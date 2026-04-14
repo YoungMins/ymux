@@ -1,0 +1,98 @@
+// App entry point. Bootstraps the frontend by pulling the initial config +
+// detected shells from the Rust backend, then mounts the workspace bar and
+// workspace host and wires keyboard shortcuts.
+
+import "./style.css";
+import { api } from "./ipc/bridge";
+import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
+import { mountWorkspaceBar, refreshWorkspaceBar } from "./workspace/WorkspaceBar";
+
+async function main(): Promise<void> {
+  const app = document.getElementById("app");
+  if (!app) throw new Error("#app mount point missing");
+
+  const bootstrap = await api.loadBootstrap();
+  if (bootstrap.shells.length === 0) {
+    const warn = document.createElement("div");
+    warn.textContent =
+      "No shells detected. ymux could not find cmd, PowerShell, Git Bash, or WSL on this machine.";
+    warn.style.padding = "20px";
+    app.appendChild(warn);
+    return;
+  }
+
+  const host = document.createElement("div");
+  host.className = "workspace-host";
+  app.appendChild(host);
+
+  const manager = new WorkspaceManager(host, bootstrap.config, bootstrap.shells);
+  mountWorkspaceBar(app, manager, bootstrap.shells);
+  // The bar was appended after the host; move it to the top.
+  const bar = app.querySelector(".workspace-bar");
+  if (bar) app.insertBefore(bar, host);
+
+  await manager.start();
+
+  // Global keybindings. Tauri's global-shortcut plugin is overkill for
+  // window-local bindings — plain DOM events are sufficient inside WebView2.
+  window.addEventListener("keydown", (ev) => {
+    const key = ev.key;
+
+    // Ctrl+1..9 switch workspaces.
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && /^[1-9]$/.test(key)) {
+      const id = Number.parseInt(key, 10);
+      if (id >= 1 && id <= MAX_WORKSPACES) {
+        ev.preventDefault();
+        void manager.activate(id).then(() => refreshWorkspaceBar(app));
+      }
+      return;
+    }
+
+    // Ctrl+Shift+D horizontal split.
+    if (ev.ctrlKey && ev.shiftKey && (key === "D" || key === "d")) {
+      ev.preventDefault();
+      void manager.splitFocused("horizontal");
+      return;
+    }
+
+    // Ctrl+Shift+- vertical split (`-` on most layouts).
+    if (ev.ctrlKey && ev.shiftKey && (key === "_" || key === "-")) {
+      ev.preventDefault();
+      void manager.splitFocused("vertical");
+      return;
+    }
+
+    // Ctrl+Shift+W close focused pane.
+    if (ev.ctrlKey && ev.shiftKey && (key === "W" || key === "w")) {
+      ev.preventDefault();
+      void manager.closeFocused();
+      return;
+    }
+
+    // Ctrl+Tab cycle.
+    if (ev.ctrlKey && !ev.shiftKey && key === "Tab") {
+      ev.preventDefault();
+      manager.cycleFocus(1);
+      return;
+    }
+    if (ev.ctrlKey && ev.shiftKey && key === "Tab") {
+      ev.preventDefault();
+      manager.cycleFocus(-1);
+      return;
+    }
+  });
+
+  window.addEventListener("resize", () => manager.refitActive());
+  window.addEventListener("beforeunload", () => {
+    void manager.flush();
+  });
+}
+
+main().catch((e) => {
+  console.error(e);
+  const el = document.getElementById("app");
+  if (el) {
+    el.textContent = `ymux failed to start: ${(e as Error).message}`;
+    el.style.padding = "20px";
+  }
+});
