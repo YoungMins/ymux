@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the ymux main window. Grants the core IPC + event APIs the frontend needs to invoke commands and listen for PTY data/exit events. Custom commands registered via generate_handler! are auto-allowed by Tauri 2 and do not need explicit permissions here.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}

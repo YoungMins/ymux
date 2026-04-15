@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "ymux",
         "width": 1280,
         "height": 800,

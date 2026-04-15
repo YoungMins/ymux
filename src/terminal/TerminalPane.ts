@@ -9,7 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import type { PaneSpec, Uuid } from "../types";
-import { api, onPaneData, onPaneExit } from "../ipc/bridge";
+import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -130,9 +130,12 @@ export class TerminalPane {
         }, 200);
       }
     } catch (e) {
-      this.term.writeln(
-        `\x1b[31mfailed to start shell: ${(e as Error).message}\x1b[0m`,
-      );
+      // `e` from Tauri can be a string (Rust error serialized as a string),
+      // an Error (wrapped by `bridge.ts call()`), an object (capability
+      // rejection), or even `undefined` if a permission was denied silently.
+      // Render *something* useful in every case.
+      const msg = describeError(e);
+      this.term.writeln(`\x1b[31mfailed to start shell: ${msg}\x1b[0m`);
       throw e;
     }
   }
