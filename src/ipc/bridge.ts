@@ -97,6 +97,14 @@ export const api = {
 
   setActiveWorkspace: (id: number): Promise<void> =>
     call("set_active_workspace", { id }),
+
+  /// Get the most recently reported working directory for a pane (via OSC 7).
+  /// Returns `null` if the pane has not yet emitted a cwd sequence.
+  getPaneCwd: (id: Uuid): Promise<string | null> =>
+    call("get_pane_cwd", { id }),
+
+  /// Open a URL in the system default browser. Only http/https are allowed.
+  openUrl: (url: string): Promise<void> => call("open_url", { url }),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.

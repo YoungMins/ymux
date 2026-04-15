@@ -42,6 +42,8 @@ fn main() {
             ymux_lib::commands::resize_pane,
             ymux_lib::commands::kill_pane,
             ymux_lib::commands::set_active_workspace,
+            ymux_lib::commands::get_pane_cwd,
+            ymux_lib::commands::open_url,
         ])
         .setup(|app| {
             start_pty_event_pump(app.handle().clone());

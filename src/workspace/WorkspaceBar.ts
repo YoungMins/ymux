@@ -3,6 +3,7 @@
 
 import type { ShellProfile } from "../types";
 import type { WorkspaceManager } from "./WorkspaceManager";
+import { mountHelpButton } from "../help/HelpOverlay";
 
 export function mountWorkspaceBar(
   host: HTMLElement,
@@ -21,7 +22,7 @@ export function mountWorkspaceBar(
     const btn = document.createElement("button");
     btn.className = "workspace-bar__ws";
     btn.textContent = String(i);
-    btn.title = `Workspace ${i} (Ctrl+${i})`;
+    btn.title = `Workspace ${i} (Ctrl+Shift+${i})`;
     btn.addEventListener("click", () => {
       void manager.activate(i);
       highlight();
@@ -51,6 +52,9 @@ export function mountWorkspaceBar(
   }
   bar.appendChild(shellPicker);
 
+  // "?" help button — always at the far right of the bar.
+  const cleanupHelp = mountHelpButton(bar);
+
   host.appendChild(bar);
 
   function highlight(): void {
@@ -69,7 +73,10 @@ export function mountWorkspaceBar(
   // Expose an updater so main.ts can re-highlight after keyboard shortcuts.
   (bar as unknown as { __ymuxHighlight: () => void }).__ymuxHighlight = highlight;
 
-  return () => bar.remove();
+  return () => {
+    cleanupHelp();
+    bar.remove();
+  };
 }
 
 export function refreshWorkspaceBar(host: HTMLElement): void {

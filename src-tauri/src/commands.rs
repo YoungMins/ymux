@@ -169,6 +169,41 @@ pub fn set_active_workspace(state: State<'_, AppState>, id: u32) -> YmuxResult<(
     Ok(())
 }
 
+/// Return the most recently reported working directory for a pane, or `None`
+/// if the pane has not yet emitted an OSC 7 sequence.
+#[tauri::command]
+pub fn get_pane_cwd(state: State<'_, AppState>, id: Uuid) -> Option<String> {
+    state.pty.cwd_for(id)
+}
+
+/// Open a URL in the system default browser. Only `http://` and `https://`
+/// URLs are accepted; anything else is rejected to prevent accidental
+/// execution of arbitrary shell commands via `start` or `xdg-open`.
+#[tauri::command]
+pub fn open_url(url: String) -> YmuxResult<()> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(YmuxError::Other(
+            "open_url: only http/https URLs are supported".into(),
+        ));
+    }
+    #[cfg(windows)]
+    {
+        // `start "" <url>` — the empty string is the window title, required
+        // when the URL contains query params so `cmd /C start` doesn't
+        // misparse the first `=` as a window-title separator.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(YmuxError::Io)?;
+    }
+    #[cfg(not(windows))]
+    {
+        // Development hosts (Linux/macOS).
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    }
+    Ok(())
+}
+
 /// Start the reader thread that drains PTY output and forwards it to the
 /// frontend as Tauri events. Must be called once, at startup, after the
 /// [`AppState`] is installed.

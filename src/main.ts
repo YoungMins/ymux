@@ -38,9 +38,12 @@ async function main(): Promise<void> {
   window.addEventListener("keydown", (ev) => {
     const key = ev.key;
 
-    // Ctrl+1..9 switch workspaces.
-    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && /^[1-9]$/.test(key)) {
-      const id = Number.parseInt(key, 10);
+    // Ctrl+Shift+1..9 switch workspaces. We check both the key value (which
+    // varies by keyboard layout) and the digit codes so Korean / AZERTY / etc.
+    // users who produce a different character on the number row still get the
+    // correct workspace. `ev.code` is layout-independent ("Digit1"…"Digit9").
+    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && /^Digit[1-9]$/.test(ev.code)) {
+      const id = Number.parseInt(ev.code.slice(-1), 10);
       if (id >= 1 && id <= MAX_WORKSPACES) {
         ev.preventDefault();
         void manager.activate(id).then(() => refreshWorkspaceBar(app));
@@ -55,8 +58,11 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Ctrl+Shift+- vertical split (`-` on most layouts).
-    if (ev.ctrlKey && ev.shiftKey && (key === "_" || key === "-")) {
+    // Ctrl+Shift+- (Minus key) vertical split. We use `ev.code` ("Minus")
+    // instead of `ev.key` because Shift+- produces "_" on US layouts and
+    // different characters on Korean / other layouts, so the key value is
+    // unreliable. `code` is always "Minus" regardless of Shift or locale.
+    if (ev.ctrlKey && ev.shiftKey && ev.code === "Minus") {
       ev.preventDefault();
       void manager.splitFocused("vertical");
       return;

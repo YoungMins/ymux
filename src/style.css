@@ -193,3 +193,148 @@ body,
   flex: 1 1 auto;
   min-height: 0;
 }
+
+/* ── Help "?" button in the workspace bar ─────────────────────────────────── */
+
+.workspace-bar__help {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.workspace-bar__help:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Help overlay ─────────────────────────────────────────────────────────── */
+
+.help-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 100;
+}
+
+.help-backdrop--visible {
+  display: block;
+}
+
+.help-modal {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 420px;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.help-modal--visible {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.help-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.help-modal__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.help-modal__lang-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help-modal__lang-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.help-modal__lang-sel {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+}
+
+.help-modal__table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.help-modal__table tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.help-modal__keys {
+  padding: 8px 12px 8px 0;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.help-modal__keys kbd {
+  display: inline-block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.help-modal__desc {
+  padding: 8px 0;
+  color: var(--fg);
+  vertical-align: middle;
+}
+
+.help-modal__close {
+  align-self: flex-end;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 16px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.help-modal__close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

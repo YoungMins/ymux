@@ -73,7 +73,19 @@ export class TerminalPane {
 
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
-    this.term.loadAddon(new WebLinksAddon());
+    // Custom link handler: Ctrl+click opens the URL in the system browser via
+    // the Rust backend instead of the default WebLinksAddon behaviour (which
+    // tries `window.open` — unreliable inside WebView2).
+    this.term.loadAddon(
+      new WebLinksAddon((ev, uri) => {
+        if (ev.ctrlKey) {
+          ev.preventDefault();
+          void api.openUrl(uri).catch((e) =>
+            console.warn("openUrl failed:", e),
+          );
+        }
+      }),
+    );
     this.term.open(this.element);
 
     this.term.onData((data) => {

@@ -245,7 +245,20 @@ export class WorkspaceManager {
     // Bash", which inheritance from the parent silently breaks once you've
     // changed the picker.
     const shellName = this.resolveShell(this.shells[0]?.name ?? "");
-    const spec = newPane(shellName, existing?.cwd ?? null);
+
+    // Inherit the *live* working directory from the parent pane (OSC 7
+    // tracked by the Rust backend) rather than the stale initial cwd stored
+    // in the config. This means "split while in ~/projects/foo" opens the new
+    // pane in ~/projects/foo, not wherever the shell originally started.
+    let liveCwd: string | null = null;
+    try {
+      liveCwd = await api.getPaneCwd(focusId);
+    } catch {
+      // Backend didn't have a cwd (pane not spawned yet, or shell never
+      // emitted OSC 7). Fall through to the config-stored cwd below.
+    }
+    const inheritedCwd = liveCwd ?? existing?.cwd ?? null;
+    const spec = newPane(shellName, inheritedCwd);
     ws.root = splitPane(ws.root, focusId, direction, spec);
 
     // Create a new TerminalPane for the new spec and spawn it.
