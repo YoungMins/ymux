@@ -27,7 +27,7 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
 - **Shell auto-detection**: scans the system for `cmd.exe`, Windows PowerShell,
   PowerShell 7 (`pwsh`), Git Bash, and WSL distros, and exposes them as
   selectable profiles.
-- **Numbered workspaces**: `Ctrl+Shift+1` .. `Ctrl+Shift+9` switch between
+- **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between
   workspaces. Every workspace saves its own layout. Panes stay alive across
   switches (tmux-style) so your REPLs and tails don't die.
 - **Clickable URLs**: `Ctrl+Click` on any `http://` or `https://` link inside
@@ -60,12 +60,12 @@ close.
 
 | Shortcut                    | Action                               |
 |-----------------------------|--------------------------------------|
-| `Ctrl+Shift+D`              | Split pane horizontally              |
-| `Ctrl+Shift+−`              | Split pane vertically                |
+| `Ctrl+Shift+H`              | Split pane horizontally              |
+| `Ctrl+Shift+V`              | Split pane vertically                |
 | `Ctrl+Shift+W`              | Close focused pane                   |
 | `Ctrl+Tab`                  | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | Focus previous pane                  |
-| `Ctrl+Shift+1` .. `Ctrl+Shift+9` | Switch workspace                |
+| `Ctrl+Alt+1` .. `Ctrl+Alt+9` | Switch workspace                    |
 | `Ctrl+Click` on a URL       | Open link in default browser         |
 | `?` button (toolbar)        | Show / hide this shortcut reference  |
 

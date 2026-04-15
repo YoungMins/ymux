@@ -38,11 +38,12 @@ async function main(): Promise<void> {
   window.addEventListener("keydown", (ev) => {
     const key = ev.key;
 
-    // Ctrl+Shift+1..9 switch workspaces. We check both the key value (which
-    // varies by keyboard layout) and the digit codes so Korean / AZERTY / etc.
-    // users who produce a different character on the number row still get the
-    // correct workspace. `ev.code` is layout-independent ("Digit1"…"Digit9").
-    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && /^Digit[1-9]$/.test(ev.code)) {
+    // Ctrl+Alt+1..9 switch workspaces. We use Ctrl+Alt instead of Ctrl+Shift
+    // (which some Windows apps intercept at the OS level) and check both the
+    // key value and the digit codes so Korean / AZERTY / etc. users who
+    // produce a different character on the number row still get the correct
+    // workspace. `ev.code` is layout-independent ("Digit1"…"Digit9").
+    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && /^Digit[1-9]$/.test(ev.code)) {
       const id = Number.parseInt(ev.code.slice(-1), 10);
       if (id >= 1 && id <= MAX_WORKSPACES) {
         ev.preventDefault();
@@ -51,18 +52,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Ctrl+Shift+D horizontal split.
-    if (ev.ctrlKey && ev.shiftKey && (key === "D" || key === "d")) {
+    // Ctrl+Shift+H horizontal split.
+    if (ev.ctrlKey && ev.shiftKey && (key === "H" || key === "h")) {
       ev.preventDefault();
       void manager.splitFocused("horizontal");
       return;
     }
 
-    // Ctrl+Shift+- (Minus key) vertical split. We use `ev.code` ("Minus")
-    // instead of `ev.key` because Shift+- produces "_" on US layouts and
-    // different characters on Korean / other layouts, so the key value is
-    // unreliable. `code` is always "Minus" regardless of Shift or locale.
-    if (ev.ctrlKey && ev.shiftKey && ev.code === "Minus") {
+    // Ctrl+Shift+V vertical split.
+    if (ev.ctrlKey && ev.shiftKey && (key === "V" || key === "v")) {
       ev.preventDefault();
       void manager.splitFocused("vertical");
       return;

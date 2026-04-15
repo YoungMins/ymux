@@ -13,19 +13,19 @@ interface ShortcutEntry {
 
 const SHORTCUTS: ShortcutEntry[] = [
   {
-    keys: "Ctrl+Shift+1 … 9",
+    keys: "Ctrl+Alt+1 … 9",
     en: "Switch to workspace 1 – 9",
     ko: "워크스페이스 1 – 9로 전환",
     ja: "ワークスペース 1 – 9 に切り替え",
   },
   {
-    keys: "Ctrl+Shift+D",
+    keys: "Ctrl+Shift+H",
     en: "Split pane horizontally",
     ko: "현재 창을 가로로 분할",
     ja: "ペインを水平に分割",
   },
   {
-    keys: "Ctrl+Shift+−",
+    keys: "Ctrl+Shift+V",
     en: "Split pane vertically",
     ko: "현재 창을 세로로 분할",
     ja: "ペインを垂直に分割",

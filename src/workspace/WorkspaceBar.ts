@@ -22,7 +22,7 @@ export function mountWorkspaceBar(
     const btn = document.createElement("button");
     btn.className = "workspace-bar__ws";
     btn.textContent = String(i);
-    btn.title = `Workspace ${i} (Ctrl+Shift+${i})`;
+    btn.title = `Workspace ${i} (Ctrl+Alt+${i})`;
     btn.addEventListener("click", () => {
       void manager.activate(i);
       highlight();
