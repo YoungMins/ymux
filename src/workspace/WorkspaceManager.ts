@@ -81,6 +81,21 @@ export class WorkspaceManager {
       this.paneCaches.set(ws.id, new Map());
     }
 
+    // Single host-level focus tracker. Any descendant of `this.host` that
+    // gains focus (a `.pane` element directly or xterm.js's helper textarea
+    // inside one) bubbles a `focusin` event up here, and we walk back up to
+    // find the owning `.pane[data-pane-id]`. This is the authoritative path
+    // for focus tracking; the per-pane `onFocus` callback is left in place
+    // as a redundant signal but is no longer relied on.
+    this.host.addEventListener("focusin", (ev) => {
+      const target = ev.target as HTMLElement | null;
+      if (!target) return;
+      const paneEl = target.closest<HTMLElement>(".pane[data-pane-id]");
+      if (paneEl?.dataset.paneId) {
+        this.focusedPaneId = paneEl.dataset.paneId;
+      }
+    });
+
     await this.activate(this.activeId);
   }
 
@@ -269,10 +284,13 @@ export class WorkspaceManager {
     } else {
       ws.root = newRoot;
       this.renderWorkspace(ws);
-      // Move focus to the first remaining pane.
+      // Move focus to the first remaining pane in tree (depth-first) order
+      // so the new focus is predictable from the user's point of view, not
+      // dependent on Map insertion order.
       this.focusedPaneId = null;
-      const first = cache.values().next().value as TerminalPane | undefined;
-      first?.focus();
+      const remaining = panes(ws.root);
+      const next = remaining[0] ? cache.get(remaining[0].id) : undefined;
+      next?.focus();
     }
     this.persistDebounced();
   }

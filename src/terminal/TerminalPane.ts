@@ -44,6 +44,10 @@ export class TerminalPane {
     this.element = document.createElement("div");
     this.element.className = "pane";
     this.element.tabIndex = 0;
+    // Tag the element so a host-level focusin handler can find it via
+    // `event.target.closest('.pane')` and update the focused pane id without
+    // having to thread an `onFocus` callback through every render.
+    this.element.dataset.paneId = this.id;
 
     this.term = new Terminal({
       allowProposedApi: true,
@@ -89,8 +93,14 @@ export class TerminalPane {
       });
     });
 
+    // `focusin` bubbles, unlike `focus`, so we catch the case where xterm.js
+    // moves focus into its hidden helper textarea (a descendant of
+    // `this.element`). `focus` would only fire if `this.element` itself
+    // received focus, which never happens once xterm is inside it.
+    this.element.addEventListener("focusin", () => this.opts.onFocus?.());
+    // Pointerdown still routes clicks on the surrounding padding (outside
+    // xterm's drawing area) into focus().
     this.element.addEventListener("pointerdown", () => this.focus());
-    this.element.addEventListener("focus", () => this.opts.onFocus?.());
   }
 
   async spawn(): Promise<void> {
