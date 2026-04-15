@@ -7,7 +7,6 @@
 use std::io::Read;
 use std::io::Write as IoWrite;
 use std::sync::mpsc::Sender;
-use std::thread::JoinHandle;
 
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -19,12 +18,20 @@ use crate::error::{YmuxError, YmuxResult};
 /// Handle to a single running PTY. `stdout` bytes from the child are pushed
 /// into a caller-provided `mpsc::Sender` on a dedicated reader thread — the
 /// Tauri layer forwards them to the frontend via an event channel.
+///
+/// The reader thread is intentionally **detached** rather than joined on
+/// drop. On Windows ConPTY the master read loop can stay blocked in `read()`
+/// for an unbounded amount of time after the child has been killed, because
+/// ConPTY does not necessarily close the master side immediately. Joining
+/// that thread from `Drop` would freeze whichever Tauri command worker
+/// happened to call `kill_pane`, which in turn deadlocks the entire IPC
+/// surface and produces a "Not Responding" window the moment the user closes
+/// a pane.
 pub struct PtySession {
     pub id: Uuid,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn IoWrite + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
-    reader_join: Option<JoinHandle<()>>,
 }
 
 /// Event emitted from the reader thread back to the app layer.
@@ -78,7 +85,9 @@ impl PtySession {
 
         let id = spec.id;
         let tx = events.clone();
-        let reader_join = std::thread::Builder::new()
+        // Detached reader thread — we never join it. See the doc comment on
+        // `PtySession` for why joining causes UI hangs on Windows.
+        std::thread::Builder::new()
             .name(format!("ymux-pty-reader-{id}"))
             .spawn(move || {
                 let mut buf = [0u8; 8192];
@@ -96,10 +105,9 @@ impl PtySession {
                         }
                     }
                 }
-                // Signal exit once the reader drains. We do not have
-                // access to the child handle here, so the exit code is a
-                // placeholder; the manager will update it when it reaps the
-                // child.
+                // Signal exit once the reader drains. The receiver may have
+                // already gone away if the pane was disposed, in which case
+                // the send fails silently and that's fine.
                 let _ = tx.send(PaneEvent::Exit(id, 0));
             })
             .map_err(|e| YmuxError::Pty(format!("spawn reader thread: {e}")))?;
@@ -114,7 +122,6 @@ impl PtySession {
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             child: Mutex::new(child),
-            reader_join: Some(reader_join),
         })
     }
 
@@ -144,12 +151,14 @@ impl PtySession {
 
 impl Drop for PtySession {
     fn drop(&mut self) {
-        // Best effort: terminate the child and join the reader so we don't
-        // leak OS threads when a workspace or window is closed.
+        // Best effort: terminate the child. The reader thread will see EOF
+        // (or an error) on its next `read()` and exit on its own. We do NOT
+        // join the reader here because on Windows ConPTY the master read can
+        // stay blocked indefinitely after the child has been killed, and
+        // joining would freeze the calling Tauri command worker thread,
+        // hanging the whole IPC surface and causing "Not Responding" the
+        // moment the user closes a pane.
         let _ = self.child.lock().kill();
-        if let Some(handle) = self.reader_join.take() {
-            let _ = handle.join();
-        }
     }
 }
 
