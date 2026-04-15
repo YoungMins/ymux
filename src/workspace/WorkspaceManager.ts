@@ -81,20 +81,41 @@ export class WorkspaceManager {
       this.paneCaches.set(ws.id, new Map());
     }
 
-    // Single host-level focus tracker. Any descendant of `this.host` that
-    // gains focus (a `.pane` element directly or xterm.js's helper textarea
-    // inside one) bubbles a `focusin` event up here, and we walk back up to
-    // find the owning `.pane[data-pane-id]`. This is the authoritative path
-    // for focus tracking; the per-pane `onFocus` callback is left in place
-    // as a redundant signal but is no longer relied on.
-    this.host.addEventListener("focusin", (ev) => {
-      const target = ev.target as HTMLElement | null;
-      if (!target) return;
-      const paneEl = target.closest<HTMLElement>(".pane[data-pane-id]");
-      if (paneEl?.dataset.paneId) {
-        this.focusedPaneId = paneEl.dataset.paneId;
+    // Authoritative focus tracking. We listen at the host (workspace area)
+    // level instead of relying on per-pane handlers because xterm.js mounts
+    // a hidden helper textarea + canvases as descendants of `.pane`, and
+    // `focus` does not bubble — so a `focus` listener directly on `.pane`
+    // never fires when xterm steals input focus into its own elements.
+    //
+    // Two signals, both at host level so they can't be defeated by a
+    // descendant calling `stopPropagation()`:
+    //
+    //   1. `focusin` — bubbles, fires for any descendant focus. Catches the
+    //      xterm textarea focus path naturally.
+    //   2. `pointerdown` in the **capture** phase — runs before xterm.js
+    //      gets a chance to handle the click. We use this to *forcefully*
+    //      call `pane.focus()` on the clicked `.pane`, which guarantees
+    //      both DOM focus and `term.focus()` even if xterm later rearranges
+    //      things underneath us.
+    const handlePaneActivation = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return;
+      const paneEl = el.closest<HTMLElement>(".pane[data-pane-id]");
+      const id = paneEl?.dataset.paneId;
+      if (!id) return;
+      const cache = this.paneCaches.get(this.activeId);
+      const pane = cache?.get(id);
+      if (pane) {
+        pane.focus();
       }
-    });
+      this.focusedPaneId = id;
+    };
+    this.host.addEventListener("focusin", (ev) => handlePaneActivation(ev.target));
+    this.host.addEventListener(
+      "pointerdown",
+      (ev) => handlePaneActivation(ev.target),
+      true, // capture phase: run before xterm.js's own handlers
+    );
 
     await this.activate(this.activeId);
   }
