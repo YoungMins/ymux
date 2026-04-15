@@ -30,10 +30,12 @@ parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Tauri runtime is only pulled in for the full desktop build. On Linux dev
-# hosts we run `cargo check --lib --tests` without this feature to avoid the
-# system-library dependencies (gtk/webkit2gtk/pango) that the tauri crate
-# transitively needs.
+# Tauri runtime is gated behind the `desktop` feature, which is on by default
+# so that `pnpm tauri dev` / `pnpm tauri build` work out of the box on the
+# Windows target machines this app is built for. Linux dev hosts that only
+# want to run the cross-platform unit tests can opt out with
+# `--no-default-features --lib --tests` to avoid pulling in the GTK/webkit2gtk
+# system libraries the Tauri crate needs on Linux.
 tauri = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
@@ -44,7 +46,7 @@ windows = { version = "0.56", features = [
 ] }
 
 [features]
-default = []
+default = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-build"]
 
 [profile.release]

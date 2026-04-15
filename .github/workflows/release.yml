@@ -54,13 +54,13 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --check
 
-      - name: cargo clippy (lib + tests)
+      - name: cargo clippy (lib + tests, no tauri runtime)
         working-directory: src-tauri
-        run: cargo clippy --lib --tests -- -D warnings
+        run: cargo clippy --no-default-features --lib --tests -- -D warnings
 
-      - name: cargo test (lib)
+      - name: cargo test (lib, no tauri runtime)
         working-directory: src-tauri
-        run: cargo test --lib
+        run: cargo test --no-default-features --lib
 
   build-windows:
     name: Build (windows, tauri)
@@ -129,4 +129,3 @@ jobs:
             See the [README](https://github.com/${{ github.repository }}#readme) for keybindings and usage.
           releaseDraft: ${{ steps.meta.outputs.draft == 'true' }}
           prerelease: false
-          args: --features desktop
