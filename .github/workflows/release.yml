@@ -1,0 +1,132 @@
+name: release
+
+# Build the Windows installer and publish it to GitHub Releases.
+#
+# Triggers:
+#   - Pushing a tag matching `v*` (e.g. `v0.1.0`) — the normal release path.
+#   - Manual `workflow_dispatch` from the Actions UI for ad-hoc test builds.
+#
+# The actual build runs on `windows-latest` because the Tauri runtime, ConPTY,
+# WebView2 bootstrapper, and NSIS bundler are all Windows-only. The pure-logic
+# Rust crate (ymux_lib) is also unit-tested on a Linux runner first so a
+# broken commit fails fast before the slow Windows build starts.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to use for the release (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0-test'
+      draft:
+        description: 'Publish as a draft release?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  test-linux:
+    name: Test (linux, lib only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy (lib + tests)
+        working-directory: src-tauri
+        run: cargo clippy --lib --tests -- -D warnings
+
+      - name: cargo test (lib)
+        working-directory: src-tauri
+        run: cargo test --lib
+
+  build-windows:
+    name: Build (windows, tauri)
+    needs: test-linux
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Determine release tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "draft=${{ inputs.draft }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build & release with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: 'ymux ${{ steps.meta.outputs.tag }}'
+          releaseBody: |
+            ymux ${{ steps.meta.outputs.tag }} — Windows build.
+
+            ## Install
+            Download `ymux_*-setup.exe` below and run it. The NSIS installer
+            bundles a WebView2 bootstrapper, so Windows 10 machines without
+            the runtime will install it on first launch.
+
+            ## What's in the box
+            - Persistent split layouts saved to `%APPDATA%\ymux\config.toml`
+            - Numbered workspaces (`Ctrl+1` .. `Ctrl+9`) each with their own layout
+            - Auto-detection of cmd.exe / PowerShell / pwsh / Git Bash / WSL distros
+            - Per-pane working directory, shell, and optional startup command
+
+            See the [README](https://github.com/${{ github.repository }}#readme) for keybindings and usage.
+          releaseDraft: ${{ steps.meta.outputs.draft == 'true' }}
+          prerelease: false
+          args: --features desktop
