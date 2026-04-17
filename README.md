@@ -50,6 +50,12 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
 - **Update notifications**: a background poller checks GitHub releases every
   6 hours and surfaces a dismissable banner when a newer version ships. No
   auto-install — you stay in control.
+- **System monitor status bar**: a thin bottom bar streams live CPU / RAM /
+  GPU / disk / network ↑↓ every 2 seconds. Values turn amber at 70% and red at
+  90%. Multi-GPU and multi-disk rigs are handled (inline up to 3 entries, then
+  collapsed with a tooltip breakdown).
+- **Support on Ko-fi**: a ☕ Support button next to `?` opens
+  [ko-fi.com/youngminkim](https://ko-fi.com/youngminkim) in the system browser.
 - **Clickable URLs**: `Ctrl+Click` on any `http://` or `https://` link inside
   a terminal opens it in your default browser.
 - **Keyboard shortcut reference**: press `?` in the top-right corner of the
