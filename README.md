@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.1-7fdbca?style=flat-square" alt="version 0.2.1" />
+  <img src="https://img.shields.io/badge/version-0.3.0-7fdbca?style=flat-square" alt="version 0.3.0" />
 </p>
 
 <p align="center">
@@ -36,6 +36,20 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
 - **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between
   workspaces. Every workspace saves its own layout. Panes stay alive across
   switches (tmux-style) so your REPLs and tails don't die.
+- **HotKey buttons per pane**: bind frequently-used commands (single line or
+  batch multi-line) to labelled buttons on top of every terminal. Click →
+  the command is injected into the shell. Manage them from the `⚙` button.
+- **Browser panes**: drop an iframe-based browser into any layout slot via the
+  toolbar's `+ Browser` button. URL bar with back / forward / reload. The URL
+  persists across workspace switches and app restarts, just like a terminal.
+- **Pane zoom**: `Ctrl+Shift+Z` hides every other pane so you can focus.
+  Press again to restore the split.
+- **Scrollback search**: `Ctrl+F` opens a find bar on the focused terminal.
+  Enter / Shift+Enter step through matches; Esc closes.
+- **Rename panes**: `Ctrl+Shift+R` gives the focused pane a custom title.
+- **Update notifications**: a background poller checks GitHub releases every
+  6 hours and surfaces a dismissable banner when a newer version ships. No
+  auto-install — you stay in control.
 - **Clickable URLs**: `Ctrl+Click` on any `http://` or `https://` link inside
   a terminal opens it in your default browser.
 - **Keyboard shortcut reference**: press `?` in the top-right corner of the
@@ -69,6 +83,9 @@ close.
 | `Ctrl+Shift+H`              | Split pane horizontally              |
 | `Ctrl+Shift+V`              | Split pane vertically                |
 | `Ctrl+Shift+W`              | Close focused pane                   |
+| `Ctrl+Shift+Z`              | Zoom / unzoom focused pane           |
+| `Ctrl+Shift+R`              | Rename focused pane                  |
+| `Ctrl+F`                    | Search terminal scrollback           |
 | `Ctrl+Tab`                  | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | Focus previous pane                  |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | Switch workspace                    |

@@ -6,7 +6,8 @@
 // can diff easily, but we do return the same reference when a subtree is
 // unchanged for cheap equality checks.
 
-import type { LayoutNode, PaneSpec, SplitDir, Uuid } from "../types";
+import type { HotKeyDef, LayoutNode, PaneSpec, Uuid } from "../types";
+import type { SplitDir } from "../types";
 import { uuidv4 } from "../types";
 
 export function newPane(shell: string, cwd: string | null = null): PaneSpec {
@@ -17,6 +18,23 @@ export function newPane(shell: string, cwd: string | null = null): PaneSpec {
     cwd,
     startup_cmd: null,
     env: [],
+    pane_kind: "terminal",
+    url: null,
+    hotkeys: [],
+  };
+}
+
+export function newBrowserPane(url: string): PaneSpec {
+  return {
+    id: uuidv4(),
+    title: null,
+    shell: "",
+    cwd: null,
+    startup_cmd: null,
+    env: [],
+    pane_kind: "browser",
+    url,
+    hotkeys: [],
   };
 }
 
@@ -29,6 +47,9 @@ export function paneNode(spec: PaneSpec): LayoutNode {
     cwd: spec.cwd,
     startup_cmd: spec.startup_cmd,
     env: spec.env,
+    pane_kind: spec.pane_kind ?? "terminal",
+    url: spec.url ?? null,
+    hotkeys: spec.hotkeys ?? [],
   };
 }
 
@@ -40,6 +61,9 @@ export function nodeToSpec(node: LayoutNode & { kind: "pane" }): PaneSpec {
     cwd: node.cwd,
     startup_cmd: node.startup_cmd,
     env: node.env,
+    pane_kind: node.pane_kind ?? "terminal",
+    url: node.url ?? null,
+    hotkeys: (node.hotkeys ?? []) as HotKeyDef[],
   };
 }
 

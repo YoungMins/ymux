@@ -54,6 +54,24 @@ const SHORTCUTS: ShortcutEntry[] = [
     ko: "기본 브라우저로 링크 열기",
     ja: "リンクをデフォルトブラウザで開く",
   },
+  {
+    keys: "Ctrl+Shift+Z",
+    en: "Zoom / unzoom focused pane",
+    ko: "포커스된 창 확대 / 원복",
+    ja: "フォーカスしているペインを拡大 / 戻す",
+  },
+  {
+    keys: "Ctrl+F",
+    en: "Search terminal scrollback",
+    ko: "터미널 스크롤백 검색",
+    ja: "ターミナルのスクロールバックを検索",
+  },
+  {
+    keys: "Ctrl+Shift+R",
+    en: "Rename focused pane",
+    ko: "포커스된 창 이름 변경",
+    ja: "フォーカスしているペインの名前を変更",
+  },
 ];
 
 const LABELS: Record<

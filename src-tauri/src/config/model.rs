@@ -16,7 +16,10 @@ use uuid::Uuid;
 ///       for dynamic cwd, and Git Bash gained a `--rcfile`-based init that
 ///       installs a `PROMPT_COMMAND` OSC 7 hook. Any cached shell profile
 ///       from v1 or v2 is dropped on load so the next bootstrap re-detects.
-pub const CONFIG_VERSION: u32 = 3;
+///   4 — `PaneSpec` gained `kind` (Terminal / Browser), `url`, and
+///       `hotkeys`. All new fields have serde defaults so v3 configs load
+///       transparently; migration just bumps the version number.
+pub const CONFIG_VERSION: u32 = 4;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
@@ -301,6 +304,24 @@ pub enum SplitDir {
     Vertical,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneKind {
+    #[default]
+    Terminal,
+    Browser,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HotKeyDef {
+    pub label: String,
+    /// Raw command string. For `batch = true`, newlines separate discrete
+    /// lines sent one-by-one, each terminated with `\r`.
+    pub command: String,
+    #[serde(default)]
+    pub batch: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaneSpec {
     pub id: Uuid,
@@ -316,6 +337,17 @@ pub struct PaneSpec {
     pub startup_cmd: Option<String>,
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// Terminal vs Browser. Renamed from `kind` to avoid collision with the
+    /// `LayoutNode` tag (also named `kind`) when the pane spec is flattened
+    /// into the tagged enum.
+    #[serde(default, rename = "pane_kind")]
+    pub pane_kind: PaneKind,
+    /// Target URL when `kind == Browser`. Ignored for terminal panes.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// User-defined HotKey buttons shown above terminal panes.
+    #[serde(default)]
+    pub hotkeys: Vec<HotKeyDef>,
 }
 
 impl PaneSpec {
@@ -327,6 +359,9 @@ impl PaneSpec {
             cwd: None,
             startup_cmd: None,
             env: Vec::new(),
+            pane_kind: PaneKind::Terminal,
+            url: None,
+            hotkeys: Vec::new(),
         }
     }
 
@@ -340,6 +375,23 @@ impl PaneSpec {
             cwd: None,
             startup_cmd: None,
             env: Vec::new(),
+            pane_kind: PaneKind::Terminal,
+            url: None,
+            hotkeys: Vec::new(),
+        }
+    }
+
+    pub fn new_browser(url: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            title: None,
+            shell: String::new(),
+            cwd: None,
+            startup_cmd: None,
+            env: Vec::new(),
+            pane_kind: PaneKind::Browser,
+            url: Some(url.into()),
+            hotkeys: Vec::new(),
         }
     }
 }
@@ -368,6 +420,9 @@ mod tests {
             cwd: None,
             startup_cmd: None,
             env: Vec::new(),
+            pane_kind: PaneKind::Terminal,
+            url: None,
+            hotkeys: Vec::new(),
         })
     }
 
@@ -555,6 +610,9 @@ mod tests {
                         cwd: Some("C:\\old".into()),
                         startup_cmd: None,
                         env: vec![],
+                        pane_kind: PaneKind::Terminal,
+                        url: None,
+                        hotkeys: vec![],
                     })),
                     b: Box::new(LayoutNode::Pane(PaneSpec {
                         id: b,
@@ -563,6 +621,9 @@ mod tests {
                         cwd: None,
                         startup_cmd: None,
                         env: vec![],
+                        pane_kind: PaneKind::Terminal,
+                        url: None,
+                        hotkeys: vec![],
                     })),
                 },
             }],
@@ -638,6 +699,71 @@ mod tests {
             node.find_pane_mut(a).unwrap().title.as_deref(),
             Some("visited")
         );
+    }
+
+    #[test]
+    fn migrate_v3_to_v4_defaults_panes_to_terminal() {
+        // v3 configs have no `pane_kind`, `url`, or `hotkeys` fields. Loading
+        // them should default every pane to Terminal with no hotkeys.
+        let toml_v3 = r#"
+version = 3
+active_workspace = 1
+
+[[workspaces]]
+id = 1
+name = "main"
+
+[workspaces.root]
+kind = "pane"
+id = "00000000-0000-0000-0000-000000000001"
+shell = "PowerShell 7"
+"#;
+        let mut cfg: Config = toml::from_str(toml_v3).expect("parse v3");
+        cfg.migrate();
+        assert_eq!(cfg.version, CONFIG_VERSION);
+        let pane = cfg.workspaces[0].panes()[0];
+        assert_eq!(pane.pane_kind, PaneKind::Terminal);
+        assert!(pane.url.is_none());
+        assert!(pane.hotkeys.is_empty());
+    }
+
+    #[test]
+    fn browser_pane_round_trips_through_toml() {
+        // The `LayoutNode` tag `kind` and the `PaneSpec.pane_kind` field must
+        // coexist without collision — `pane_kind` is explicitly renamed for
+        // exactly this reason.
+        let mut cfg = Config::default();
+        cfg.workspaces[0].root = LayoutNode::Pane(PaneSpec::new_browser("https://example.com"));
+        let serialized = toml::to_string(&cfg).expect("serialize");
+        let parsed: Config = toml::from_str(&serialized).expect("deserialize");
+        let pane = parsed.workspaces[0].panes()[0];
+        assert_eq!(pane.pane_kind, PaneKind::Browser);
+        assert_eq!(pane.url.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn hotkey_def_serde_round_trip() {
+        let spec = PaneSpec {
+            hotkeys: vec![
+                HotKeyDef {
+                    label: "git status".into(),
+                    command: "git status".into(),
+                    batch: false,
+                },
+                HotKeyDef {
+                    label: "pull+install".into(),
+                    command: "git pull\npnpm install".into(),
+                    batch: true,
+                },
+            ],
+            ..PaneSpec::new_default()
+        };
+        let toml_str = toml::to_string(&spec).expect("serialize");
+        let parsed: PaneSpec = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(parsed.hotkeys.len(), 2);
+        assert_eq!(parsed.hotkeys[0].label, "git status");
+        assert!(!parsed.hotkeys[0].batch);
+        assert!(parsed.hotkeys[1].batch);
     }
 
     #[test]

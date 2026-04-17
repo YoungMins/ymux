@@ -1,6 +1,6 @@
 [package]
 name = "ymux"
-version = "0.2.1"
+version = "0.3.0"
 description = "A lightweight tmux-inspired terminal multiplexer for Windows"
 edition = "2021"
 rust-version = "1.77"
@@ -38,6 +38,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # system libraries the Tauri crate needs on Linux.
 tauri = { version = "2", optional = true }
 
+# Update checker: polls the GitHub releases API in a background thread. Kept
+# behind the `desktop` feature because the cross-platform test suite doesn't
+# need it, and rustls keeps the binary footprint minimal vs. openssl.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"], optional = true }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.56", features = [
     "Win32_System_Registry",
@@ -47,7 +52,7 @@ windows = { version = "0.56", features = [
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest"]
 
 [profile.release]
 lto = true

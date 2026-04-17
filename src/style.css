@@ -140,10 +140,24 @@ body,
   background: #0b0f14;
   outline: none;
   display: flex;
+  flex-direction: column;
 }
 
 .pane:focus-within {
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.pane__term {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+.pane__term .xterm {
+  flex: 1 1 auto;
+  height: 100%;
+  width: 100%;
 }
 
 .pane .xterm {
@@ -337,4 +351,315 @@ body,
 .help-modal__close:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── HotKey bar ───────────────────────────────────────────────────────────── */
+
+.hotkey-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 2px 4px 2px;
+  flex: 0 0 auto;
+}
+
+.hotkey-bar__btn {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotkey-bar__btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hotkey-bar__btn--manage {
+  margin-left: auto;
+  width: 22px;
+  padding: 2px 0;
+  text-align: center;
+}
+
+/* ── HotKey manager modal ─────────────────────────────────────────────────── */
+
+.hotkey-modal {
+  min-width: 560px;
+  max-width: 720px;
+}
+
+.hotkey-modal h2 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.hotkey-modal__hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.hotkey-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.hotkey-modal__row {
+  display: grid;
+  grid-template-columns: 160px 1fr auto auto;
+  gap: 6px;
+  align-items: start;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+}
+
+.hotkey-modal__label-input,
+.hotkey-modal__cmd-input {
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.hotkey-modal__cmd-input {
+  resize: vertical;
+  min-height: 26px;
+}
+
+.hotkey-modal__batch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.hotkey-modal__controls {
+  display: flex;
+  gap: 2px;
+}
+
+.hotkey-modal__row-btn {
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.hotkey-modal__row-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.hotkey-modal__footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.hotkey-modal__btn {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.hotkey-modal__btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hotkey-modal__btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hotkey-modal__empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px 0;
+}
+
+/* ── Browser pane ─────────────────────────────────────────────────────────── */
+
+.browser-pane {
+  padding: 4px;
+}
+
+.browser-pane__nav {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 4px;
+  align-items: center;
+}
+
+.browser-pane__btn {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1;
+}
+
+.browser-pane__btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.browser-pane__url {
+  flex: 1 1 auto;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  min-width: 0;
+}
+
+.browser-pane__iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  min-height: 0;
+}
+
+/* ── Update banner ────────────────────────────────────────────────────────── */
+
+.update-banner {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  background: var(--bg-alt);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 90;
+}
+
+.update-banner__link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.update-banner__close {
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.update-banner__close:hover {
+  color: var(--accent);
+}
+
+/* ── Pane zoom overlay ────────────────────────────────────────────────────── */
+
+.workspace--zoomed > .split,
+.workspace--zoomed > .tabs {
+  display: none !important;
+}
+
+.pane--zoomed {
+  position: absolute !important;
+  inset: 0;
+  z-index: 50;
+}
+
+/* ── Search bar for terminal scrollback ───────────────────────────────────── */
+
+.search-bar {
+  display: none;
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  gap: 4px;
+  align-items: center;
+  z-index: 80;
+}
+
+.search-bar--visible {
+  display: flex;
+}
+
+.search-bar__input {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  outline: none;
+}
+
+.search-bar__btn {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.search-bar__btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }

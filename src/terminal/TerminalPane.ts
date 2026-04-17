@@ -4,12 +4,15 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import type { PaneSpec, Uuid } from "../types";
+import type { HotKeyDef, PaneSpec, Uuid } from "../types";
+import type { Pane } from "../layout/Pane";
 import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
+import { HotKeyBar } from "./HotKeyBar";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -17,6 +20,9 @@ export interface TerminalPaneOptions {
   onExit?: (code: number) => void;
   /// Called when the user focuses this pane (via pointerdown or key).
   onFocus?: () => void;
+  /// Called when the user mutates the HotKey list (add / edit / delete /
+  /// reorder) so the owner can persist the new list into the PaneSpec.
+  onHotKeysChange?: (hotkeys: HotKeyDef[]) => void;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -25,11 +31,16 @@ export interface TerminalPaneOptions {
 /// the default on modern Windows Terminal.
 const ENCODER = new TextEncoder();
 
-export class TerminalPane {
+export class TerminalPane implements Pane {
   readonly id: Uuid;
   readonly element: HTMLElement;
+  private termHost: HTMLElement;
+  private hotkeyBar: HotKeyBar;
   private term: Terminal;
   private fit: FitAddon;
+  private search: SearchAddon;
+  private searchBar: HTMLElement | null = null;
+  private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
   private spec: PaneSpec;
@@ -48,6 +59,25 @@ export class TerminalPane {
     // `event.target.closest('.pane')` and update the focused pane id without
     // having to thread an `onFocus` callback through every render.
     this.element.dataset.paneId = this.id;
+
+    // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
+    // visible ⚙ button so the user can discover the feature.
+    this.hotkeyBar = new HotKeyBar({
+      paneId: this.id,
+      initial: opts.spec.hotkeys ?? [],
+      onChange: (next) => {
+        this.spec = { ...this.spec, hotkeys: next };
+        this.opts.onHotKeysChange?.(next);
+      },
+    });
+    this.element.appendChild(this.hotkeyBar.element);
+
+    // xterm mounts into a child element (not `this.element` directly) so the
+    // HotKeyBar sibling doesn't get clobbered when xterm rearranges its
+    // internal DOM subtree.
+    this.termHost = document.createElement("div");
+    this.termHost.className = "pane__term";
+    this.element.appendChild(this.termHost);
 
     this.term = new Terminal({
       allowProposedApi: true,
@@ -73,6 +103,8 @@ export class TerminalPane {
 
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
+    this.search = new SearchAddon();
+    this.term.loadAddon(this.search);
     // Custom link handler: Ctrl+click opens the URL in the system browser via
     // the Rust backend instead of the default WebLinksAddon behaviour (which
     // tries `window.open` — unreliable inside WebView2).
@@ -86,7 +118,7 @@ export class TerminalPane {
         }
       }),
     );
-    this.term.open(this.element);
+    this.term.open(this.termHost);
 
     this.term.onData((data) => {
       if (!this.spawned) return;
@@ -183,6 +215,88 @@ export class TerminalPane {
     this.element.focus({ preventScroll: true });
     this.term.focus();
     this.opts.onFocus?.();
+  }
+
+  /// Toggle the search bar. Once shown, pressing Enter calls `findNext`,
+  /// Shift+Enter calls `findPrevious`, Esc hides it. Multiple panes each get
+  /// their own independent bar.
+  toggleSearch(): void {
+    if (!this.searchBar) this.buildSearchBar();
+    const bar = this.searchBar!;
+    const visible = bar.classList.toggle("search-bar--visible");
+    if (visible) {
+      this.searchInput!.focus();
+      this.searchInput!.select();
+    } else {
+      // Restore the selection state so the user sees their highlight clear
+      // cleanly. xterm's SearchAddon.clearDecorations exists in recent
+      // versions; guard in case.
+      (this.search as unknown as { clearDecorations?: () => void })
+        .clearDecorations?.();
+      this.term.focus();
+    }
+  }
+
+  private buildSearchBar(): void {
+    const bar = document.createElement("div");
+    bar.className = "search-bar";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "search-bar__input";
+    input.placeholder = "Find…";
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        const opts = { incremental: false };
+        if (ev.shiftKey) this.search.findPrevious(input.value, opts);
+        else this.search.findNext(input.value, opts);
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        this.toggleSearch();
+      }
+    });
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "search-bar__btn";
+    prevBtn.textContent = "↑";
+    prevBtn.title = "Previous (Shift+Enter)";
+    prevBtn.addEventListener("click", () =>
+      this.search.findPrevious(input.value, { incremental: false }),
+    );
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "search-bar__btn";
+    nextBtn.textContent = "↓";
+    nextBtn.title = "Next (Enter)";
+    nextBtn.addEventListener("click", () =>
+      this.search.findNext(input.value, { incremental: false }),
+    );
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "search-bar__btn";
+    closeBtn.textContent = "✕";
+    closeBtn.title = "Close (Esc)";
+    closeBtn.addEventListener("click", () => this.toggleSearch());
+
+    bar.appendChild(input);
+    bar.appendChild(prevBtn);
+    bar.appendChild(nextBtn);
+    bar.appendChild(closeBtn);
+    this.termHost.appendChild(bar);
+    this.searchBar = bar;
+    this.searchInput = input;
+  }
+
+  /// Set the visible title for this pane. Used by the rename flow; the new
+  /// title is also written back into the PaneSpec by WorkspaceManager.
+  setTitle(title: string | null): void {
+    this.spec = { ...this.spec, title };
+    // xterm's window-title channel is a backend concern; for now title is
+    // informational only. Future: display it in a tab strip above the pane.
   }
 
   /// Recompute size based on the container. Debounced to one call per

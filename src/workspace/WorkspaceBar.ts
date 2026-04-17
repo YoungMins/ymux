@@ -52,6 +52,20 @@ export function mountWorkspaceBar(
   }
   bar.appendChild(shellPicker);
 
+  // "+ Browser" — split the focused pane into a browser pane. The user picks a
+  // direction via their normal Ctrl+Shift+H/V shortcut after; we default to
+  // horizontal for a one-click path from a fresh workspace.
+  const browserBtn = document.createElement("button");
+  browserBtn.className = "workspace-bar__shell";
+  browserBtn.type = "button";
+  browserBtn.textContent = "+ Browser";
+  browserBtn.title = "Split focused pane into a browser pane";
+  browserBtn.style.cursor = "pointer";
+  browserBtn.addEventListener("click", () => {
+    void manager.splitFocusedBrowser("horizontal");
+  });
+  bar.appendChild(browserBtn);
+
   // "?" help button — always at the far right of the bar.
   const cleanupHelp = mountHelpButton(bar);
 

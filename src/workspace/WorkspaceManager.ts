@@ -5,6 +5,7 @@
 
 import type {
   Config,
+  HotKeyDef,
   LayoutNode,
   PaneSpec,
   ShellProfile,
@@ -14,6 +15,8 @@ import type {
 } from "../types";
 import { api } from "../ipc/bridge";
 import { TerminalPane } from "../terminal/TerminalPane";
+import { BrowserPane } from "../browser/BrowserPane";
+import type { Pane } from "../layout/Pane";
 import {
   findPane,
   newPane,
@@ -29,7 +32,7 @@ const MAX_WORKSPACES = 9;
 export class WorkspaceManager {
   private config: Config;
   private shells: ShellProfile[];
-  private paneCaches = new Map<number, Map<Uuid, TerminalPane>>();
+  private paneCaches = new Map<number, Map<Uuid, Pane>>();
   private workspaceContainers = new Map<number, HTMLElement>();
   private activeId: number;
   private focusedPaneId: Uuid | null = null;
@@ -138,6 +141,9 @@ export class WorkspaceManager {
           cwd: null,
           startup_cmd: null,
           env: [],
+          pane_kind: "terminal",
+          url: null,
+          hotkeys: [],
         },
       };
       this.config.workspaces.push(ws);
@@ -184,19 +190,12 @@ export class WorkspaceManager {
     const specs = panes(ws.root);
     const cache = this.paneCaches.get(ws.id)!;
     for (const spec of specs) {
-      const resolvedShell = this.resolveShell(spec.shell);
-      const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
-      const pane = new TerminalPane({
-        spec: finalSpec,
-        onFocus: () => {
-          this.focusedPaneId = spec.id;
-        },
-      });
+      const pane = this.createPane(spec);
       cache.set(spec.id, pane);
     }
     // Re-render now that panes exist in cache.
     this.renderWorkspace(ws);
-    // Spawn shells sequentially to avoid hammering the system.
+    // Spawn shells / load iframes sequentially to avoid hammering the system.
     for (const pane of cache.values()) {
       try {
         await pane.spawn();
@@ -205,9 +204,74 @@ export class WorkspaceManager {
       }
     }
     if (!this.focusedPaneId && cache.size > 0) {
-      const first = cache.values().next().value as TerminalPane | undefined;
+      const first = cache.values().next().value as Pane | undefined;
       first?.focus();
     }
+  }
+
+  /// Build either a terminal or browser pane based on `spec.pane_kind`. All
+  /// focus / hotkey / url change callbacks are wired so the manager can react
+  /// to state changes without needing to know the pane subclass.
+  private createPane(spec: PaneSpec): Pane {
+    if (spec.pane_kind === "browser") {
+      return new BrowserPane({
+        spec,
+        onFocus: () => {
+          this.focusedPaneId = spec.id;
+        },
+        onUrlChange: (url) => {
+          this.updatePaneSpec(spec.id, (p) => {
+            p.url = url;
+          });
+        },
+      });
+    }
+    const resolvedShell = this.resolveShell(spec.shell);
+    const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
+    return new TerminalPane({
+      spec: finalSpec,
+      onFocus: () => {
+        this.focusedPaneId = spec.id;
+      },
+      onHotKeysChange: (hotkeys) => {
+        this.updatePaneSpec(spec.id, (p) => {
+          p.hotkeys = hotkeys;
+        });
+      },
+    });
+  }
+
+  /// Mutate the stored PaneSpec for `id` via `patch`, then debounce-persist.
+  /// Used by HotKey edits, browser URL changes, and future pane-metadata UIs.
+  updatePaneSpec(id: Uuid, patch: (spec: PaneSpec) => void): void {
+    for (const ws of this.config.workspaces) {
+      const found = findAndMutatePane(ws.root, id, patch);
+      if (found) {
+        this.persistDebounced();
+        return;
+      }
+    }
+  }
+
+  /// Look up the current PaneSpec snapshot for an id across all workspaces.
+  getPaneSpec(id: Uuid): PaneSpec | null {
+    for (const ws of this.config.workspaces) {
+      const found = findPane(ws.root, id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /// Update the hotkeys for the currently focused terminal pane. Returns the
+  /// new list for the caller to rebind its own UI to, or `null` if no pane is
+  /// focused.
+  setHotKeysForFocused(hotkeys: HotKeyDef[]): HotKeyDef[] | null {
+    const id = this.focusedPaneId;
+    if (!id) return null;
+    this.updatePaneSpec(id, (p) => {
+      p.hotkeys = hotkeys;
+    });
+    return hotkeys;
   }
 
   private renderWorkspace(ws: Workspace): void {
@@ -261,14 +325,8 @@ export class WorkspaceManager {
     const spec = newPane(shellName, inheritedCwd);
     ws.root = splitPane(ws.root, focusId, direction, spec);
 
-    // Create a new TerminalPane for the new spec and spawn it.
     const cache = this.paneCaches.get(ws.id)!;
-    const pane = new TerminalPane({
-      spec,
-      onFocus: () => {
-        this.focusedPaneId = spec.id;
-      },
-    });
+    const pane = this.createPane(spec);
     cache.set(spec.id, pane);
     this.renderWorkspace(ws);
     try {
@@ -276,6 +334,38 @@ export class WorkspaceManager {
       pane.focus();
     } catch (e) {
       console.error("split spawn failed", e);
+    }
+    this.persistDebounced();
+  }
+
+  /// Split the focused pane and drop a browser pane into the new slot instead
+  /// of a terminal. URL defaults to `about:blank` so the user can type into
+  /// the URL bar.
+  async splitFocusedBrowser(direction: SplitDir, url: string = ""): Promise<void> {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const spec: PaneSpec = {
+      id: crypto.randomUUID(),
+      title: null,
+      shell: "",
+      cwd: null,
+      startup_cmd: null,
+      env: [],
+      pane_kind: "browser",
+      url: url || null,
+      hotkeys: [],
+    };
+    ws.root = splitPane(ws.root, focusId, direction, spec);
+    const cache = this.paneCaches.get(ws.id)!;
+    const pane = this.createPane(spec);
+    cache.set(spec.id, pane);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("browser split failed", e);
     }
     this.persistDebounced();
   }
@@ -304,13 +394,11 @@ export class WorkspaceManager {
         cwd: null,
         startup_cmd: null,
         env: [],
+        pane_kind: "terminal",
+        url: null,
+        hotkeys: [],
       };
-      const replacement = new TerminalPane({
-        spec,
-        onFocus: () => {
-          this.focusedPaneId = spec.id;
-        },
-      });
+      const replacement = this.createPane(spec);
       cache.set(spec.id, replacement);
       this.renderWorkspace(ws);
       await replacement.spawn();
@@ -327,6 +415,65 @@ export class WorkspaceManager {
       next?.focus();
     }
     this.persistDebounced();
+  }
+
+  /// Toggle "zoom" on the focused pane: hide every other pane in the workspace
+  /// by css so the focused one takes the whole viewport. The layout tree is
+  /// unchanged; on unzoom, the normal render reappears.
+  toggleZoomFocused(): void {
+    const ws = this.active;
+    const container = this.workspaceContainers.get(ws.id);
+    if (!container) return;
+    const id = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!id) return;
+    const cache = this.paneCaches.get(ws.id);
+    const pane = cache?.get(id);
+    if (!pane) return;
+
+    const alreadyZoomed = container.classList.contains("workspace--zoomed");
+    if (alreadyZoomed) {
+      container.classList.remove("workspace--zoomed");
+      pane.element.classList.remove("pane--zoomed");
+      this.renderWorkspace(ws);
+      pane.focus();
+      pane.scheduleFit();
+      return;
+    }
+    // Ensure the pane element is directly inside the workspace container so
+    // the absolute-positioned overlay covers the whole area, and clear any
+    // previous zoom styling from a stale toggle.
+    for (const p of cache!.values()) p.element.classList.remove("pane--zoomed");
+    container.classList.add("workspace--zoomed");
+    pane.element.classList.add("pane--zoomed");
+    if (pane.element.parentElement !== container) {
+      container.appendChild(pane.element);
+    }
+    pane.focus();
+    pane.scheduleFit();
+  }
+
+  /// Rename the focused pane. Passing an empty string clears the title so the
+  /// default rendering (shell name) is used.
+  renameFocused(title: string): void {
+    const id = this.focusedPaneId;
+    if (!id) return;
+    const trimmed = title.trim();
+    this.updatePaneSpec(id, (p) => {
+      p.title = trimmed.length > 0 ? trimmed : null;
+    });
+    const pane = this.paneCaches.get(this.activeId)?.get(id);
+    (pane as { setTitle?: (t: string | null) => void } | undefined)?.setTitle?.(
+      trimmed.length > 0 ? trimmed : null,
+    );
+  }
+
+  /// Request the focused pane to toggle its scrollback search bar. Only
+  /// TerminalPane exposes this; for non-terminal panes the call is a no-op.
+  toggleSearchOnFocused(): void {
+    const id = this.focusedPaneId;
+    if (!id) return;
+    const pane = this.paneCaches.get(this.activeId)?.get(id);
+    (pane as { toggleSearch?: () => void } | undefined)?.toggleSearch?.();
   }
 
   /// Move focus to the next pane in depth-first order.
@@ -392,3 +539,50 @@ export { MAX_WORKSPACES };
 // Needed to satisfy `import type { LayoutNode }` at the top-level in other
 // files that import from this module.
 export type { LayoutNode };
+
+/// Walk `root` in place, apply `patch` to the pane whose id matches `id`, and
+/// return true on success. The tree's shape is not altered. Mirrors Rust's
+/// `LayoutNode::find_pane_mut`.
+function findAndMutatePane(
+  root: LayoutNode,
+  id: Uuid,
+  patch: (spec: PaneSpec) => void,
+): boolean {
+  if (root.kind === "pane") {
+    if (root.id === id) {
+      const snapshot: PaneSpec = {
+        id: root.id,
+        title: root.title,
+        shell: root.shell,
+        cwd: root.cwd,
+        startup_cmd: root.startup_cmd,
+        env: root.env,
+        pane_kind: root.pane_kind ?? "terminal",
+        url: root.url ?? null,
+        hotkeys: root.hotkeys ?? [],
+      };
+      patch(snapshot);
+      // Write fields back onto the tree node (which is structurally identical
+      // to PaneSpec aside from the `kind: "pane"` discriminator).
+      root.title = snapshot.title;
+      root.shell = snapshot.shell;
+      root.cwd = snapshot.cwd;
+      root.startup_cmd = snapshot.startup_cmd;
+      root.env = snapshot.env;
+      root.pane_kind = snapshot.pane_kind;
+      root.url = snapshot.url;
+      root.hotkeys = snapshot.hotkeys;
+      return true;
+    }
+    return false;
+  }
+  if (root.kind === "split") {
+    return findAndMutatePane(root.a, id, patch) || findAndMutatePane(root.b, id, patch);
+  }
+  if (root.kind === "tabs") {
+    for (const c of root.children) {
+      if (findAndMutatePane(c, id, patch)) return true;
+    }
+  }
+  return false;
+}

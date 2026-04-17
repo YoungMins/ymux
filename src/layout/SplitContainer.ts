@@ -4,13 +4,13 @@
 // instances survive layout edits.
 
 import type { LayoutNode, SplitDir, Uuid } from "../types";
-import type { TerminalPane } from "../terminal/TerminalPane";
+import type { Pane } from "./Pane";
 
 export interface RenderContext {
   /// Pane instance cache. Key is pane id. Ownership of entries is shared with
   /// `WorkspaceManager`, so the renderer neither creates nor disposes entries;
   /// it only mounts/unmounts the existing `element`s.
-  paneCache: Map<Uuid, TerminalPane>;
+  paneCache: Map<Uuid, Pane>;
   onRatioCommitted: (path: number[], ratio: number) => void;
 }
 

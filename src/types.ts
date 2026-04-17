@@ -13,6 +13,14 @@ export interface ShellProfile {
   color?: string | null;
 }
 
+export type PaneKind = "terminal" | "browser";
+
+export interface HotKeyDef {
+  label: string;
+  command: string;
+  batch?: boolean;
+}
+
 export interface PaneSpec {
   id: Uuid;
   title?: string | null;
@@ -20,12 +28,17 @@ export interface PaneSpec {
   cwd?: string | null;
   startup_cmd?: string | null;
   env: [string, string][];
+  /// Renamed from `kind` on the Rust side to avoid colliding with the
+  /// `LayoutNode` tagged-enum discriminator (also called `kind`).
+  pane_kind?: PaneKind;
+  url?: string | null;
+  hotkeys?: HotKeyDef[];
 }
 
 export type SplitDir = "horizontal" | "vertical";
 
 export type LayoutNode =
-  | { kind: "pane"; id: Uuid; title?: string | null; shell: string; cwd?: string | null; startup_cmd?: string | null; env: [string, string][] }
+  | ({ kind: "pane" } & PaneSpec)
   | { kind: "split"; direction: SplitDir; ratio: number; a: LayoutNode; b: LayoutNode }
   | { kind: "tabs"; active: number; children: LayoutNode[] };
 

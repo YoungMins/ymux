@@ -6,6 +6,7 @@ import "./style.css";
 import { api } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar, refreshWorkspaceBar } from "./workspace/WorkspaceBar";
+import { mountUpdateBanner } from "./update/UpdateBanner";
 
 async function main(): Promise<void> {
   const app = document.getElementById("app");
@@ -32,6 +33,12 @@ async function main(): Promise<void> {
   if (bar) app.insertBefore(bar, host);
 
   await manager.start();
+
+  // Listen for update-available events from the Rust poller. Non-fatal if the
+  // listen fails (e.g. capability denied in some harness); app keeps running.
+  void mountUpdateBanner(document.body).catch((e) =>
+    console.warn("mountUpdateBanner failed:", e),
+  );
 
   // Global keybindings. Tauri's global-shortcut plugin is overkill for
   // window-local bindings — plain DOM events are sufficient inside WebView2.
@@ -82,6 +89,30 @@ async function main(): Promise<void> {
     if (ev.ctrlKey && ev.shiftKey && key === "Tab") {
       ev.preventDefault();
       manager.cycleFocus(-1);
+      return;
+    }
+
+    // Ctrl+Shift+Z zoom / unzoom focused pane.
+    if (ev.ctrlKey && ev.shiftKey && (key === "Z" || key === "z")) {
+      ev.preventDefault();
+      manager.toggleZoomFocused();
+      return;
+    }
+
+    // Ctrl+F scrollback search on the focused terminal pane.
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && (key === "F" || key === "f")) {
+      ev.preventDefault();
+      manager.toggleSearchOnFocused();
+      return;
+    }
+
+    // Ctrl+Shift+R rename focused pane (prompt). Keeping it under Ctrl+Shift
+    // so a stray lowercase `r` in a shell still reaches the PTY.
+    if (ev.ctrlKey && ev.shiftKey && (key === "R" || key === "r")) {
+      ev.preventDefault();
+      const current = "";
+      const next = window.prompt("Pane title:", current);
+      if (next !== null) manager.renameFocused(next);
       return;
     }
   });

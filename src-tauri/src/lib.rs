@@ -17,4 +17,9 @@ pub mod shell;
 #[cfg(feature = "desktop")]
 pub mod commands;
 
+// Update checker. Feature-gated the same way as `commands` because it emits
+// Tauri events and pulls `reqwest` — both only relevant in the desktop build.
+#[cfg(feature = "desktop")]
+pub mod updater;
+
 pub use error::{YmuxError, YmuxResult};

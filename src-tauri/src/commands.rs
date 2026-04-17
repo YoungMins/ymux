@@ -125,6 +125,9 @@ pub fn spawn_pane(state: State<'_, AppState>, args: SpawnArgs) -> YmuxResult<Spa
         cwd: args.cwd,
         startup_cmd: None,
         env: Vec::new(),
+        pane_kind: crate::config::model::PaneKind::Terminal,
+        url: None,
+        hotkeys: Vec::new(),
     };
 
     state.pty.spawn(
