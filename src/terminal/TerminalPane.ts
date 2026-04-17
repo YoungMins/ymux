@@ -36,6 +36,7 @@ export class TerminalPane implements Pane {
   readonly element: HTMLElement;
   private termHost: HTMLElement;
   private hotkeyBar: HotKeyBar;
+  private titleEl: HTMLElement;
   private term: Terminal;
   private fit: FitAddon;
   private search: SearchAddon;
@@ -59,6 +60,13 @@ export class TerminalPane implements Pane {
     // `event.target.closest('.pane')` and update the focused pane id without
     // having to thread an `onFocus` callback through every render.
     this.element.dataset.paneId = this.id;
+
+    // Title label shown above the hotkey bar. Falls back to the shell name
+    // when no user title has been set (via `Ctrl+Shift+R`).
+    this.titleEl = document.createElement("div");
+    this.titleEl.className = "pane-title";
+    this.titleEl.textContent = opts.spec.title || opts.spec.shell || "pane";
+    this.element.appendChild(this.titleEl);
 
     // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
     // visible ⚙ button so the user can discover the feature.
@@ -105,6 +113,22 @@ export class TerminalPane implements Pane {
     this.term.loadAddon(this.fit);
     this.search = new SearchAddon();
     this.term.loadAddon(this.search);
+
+    // Block xterm.js from consuming ymux-level hotkeys. Without this, Ctrl+F
+    // etc. get translated into control bytes (Ctrl+F → 0x06) and written to
+    // the PTY, never reaching our window keydown listener. Returning `false`
+    // tells xterm to skip its own handling; the DOM event still bubbles up.
+    this.term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== "keydown") return true;
+      if (ev.ctrlKey && !ev.altKey) {
+        const k = ev.key.toLowerCase();
+        if (!ev.shiftKey && k === "f") return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r")) return false;
+        if (k === "tab") return false;
+      }
+      if (ev.ctrlKey && ev.altKey && /^Digit[1-9]$/.test(ev.code)) return false;
+      return true;
+    });
     // Custom link handler: Ctrl+click opens the URL in the system browser via
     // the Rust backend instead of the default WebLinksAddon behaviour (which
     // tries `window.open` — unreliable inside WebView2).
@@ -295,8 +319,7 @@ export class TerminalPane implements Pane {
   /// title is also written back into the PaneSpec by WorkspaceManager.
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
-    // xterm's window-title channel is a backend concern; for now title is
-    // informational only. Future: display it in a tab strip above the pane.
+    this.titleEl.textContent = title || this.spec.shell || "pane";
   }
 
   /// Recompute size based on the container. Debounced to one call per

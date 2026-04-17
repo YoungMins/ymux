@@ -18,6 +18,10 @@ export interface BrowserPaneOptions {
   /// Called whenever the user navigates to a new URL so the manager can
   /// persist it into the `PaneSpec`.
   onUrlChange?: (url: string) => void;
+  /// Called when the user clicks the ⛶ button in the nav bar. Routed through
+  /// the manager because keyboard `Ctrl+Shift+Z` can't reach us once focus is
+  /// inside the iframe's document.
+  onZoomRequested?: () => void;
 }
 
 const DEFAULT_URL = "about:blank";
@@ -27,6 +31,7 @@ export class BrowserPane implements Pane {
   readonly element: HTMLElement;
   private iframe: HTMLIFrameElement;
   private urlInput: HTMLInputElement;
+  private titleEl: HTMLElement;
   private history: string[] = [];
   private historyIndex = -1;
   private opts: BrowserPaneOptions;
@@ -39,6 +44,11 @@ export class BrowserPane implements Pane {
     this.element.className = "pane browser-pane";
     this.element.tabIndex = 0;
     this.element.dataset.paneId = this.id;
+
+    this.titleEl = document.createElement("div");
+    this.titleEl.className = "pane-title";
+    this.titleEl.textContent = opts.spec.title || "browser";
+    this.element.appendChild(this.titleEl);
 
     const nav = document.createElement("div");
     nav.className = "browser-pane__nav";
@@ -60,10 +70,19 @@ export class BrowserPane implements Pane {
       }
     });
 
+    // Zoom button: keyboard `Ctrl+Shift+Z` can't reach us while focus is inside
+    // the iframe's browsing context (keydown events don't cross the iframe
+    // boundary into the parent document), so expose the same action as a click
+    // target in the nav bar.
+    const zoomBtn = makeIconBtn("⛶", "Zoom / unzoom (Ctrl+Shift+Z)", () =>
+      this.opts.onZoomRequested?.(),
+    );
+
     nav.appendChild(backBtn);
     nav.appendChild(fwdBtn);
     nav.appendChild(reloadBtn);
     nav.appendChild(this.urlInput);
+    nav.appendChild(zoomBtn);
 
     this.iframe = document.createElement("iframe");
     this.iframe.className = "browser-pane__iframe";
@@ -96,6 +115,11 @@ export class BrowserPane implements Pane {
 
   scheduleFit(): void {
     // iframe uses CSS sizing; nothing to do.
+  }
+
+  setTitle(title: string | null): void {
+    this.opts = { ...this.opts, spec: { ...this.opts.spec, title } };
+    this.titleEl.textContent = title || "browser";
   }
 
   dispose(): void {

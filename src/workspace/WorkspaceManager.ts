@@ -230,6 +230,10 @@ export class WorkspaceManager {
             p.url = url;
           });
         },
+        onZoomRequested: () => {
+          this.focusedPaneId = spec.id;
+          this.toggleZoomFocused();
+        },
       });
     }
     const resolvedShell = this.resolveShell(spec.shell);
@@ -456,6 +460,14 @@ export class WorkspaceManager {
     }
     pane.focus();
     pane.scheduleFit();
+  }
+
+  /// Returns the current display title of the focused pane, or null if there
+  /// is no focus or no custom title set. Used to pre-fill the rename prompt.
+  getFocusedTitle(): string | null {
+    const id = this.focusedPaneId;
+    if (!id) return null;
+    return this.getPaneSpec(id)?.title ?? null;
   }
 
   /// Rename the focused pane. Passing an empty string clears the title so the

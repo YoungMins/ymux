@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     // so a stray lowercase `r` in a shell still reaches the PTY.
     if (ev.ctrlKey && ev.shiftKey && (key === "R" || key === "r")) {
       ev.preventDefault();
-      const current = "";
+      const current = manager.getFocusedTitle() ?? "";
       const next = window.prompt("Pane title:", current);
       if (next !== null) manager.renameFocused(next);
       return;
