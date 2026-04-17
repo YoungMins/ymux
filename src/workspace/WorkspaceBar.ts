@@ -3,6 +3,7 @@
 
 import type { ShellProfile } from "../types";
 import type { WorkspaceManager } from "./WorkspaceManager";
+import { api } from "../ipc/bridge";
 import { mountHelpButton } from "../help/HelpOverlay";
 
 export function mountWorkspaceBar(
@@ -65,6 +66,19 @@ export function mountWorkspaceBar(
     void manager.splitFocusedBrowser("horizontal");
   });
   bar.appendChild(browserBtn);
+
+  // Ko-fi support button — before the help button.
+  const kofiBtn = document.createElement("button");
+  kofiBtn.className = "workspace-bar__kofi";
+  kofiBtn.type = "button";
+  kofiBtn.textContent = "☕ Support";
+  kofiBtn.title = "Support ymux on Ko-fi";
+  kofiBtn.addEventListener("click", () => {
+    void api.openUrl("https://ko-fi.com/youngminkim").catch((e) =>
+      console.warn("openUrl failed:", e),
+    );
+  });
+  bar.appendChild(kofiBtn);
 
   // "?" help button — always at the far right of the bar.
   const cleanupHelp = mountHelpButton(bar);

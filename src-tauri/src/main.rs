@@ -4,6 +4,7 @@ use tauri::{Manager, RunEvent};
 use ymux_lib::commands::{start_pty_event_pump, AppState};
 use ymux_lib::config::ConfigStore;
 use ymux_lib::pty::PtyManager;
+use ymux_lib::sysmonitor::start_sysmonitor;
 use ymux_lib::updater::start_update_checker;
 
 fn main() {
@@ -49,6 +50,7 @@ fn main() {
         .setup(|app| {
             start_pty_event_pump(app.handle().clone());
             start_update_checker(app.handle().clone());
+            start_sysmonitor(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

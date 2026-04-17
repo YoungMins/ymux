@@ -22,4 +22,9 @@ pub mod commands;
 #[cfg(feature = "desktop")]
 pub mod updater;
 
+// System resource monitor (CPU, RAM, disk, network, GPU). Desktop-only
+// because it emits Tauri events.
+#[cfg(feature = "desktop")]
+pub mod sysmonitor;
+
 pub use error::{YmuxError, YmuxResult};
