@@ -7,6 +7,7 @@ import { api } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar, refreshWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountUpdateBanner } from "./update/UpdateBanner";
+import { mountStatusBar } from "./statusbar/StatusBar";
 
 async function main(): Promise<void> {
   const app = document.getElementById("app");
@@ -38,6 +39,11 @@ async function main(): Promise<void> {
   // listen fails (e.g. capability denied in some harness); app keeps running.
   void mountUpdateBanner(document.body).catch((e) =>
     console.warn("mountUpdateBanner failed:", e),
+  );
+
+  // System monitor status bar — sits at the bottom of #app.
+  void mountStatusBar(app).catch((e) =>
+    console.warn("mountStatusBar failed:", e),
   );
 
   // Global keybindings. Tauri's global-shortcut plugin is overkill for
