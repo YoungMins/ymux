@@ -13,6 +13,7 @@ import type { HotKeyDef, PaneSpec, Uuid } from "../types";
 import type { Pane } from "../layout/Pane";
 import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
+import { t, onLangChange } from "../i18n/i18n";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -47,6 +48,7 @@ export class TerminalPane implements Pane {
   private spec: PaneSpec;
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
+  private cleanupLang: () => void = () => {};
 
   constructor(opts: TerminalPaneOptions) {
     this.id = opts.spec.id;
@@ -65,7 +67,7 @@ export class TerminalPane implements Pane {
     // when no user title has been set (via `Ctrl+Shift+R`).
     this.titleEl = document.createElement("div");
     this.titleEl.className = "pane-title";
-    this.titleEl.textContent = opts.spec.title || opts.spec.shell || "pane";
+    this.titleEl.textContent = opts.spec.title || opts.spec.shell || t("terminal.defaultTitle");
     this.element.appendChild(this.titleEl);
 
     // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
@@ -166,9 +168,24 @@ export class TerminalPane implements Pane {
     // `this.element`). `focus` would only fire if `this.element` itself
     // received focus, which never happens once xterm is inside it.
     this.element.addEventListener("focusin", () => this.opts.onFocus?.());
-    // Pointerdown still routes clicks on the surrounding padding (outside
-    // xterm's drawing area) into focus().
     this.element.addEventListener("pointerdown", () => this.focus());
+
+    this.cleanupLang = onLangChange(() => this.updateLang());
+  }
+
+  private updateLang(): void {
+    if (!this.spec.title && !this.spec.shell) {
+      this.titleEl.textContent = t("terminal.defaultTitle");
+    }
+    if (this.searchInput) {
+      this.searchInput.placeholder = t("terminal.findPlaceholder");
+    }
+    if (this.searchBar) {
+      const btns = this.searchBar.querySelectorAll<HTMLButtonElement>(".search-bar__btn");
+      if (btns[0]) btns[0].title = t("terminal.findPrev");
+      if (btns[1]) btns[1].title = t("terminal.findNext");
+      if (btns[2]) btns[2].title = t("terminal.findClose");
+    }
   }
 
   async spawn(): Promise<void> {
@@ -268,7 +285,7 @@ export class TerminalPane implements Pane {
     const input = document.createElement("input");
     input.type = "text";
     input.className = "search-bar__input";
-    input.placeholder = "Find…";
+    input.placeholder = t("terminal.findPlaceholder");
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         ev.preventDefault();
@@ -285,7 +302,7 @@ export class TerminalPane implements Pane {
     prevBtn.type = "button";
     prevBtn.className = "search-bar__btn";
     prevBtn.textContent = "↑";
-    prevBtn.title = "Previous (Shift+Enter)";
+    prevBtn.title = t("terminal.findPrev");
     prevBtn.addEventListener("click", () =>
       this.search.findPrevious(input.value, { incremental: false }),
     );
@@ -294,7 +311,7 @@ export class TerminalPane implements Pane {
     nextBtn.type = "button";
     nextBtn.className = "search-bar__btn";
     nextBtn.textContent = "↓";
-    nextBtn.title = "Next (Enter)";
+    nextBtn.title = t("terminal.findNext");
     nextBtn.addEventListener("click", () =>
       this.search.findNext(input.value, { incremental: false }),
     );
@@ -303,7 +320,7 @@ export class TerminalPane implements Pane {
     closeBtn.type = "button";
     closeBtn.className = "search-bar__btn";
     closeBtn.textContent = "✕";
-    closeBtn.title = "Close (Esc)";
+    closeBtn.title = t("terminal.findClose");
     closeBtn.addEventListener("click", () => this.toggleSearch());
 
     bar.appendChild(input);
@@ -319,7 +336,7 @@ export class TerminalPane implements Pane {
   /// title is also written back into the PaneSpec by WorkspaceManager.
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
-    this.titleEl.textContent = title || this.spec.shell || "pane";
+    this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
   }
 
   /// Recompute size based on the container. Debounced to one call per
@@ -343,6 +360,7 @@ export class TerminalPane implements Pane {
   }
 
   dispose(): void {
+    this.cleanupLang();
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     if (this.spawned) {

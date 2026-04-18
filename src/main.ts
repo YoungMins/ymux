@@ -8,16 +8,18 @@ import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar, refreshWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountUpdateBanner } from "./update/UpdateBanner";
 import { mountStatusBar } from "./statusbar/StatusBar";
+import { initLang, t } from "./i18n/i18n";
 
 async function main(): Promise<void> {
+  initLang();
+
   const app = document.getElementById("app");
   if (!app) throw new Error("#app mount point missing");
 
   const bootstrap = await api.loadBootstrap();
   if (bootstrap.shells.length === 0) {
     const warn = document.createElement("div");
-    warn.textContent =
-      "No shells detected. ymux could not find cmd, PowerShell, Git Bash, or WSL on this machine.";
+    warn.textContent = t("app.noShells");
     warn.style.padding = "20px";
     app.appendChild(warn);
     return;
@@ -117,7 +119,7 @@ async function main(): Promise<void> {
     if (ev.ctrlKey && ev.shiftKey && (key === "R" || key === "r")) {
       ev.preventDefault();
       const current = manager.getFocusedTitle() ?? "";
-      const next = window.prompt("Pane title:", current);
+      const next = window.prompt(t("app.paneTitle"), current);
       if (next !== null) manager.renameFocused(next);
       return;
     }

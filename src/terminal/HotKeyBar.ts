@@ -6,6 +6,7 @@
 import type { HotKeyDef, Uuid } from "../types";
 import { api } from "../ipc/bridge";
 import { openHotKeyManager } from "../hotkey/HotKeyManager";
+import { t, onLangChange } from "../i18n/i18n";
 
 const ENCODER = new TextEncoder();
 
@@ -21,6 +22,7 @@ export class HotKeyBar {
   readonly element: HTMLElement;
   private hotkeys: HotKeyDef[];
   private opts: HotKeyBarOptions;
+  private _cleanupLang: () => void;
 
   constructor(opts: HotKeyBarOptions) {
     this.opts = opts;
@@ -28,6 +30,11 @@ export class HotKeyBar {
     this.element = document.createElement("div");
     this.element.className = "hotkey-bar";
     this.render();
+    this._cleanupLang = onLangChange(() => this.render());
+  }
+
+  dispose(): void {
+    this._cleanupLang();
   }
 
   setHotKeys(next: HotKeyDef[]): void {
@@ -55,7 +62,7 @@ export class HotKeyBar {
     manage.type = "button";
     manage.className = "hotkey-bar__btn hotkey-bar__btn--manage";
     manage.textContent = "⚙";
-    manage.title = "Manage HotKeys";
+    manage.title = t("hotkey.manage");
     manage.addEventListener("click", (ev) => {
       ev.preventDefault();
       openHotKeyManager(this.hotkeys, (next) => {

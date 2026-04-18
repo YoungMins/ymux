@@ -11,6 +11,7 @@
 
 import type { PaneSpec, Uuid } from "../types";
 import type { Pane } from "../layout/Pane";
+import { t, onLangChange } from "../i18n/i18n";
 
 export interface BrowserPaneOptions {
   spec: PaneSpec;
@@ -32,9 +33,14 @@ export class BrowserPane implements Pane {
   private iframe: HTMLIFrameElement;
   private urlInput: HTMLInputElement;
   private titleEl: HTMLElement;
+  private backBtn: HTMLButtonElement;
+  private fwdBtn: HTMLButtonElement;
+  private reloadBtn: HTMLButtonElement;
+  private zoomBtn: HTMLButtonElement;
   private history: string[] = [];
   private historyIndex = -1;
   private opts: BrowserPaneOptions;
+  private cleanupLang: () => void;
 
   constructor(opts: BrowserPaneOptions) {
     this.id = opts.spec.id;
@@ -47,15 +53,15 @@ export class BrowserPane implements Pane {
 
     this.titleEl = document.createElement("div");
     this.titleEl.className = "pane-title";
-    this.titleEl.textContent = opts.spec.title || "browser";
+    this.titleEl.textContent = opts.spec.title || t("browser.defaultTitle");
     this.element.appendChild(this.titleEl);
 
     const nav = document.createElement("div");
     nav.className = "browser-pane__nav";
 
-    const backBtn = makeIconBtn("←", "Back", () => this.goBack());
-    const fwdBtn = makeIconBtn("→", "Forward", () => this.goForward());
-    const reloadBtn = makeIconBtn("⟳", "Reload", () => this.reload());
+    this.backBtn = makeIconBtn("←", t("browser.back"), () => this.goBack());
+    this.fwdBtn = makeIconBtn("→", t("browser.forward"), () => this.goForward());
+    this.reloadBtn = makeIconBtn("⟳", t("browser.reload"), () => this.reload());
 
     this.urlInput = document.createElement("input");
     this.urlInput.type = "text";
@@ -70,19 +76,15 @@ export class BrowserPane implements Pane {
       }
     });
 
-    // Zoom button: keyboard `Ctrl+Shift+Z` can't reach us while focus is inside
-    // the iframe's browsing context (keydown events don't cross the iframe
-    // boundary into the parent document), so expose the same action as a click
-    // target in the nav bar.
-    const zoomBtn = makeIconBtn("⛶", "Zoom / unzoom (Ctrl+Shift+Z)", () =>
+    this.zoomBtn = makeIconBtn("⛶", t("browser.zoom"), () =>
       this.opts.onZoomRequested?.(),
     );
 
-    nav.appendChild(backBtn);
-    nav.appendChild(fwdBtn);
-    nav.appendChild(reloadBtn);
+    nav.appendChild(this.backBtn);
+    nav.appendChild(this.fwdBtn);
+    nav.appendChild(this.reloadBtn);
     nav.appendChild(this.urlInput);
-    nav.appendChild(zoomBtn);
+    nav.appendChild(this.zoomBtn);
 
     this.iframe = document.createElement("iframe");
     this.iframe.className = "browser-pane__iframe";
@@ -101,6 +103,18 @@ export class BrowserPane implements Pane {
 
     this.element.addEventListener("focusin", () => this.opts.onFocus?.());
     this.element.addEventListener("pointerdown", () => this.focus());
+
+    this.cleanupLang = onLangChange(() => this.updateLang());
+  }
+
+  private updateLang(): void {
+    this.backBtn.title = t("browser.back");
+    this.fwdBtn.title = t("browser.forward");
+    this.reloadBtn.title = t("browser.reload");
+    this.zoomBtn.title = t("browser.zoom");
+    if (!this.opts.spec.title) {
+      this.titleEl.textContent = t("browser.defaultTitle");
+    }
   }
 
   async spawn(): Promise<void> {
@@ -119,10 +133,11 @@ export class BrowserPane implements Pane {
 
   setTitle(title: string | null): void {
     this.opts = { ...this.opts, spec: { ...this.opts.spec, title } };
-    this.titleEl.textContent = title || "browser";
+    this.titleEl.textContent = title || t("browser.defaultTitle");
   }
 
   dispose(): void {
+    this.cleanupLang();
     this.iframe.src = "about:blank";
     this.element.remove();
   }

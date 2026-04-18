@@ -1,7 +1,6 @@
-// Bottom status bar: shows real-time CPU / RAM / GPU / Disk / Network stats
-// streamed from the Rust sysmonitor thread via a Tauri event.
-
 import { listen as tauriListen } from "@tauri-apps/api/event";
+import { getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n/i18n";
+import { t } from "../i18n/i18n";
 
 interface GpuInfo {
   name: string;
@@ -61,6 +60,30 @@ export async function mountStatusBar(parent: HTMLElement): Promise<() => void> {
   bar.appendChild(netUpEl.root);
   bar.appendChild(netDownEl.root);
 
+  const langSep = makeSep();
+  bar.appendChild(langSep);
+
+  const langSel = document.createElement("select");
+  langSel.className = "status-bar__lang";
+  langSel.title = t("help.langLabel");
+  const cur = getLang();
+  for (const { code, label } of ALL_LANGS) {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = label;
+    if (code === cur) opt.selected = true;
+    langSel.appendChild(opt);
+  }
+  langSel.addEventListener("change", () => {
+    setLang(langSel.value as Lang);
+  });
+  bar.appendChild(langSel);
+
+  const cleanupLang = onLangChange(() => {
+    langSel.value = getLang();
+    langSel.title = t("help.langLabel");
+  });
+
   parent.appendChild(bar);
 
   const unlisten = await tauriListen<SystemSnapshot>(
@@ -102,7 +125,10 @@ export async function mountStatusBar(parent: HTMLElement): Promise<() => void> {
           .join("\n");
       } else {
         const maxUsage = Math.max(...s.disks.map((d) => d.usage));
-        diskEl.update(`${s.disks.length} disks — max ${maxUsage.toFixed(0)}%`, usageColor(maxUsage));
+        diskEl.update(
+          `${s.disks.length} ${t("status.disksMax")} ${maxUsage.toFixed(0)}%`,
+          usageColor(maxUsage),
+        );
         diskEl.root.title = s.disks
           .map((d) => `${d.name} ${d.used_gb}/${d.total_gb} GB (${d.usage.toFixed(1)}%)`)
           .join("\n");
@@ -114,6 +140,7 @@ export async function mountStatusBar(parent: HTMLElement): Promise<() => void> {
   );
 
   return () => {
+    cleanupLang();
     unlisten();
     bar.remove();
   };
