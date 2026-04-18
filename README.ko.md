@@ -18,7 +18,11 @@
 
 Windows용 경량 tmux 스타일 터미널 멀티플렉서.
 
-https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4
+<p align="center">
+  <video src="https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4" controls muted playsinline width="720"></video>
+</p>
+
+> 플레이어가 보이지 않으면 [여기서 튜토리얼 영상을 볼 수 있습니다](https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4).
 
 Tauri 2 (Rust) + WebView2 + xterm.js 로 만들어졌습니다. Windows에서 가볍고 빠르게
 네이티브로 동작하면서, 레이아웃 저장, pane별 작업 디렉터리와 실행 명령,

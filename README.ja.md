@@ -18,7 +18,11 @@
 
 Windows 向けの軽量な tmux スタイルのターミナルマルチプレクサ。
 
-https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4
+<p align="center">
+  <video src="https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4" controls muted playsinline width="720"></video>
+</p>
+
+> プレイヤーが表示されない場合は [こちらからチュートリアル動画をご覧いただけます](https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4)。
 
 Tauri 2 (Rust) + WebView2 + xterm.js で構築されています。Windows 上で軽量かつ
 高速にネイティブ動作しながら、保存されるレイアウト、ペインごとの作業ディレクトリ
