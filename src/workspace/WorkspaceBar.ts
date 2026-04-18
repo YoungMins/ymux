@@ -1,10 +1,8 @@
-// Slim top bar that shows numbered workspaces and a shell-picker dropdown for
-// the default shell used when new panes are created.
-
 import type { ShellProfile } from "../types";
 import type { WorkspaceManager } from "./WorkspaceManager";
 import { api } from "../ipc/bridge";
 import { mountHelpButton } from "../help/HelpOverlay";
+import { t, onLangChange } from "../i18n/i18n";
 
 export function mountWorkspaceBar(
   host: HTMLElement,
@@ -38,7 +36,7 @@ export function mountWorkspaceBar(
 
   const shellPicker = document.createElement("select");
   shellPicker.className = "workspace-bar__shell";
-  shellPicker.title = "Default shell for new panes";
+  shellPicker.title = t("workspace.shellTitle");
   for (const s of shells) {
     const opt = document.createElement("option");
     opt.value = s.name;
@@ -53,26 +51,22 @@ export function mountWorkspaceBar(
   }
   bar.appendChild(shellPicker);
 
-  // "+ Browser" — split the focused pane into a browser pane. The user picks a
-  // direction via their normal Ctrl+Shift+H/V shortcut after; we default to
-  // horizontal for a one-click path from a fresh workspace.
   const browserBtn = document.createElement("button");
   browserBtn.className = "workspace-bar__shell";
   browserBtn.type = "button";
-  browserBtn.textContent = "+ Browser";
-  browserBtn.title = "Split focused pane into a browser pane";
+  browserBtn.textContent = t("workspace.addBrowser");
+  browserBtn.title = t("workspace.addBrowserTitle");
   browserBtn.style.cursor = "pointer";
   browserBtn.addEventListener("click", () => {
     void manager.splitFocusedBrowser("horizontal");
   });
   bar.appendChild(browserBtn);
 
-  // Ko-fi support button — before the help button.
   const kofiBtn = document.createElement("button");
   kofiBtn.className = "workspace-bar__kofi";
   kofiBtn.type = "button";
   kofiBtn.textContent = "☕ Support";
-  kofiBtn.title = "Support ymux on Ko-fi";
+  kofiBtn.title = t("workspace.supportTitle");
   kofiBtn.addEventListener("click", () => {
     void api.openUrl("https://ko-fi.com/youngminkim").catch((e) =>
       console.warn("openUrl failed:", e),
@@ -80,7 +74,6 @@ export function mountWorkspaceBar(
   });
   bar.appendChild(kofiBtn);
 
-  // "?" help button — always at the far right of the bar.
   const cleanupHelp = mountHelpButton(bar);
 
   host.appendChild(bar);
@@ -98,10 +91,17 @@ export function mountWorkspaceBar(
 
   highlight();
 
-  // Expose an updater so main.ts can re-highlight after keyboard shortcuts.
+  const cleanupLang = onLangChange(() => {
+    shellPicker.title = t("workspace.shellTitle");
+    browserBtn.textContent = t("workspace.addBrowser");
+    browserBtn.title = t("workspace.addBrowserTitle");
+    kofiBtn.title = t("workspace.supportTitle");
+  });
+
   (bar as unknown as { __ymuxHighlight: () => void }).__ymuxHighlight = highlight;
 
   return () => {
+    cleanupLang();
     cleanupHelp();
     bar.remove();
   };

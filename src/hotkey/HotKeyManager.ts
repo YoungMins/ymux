@@ -1,9 +1,5 @@
-// Modal for CRUD on a pane's HotKey list. Invoked by the `⚙` button in
-// `HotKeyBar`. Reuses the same overlay pattern as `HelpOverlay` (backdrop +
-// centered panel, Esc / outside-click to dismiss) so the visual language
-// stays consistent.
-
 import type { HotKeyDef } from "../types";
+import { t } from "../i18n/i18n";
 
 export function openHotKeyManager(
   initial: HotKeyDef[],
@@ -18,13 +14,12 @@ export function openHotKeyManager(
   modal.className = "help-modal hotkey-modal";
 
   const title = document.createElement("h2");
-  title.textContent = "Manage HotKeys";
+  title.textContent = t("hotkey.title");
   modal.appendChild(title);
 
   const hint = document.createElement("p");
   hint.className = "hotkey-modal__hint";
-  hint.textContent =
-    "배치 모드: 여러 줄 명령을 한 줄씩 순차 실행합니다. 비활성화 시 전체를 한 번에 전송합니다.";
+  hint.textContent = t("hotkey.hint");
   modal.appendChild(hint);
 
   const list = document.createElement("div");
@@ -38,7 +33,7 @@ export function openHotKeyManager(
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.className = "hotkey-modal__btn";
-  addBtn.textContent = "+ Add HotKey";
+  addBtn.textContent = t("hotkey.add");
   addBtn.addEventListener("click", () => {
     draft.push({ label: "", command: "", batch: false });
     renderList();
@@ -52,16 +47,15 @@ export function openHotKeyManager(
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "hotkey-modal__btn";
-  cancelBtn.textContent = "Cancel";
+  cancelBtn.textContent = t("hotkey.cancel");
   cancelBtn.addEventListener("click", close);
   footer.appendChild(cancelBtn);
 
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "hotkey-modal__btn hotkey-modal__btn--primary";
-  saveBtn.textContent = "Save";
+  saveBtn.textContent = t("hotkey.save");
   saveBtn.addEventListener("click", () => {
-    // Drop empty rows silently — users will often add then abandon a slot.
     const cleaned = draft
       .map((h) => ({
         label: h.label.trim(),
@@ -97,7 +91,7 @@ export function openHotKeyManager(
     if (draft.length === 0) {
       const empty = document.createElement("p");
       empty.className = "hotkey-modal__empty";
-      empty.textContent = "아직 등록된 HotKey가 없습니다.";
+      empty.textContent = t("hotkey.empty");
       list.appendChild(empty);
       return;
     }
@@ -112,7 +106,7 @@ export function openHotKeyManager(
 
     const labelInput = document.createElement("input");
     labelInput.type = "text";
-    labelInput.placeholder = "Label (e.g. pull)";
+    labelInput.placeholder = t("hotkey.labelPlaceholder");
     labelInput.value = def.label;
     labelInput.className = "hotkey-modal__label-input";
     labelInput.addEventListener("input", () => {
@@ -120,7 +114,7 @@ export function openHotKeyManager(
     });
 
     const cmdInput = document.createElement("textarea");
-    cmdInput.placeholder = "Command — newline = next line in batch mode";
+    cmdInput.placeholder = t("hotkey.commandPlaceholder");
     cmdInput.value = def.command;
     cmdInput.rows = 2;
     cmdInput.className = "hotkey-modal__cmd-input";
@@ -137,22 +131,22 @@ export function openHotKeyManager(
       draft[idx].batch = batchInput.checked;
     });
     batchLabel.appendChild(batchInput);
-    batchLabel.appendChild(document.createTextNode(" batch"));
+    batchLabel.appendChild(document.createTextNode(` ${t("hotkey.batch")}`));
 
     const controls = document.createElement("div");
     controls.className = "hotkey-modal__controls";
 
-    const upBtn = rowBtn("↑", "Move up", () => {
+    const upBtn = rowBtn("↑", t("hotkey.moveUp"), () => {
       if (idx === 0) return;
       [draft[idx - 1], draft[idx]] = [draft[idx], draft[idx - 1]];
       renderList();
     });
-    const downBtn = rowBtn("↓", "Move down", () => {
+    const downBtn = rowBtn("↓", t("hotkey.moveDown"), () => {
       if (idx === draft.length - 1) return;
       [draft[idx + 1], draft[idx]] = [draft[idx], draft[idx + 1]];
       renderList();
     });
-    const delBtn = rowBtn("✕", "Delete", () => {
+    const delBtn = rowBtn("✕", t("hotkey.delete"), () => {
       draft.splice(idx, 1);
       renderList();
     });
