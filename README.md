@@ -18,6 +18,8 @@
 
 A lightweight, tmux-inspired terminal multiplexer for Windows.
 
+https://github.com/YoungMins/ymux/raw/main/video/ymux_tutorial.mp4
+
 Built with Tauri 2 (Rust) + WebView2 + xterm.js. Designed to stay small, fast, and
 native on Windows while giving you saved layouts, per-pane working directories
 and startup commands, a pluggable shell picker (cmd / PowerShell / pwsh / Git
@@ -42,6 +44,11 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
 - **Browser panes**: drop an iframe-based browser into any layout slot via the
   toolbar's `+ Browser` button. URL bar with back / forward / reload. The URL
   persists across workspace switches and app restarts, just like a terminal.
+  > **Note:** the browser pane is implemented as an HTML `<iframe>`, so sites
+  > that reject embedding via `X-Frame-Options` or CSP `frame-ancestors`
+  > (e.g. github.com, google.com) will not load. It's designed for development
+  > use — local dev servers, Storybook, internal dashboards, API docs,
+  > localhost previews, etc. — not general web browsing.
 - **Pane zoom**: `Ctrl+Shift+Z` hides every other pane so you can focus.
   Press again to restore the split.
 - **Scrollback search**: `Ctrl+F` opens a find bar on the focused terminal.
