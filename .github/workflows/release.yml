@@ -131,24 +131,53 @@ jobs:
         with:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: 'ymux ${{ steps.meta.outputs.tag }}'
-          releaseBody: |
-            ymux ${{ steps.meta.outputs.tag }} — Windows build.
-
-            ## Install
-            Two installer flavours are attached — pick whichever suits you:
-            - `ymux_*-setup.exe` — NSIS, double-click installer for personal use.
-            - `ymux_*_x64_en-US.msi` — WiX / MSI, preferred for enterprise
-              deployment via Group Policy / SCCM.
-
-            Both bundle a WebView2 bootstrapper, so Windows 10 machines without
-            the runtime will install it on first launch.
-
-            ## What's in the box
-            - Persistent split layouts saved to `%APPDATA%\ymux\config.toml`
-            - Numbered workspaces (`Ctrl+1` .. `Ctrl+9`) each with their own layout
-            - Auto-detection of cmd.exe / PowerShell / pwsh / Git Bash / WSL distros
-            - Per-pane working directory, shell, and optional startup command
-
-            See the [README](https://github.com/${{ github.repository }}#readme) for keybindings and usage.
+          # Minimal placeholder — the `Rewrite release body…` step below
+          # replaces this with install info + GitHub's auto-generated
+          # notes (PRs & commits since the previous tag).
+          releaseBody: 'ymux ${{ steps.meta.outputs.tag }} — Windows build. Release notes are being generated…'
           releaseDraft: ${{ steps.meta.outputs.draft == 'true' }}
           prerelease: false
+
+      # Replace the placeholder body with install instructions plus the
+      # GitHub "Generate release notes" output (groups merged PRs and
+      # commits since the previous tag). If the API call fails — e.g. the
+      # very first release where there is no previous tag — we fall back
+      # to just the install section so the release is never left with
+      # the placeholder text.
+      - name: Rewrite release body with auto-generated notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          AUTO=$(gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${REPO}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            --jq .body 2>/dev/null || echo "")
+
+          {
+            echo "ymux ${TAG} — Windows build."
+            echo ""
+            echo "## Install"
+            echo ""
+            echo "Two installer flavours are attached — pick whichever suits you:"
+            echo "- \`ymux_*-setup.exe\` — NSIS, double-click installer for personal use."
+            echo "- \`ymux_*_x64_en-US.msi\` — WiX / MSI, preferred for enterprise"
+            echo "  deployment via Group Policy / SCCM."
+            echo ""
+            echo "Both bundle a WebView2 bootstrapper, so Windows 10 machines without"
+            echo "the runtime will install it on first launch."
+            if [ -n "$AUTO" ]; then
+              echo ""
+              echo "$AUTO"
+            fi
+            echo ""
+            echo "See the [README](https://github.com/${REPO}#readme) for keybindings and usage."
+          } > release-notes.md
+
+          gh release edit "$TAG" --repo "$REPO" --notes-file release-notes.md
