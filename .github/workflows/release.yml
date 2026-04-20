@@ -135,8 +135,12 @@ jobs:
             ymux ${{ steps.meta.outputs.tag }} — Windows build.
 
             ## Install
-            Download `ymux_*-setup.exe` below and run it. The NSIS installer
-            bundles a WebView2 bootstrapper, so Windows 10 machines without
+            Two installer flavours are attached — pick whichever suits you:
+            - `ymux_*-setup.exe` — NSIS, double-click installer for personal use.
+            - `ymux_*_x64_en-US.msi` — WiX / MSI, preferred for enterprise
+              deployment via Group Policy / SCCM.
+
+            Both bundle a WebView2 bootstrapper, so Windows 10 machines without
             the runtime will install it on first launch.
 
             ## What's in the box
