@@ -162,7 +162,12 @@ esac
             });
         }
 
-        // 4. Git Bash.
+        // 4. Visual Studio Developer Shells (Command Prompt + PowerShell),
+        // one pair per installed VS edition. Windows Terminal offers these
+        // out of the box, so we match that behaviour.
+        out.extend(find_vs_developer_shells());
+
+        // 5. Git Bash.
         if let Some(p) = find_git_bash() {
             // Use a generated rcfile for OSC 7 cwd reporting when we can
             // write one; fall back to plain `--login -i` otherwise.
@@ -183,10 +188,10 @@ esac
             });
         }
 
-        // 5. WSL distros.
+        // 6. WSL distros.
         out.extend(find_wsl_distros());
 
-        // 6. Nushell, if on PATH.
+        // 7. Nushell, if on PATH.
         if let Some(p) = which("nu") {
             out.push(ShellProfile {
                 name: "Nushell".into(),
@@ -285,23 +290,63 @@ esac
             Some(p) => p,
             None => return Vec::new(),
         };
-        let output = match Command::new(&wsl).args(["--list", "--quiet"]).output() {
-            Ok(o) if o.status.success() => o,
-            _ => return Vec::new(),
-        };
-        // `wsl.exe --list --quiet` prints UTF-16LE. Decode with a lossy
-        // fallback if the first byte pair looks like UTF-16.
-        let text = decode_possibly_utf16(&output.stdout);
+
+        // Prefer `--list --quiet` (no header, no annotations). On older
+        // Windows builds this occasionally prints nothing for non-default
+        // distros, so we fall back to `--list --verbose` and parse the
+        // tabular output as a second pass.
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(o) = Command::new(&wsl).args(["--list", "--quiet"]).output() {
+            if o.status.success() {
+                let text = decode_possibly_utf16(&o.stdout);
+                for line in text.lines() {
+                    let n = sanitize_wsl_name(line);
+                    if !n.is_empty() {
+                        names.push(n);
+                    }
+                }
+            }
+        }
+        if names.is_empty() {
+            if let Ok(o) = Command::new(&wsl).args(["--list", "--verbose"]).output() {
+                if o.status.success() {
+                    let text = decode_possibly_utf16(&o.stdout);
+                    for (idx, line) in text.lines().enumerate() {
+                        // Skip the first header row. Each data row looks
+                        // like `  NAME          STATE           VERSION`
+                        // with an optional `*` in the leading column for
+                        // the default distro.
+                        if idx == 0 {
+                            continue;
+                        }
+                        let trimmed = line.trim().trim_start_matches('*').trim();
+                        let first = trimmed.split_whitespace().next().unwrap_or("");
+                        let n = sanitize_wsl_name(first);
+                        if !n.is_empty() {
+                            names.push(n);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
         let mut profiles = Vec::new();
-        for line in text.lines() {
-            let name = line.trim().trim_end_matches('\r').trim();
-            if name.is_empty() {
+        for name in names {
+            // Docker Desktop registers internal distros (`docker-desktop`
+            // and `docker-desktop-data`) that aren't useful as interactive
+            // shells — Windows Terminal hides them and we match that.
+            let lower = name.to_lowercase();
+            if lower.starts_with("docker-desktop") || lower == "rancher-desktop" {
+                continue;
+            }
+            if !seen.insert(name.clone()) {
                 continue;
             }
             profiles.push(ShellProfile {
                 name: format!("WSL: {name}"),
                 executable: wsl.to_string_lossy().into_owned(),
-                args: vec!["-d".into(), name.into()],
+                args: vec!["-d".into(), name.clone()],
                 icon: Some("wsl".into()),
                 color: Some("#4e9a06".into()),
             });
@@ -309,14 +354,173 @@ esac
         profiles
     }
 
+    /// Strip a UTF-16 BOM, stray NUL bytes, carriage returns and surrounding
+    /// whitespace from a single line emitted by `wsl.exe`.
+    fn sanitize_wsl_name(raw: &str) -> String {
+        raw.trim_start_matches('\u{FEFF}')
+            .replace('\0', "")
+            .trim()
+            .trim_end_matches('\r')
+            .trim()
+            .to_string()
+    }
+
+    /// Locate every installed Visual Studio edition via `vswhere.exe` and
+    /// expose its Developer Command Prompt + Developer PowerShell as shell
+    /// profiles. Windows Terminal does the same thing, which is why the
+    /// user's screenshot shows both entries alongside "cmd" / "PowerShell".
+    fn find_vs_developer_shells() -> Vec<ShellProfile> {
+        use std::process::Command;
+
+        let base = match std::env::var("ProgramFiles(x86)").ok() {
+            Some(b) => b,
+            None => return Vec::new(),
+        };
+        let vswhere = PathBuf::from(base)
+            .join("Microsoft Visual Studio")
+            .join("Installer")
+            .join("vswhere.exe");
+        if !is_file(&vswhere) {
+            return Vec::new();
+        }
+
+        let output = match Command::new(&vswhere)
+            .args([
+                "-all",
+                "-prerelease",
+                "-products",
+                "*",
+                "-format",
+                "value",
+                "-property",
+                "installationPath",
+            ])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            _ => return Vec::new(),
+        };
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        let cmd_path = find_cmd();
+        // Launch-VsDevShell.ps1 depends on .NET Framework APIs that only
+        // ship with Windows PowerShell 5.1, so prefer powershell.exe over
+        // pwsh even when both are installed.
+        let ps_path = find_windows_powershell().or_else(find_pwsh);
+
+        // Collect installs first so we can decide how much disambiguation
+        // each profile name needs (year alone vs. year + edition).
+        let installs: Vec<(PathBuf, String, String)> = text
+            .lines()
+            .filter_map(|line| {
+                let path = line.trim();
+                if path.is_empty() {
+                    None
+                } else {
+                    let (year, edition) = vs_labels(path);
+                    Some((PathBuf::from(path), year, edition))
+                }
+            })
+            .collect();
+
+        let mut year_counts: std::collections::HashMap<&str, u32> =
+            std::collections::HashMap::new();
+        for (_, year, _) in &installs {
+            *year_counts.entry(year.as_str()).or_insert(0) += 1;
+        }
+
+        let mut out = Vec::new();
+        for (install, year, edition) in &installs {
+            let needs_edition = year_counts.get(year.as_str()).copied().unwrap_or(1) > 1;
+            let label = if needs_edition && !edition.is_empty() {
+                format!("{year} {edition}")
+            } else {
+                year.clone()
+            };
+
+            let vsdevcmd = install.join("Common7").join("Tools").join("VsDevCmd.bat");
+            if is_file(&vsdevcmd) {
+                if let Some(cmd) = cmd_path.as_ref() {
+                    // `call` keeps the outer cmd.exe alive after the batch
+                    // finishes so we can chain our OSC 7 prompt setup.
+                    let joined = format!(
+                        "call \"{}\" & {}",
+                        vsdevcmd.display(),
+                        CMD_OSC7_PROMPT
+                    );
+                    out.push(ShellProfile {
+                        name: format!("Developer Command Prompt for VS {label}"),
+                        executable: cmd.to_string_lossy().into_owned(),
+                        args: vec!["/Q".into(), "/K".into(), joined],
+                        icon: Some("vsdev-cmd".into()),
+                        color: Some("#5c2d91".into()),
+                    });
+                }
+            }
+
+            let launch = install
+                .join("Common7")
+                .join("Tools")
+                .join("Launch-VsDevShell.ps1");
+            if is_file(&launch) {
+                if let Some(ps) = ps_path.as_ref() {
+                    // `-SkipAutomaticLocation` prevents the script from
+                    // chdir-ing into the user's "Source" folder so the
+                    // pane inherits the parent cwd like every other shell.
+                    let launch_escaped = launch.to_string_lossy().replace('\'', "''");
+                    let script = format!(
+                        "& '{}' -SkipAutomaticLocation; {}",
+                        launch_escaped, PWSH_OSC7_INIT
+                    );
+                    out.push(ShellProfile {
+                        name: format!("Developer PowerShell for VS {label}"),
+                        executable: ps.to_string_lossy().into_owned(),
+                        args: vec![
+                            "-NoLogo".into(),
+                            "-NoExit".into(),
+                            "-Command".into(),
+                            script,
+                        ],
+                        icon: Some("vsdev-ps".into()),
+                        color: Some("#5c2d91".into()),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Extract the product year (e.g. "2022") and edition (e.g. "Community")
+    /// from a VS installation path. vswhere returns paths shaped like
+    /// `C:\Program Files\Microsoft Visual Studio\2022\Community`.
+    fn vs_labels(install_path: &str) -> (String, String) {
+        const MARKER: &str = "Microsoft Visual Studio";
+        if let Some(idx) = install_path.find(MARKER) {
+            let tail = install_path[idx + MARKER.len()..]
+                .trim_start_matches(['\\', '/']);
+            let mut parts = tail.split(['\\', '/']);
+            let year = parts.next().unwrap_or("").to_string();
+            let edition = parts.next().unwrap_or("").to_string();
+            if !year.is_empty() {
+                return (year, edition);
+            }
+        }
+        ("Preview".to_string(), String::new())
+    }
+
     fn decode_possibly_utf16(bytes: &[u8]) -> String {
         if bytes.len() >= 2 && bytes.len() % 2 == 0 {
-            let looks_like_utf16 = bytes
-                .chunks_exact(2)
-                .take(16)
-                .any(|c| c[1] == 0 && c[0] != 0);
+            // Explicit UTF-16LE BOM, or a ratio of ASCII-in-UTF-16 pairs
+            // large enough to be distinguishable from accidental UTF-8.
+            let has_bom = bytes[0] == 0xFF && bytes[1] == 0xFE;
+            let looks_like_utf16 = has_bom
+                || bytes
+                    .chunks_exact(2)
+                    .take(16)
+                    .any(|c| c[1] == 0 && c[0] != 0);
             if looks_like_utf16 {
-                let u16s: Vec<u16> = bytes
+                let start = if has_bom { 2 } else { 0 };
+                let u16s: Vec<u16> = bytes[start..]
                     .chunks_exact(2)
                     .map(|c| u16::from_le_bytes([c[0], c[1]]))
                     .collect();
