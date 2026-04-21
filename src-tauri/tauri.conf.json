@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["msi"],
     "category": "DeveloperTool",
     "shortDescription": "Lightweight tmux-style terminal multiplexer for Windows",
     "longDescription": "ymux is a tmux-inspired terminal multiplexer for Windows. It supports persistent split layouts, per-pane working directories and startup commands, a shell picker (cmd / PowerShell / pwsh / Git Bash / WSL), and numbered workspaces each with their own saved layout.",

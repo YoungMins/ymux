@@ -76,7 +76,7 @@ Requires: Rust (stable), Node 20+, pnpm (or npm).
 ```sh
 pnpm install
 pnpm tauri dev          # run in dev mode
-pnpm tauri build        # produce Windows installers: NSIS (.exe) + MSI (run on Windows)
+pnpm tauri build        # produce Windows MSI installer (run on Windows)
 ```
 
 On non-Windows hosts the Rust crate still `cargo check`s cleanly so you can work

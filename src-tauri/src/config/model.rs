@@ -19,7 +19,10 @@ use uuid::Uuid;
 ///   4 — `PaneSpec` gained `kind` (Terminal / Browser), `url`, and
 ///       `hotkeys`. All new fields have serde defaults so v3 configs load
 ///       transparently; migration just bumps the version number.
-pub const CONFIG_VERSION: u32 = 4;
+///   5 — Shell detector now enumerates Visual Studio Developer Shells
+///       (vswhere) and filters Docker Desktop WSL distros. Cached profiles
+///       from v4 are stale; clearing forces a fresh detect.
+pub const CONFIG_VERSION: u32 = 5;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
