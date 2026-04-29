@@ -111,10 +111,10 @@ fn draw_status_line(frame: &mut Frame, app: &App, area: Rect) {
         app.buffer.line_count()
     );
 
-    let padding = area.width as usize
-        - left.len().min(area.width as usize)
-        - right.len().min(area.width as usize);
-    let text = format!("{}{:pad$}{}", left, "", right, pad = padding.max(0));
+    let padding = (area.width as usize)
+        .saturating_sub(left.len())
+        .saturating_sub(right.len());
+    let text = format!("{}{:pad$}{}", left, "", right, pad = padding);
 
     let bar = Paragraph::new(text).style(
         Style::default()
