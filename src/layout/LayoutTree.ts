@@ -64,6 +64,7 @@ export function nodeToSpec(node: LayoutNode & { kind: "pane" }): PaneSpec {
     pane_kind: node.pane_kind ?? "terminal",
     url: node.url ?? null,
     hotkeys: (node.hotkeys ?? []) as HotKeyDef[],
+    bg_color: node.bg_color ?? "",
   };
 }
 
