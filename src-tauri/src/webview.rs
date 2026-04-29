@@ -1,8 +1,13 @@
 //! Tauri commands for managing native browser child webview windows.
 //!
-//! Each browser pane gets its own `WebviewWindow` parented to the main window.
-//! The frontend keeps the child window positioned over a placeholder `<div>` by
-//! listening for layout changes AND main-window move/resize events.
+//! Each browser pane gets its own borderless `WebviewWindow`. The frontend
+//! polls the placeholder's screen position and calls `resize_webview` to keep
+//! the child window glued to the layout.
+//!
+//! NOTE: deliberately NOT using `WebviewWindowBuilder::parent` because on
+//! Windows that creates an owner-owned relationship that interferes with
+//! both manual repositioning and webview navigation. We manage child
+//! lifetime manually (closed in main.rs ExitRequested handler).
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
@@ -17,10 +22,7 @@ pub fn create_webview(
     height: f64,
 ) -> Result<(), String> {
     let label = format!("browser-{}", id);
-
-    let parent = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
+    eprintln!("[webview] create {} url={} pos=({},{}) size=({}x{})", label, url, x, y, width, height);
 
     let parsed_url: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
 
@@ -29,17 +31,20 @@ pub fn create_webview(
         .inner_size(width, height)
         .position(x, y)
         .decorations(false)
-        .parent(&parent)
-        .map_err(|e| format!("set parent failed: {e}"))?
+        .resizable(false)
+        .skip_taskbar(true)
+        .always_on_top(false)
         .build()
         .map_err(|e| format!("create webview failed: {e}"))?;
 
+    eprintln!("[webview] {} created", label);
     Ok(())
 }
 
 #[tauri::command]
 pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
+    eprintln!("[webview] destroy {}", label);
     if let Some(win) = app.get_webview_window(&label) {
         win.close().map_err(|e| format!("close failed: {e}"))?;
     }
@@ -49,22 +54,35 @@ pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn navigate_webview(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    eprintln!("[webview] navigate request: {} -> {}", label, url);
+    eprintln!("[webview] navigate {} -> {}", label, url);
+
     let win = app
         .get_webview_window(&label)
         .ok_or_else(|| format!("webview '{label}' not found"))?;
 
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
+
+    // Try navigate() first.
     match win.navigate(parsed) {
         Ok(_) => {
-            eprintln!("[webview] navigate succeeded for {}", label);
-            Ok(())
+            eprintln!("[webview] {} navigate() OK", label);
         }
         Err(e) => {
-            eprintln!("[webview] navigate failed for {}: {}", label, e);
-            Err(format!("navigate failed: {e}"))
+            eprintln!("[webview] {} navigate() failed: {} — trying eval fallback", label, e);
         }
     }
+
+    // ALSO call eval() as a fallback — some Tauri/WebView2 combinations
+    // ignore navigate() but accept window.location assignment from JS.
+    let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
+    let js = format!("window.location.href = \"{}\";", escaped);
+    if let Err(e) = win.eval(&js) {
+        eprintln!("[webview] {} eval fallback failed: {}", label, e);
+    } else {
+        eprintln!("[webview] {} eval fallback OK", label);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -83,7 +101,7 @@ pub fn resize_webview(
 
     win.set_position(PhysicalPosition::new(x as i32, y as i32))
         .map_err(|e| format!("set_position failed: {e}"))?;
-    win.set_size(PhysicalSize::new(width as u32, height as u32))
+    win.set_size(PhysicalSize::new(width.max(1.0) as u32, height.max(1.0) as u32))
         .map_err(|e| format!("set_size failed: {e}"))?;
     Ok(())
 }

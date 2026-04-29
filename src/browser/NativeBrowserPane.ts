@@ -31,6 +31,8 @@ export class NativeBrowserPane implements Pane {
   private spawned = false;
   private repositionRaf: number | null = null;
   private posPollTimer: number | null = null;
+  private cachedScale = 1;
+  private statusEl: HTMLDivElement;
   private opts: NativeBrowserPaneOptions;
   private cleanupLang: () => void;
   private unlisteners: UnlistenFn[] = [];
@@ -87,7 +89,25 @@ export class NativeBrowserPane implements Pane {
     this.placeholder.style.minHeight = "0";
     this.placeholder.style.minWidth = "0";
     this.placeholder.style.background = "#1a2230";
+    this.placeholder.style.position = "relative";
     this.element.appendChild(this.placeholder);
+
+    // Status overlay — visible debug log for users without DevTools.
+    this.statusEl = document.createElement("div");
+    this.statusEl.style.position = "absolute";
+    this.statusEl.style.bottom = "4px";
+    this.statusEl.style.left = "4px";
+    this.statusEl.style.right = "4px";
+    this.statusEl.style.padding = "2px 4px";
+    this.statusEl.style.background = "rgba(11, 15, 20, 0.85)";
+    this.statusEl.style.color = "#7fdbca";
+    this.statusEl.style.fontSize = "10px";
+    this.statusEl.style.fontFamily = "Cascadia Code, Consolas, monospace";
+    this.statusEl.style.zIndex = "5";
+    this.statusEl.style.whiteSpace = "nowrap";
+    this.statusEl.style.overflow = "hidden";
+    this.statusEl.style.textOverflow = "ellipsis";
+    this.placeholder.appendChild(this.statusEl);
 
     // Track layout changes
     this.resizeObserver = new ResizeObserver(() => this.scheduleReposition());
@@ -109,12 +129,18 @@ export class NativeBrowserPane implements Pane {
       ? normalizeUrl(this.url) ?? "https://www.bing.com"
       : "https://www.bing.com";
 
+    // Cache the scale factor — it's stable for the lifetime of the window
+    // and we don't want to do an IPC roundtrip every poll tick.
+    const win = getCurrentWindow();
+    this.cachedScale = await win.scaleFactor();
+
     const rect = await this.getScreenRect();
     try {
       await api.createWebview(this.id, initial, rect.x, rect.y, rect.width, rect.height);
       this.spawned = true;
       this.urlInput.value = initial;
       this.pushHistory(initial);
+      this.setStatus(`spawned at ${rect.x},${rect.y} ${rect.width}x${rect.height}`);
     } catch (e) {
       this.placeholder.textContent = `Browser failed: ${e}`;
       throw e;
@@ -122,19 +148,28 @@ export class NativeBrowserPane implements Pane {
 
     // Poll the main window position every ~33ms to keep the child window
     // glued to the placeholder. Tauri's onMoved event only fires AFTER
-    // the user releases the title bar drag — that's too late for
-    // smooth tracking, so we poll instead. Cheap because getScreenRect
-    // and resizeWebview are no-ops if the rect didn't change.
+    // the user releases the title bar drag — too late for smooth tracking.
     let lastKey = "";
+    let pollCount = 0;
     this.posPollTimer = window.setInterval(() => {
       if (!this.spawned) return;
+      pollCount++;
       void this.getScreenRect().then((r) => {
         const key = `${r.x},${r.y},${r.width},${r.height}`;
         if (key === lastKey) return;
         lastKey = key;
-        void api.resizeWebview(this.id, r.x, r.y, r.width, r.height).catch(() => {});
+        this.setStatus(`poll #${pollCount} → ${r.x},${r.y} ${r.width}x${r.height}`);
+        void api.resizeWebview(this.id, r.x, r.y, r.width, r.height).catch((e) => {
+          this.setStatus(`resize ERR: ${e}`);
+        });
       });
     }, 33);
+  }
+
+  /// Show a short status message in the placeholder so the user can see
+  /// what's happening without DevTools.
+  private setStatus(msg: string): void {
+    this.statusEl.textContent = msg;
   }
 
   focus(): void {
@@ -173,20 +208,20 @@ export class NativeBrowserPane implements Pane {
   private navigate(raw: string): void {
     const url = normalizeUrl(raw);
     if (!url) {
-      console.warn("[NativeBrowser] invalid URL:", raw);
+      this.setStatus(`invalid URL: ${raw}`);
       return;
     }
-    console.log("[NativeBrowser] navigate ->", url);
+    this.setStatus(`navigate -> ${url}`);
     this.url = url;
     this.urlInput.value = url;
     this.pushHistory(url);
     if (this.spawned) {
       void api.navigateWebview(this.id, url).then(
-        () => console.log("[NativeBrowser] navigateWebview returned ok"),
-        (e) => console.error("[NativeBrowser] navigateWebview rejected:", e),
+        () => this.setStatus(`navigate OK: ${url}`),
+        (e) => this.setStatus(`navigate ERR: ${e}`),
       );
     } else {
-      console.warn("[NativeBrowser] not spawned yet");
+      this.setStatus("ERR: not spawned");
     }
     this.opts.onUrlChange?.(url);
   }
@@ -248,17 +283,13 @@ export class NativeBrowserPane implements Pane {
     height: number;
   }> {
     const win = getCurrentWindow();
-    const [, scale] = await Promise.all([
-      win.outerPosition(),
-      win.scaleFactor(),
-    ]);
-    const domRect = this.placeholder.getBoundingClientRect();
-
-    // outerPosition is in physical pixels. DOM rect is in CSS pixels.
-    // On decorated windows, we need to account for the title bar offset.
-    // Tauri's outerPosition gives the frame origin; innerPosition gives
-    // the content origin. The difference is the title bar + border.
     const innerPos = await win.innerPosition();
+    const domRect = this.placeholder.getBoundingClientRect();
+    const scale = this.cachedScale;
+
+    // innerPosition is in physical pixels (content origin, excluding title
+    // bar + borders). DOM rect is in CSS pixels — multiply by scale to get
+    // physical, then offset by the window's content origin.
     const x = innerPos.x + Math.round(domRect.left * scale);
     const y = innerPos.y + Math.round(domRect.top * scale);
     const width = Math.max(1, Math.round(domRect.width * scale));
