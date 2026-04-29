@@ -237,6 +237,12 @@ export class TerminalPane implements Pane {
       });
       this.spawned = true;
 
+      // Re-apply background color after spawn — xterm may reset its
+      // internal theme when the terminal size changes during fit().
+      if (this.spec.bg_color) {
+        this.setBgColor(this.spec.bg_color);
+      }
+
       const dataUnlisten = await onPaneData(this.id, (bytes) => {
         this.term.write(bytes);
       });

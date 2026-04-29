@@ -46,6 +46,10 @@
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"
+      },
+      "wix": {
+        "fragmentPaths": ["wix/path-env.wxs"],
+        "componentGroupRefs": ["PathEnvGroup"]
       }
     }
   }

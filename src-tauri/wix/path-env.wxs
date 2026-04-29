@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v3 fragment that adds the ymux install directory to the system PATH.
+  This makes ymux, ymon, ydir, ycode, and y available from any terminal
+  immediately after MSI installation (no manual PATH editing).
+
+  Tauri's WiX bundler merges any .wxs files found in src-tauri/wix/ into
+  the generated installer.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="PathEnvComponent" Guid="e3a7c1b0-5f2d-4e8a-9c6b-1d3f5a7e9b2c" KeyPath="yes">
+        <Environment Id="PathEnv"
+                     Name="PATH"
+                     Value="[INSTALLDIR]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="PathEnvGroup">
+      <ComponentRef Id="PathEnvComponent" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>
