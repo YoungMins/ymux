@@ -68,6 +68,7 @@ export class NativeBrowserPane implements Pane {
     this.urlInput.placeholder = "https://…";
     this.urlInput.value = this.url;
     this.urlInput.spellcheck = false;
+    this.urlInput.disabled = true; // re-enabled after spawn completes
     this.urlInput.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         ev.preventDefault();
@@ -121,10 +122,18 @@ export class NativeBrowserPane implements Pane {
       this.fwdBtn.title = t("browser.forward");
       this.reloadBtn.title = t("browser.reload");
     });
+
+    // Visible startup status. Use queueMicrotask so the status element
+    // is mounted in the DOM before the first setStatus call.
+    queueMicrotask(() => this.setStatus(`constructed id=${this.id.slice(0, 8)}`));
   }
 
   async spawn(): Promise<void> {
-    if (this.spawned) return;
+    if (this.spawned) {
+      this.setStatus("spawn() called again — already spawned");
+      return;
+    }
+    this.setStatus(`spawning id=${this.id.slice(0, 8)}…`);
     const initial = this.url
       ? normalizeUrl(this.url) ?? "https://www.bing.com"
       : "https://www.bing.com";
@@ -135,14 +144,37 @@ export class NativeBrowserPane implements Pane {
     this.cachedScale = await win.scaleFactor();
 
     const rect = await this.getScreenRect();
+    if (rect.width <= 1 || rect.height <= 1) {
+      // DOM not measured yet — defer spawn until placeholder has size.
+      this.setStatus(`waiting for layout (rect ${rect.width}x${rect.height})…`);
+      await new Promise<void>((resolve) => {
+        const ro = new ResizeObserver(() => {
+          const r = this.placeholder.getBoundingClientRect();
+          if (r.width > 1 && r.height > 1) {
+            ro.disconnect();
+            resolve();
+          }
+        });
+        ro.observe(this.placeholder);
+        // Also resolve after a max wait so we don't hang.
+        setTimeout(() => {
+          ro.disconnect();
+          resolve();
+        }, 2000);
+      });
+    }
+
+    const finalRect = await this.getScreenRect();
     try {
-      await api.createWebview(this.id, initial, rect.x, rect.y, rect.width, rect.height);
+      await api.createWebview(this.id, initial, finalRect.x, finalRect.y, finalRect.width, finalRect.height);
       this.spawned = true;
       this.urlInput.value = initial;
+      this.urlInput.disabled = false;
       this.pushHistory(initial);
-      this.setStatus(`spawned at ${rect.x},${rect.y} ${rect.width}x${rect.height}`);
+      this.setStatus(`spawned ✓ ${finalRect.x},${finalRect.y} ${finalRect.width}x${finalRect.height}`);
     } catch (e) {
-      this.placeholder.textContent = `Browser failed: ${e}`;
+      this.spawned = false;
+      this.setStatus(`spawn FAILED: ${e}`);
       throw e;
     }
 
@@ -211,17 +243,17 @@ export class NativeBrowserPane implements Pane {
       this.setStatus(`invalid URL: ${raw}`);
       return;
     }
-    this.setStatus(`navigate -> ${url}`);
     this.url = url;
     this.urlInput.value = url;
     this.pushHistory(url);
     if (this.spawned) {
+      this.setStatus(`navigate -> ${url} (id=${this.id.slice(0, 8)})`);
       void api.navigateWebview(this.id, url).then(
         () => this.setStatus(`navigate OK: ${url}`),
         (e) => this.setStatus(`navigate ERR: ${e}`),
       );
     } else {
-      this.setStatus("ERR: not spawned");
+      this.setStatus(`ERR: not spawned (id=${this.id.slice(0, 8)} url-was=${this.url})`);
     }
     this.opts.onUrlChange?.(url);
   }
