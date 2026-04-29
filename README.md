@@ -39,9 +39,11 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   workspaces. Every workspace saves its own layout. Panes stay alive across
   switches (tmux-style) so your REPLs and tails don't die. Double-click a
   workspace button to give it a custom name.
-- **HotKey buttons per pane**: bind frequently-used commands (single line or
-  batch multi-line) to labelled buttons on top of every terminal. Click →
-  the command is injected into the shell. Manage them from the `⚙` button.
+- **Per-pane settings (⚙)**: the `⚙` button on each terminal opens a settings
+  panel where you can set a **custom background color** (via native color picker)
+  and manage **HotKey buttons** (single-line or batch multi-line commands bound
+  to labelled buttons above the terminal). Background colors persist across
+  restarts.
 - **Browser panes**: drop an iframe-based browser into any layout slot via the
   toolbar's `+ Browser` button. URL bar with back / forward / reload. The URL
   persists across workspace switches and app restarts, just like a terminal.
@@ -70,6 +72,14 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   toolbar for a built-in cheat sheet. Supports English, 한국어, and 日本語.
 - **Command palette**: `Ctrl+Shift+P` opens a VS Code-style searchable
   command overlay. Fuzzy-match any built-in action by name or keybinding.
+- **Clipboard paste**: `Ctrl+V` pastes clipboard text into the focused
+  terminal (reads via `navigator.clipboard.readText()`).
+- **13-language i18n**: English, 한국어, 日本語, 中文, हिन्दी, Español,
+  Français, العربية, Português, Русский, Türkçe, Deutsch, Tiếng Việt.
+  Switch from the language selector in the bottom-right status bar.
+- **MSI installer with PATH**: the MSI adds the install directory to the
+  system PATH, so `ymux`, `ymon`, `ydir`, `ycode`, and `y` are immediately
+  available from any terminal after install.
 - **Lightweight**: Tauri binary + WebView2. Installer target < 10 MB.
 
 ### Companion TUI tools
@@ -80,8 +90,8 @@ alongside ymux or use the `y` launcher (`y mon`, `y dir`, `y code`).
 | Tool | Command | Description |
 |------|---------|-------------|
 | **ymon** | `ymon` | htop/btop-style system monitor (CPU, memory, disk, processes) |
-| **ydir** | `ydir` | mdir / Midnight Commander dual-pane file manager |
-| **ycode** | `ycode <file>` | VS Code-style TUI code editor with undo/redo and search |
+| **ydir** | `ydir` | Dual-pane file manager — navigate, copy/move/delete, run executables with args dialog |
+| **ycode** | `ycode <file>` | TUI code editor — undo/redo, search, goto, Esc exit dialog, full CJK/emoji support |
 | **y** | `y help` | Launcher that lists and dispatches all y* tools |
 
 ## Development
@@ -114,6 +124,7 @@ close.
 | `Ctrl+Shift+Z`              | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+R`              | Rename focused pane                  |
 | `Ctrl+Shift+P`              | Open command palette                 |
+| `Ctrl+V`                    | Paste clipboard into terminal        |
 | `Ctrl+F`                    | Search terminal scrollback           |
 | `Ctrl+Tab`                  | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | Focus previous pane                  |
