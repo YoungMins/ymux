@@ -239,10 +239,14 @@ export class WorkspaceManager {
     }
     if (spec.pane_kind === "native_browser") {
       return new NativeBrowserPane({
-        id: spec.id,
-        url: spec.url,
+        spec,
         onFocus: () => {
           this.focusedPaneId = spec.id;
+        },
+        onUrlChange: (url) => {
+          this.updatePaneSpec(spec.id, (p) => {
+            p.url = url;
+          });
         },
       });
     }

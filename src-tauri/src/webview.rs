@@ -1,13 +1,14 @@
 //! Tauri commands for managing native browser child webviews.
 //!
-//! Each browser pane gets its own `WebviewWindow` positioned over a placeholder
-//! `<div>` in the main window's layout. This bypasses X-Frame-Options / CSP
-//! restrictions that limit the iframe-based `BrowserPane`.
+//! Each browser pane gets its own `Webview` **embedded inside the main
+//! window** (not a separate OS window). The frontend positions a placeholder
+//! `<div>` in the layout, and these commands create / move / resize the
+//! native webview to overlay that placeholder. Because the webview lives in
+//! the same window, it moves with it — no position sync needed.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::webview::WebviewBuilder;
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};
 
-/// Create a child WebviewWindow overlaid on the main window at the given
-/// screen-pixel position and size.
 #[tauri::command]
 pub fn create_webview(
     app: AppHandle,
@@ -19,51 +20,47 @@ pub fn create_webview(
     height: f64,
 ) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    let parent = app
+
+    let main_window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
-    let webview_url = WebviewUrl::External(url.parse().map_err(|e| format!("invalid URL: {e}"))?);
+    let parsed_url: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
+    let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed_url));
 
-    WebviewWindowBuilder::new(&app, &label, webview_url)
-        .title("ymux browser")
-        .inner_size(width, height)
-        .position(x, y)
-        .decorations(false)
-        .always_on_top(false)
-        .parent(&parent)
-        .map_err(|e| format!("failed to set parent: {e}"))?
-        .build()
-        .map_err(|e| format!("failed to create webview window: {e}"))?;
+    main_window
+        .add_child(
+            builder,
+            LogicalPosition::new(x, y),
+            LogicalSize::new(width, height),
+        )
+        .map_err(|e| format!("failed to create webview: {e}"))?;
 
     Ok(())
 }
 
-/// Destroy (close) the child webview with the given id.
 #[tauri::command]
 pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    if let Some(win) = app.get_webview_window(&label) {
-        win.close().map_err(|e| format!("close failed: {e}"))?;
+    if let Some(wv) = app.get_webview(&label) {
+        wv.close().map_err(|e| format!("close failed: {e}"))?;
     }
     Ok(())
 }
 
-/// Navigate an existing child webview to a new URL.
 #[tauri::command]
 pub fn navigate_webview(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    let win = app
-        .get_webview_window(&label)
+    let wv = app
+        .get_webview(&label)
         .ok_or_else(|| format!("webview '{label}' not found"))?;
 
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
-    win.navigate(parsed)
+    wv.navigate(parsed)
         .map_err(|e| format!("navigate failed: {e}"))?;
     Ok(())
 }
 
-/// Reposition and resize an existing child webview.
 #[tauri::command]
 pub fn resize_webview(
     app: AppHandle,
@@ -74,16 +71,13 @@ pub fn resize_webview(
     height: f64,
 ) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    let win = app
-        .get_webview_window(&label)
+    let wv = app
+        .get_webview(&label)
         .ok_or_else(|| format!("webview '{label}' not found"))?;
 
-    use tauri::PhysicalPosition;
-    use tauri::PhysicalSize;
-
-    win.set_position(PhysicalPosition::new(x as i32, y as i32))
+    wv.set_position(LogicalPosition::new(x, y))
         .map_err(|e| format!("set_position failed: {e}"))?;
-    win.set_size(PhysicalSize::new(width as u32, height as u32))
+    wv.set_size(LogicalSize::new(width, height))
         .map_err(|e| format!("set_size failed: {e}"))?;
     Ok(())
 }
