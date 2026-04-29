@@ -187,22 +187,20 @@ export class NativeBrowserPane implements Pane {
       this.setStatus(`rect2=${rect.x},${rect.y} ${rect.width}x${rect.height}`);
     }
 
-    // Fire-and-forget the createWebview IPC. Awaiting it can hang if the
-    // newly-created webview steals focus from the main window — WebView2
-    // throttles JS in unfocused webviews, so the await never resolves.
-    this.setStatus(`calling createWebview…`);
+    // Eagerly mark spawned and enable the URL bar — the IPC reply may
+    // never come back from Rust on Windows (we've seen this with
+    // WebviewWindowBuilder), but the underlying webview is still
+    // created on the main thread. Don't gate the user's ability to
+    // type a URL on the IPC promise that may hang.
+    this.spawned = true;
+    this.urlInput.value = initial;
+    this.urlInput.disabled = false;
+    this.pushHistory(initial);
+    this.setStatus(`spawned (eager) ${rect.x},${rect.y} ${rect.width}x${rect.height}`);
+
     api.createWebview(this.id, initial, rect.x, rect.y, rect.width, rect.height).then(
-      () => {
-        this.spawned = true;
-        this.urlInput.value = initial;
-        this.urlInput.disabled = false;
-        this.pushHistory(initial);
-        this.setStatus(`spawned ✓`);
-      },
-      (e) => {
-        this.spawned = false;
-        this.setStatus(`spawn FAILED: ${e}`);
-      },
+      () => this.setStatus(`createWebview replied OK`),
+      (e) => this.setStatus(`createWebview replied ERR: ${e}`),
     );
 
     // Poll the main window position every ~33ms to keep the child window
