@@ -1,13 +1,6 @@
 import type { HotKeyDef } from "../types";
 import { t } from "../i18n/i18n";
 
-const COLOR_PRESETS = [
-  "#0b0f14", "#1a1a2e", "#16213e", "#0f3460",
-  "#1b1b2f", "#162447", "#1f4068", "#1a3c40",
-  "#2d132c", "#3b0a30", "#461220", "#1c0c1b",
-  "#0a1628", "#0d1b2a", "#1b263b", "#1d3557",
-];
-
 export function openHotKeyManager(
   initial: HotKeyDef[],
   initialBgColor: string | null,
@@ -29,52 +22,52 @@ export function openHotKeyManager(
 
   const colorRow = document.createElement("div");
   colorRow.style.display = "flex";
-  colorRow.style.gap = "6px";
-  colorRow.style.flexWrap = "wrap";
+  colorRow.style.gap = "8px";
   colorRow.style.alignItems = "center";
   colorRow.style.marginBottom = "12px";
 
-  for (const preset of COLOR_PRESETS) {
-    const swatch = document.createElement("button");
-    swatch.type = "button";
-    swatch.style.width = "22px";
-    swatch.style.height = "22px";
-    swatch.style.background = preset;
-    swatch.style.border = preset === (initialBgColor || "#0b0f14")
-      ? "2px solid #7fdbca"
-      : "1px solid #1e2a38";
-    swatch.style.borderRadius = "4px";
-    swatch.style.cursor = "pointer";
-    swatch.style.padding = "0";
-    swatch.title = preset;
-    swatch.addEventListener("click", () => {
-      onBgColorChange(preset === "#0b0f14" ? null : preset);
-      // Update border highlights
-      for (const ch of colorRow.querySelectorAll("button")) {
-        (ch as HTMLElement).style.border = ch === swatch
-          ? "2px solid #7fdbca"
-          : "1px solid #1e2a38";
-      }
-      // Update custom input
-      const inp = colorRow.querySelector("input");
-      if (inp) inp.value = preset;
-    });
-    colorRow.appendChild(swatch);
-  }
+  const colorPicker = document.createElement("input");
+  colorPicker.type = "color";
+  colorPicker.value = initialBgColor || "#0b0f14";
+  colorPicker.style.width = "40px";
+  colorPicker.style.height = "28px";
+  colorPicker.style.border = "1px solid #1e2a38";
+  colorPicker.style.borderRadius = "4px";
+  colorPicker.style.cursor = "pointer";
+  colorPicker.style.background = "transparent";
+  colorPicker.style.padding = "0";
+  colorPicker.addEventListener("input", () => {
+    const v = colorPicker.value;
+    hexInput.value = v;
+    onBgColorChange(v === "#0b0f14" ? null : v);
+  });
+  colorRow.appendChild(colorPicker);
 
-  const customInput = document.createElement("input");
-  customInput.type = "text";
-  customInput.className = "hotkey-modal__label-input";
-  customInput.value = initialBgColor || "#0b0f14";
-  customInput.placeholder = "#hex";
-  customInput.style.width = "80px";
-  customInput.addEventListener("change", () => {
-    const v = customInput.value.trim();
+  const hexInput = document.createElement("input");
+  hexInput.type = "text";
+  hexInput.className = "hotkey-modal__label-input";
+  hexInput.value = initialBgColor || "#0b0f14";
+  hexInput.placeholder = "#0b0f14";
+  hexInput.style.width = "80px";
+  hexInput.addEventListener("change", () => {
+    const v = hexInput.value.trim();
     if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+      colorPicker.value = v;
       onBgColorChange(v === "#0b0f14" ? null : v);
     }
   });
-  colorRow.appendChild(customInput);
+  colorRow.appendChild(hexInput);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "hotkey-modal__btn";
+  resetBtn.textContent = "Reset";
+  resetBtn.addEventListener("click", () => {
+    colorPicker.value = "#0b0f14";
+    hexInput.value = "#0b0f14";
+    onBgColorChange(null);
+  });
+  colorRow.appendChild(resetBtn);
 
   modal.appendChild(colorRow);
 
