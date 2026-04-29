@@ -16,6 +16,10 @@ const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+Shift+Z",   tKey: "shortcut.zoom" },
   { keys: "Ctrl+F",         tKey: "shortcut.search" },
   { keys: "Ctrl+Shift+R",   tKey: "shortcut.rename" },
+  { keys: "Ctrl+Shift+P",   tKey: "shortcut.palette" },
+  { keys: "Ctrl+V",         tKey: "shortcut.paste" },
+  { keys: "Dbl-click WS", tKey: "shortcut.renameWs" },
+  { keys: "?",              tKey: "shortcut.helpToggle" },
 ];
 
 export function mountHelpButton(parent: HTMLElement): () => void {

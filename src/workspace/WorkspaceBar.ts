@@ -105,7 +105,10 @@ export function mountWorkspaceBar(
       btn.title = wsTooltip(id, manager);
       const name = ws?.name;
       const isCustom = name && name !== `workspace-${id}` && name !== "main";
-      btn.textContent = isCustom ? name.slice(0, 3) : String(id);
+      // Show "1: 이름" so the user can see both the workspace number
+      // (matching the Ctrl+Alt+N keybinding) and the custom name they
+      // gave it. CSS handles ellipsis if the name overflows max-width.
+      btn.textContent = isCustom ? `${id}: ${name}` : String(id);
     }
   }
 
