@@ -104,6 +104,14 @@ pub fn save_config(state: State<'_, AppState>, config: Config) -> YmuxResult<()>
     // into `PtyManager.cwds`, and we snapshot it here so the saved layout
     // tree carries the live directory instead of the stale initial one.
     let mut incoming = config;
+    // DEBUG: log bg_color values in incoming config
+    for ws in &incoming.workspaces {
+        for pane in ws.panes() {
+            if pane.bg_color.is_some() {
+                eprintln!("[save_config] pane {} has bg_color={:?}", pane.id, pane.bg_color);
+            }
+        }
+    }
     incoming.patch_cwds(&state.pty.cwds_snapshot());
     state.config.update(|c| c.merge_layouts_from(incoming));
     state.config.flush()?;

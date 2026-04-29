@@ -266,6 +266,9 @@ export class WorkspaceManager {
         this.updatePaneSpec(spec.id, (p) => {
           p.bg_color = color;
         });
+        // DEBUG: verify the write-back worked
+        const check = this.getPaneSpec(spec.id);
+        console.log("[DEBUG] bg_color after updatePaneSpec:", check?.bg_color);
       },
     });
   }
