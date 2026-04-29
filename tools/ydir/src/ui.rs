@@ -47,26 +47,69 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
         return;
     }
 
-    let visible_height = inner.height as usize;
+    // Header
+    let header_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y + 1,
+        width: inner.width,
+        height: inner.height.saturating_sub(1),
+    };
+
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            pad_right("Name", inner.width as usize / 2),
+            Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)),
+        ),
+        Span::styled(
+            pad_right("Size", 10),
+            Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)),
+        ),
+        Span::styled(
+            "Modified",
+            Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)),
+        ),
+    ]));
+    frame.render_widget(header, header_area);
+
+    // Scrolling: keep selected item visible
+    let visible_height = list_area.height as usize;
     let scroll = if panel.selected >= visible_height {
         panel.selected - visible_height + 1
     } else {
         0
     };
 
-    let rows: Vec<Row> = panel
+    let items: Vec<ListItem> = panel
         .entries
         .iter()
         .skip(scroll)
+        .take(visible_height)
         .enumerate()
         .map(|(i, entry)| {
             let idx = i + scroll;
-            let style = if idx == panel.selected && active {
+            let is_selected = idx == panel.selected;
+
+            let icon = if entry.is_dir { "\u{1F4C1} " } else { "   " };
+            let name_width = (inner.width as usize).saturating_sub(28);
+            let name = truncate(&entry.name, name_width);
+            let size = pad_right(&entry.size_display(), 10);
+            let date = entry
+                .modified
+                .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default();
+
+            let style = if is_selected && active {
                 Style::default()
                     .bg(Color::Rgb(0x1a, 0x22, 0x30))
                     .fg(Color::Rgb(0x7f, 0xdb, 0xca))
                     .add_modifier(Modifier::BOLD)
-            } else if idx == panel.selected {
+            } else if is_selected {
                 Style::default()
                     .bg(Color::Rgb(0x1a, 0x22, 0x30))
                     .fg(Color::Rgb(0xd6, 0xde, 0xeb))
@@ -76,36 +119,38 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
                 Style::default().fg(Color::Rgb(0xd6, 0xde, 0xeb))
             };
 
-            let icon = if entry.is_dir { "📁" } else { "  " };
-            let date = entry
-                .modified
-                .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_default();
-
-            Row::new(vec![
-                Cell::from(format!("{} {}", icon, entry.name)),
-                Cell::from(entry.size_display()),
-                Cell::from(date),
-            ])
-            .style(style)
+            let line = Line::from(vec![
+                Span::raw(icon),
+                Span::raw(pad_right(&name, name_width)),
+                Span::raw(size),
+                Span::raw(date),
+            ]);
+            ListItem::new(line).style(style)
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(50),
-            Constraint::Percentage(20),
-            Constraint::Percentage(30),
-        ],
-    )
-    .header(
-        Row::new(vec!["Name", "Size", "Modified"])
-            .style(Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)))
-            .bottom_margin(0),
-    );
+    let list = List::new(items);
+    frame.render_widget(list, list_area);
 
-    frame.render_widget(table, inner);
+    // Scroll indicator
+    if panel.entries.len() > visible_height {
+        let pct = if panel.entries.len() <= 1 {
+            0
+        } else {
+            panel.selected * 100 / (panel.entries.len() - 1)
+        };
+        let indicator = format!(" {}% ", pct);
+        let ind_area = Rect {
+            x: area.x + area.width - indicator.len() as u16 - 1,
+            y: area.y,
+            width: indicator.len() as u16,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(indicator).style(Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a))),
+            ind_area,
+        );
+    }
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -126,4 +171,21 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(status, Style::default().fg(Color::Rgb(0xe5, 0xc0, 0x7b))),
     ]);
     frame.render_widget(Paragraph::new(text), area);
+}
+
+fn pad_right(s: &str, width: usize) -> String {
+    if s.len() >= width {
+        s[..width].to_string()
+    } else {
+        format!("{:width$}", s, width = width)
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{}~", truncated)
+    }
 }

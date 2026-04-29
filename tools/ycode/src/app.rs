@@ -4,6 +4,25 @@ use anyhow::Result;
 
 use crate::buffer::Buffer;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitChoice {
+    Save,
+    Quit,
+    Cancel,
+}
+
+impl ExitChoice {
+    pub const ALL: [ExitChoice; 3] = [ExitChoice::Save, ExitChoice::Quit, ExitChoice::Cancel];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ExitChoice::Save => "Save & Quit",
+            ExitChoice::Quit => "Quit without saving",
+            ExitChoice::Cancel => "Cancel",
+        }
+    }
+}
+
 pub struct App {
     pub buffer: Buffer,
     pub file_path: Option<PathBuf>,
@@ -15,6 +34,8 @@ pub struct App {
     pub command_mode: bool,
     pub command_input: String,
     pub status_msg: Option<String>,
+    pub exit_dialog: bool,
+    pub exit_choice: usize,
 }
 
 impl App {
@@ -41,6 +62,8 @@ impl App {
             command_mode: false,
             command_input: String::new(),
             status_msg: None,
+            exit_dialog: false,
+            exit_choice: 2, // default to Cancel
         })
     }
 
@@ -155,6 +178,41 @@ impl App {
             (self.cursor_row + self.viewport_rows).min(self.buffer.line_count().saturating_sub(1));
         self.clamp_col();
         self.ensure_scroll();
+    }
+
+    pub fn show_exit_dialog(&mut self) {
+        if self.command_mode {
+            self.command_mode = false;
+            self.command_input.clear();
+            return;
+        }
+        self.exit_dialog = true;
+        self.exit_choice = 2; // default Cancel
+    }
+
+    pub fn exit_dialog_left(&mut self) {
+        self.exit_choice = self.exit_choice.saturating_sub(1);
+    }
+
+    pub fn exit_dialog_right(&mut self) {
+        self.exit_choice = (self.exit_choice + 1).min(ExitChoice::ALL.len() - 1);
+    }
+
+    /// Returns Some(true) if should quit, Some(false) if saved+quit, None if cancelled.
+    pub fn exit_dialog_confirm(&mut self) -> Result<Option<bool>> {
+        self.exit_dialog = false;
+        match ExitChoice::ALL[self.exit_choice] {
+            ExitChoice::Save => {
+                self.save()?;
+                Ok(Some(true))
+            }
+            ExitChoice::Quit => Ok(Some(true)),
+            ExitChoice::Cancel => Ok(None),
+        }
+    }
+
+    pub fn exit_dialog_cancel(&mut self) {
+        self.exit_dialog = false;
     }
 
     pub fn enter_command_mode(&mut self) {
@@ -294,6 +352,8 @@ mod tests {
             command_mode: false,
             command_input: String::new(),
             status_msg: None,
+            exit_dialog: false,
+            exit_choice: 2,
         }
     }
 

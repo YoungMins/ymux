@@ -45,7 +45,20 @@ fn run(
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if app.command_mode {
+                    // Exit dialog takes priority over everything
+                    if app.exit_dialog {
+                        match key.code {
+                            KeyCode::Left | KeyCode::Char('h') => app.exit_dialog_left(),
+                            KeyCode::Right | KeyCode::Char('l') => app.exit_dialog_right(),
+                            KeyCode::Enter => {
+                                if let Some(true) = app.exit_dialog_confirm()? {
+                                    return Ok(());
+                                }
+                            }
+                            KeyCode::Esc => app.exit_dialog_cancel(),
+                            _ => {}
+                        }
+                    } else if app.command_mode {
                         match key.code {
                             KeyCode::Esc => app.cancel_command(),
                             KeyCode::Enter => {
@@ -60,6 +73,7 @@ fn run(
                         }
                     } else {
                         match key.code {
+                            KeyCode::Esc => app.show_exit_dialog(),
                             KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(());
                             }
