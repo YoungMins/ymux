@@ -610,10 +610,9 @@ function findAndMutatePane(
         pane_kind: root.pane_kind ?? "terminal",
         url: root.url ?? null,
         hotkeys: root.hotkeys ?? [],
+        bg_color: root.bg_color ?? null,
       };
       patch(snapshot);
-      // Write fields back onto the tree node (which is structurally identical
-      // to PaneSpec aside from the `kind: "pane"` discriminator).
       root.title = snapshot.title;
       root.shell = snapshot.shell;
       root.cwd = snapshot.cwd;
@@ -622,6 +621,7 @@ function findAndMutatePane(
       root.pane_kind = snapshot.pane_kind;
       root.url = snapshot.url;
       root.hotkeys = snapshot.hotkeys;
+      root.bg_color = snapshot.bg_color;
       return true;
     }
     return false;

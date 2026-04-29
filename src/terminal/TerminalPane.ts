@@ -71,9 +71,7 @@ export class TerminalPane implements Pane {
     // when no user title has been set (via `Ctrl+Shift+R`).
     this.titleEl = document.createElement("div");
     this.titleEl.className = "pane-title";
-    // DEBUG: show bg_color in title to verify config round-trip
-    const debugBg = opts.spec.bg_color ? ` [bg:${opts.spec.bg_color}]` : "";
-    this.titleEl.textContent = (opts.spec.title || opts.spec.shell || t("terminal.defaultTitle")) + debugBg;
+    this.titleEl.textContent = opts.spec.title || opts.spec.shell || t("terminal.defaultTitle");
     this.element.appendChild(this.titleEl);
 
     // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
