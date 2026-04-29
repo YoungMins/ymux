@@ -78,6 +78,14 @@ jobs:
             librsvg2-dev \
             pkg-config
 
+      - name: Create dummy sidecar binaries for cargo check
+        run: |
+          mkdir -p src-tauri/binaries
+          TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+          for tool in ymon ydir ycode y; do
+            touch "src-tauri/binaries/${tool}-${TRIPLE}"
+          done
+
       - name: cargo check --bin (with desktop feature)
         run: cargo check --features desktop --bin ymux -p ymux
 
