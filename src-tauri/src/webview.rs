@@ -49,14 +49,22 @@ pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn navigate_webview(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
+    eprintln!("[webview] navigate request: {} -> {}", label, url);
     let win = app
         .get_webview_window(&label)
         .ok_or_else(|| format!("webview '{label}' not found"))?;
 
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
-    win.navigate(parsed)
-        .map_err(|e| format!("navigate failed: {e}"))?;
-    Ok(())
+    match win.navigate(parsed) {
+        Ok(_) => {
+            eprintln!("[webview] navigate succeeded for {}", label);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("[webview] navigate failed for {}: {}", label, e);
+            Err(format!("navigate failed: {e}"))
+        }
+    }
 }
 
 #[tauri::command]

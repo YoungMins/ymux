@@ -30,6 +30,7 @@ export class NativeBrowserPane implements Pane {
   private resizeObserver: ResizeObserver;
   private spawned = false;
   private repositionRaf: number | null = null;
+  private posPollTimer: number | null = null;
   private opts: NativeBrowserPaneOptions;
   private cleanupLang: () => void;
   private unlisteners: UnlistenFn[] = [];
@@ -119,11 +120,21 @@ export class NativeBrowserPane implements Pane {
       throw e;
     }
 
-    // Track main window move/resize so child window follows
-    const win = getCurrentWindow();
-    const onMove = await win.onMoved(() => this.scheduleReposition());
-    const onResize = await win.onResized(() => this.scheduleReposition());
-    this.unlisteners.push(onMove, onResize);
+    // Poll the main window position every ~33ms to keep the child window
+    // glued to the placeholder. Tauri's onMoved event only fires AFTER
+    // the user releases the title bar drag — that's too late for
+    // smooth tracking, so we poll instead. Cheap because getScreenRect
+    // and resizeWebview are no-ops if the rect didn't change.
+    let lastKey = "";
+    this.posPollTimer = window.setInterval(() => {
+      if (!this.spawned) return;
+      void this.getScreenRect().then((r) => {
+        const key = `${r.x},${r.y},${r.width},${r.height}`;
+        if (key === lastKey) return;
+        lastKey = key;
+        void api.resizeWebview(this.id, r.x, r.y, r.width, r.height).catch(() => {});
+      });
+    }, 33);
   }
 
   focus(): void {
@@ -146,6 +157,10 @@ export class NativeBrowserPane implements Pane {
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     if (this.repositionRaf !== null) cancelAnimationFrame(this.repositionRaf);
+    if (this.posPollTimer !== null) {
+      window.clearInterval(this.posPollTimer);
+      this.posPollTimer = null;
+    }
     if (this.spawned) {
       this.spawned = false;
       void api.destroyWebview(this.id).catch(() => {});
@@ -157,12 +172,21 @@ export class NativeBrowserPane implements Pane {
 
   private navigate(raw: string): void {
     const url = normalizeUrl(raw);
-    if (!url) return;
+    if (!url) {
+      console.warn("[NativeBrowser] invalid URL:", raw);
+      return;
+    }
+    console.log("[NativeBrowser] navigate ->", url);
     this.url = url;
     this.urlInput.value = url;
     this.pushHistory(url);
     if (this.spawned) {
-      void api.navigateWebview(this.id, url).catch(() => {});
+      void api.navigateWebview(this.id, url).then(
+        () => console.log("[NativeBrowser] navigateWebview returned ok"),
+        (e) => console.error("[NativeBrowser] navigateWebview rejected:", e),
+      );
+    } else {
+      console.warn("[NativeBrowser] not spawned yet");
     }
     this.opts.onUrlChange?.(url);
   }
