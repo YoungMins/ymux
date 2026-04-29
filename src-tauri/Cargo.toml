@@ -37,7 +37,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # want to run the cross-platform unit tests can opt out with
 # `--no-default-features --lib --tests` to avoid pulling in the GTK/webkit2gtk
 # system libraries the Tauri crate needs on Linux.
-tauri = { version = "2", optional = true , features = ["unstable"] }
+tauri = { version = "2", optional = true , features = [] }
 
 # Update checker: polls the GitHub releases API in a background thread. Kept
 # behind the `desktop` feature because the cross-platform test suite doesn't

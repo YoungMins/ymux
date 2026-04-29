@@ -1,11 +1,12 @@
-// Native browser pane: uses a Tauri child Webview EMBEDDED inside the main
-// window (not a separate OS window). Bypasses X-Frame-Options / CSP that
-// limit the iframe-based BrowserPane.
+// Native browser pane: opens a child WebviewWindow (parented to the main
+// window) and keeps it positioned over a placeholder <div>. Bypasses
+// X-Frame-Options / CSP restrictions that limit the iframe-based BrowserPane.
 //
-// Layout: a URL bar (back / forward / reload / input) sits in the DOM, and
-// the native webview is positioned to overlay the placeholder below it.
-// Because the webview lives in the same window, it moves with it naturally.
+// The child window tracks the main window's position via onMoved/onResized
+// events so it follows when the user drags the main window.
 
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { PaneSpec, Uuid } from "../types";
 import type { Pane } from "../layout/Pane";
 import { api } from "../ipc/bridge";
@@ -16,8 +17,6 @@ export interface NativeBrowserPaneOptions {
   onFocus?: () => void;
   onUrlChange?: (url: string) => void;
 }
-
-const DEFAULT_URL = "about:blank";
 
 export class NativeBrowserPane implements Pane {
   readonly id: Uuid;
@@ -33,13 +32,14 @@ export class NativeBrowserPane implements Pane {
   private repositionRaf: number | null = null;
   private opts: NativeBrowserPaneOptions;
   private cleanupLang: () => void;
+  private unlisteners: UnlistenFn[] = [];
   private history: string[] = [];
   private historyIndex = -1;
 
   constructor(opts: NativeBrowserPaneOptions) {
     this.id = opts.spec.id;
     this.opts = opts;
-    this.url = opts.spec.url?.trim() || DEFAULT_URL;
+    this.url = opts.spec.url?.trim() || "";
 
     this.element = document.createElement("div");
     this.element.className = "pane browser-pane";
@@ -51,6 +51,7 @@ export class NativeBrowserPane implements Pane {
     titleEl.textContent = opts.spec.title || t("browser.defaultTitle");
     this.element.appendChild(titleEl);
 
+    // Nav bar
     const nav = document.createElement("div");
     nav.className = "browser-pane__nav";
 
@@ -62,7 +63,7 @@ export class NativeBrowserPane implements Pane {
     this.urlInput.type = "text";
     this.urlInput.className = "browser-pane__url";
     this.urlInput.placeholder = "https://…";
-    this.urlInput.value = this.url === DEFAULT_URL ? "" : this.url;
+    this.urlInput.value = this.url;
     this.urlInput.spellcheck = false;
     this.urlInput.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
@@ -78,14 +79,16 @@ export class NativeBrowserPane implements Pane {
     nav.appendChild(this.urlInput);
     this.element.appendChild(nav);
 
+    // Placeholder — the child window overlays this area
     this.placeholder = document.createElement("div");
     this.placeholder.className = "native-browser-pane__placeholder";
     this.placeholder.style.flex = "1 1 auto";
     this.placeholder.style.minHeight = "0";
     this.placeholder.style.minWidth = "0";
-    this.placeholder.style.position = "relative";
+    this.placeholder.style.background = "#1a2230";
     this.element.appendChild(this.placeholder);
 
+    // Track layout changes
     this.resizeObserver = new ResizeObserver(() => this.scheduleReposition());
     this.resizeObserver.observe(this.placeholder);
 
@@ -101,20 +104,26 @@ export class NativeBrowserPane implements Pane {
 
   async spawn(): Promise<void> {
     if (this.spawned) return;
-    const initial = this.url === DEFAULT_URL ? "https://www.bing.com" : normalizeUrl(this.url) ?? "https://www.bing.com";
-    const rect = this.getRect();
-    console.log("[NativeBrowser] spawn", { id: this.id, initial, rect });
+    const initial = this.url
+      ? normalizeUrl(this.url) ?? "https://www.bing.com"
+      : "https://www.bing.com";
+
+    const rect = await this.getScreenRect();
     try {
       await api.createWebview(this.id, initial, rect.x, rect.y, rect.width, rect.height);
       this.spawned = true;
       this.urlInput.value = initial;
       this.pushHistory(initial);
-      console.log("[NativeBrowser] created successfully");
     } catch (e) {
-      console.error("[NativeBrowser] create failed:", e);
-      this.placeholder.textContent = `Failed to create browser: ${e}`;
+      this.placeholder.textContent = `Browser failed: ${e}`;
       throw e;
     }
+
+    // Track main window move/resize so child window follows
+    const win = getCurrentWindow();
+    const onMove = await win.onMoved(() => this.scheduleReposition());
+    const onResize = await win.onResized(() => this.scheduleReposition());
+    this.unlisteners.push(onMove, onResize);
   }
 
   focus(): void {
@@ -132,18 +141,19 @@ export class NativeBrowserPane implements Pane {
   }
 
   dispose(): void {
-    console.log("[NativeBrowser] dispose", this.id);
     this.cleanupLang();
     this.resizeObserver.disconnect();
+    for (const u of this.unlisteners) u();
+    this.unlisteners = [];
     if (this.repositionRaf !== null) cancelAnimationFrame(this.repositionRaf);
     if (this.spawned) {
       this.spawned = false;
-      void api.destroyWebview(this.id).catch((e) =>
-        console.warn("[NativeBrowser] destroy failed:", e),
-      );
+      void api.destroyWebview(this.id).catch(() => {});
     }
     this.element.remove();
   }
+
+  // ── Navigation ──────────────────────────────────────────────────────
 
   private navigate(raw: string): void {
     const url = normalizeUrl(raw);
@@ -152,10 +162,7 @@ export class NativeBrowserPane implements Pane {
     this.urlInput.value = url;
     this.pushHistory(url);
     if (this.spawned) {
-      console.log("[NativeBrowser] navigate:", url);
-      void api.navigateWebview(this.id, url).catch((e) =>
-        console.error("[NativeBrowser] navigate failed:", e),
-      );
+      void api.navigateWebview(this.id, url).catch(() => {});
     }
     this.opts.onUrlChange?.(url);
   }
@@ -166,11 +173,7 @@ export class NativeBrowserPane implements Pane {
     const url = this.history[this.historyIndex];
     this.url = url;
     this.urlInput.value = url;
-    if (this.spawned) {
-      void api.navigateWebview(this.id, url).catch((e) =>
-        console.error("[NativeBrowser] back failed:", e),
-      );
-    }
+    if (this.spawned) void api.navigateWebview(this.id, url).catch(() => {});
     this.opts.onUrlChange?.(url);
   }
 
@@ -180,19 +183,13 @@ export class NativeBrowserPane implements Pane {
     const url = this.history[this.historyIndex];
     this.url = url;
     this.urlInput.value = url;
-    if (this.spawned) {
-      void api.navigateWebview(this.id, url).catch((e) =>
-        console.error("[NativeBrowser] forward failed:", e),
-      );
-    }
+    if (this.spawned) void api.navigateWebview(this.id, url).catch(() => {});
     this.opts.onUrlChange?.(url);
   }
 
   private doReload(): void {
     if (this.spawned && this.url) {
-      void api.navigateWebview(this.id, this.url).catch((e) =>
-        console.error("[NativeBrowser] reload failed:", e),
-      );
+      void api.navigateWebview(this.id, this.url).catch(() => {});
     }
   }
 
@@ -202,28 +199,48 @@ export class NativeBrowserPane implements Pane {
     this.historyIndex = this.history.length - 1;
   }
 
+  // ── Positioning ─────────────────────────────────────────────────────
+
   private scheduleReposition(): void {
     if (this.repositionRaf !== null) return;
     this.repositionRaf = requestAnimationFrame(() => {
       this.repositionRaf = null;
-      void this.reposition().catch(() => {});
+      void this.reposition();
     });
   }
 
   private async reposition(): Promise<void> {
     if (!this.spawned) return;
-    const rect = this.getRect();
-    await api.resizeWebview(this.id, rect.x, rect.y, rect.width, rect.height);
+    const rect = await this.getScreenRect();
+    await api.resizeWebview(this.id, rect.x, rect.y, rect.width, rect.height).catch(() => {});
   }
 
-  private getRect(): { x: number; y: number; width: number; height: number } {
-    const r = this.placeholder.getBoundingClientRect();
-    return {
-      x: Math.round(r.left),
-      y: Math.round(r.top),
-      width: Math.max(1, Math.round(r.width)),
-      height: Math.max(1, Math.round(r.height)),
-    };
+  /// Convert placeholder DOM rect to screen (physical) pixels for the
+  /// child WebviewWindow. The child window uses screen coordinates.
+  private async getScreenRect(): Promise<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }> {
+    const win = getCurrentWindow();
+    const [, scale] = await Promise.all([
+      win.outerPosition(),
+      win.scaleFactor(),
+    ]);
+    const domRect = this.placeholder.getBoundingClientRect();
+
+    // outerPosition is in physical pixels. DOM rect is in CSS pixels.
+    // On decorated windows, we need to account for the title bar offset.
+    // Tauri's outerPosition gives the frame origin; innerPosition gives
+    // the content origin. The difference is the title bar + border.
+    const innerPos = await win.innerPosition();
+    const x = innerPos.x + Math.round(domRect.left * scale);
+    const y = innerPos.y + Math.round(domRect.top * scale);
+    const width = Math.max(1, Math.round(domRect.width * scale));
+    const height = Math.max(1, Math.round(domRect.height * scale));
+
+    return { x, y, width, height };
   }
 }
 

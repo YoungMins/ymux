@@ -1,15 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for ymux. Grants IPC, event, and webview APIs.",
+  "description": "Default capability for ymux. Grants core IPC + event APIs.",
   "windows": ["main"],
-  "webviews": ["main", "browser-*"],
   "permissions": [
-    "core:default",
-    "core:window:default",
-    "core:webview:default",
-    "core:webview:allow-create-webview",
-    "core:webview:allow-set-webview-position",
-    "core:webview:allow-set-webview-size"
+    "core:default"
   ]
 }

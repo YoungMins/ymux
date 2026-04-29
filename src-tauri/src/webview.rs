@@ -1,13 +1,10 @@
-//! Tauri commands for managing native browser child webviews.
+//! Tauri commands for managing native browser child webview windows.
 //!
-//! Each browser pane gets its own `Webview` **embedded inside the main
-//! window** (not a separate OS window). The frontend positions a placeholder
-//! `<div>` in the layout, and these commands create / move / resize the
-//! native webview to overlay that placeholder. Because the webview lives in
-//! the same window, it moves with it — no position sync needed.
+//! Each browser pane gets its own `WebviewWindow` parented to the main window.
+//! The frontend keeps the child window positioned over a placeholder `<div>` by
+//! listening for layout changes AND main-window move/resize events.
 
-use tauri::webview::WebviewBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
 #[tauri::command]
 pub fn create_webview(
@@ -21,20 +18,21 @@ pub fn create_webview(
 ) -> Result<(), String> {
     let label = format!("browser-{}", id);
 
-    let main_window = app
-        .get_window("main")
+    let parent = app
+        .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
     let parsed_url: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
-    let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed_url));
 
-    main_window
-        .add_child(
-            builder,
-            LogicalPosition::new(x, y),
-            LogicalSize::new(width, height),
-        )
-        .map_err(|e| format!("failed to create webview: {e}"))?;
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed_url))
+        .title("ymux browser")
+        .inner_size(width, height)
+        .position(x, y)
+        .decorations(false)
+        .parent(&parent)
+        .map_err(|e| format!("set parent failed: {e}"))?
+        .build()
+        .map_err(|e| format!("create webview failed: {e}"))?;
 
     Ok(())
 }
@@ -42,8 +40,8 @@ pub fn create_webview(
 #[tauri::command]
 pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    if let Some(wv) = app.get_webview(&label) {
-        wv.close().map_err(|e| format!("close failed: {e}"))?;
+    if let Some(win) = app.get_webview_window(&label) {
+        win.close().map_err(|e| format!("close failed: {e}"))?;
     }
     Ok(())
 }
@@ -51,12 +49,12 @@ pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn navigate_webview(app: AppHandle, id: String, url: String) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    let wv = app
-        .get_webview(&label)
+    let win = app
+        .get_webview_window(&label)
         .ok_or_else(|| format!("webview '{label}' not found"))?;
 
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
-    wv.navigate(parsed)
+    win.navigate(parsed)
         .map_err(|e| format!("navigate failed: {e}"))?;
     Ok(())
 }
@@ -71,13 +69,13 @@ pub fn resize_webview(
     height: f64,
 ) -> Result<(), String> {
     let label = format!("browser-{}", id);
-    let wv = app
-        .get_webview(&label)
+    let win = app
+        .get_webview_window(&label)
         .ok_or_else(|| format!("webview '{label}' not found"))?;
 
-    wv.set_position(LogicalPosition::new(x, y))
+    win.set_position(PhysicalPosition::new(x as i32, y as i32))
         .map_err(|e| format!("set_position failed: {e}"))?;
-    wv.set_size(LogicalSize::new(width, height))
+    win.set_size(PhysicalSize::new(width as u32, height as u32))
         .map_err(|e| format!("set_size failed: {e}"))?;
     Ok(())
 }
