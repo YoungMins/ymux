@@ -32,7 +32,7 @@ export class NativeBrowserPane implements Pane {
   private repositionRaf: number | null = null;
   private posPollTimer: number | null = null;
   private cachedScale = 1;
-  private statusEl: HTMLDivElement;
+  private statusEl: HTMLPreElement;
   private opts: NativeBrowserPaneOptions;
   private cleanupLang: () => void;
   private unlisteners: UnlistenFn[] = [];
@@ -94,20 +94,22 @@ export class NativeBrowserPane implements Pane {
     this.element.appendChild(this.placeholder);
 
     // Status overlay — visible debug log for users without DevTools.
-    this.statusEl = document.createElement("div");
+    this.statusEl = document.createElement("pre");
     this.statusEl.style.position = "absolute";
     this.statusEl.style.bottom = "4px";
     this.statusEl.style.left = "4px";
     this.statusEl.style.right = "4px";
-    this.statusEl.style.padding = "2px 4px";
+    this.statusEl.style.margin = "0";
+    this.statusEl.style.padding = "4px 6px";
     this.statusEl.style.background = "rgba(11, 15, 20, 0.85)";
     this.statusEl.style.color = "#7fdbca";
     this.statusEl.style.fontSize = "10px";
+    this.statusEl.style.lineHeight = "1.3";
     this.statusEl.style.fontFamily = "Cascadia Code, Consolas, monospace";
     this.statusEl.style.zIndex = "5";
-    this.statusEl.style.whiteSpace = "nowrap";
-    this.statusEl.style.overflow = "hidden";
-    this.statusEl.style.textOverflow = "ellipsis";
+    this.statusEl.style.whiteSpace = "pre-wrap";
+    this.statusEl.style.maxHeight = "120px";
+    this.statusEl.style.overflow = "auto";
     this.placeholder.appendChild(this.statusEl);
 
     // Track layout changes
@@ -123,9 +125,18 @@ export class NativeBrowserPane implements Pane {
       this.reloadBtn.title = t("browser.reload");
     });
 
-    // Visible startup status. Use queueMicrotask so the status element
-    // is mounted in the DOM before the first setStatus call.
-    queueMicrotask(() => this.setStatus(`constructed id=${this.id.slice(0, 8)}`));
+    this.setStatus(`constructed id=${this.id.slice(0, 8)}`);
+  }
+
+  /// Append a line to the visible status log inside the placeholder.
+  /// Last 6 lines kept so the user can see the state history.
+  private statusLines: string[] = [];
+  private setStatus(msg: string): void {
+    this.statusLines.push(msg);
+    if (this.statusLines.length > 6) {
+      this.statusLines.splice(0, this.statusLines.length - 6);
+    }
+    this.statusEl.textContent = this.statusLines.join("\n");
   }
 
   async spawn(): Promise<void> {
@@ -196,12 +207,6 @@ export class NativeBrowserPane implements Pane {
         });
       });
     }, 33);
-  }
-
-  /// Show a short status message in the placeholder so the user can see
-  /// what's happening without DevTools.
-  private setStatus(msg: string): void {
-    this.statusEl.textContent = msg;
   }
 
   focus(): void {
