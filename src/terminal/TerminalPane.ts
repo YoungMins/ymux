@@ -24,6 +24,7 @@ export interface TerminalPaneOptions {
   /// Called when the user mutates the HotKey list (add / edit / delete /
   /// reorder) so the owner can persist the new list into the PaneSpec.
   onHotKeysChange?: (hotkeys: HotKeyDef[]) => void;
+  onBgColorChange?: (color: string | null) => void;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -58,6 +59,9 @@ export class TerminalPane implements Pane {
     this.element = document.createElement("div");
     this.element.className = "pane";
     this.element.tabIndex = 0;
+    if (opts.spec.bg_color) {
+      this.element.style.background = opts.spec.bg_color;
+    }
     // Tag the element so a host-level focusin handler can find it via
     // `event.target.closest('.pane')` and update the focused pane id without
     // having to thread an `onFocus` callback through every render.
@@ -75,9 +79,14 @@ export class TerminalPane implements Pane {
     this.hotkeyBar = new HotKeyBar({
       paneId: this.id,
       initial: opts.spec.hotkeys ?? [],
+      initialBgColor: opts.spec.bg_color ?? null,
       onChange: (next) => {
         this.spec = { ...this.spec, hotkeys: next };
         this.opts.onHotKeysChange?.(next);
+      },
+      onBgColorChange: (color) => {
+        this.setBgColor(color);
+        this.opts.onBgColorChange?.(color);
       },
     });
     this.element.appendChild(this.hotkeyBar.element);
@@ -89,6 +98,7 @@ export class TerminalPane implements Pane {
     this.termHost.className = "pane__term";
     this.element.appendChild(this.termHost);
 
+    const bgColor = opts.spec.bg_color || "#0b0f14";
     this.term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
@@ -97,7 +107,7 @@ export class TerminalPane implements Pane {
       fontSize: 13,
       scrollback: 10_000,
       theme: {
-        background: "#0b0f14",
+        background: bgColor,
         foreground: "#d6deeb",
         cursor: "#7fdbca",
         black: "#000000",
@@ -341,6 +351,13 @@ export class TerminalPane implements Pane {
 
   /// Set the visible title for this pane. Used by the rename flow; the new
   /// title is also written back into the PaneSpec by WorkspaceManager.
+  setBgColor(color: string | null): void {
+    const bg = color || "#0b0f14";
+    this.spec = { ...this.spec, bg_color: color };
+    this.term.options.theme = { ...this.term.options.theme, background: bg };
+    this.element.style.background = bg;
+  }
+
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
     this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");

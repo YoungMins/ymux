@@ -33,6 +33,7 @@ export interface PaneSpec {
   pane_kind?: PaneKind;
   url?: string | null;
   hotkeys?: HotKeyDef[];
+  bg_color?: string | null;
 }
 
 export type SplitDir = "horizontal" | "vertical";

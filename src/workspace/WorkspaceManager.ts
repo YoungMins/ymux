@@ -262,6 +262,11 @@ export class WorkspaceManager {
           p.hotkeys = hotkeys;
         });
       },
+      onBgColorChange: (color) => {
+        this.updatePaneSpec(spec.id, (p) => {
+          p.bg_color = color;
+        });
+      },
     });
   }
 

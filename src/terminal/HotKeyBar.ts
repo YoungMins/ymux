@@ -13,9 +13,9 @@ const ENCODER = new TextEncoder();
 export interface HotKeyBarOptions {
   paneId: Uuid;
   initial: HotKeyDef[];
-  /// Called whenever the hotkey list is mutated (add / edit / delete / reorder)
-  /// so the WorkspaceManager can persist the change.
+  initialBgColor: string | null;
   onChange: (next: HotKeyDef[]) => void;
+  onBgColorChange: (color: string | null) => void;
 }
 
 export class HotKeyBar {
@@ -65,11 +65,19 @@ export class HotKeyBar {
     manage.title = t("hotkey.manage");
     manage.addEventListener("click", (ev) => {
       ev.preventDefault();
-      openHotKeyManager(this.hotkeys, (next) => {
-        this.hotkeys = [...next];
-        this.opts.onChange(this.hotkeys);
-        this.render();
-      });
+      openHotKeyManager(
+        this.hotkeys,
+        this.opts.initialBgColor,
+        (next) => {
+          this.hotkeys = [...next];
+          this.opts.onChange(this.hotkeys);
+          this.render();
+        },
+        (color) => {
+          this.opts.initialBgColor = color;
+          this.opts.onBgColorChange(color);
+        },
+      );
     });
     this.element.appendChild(manage);
   }

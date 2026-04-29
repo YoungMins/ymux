@@ -1,9 +1,18 @@
 import type { HotKeyDef } from "../types";
 import { t } from "../i18n/i18n";
 
+const COLOR_PRESETS = [
+  "#0b0f14", "#1a1a2e", "#16213e", "#0f3460",
+  "#1b1b2f", "#162447", "#1f4068", "#1a3c40",
+  "#2d132c", "#3b0a30", "#461220", "#1c0c1b",
+  "#0a1628", "#0d1b2a", "#1b263b", "#1d3557",
+];
+
 export function openHotKeyManager(
   initial: HotKeyDef[],
+  initialBgColor: string | null,
   onCommit: (next: HotKeyDef[]) => void,
+  onBgColorChange: (color: string | null) => void,
 ): void {
   let draft: HotKeyDef[] = initial.map((h) => ({ ...h }));
 
@@ -13,6 +22,63 @@ export function openHotKeyManager(
   const modal = document.createElement("div");
   modal.className = "help-modal hotkey-modal";
 
+  // ── Background Color Section ──
+  const colorTitle = document.createElement("h2");
+  colorTitle.textContent = t("hotkey.bgColor") || "Background Color";
+  modal.appendChild(colorTitle);
+
+  const colorRow = document.createElement("div");
+  colorRow.style.display = "flex";
+  colorRow.style.gap = "6px";
+  colorRow.style.flexWrap = "wrap";
+  colorRow.style.alignItems = "center";
+  colorRow.style.marginBottom = "12px";
+
+  for (const preset of COLOR_PRESETS) {
+    const swatch = document.createElement("button");
+    swatch.type = "button";
+    swatch.style.width = "22px";
+    swatch.style.height = "22px";
+    swatch.style.background = preset;
+    swatch.style.border = preset === (initialBgColor || "#0b0f14")
+      ? "2px solid #7fdbca"
+      : "1px solid #1e2a38";
+    swatch.style.borderRadius = "4px";
+    swatch.style.cursor = "pointer";
+    swatch.style.padding = "0";
+    swatch.title = preset;
+    swatch.addEventListener("click", () => {
+      onBgColorChange(preset === "#0b0f14" ? null : preset);
+      // Update border highlights
+      for (const ch of colorRow.querySelectorAll("button")) {
+        (ch as HTMLElement).style.border = ch === swatch
+          ? "2px solid #7fdbca"
+          : "1px solid #1e2a38";
+      }
+      // Update custom input
+      const inp = colorRow.querySelector("input");
+      if (inp) inp.value = preset;
+    });
+    colorRow.appendChild(swatch);
+  }
+
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.className = "hotkey-modal__label-input";
+  customInput.value = initialBgColor || "#0b0f14";
+  customInput.placeholder = "#hex";
+  customInput.style.width = "80px";
+  customInput.addEventListener("change", () => {
+    const v = customInput.value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+      onBgColorChange(v === "#0b0f14" ? null : v);
+    }
+  });
+  colorRow.appendChild(customInput);
+
+  modal.appendChild(colorRow);
+
+  // ── HotKey Section ──
   const title = document.createElement("h2");
   title.textContent = t("hotkey.title");
   modal.appendChild(title);

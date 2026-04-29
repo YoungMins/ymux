@@ -54,6 +54,14 @@ export function t(key: string): string {
 type Translations = Record<string, Partial<Record<Lang, string>>>;
 
 const strings: Translations = {
+  // ── Pane Settings (⚙ modal) ────────────────────────────────────
+  "hotkey.bgColor": {
+    en: "Background Color", ko: "배경 색상", ja: "背景色",
+    zh: "背景颜色", hi: "पृष्ठभूमि रंग", es: "Color de fondo",
+    fr: "Couleur de fond", ar: "لون الخلفية", pt: "Cor de fundo",
+    ru: "Цвет фона", tr: "Arka plan rengi", de: "Hintergrundfarbe", vi: "Màu nền",
+  },
+
   // ── HotKey Manager ──────────────────────────────────────────────
   "hotkey.title": {
     en: "Manage HotKeys",
