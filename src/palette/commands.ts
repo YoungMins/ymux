@@ -62,6 +62,16 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       keybinding: "Ctrl+Shift+Tab",
       action: () => manager.cycleFocus(-1),
     },
+    {
+      id: "workspace.rename",
+      label: () => t("workspace.renamePrompt"),
+      action: () => {
+        const wsId = manager.activeIdValue;
+        const current = manager.getWorkspaceName(wsId) ?? "";
+        const next = window.prompt(t("workspace.renamePrompt"), current);
+        if (next !== null) manager.renameWorkspace(wsId, next);
+      },
+    },
     ...Array.from({ length: 9 }, (_, i) => ({
       id: `workspace.${i + 1}`,
       label: () => `${t("shortcut.switchWs")} ${i + 1}`,

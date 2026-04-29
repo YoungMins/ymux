@@ -48,8 +48,10 @@ body,
 }
 
 .workspace-bar__ws {
-  width: 24px;
+  min-width: 24px;
+  max-width: 48px;
   height: 20px;
+  padding: 0 4px;
   background: transparent;
   color: var(--fg-muted);
   border: 1px solid transparent;

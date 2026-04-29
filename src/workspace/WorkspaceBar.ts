@@ -4,6 +4,12 @@ import { api } from "../ipc/bridge";
 import { mountHelpButton } from "../help/HelpOverlay";
 import { t, onLangChange } from "../i18n/i18n";
 
+function wsTooltip(id: number, manager: WorkspaceManager): string {
+  const name = manager.getWorkspaceName(id);
+  const base = name ? `${id}: ${name}` : `Workspace ${id}`;
+  return `${base} (Ctrl+Alt+${id}) — ${t("workspace.dblclickRename")}`;
+}
+
 export function mountWorkspaceBar(
   host: HTMLElement,
   manager: WorkspaceManager,
@@ -21,10 +27,20 @@ export function mountWorkspaceBar(
     const btn = document.createElement("button");
     btn.className = "workspace-bar__ws";
     btn.textContent = String(i);
-    btn.title = `Workspace ${i} (Ctrl+Alt+${i})`;
+    btn.title = wsTooltip(i, manager);
     btn.addEventListener("click", () => {
       void manager.activate(i);
       highlight();
+    });
+    btn.addEventListener("dblclick", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const current = manager.getWorkspaceName(i) ?? "";
+      const next = window.prompt(t("workspace.renamePrompt"), current);
+      if (next !== null) {
+        manager.renameWorkspace(i, next);
+        highlight();
+      }
     });
     wsGroup.appendChild(btn);
     buttons.set(i, btn);
@@ -86,6 +102,10 @@ export function mountWorkspaceBar(
       );
       const ws = manager.workspaces.find((w) => w.id === id);
       btn.classList.toggle("workspace-bar__ws--exists", !!ws);
+      btn.title = wsTooltip(id, manager);
+      const name = ws?.name;
+      const isCustom = name && name !== `workspace-${id}` && name !== "main";
+      btn.textContent = isCustom ? name.slice(0, 3) : String(id);
     }
   }
 

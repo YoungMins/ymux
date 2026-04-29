@@ -495,6 +495,19 @@ export class WorkspaceManager {
     );
   }
 
+  getWorkspaceName(wsId: number): string | null {
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    return ws?.name ?? null;
+  }
+
+  renameWorkspace(wsId: number, name: string): void {
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    if (!ws) return;
+    const trimmed = name.trim();
+    ws.name = trimmed.length > 0 ? trimmed : `workspace-${wsId}`;
+    this.persistDebounced();
+  }
+
   /// Request the focused pane to toggle its scrollback search bar. Only
   /// TerminalPane exposes this; for non-terminal panes the call is a no-op.
   toggleSearchOnFocused(): void {

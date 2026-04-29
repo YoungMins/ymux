@@ -593,4 +593,16 @@ const strings: Translations = {
     fr: "Aucune commande correspondante", ar: "لا أوامر مطابقة", pt: "Nenhum comando correspondente",
     ru: "Нет совпадающих команд", tr: "Eşleşen komut yok", de: "Keine passenden Befehle", vi: "Không có lệnh phù hợp",
   },
+  "workspace.renamePrompt": {
+    en: "Workspace name:", ko: "워크스페이스 이름:", ja: "ワークスペース名:",
+    zh: "工作区名称:", hi: "कार्यक्षेत्र नाम:", es: "Nombre del espacio:",
+    fr: "Nom de l'espace :", ar: "اسم مساحة العمل:", pt: "Nome do workspace:",
+    ru: "Имя рабочего пространства:", tr: "Çalışma alanı adı:", de: "Workspace-Name:", vi: "Tên workspace:",
+  },
+  "workspace.dblclickRename": {
+    en: "double-click to rename", ko: "더블클릭으로 이름 변경", ja: "ダブルクリックで名前変更",
+    zh: "双击重命名", hi: "नाम बदलने के लिए डबल-क्लिक", es: "doble clic para renombrar",
+    fr: "double-clic pour renommer", ar: "انقر مرتين لإعادة التسمية", pt: "clique duplo para renomear",
+    ru: "двойной клик для переименования", tr: "yeniden adlandırmak için çift tıklayın", de: "Doppelklick zum Umbenennen", vi: "nhấp đúp để đổi tên",
+  },
 };
