@@ -37,7 +37,8 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   selectable profiles.
 - **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between
   workspaces. Every workspace saves its own layout. Panes stay alive across
-  switches (tmux-style) so your REPLs and tails don't die.
+  switches (tmux-style) so your REPLs and tails don't die. Double-click a
+  workspace button to give it a custom name.
 - **HotKey buttons per pane**: bind frequently-used commands (single line or
   batch multi-line) to labelled buttons on top of every terminal. Click →
   the command is injected into the shell. Manage them from the `⚙` button.
@@ -120,6 +121,7 @@ close.
 | `Ctrl+Tab`                  | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | Focus previous pane                  |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | Switch workspace                    |
+| Double-click workspace button | Rename workspace                    |
 | `Ctrl+Click` on a URL       | Open link in default browser         |
 | `?` button (toolbar)        | Show / hide this shortcut reference  |
 
