@@ -489,4 +489,63 @@ mod tests {
         assert!(app.cursor_row >= app.scroll_row);
         assert!(app.cursor_row < app.scroll_row + app.viewport_rows);
     }
+
+    #[test]
+    fn exit_dialog_cancel() {
+        let mut app = app_with_text("hello");
+        assert!(!app.exit_dialog);
+        app.show_exit_dialog();
+        assert!(app.exit_dialog);
+        app.exit_dialog_cancel();
+        assert!(!app.exit_dialog);
+    }
+
+    #[test]
+    fn exit_dialog_quit_without_save() {
+        let mut app = app_with_text("hello");
+        app.show_exit_dialog();
+        app.exit_choice = 1; // Quit without saving
+        let result = app.exit_dialog_confirm().unwrap();
+        assert_eq!(result, Some(true));
+        assert!(!app.exit_dialog);
+    }
+
+    #[test]
+    fn exit_dialog_save_and_quit() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        let mut app = App::new(Some(path.clone())).unwrap();
+        app.insert_char('x');
+        assert!(app.buffer.dirty);
+        app.show_exit_dialog();
+        app.exit_choice = 0; // Save & Quit
+        let result = app.exit_dialog_confirm().unwrap();
+        assert_eq!(result, Some(true));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "x");
+    }
+
+    #[test]
+    fn exit_dialog_navigation() {
+        let mut app = app_with_text("hello");
+        app.show_exit_dialog();
+        assert_eq!(app.exit_choice, 2); // default = Cancel
+        app.exit_dialog_left();
+        assert_eq!(app.exit_choice, 1);
+        app.exit_dialog_left();
+        assert_eq!(app.exit_choice, 0);
+        app.exit_dialog_left();
+        assert_eq!(app.exit_choice, 0); // clamped
+        app.exit_dialog_right();
+        assert_eq!(app.exit_choice, 1);
+    }
+
+    #[test]
+    fn esc_in_command_mode_exits_command_not_dialog() {
+        let mut app = app_with_text("hello");
+        app.enter_command_mode();
+        assert!(app.command_mode);
+        app.show_exit_dialog(); // should exit command mode, not show dialog
+        assert!(!app.command_mode);
+        assert!(!app.exit_dialog);
+    }
 }

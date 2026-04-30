@@ -819,4 +819,116 @@ shell = "PowerShell 7"
         assert_eq!(backend.shells[0].name, "new-a");
         assert_eq!(backend.shells[1].name, "new-b");
     }
+
+    /// Regression: bg_color must survive a full Config → TOML → Config round-trip.
+    /// This caught the Option<String> deserialization bug in tagged enums.
+    #[test]
+    fn bg_color_toml_roundtrip() {
+        let mut config = Config::default();
+        let ws = config.workspace_mut(1);
+        if let LayoutNode::Pane(ref mut p) = ws.root {
+            p.bg_color = "#5b6e86".to_string();
+        }
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(
+            toml_str.contains("bg_color = \"#5b6e86\""),
+            "TOML must contain bg_color"
+        );
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let pane = loaded.workspaces[0].panes()[0];
+        assert_eq!(pane.bg_color, "#5b6e86", "bg_color lost in round-trip");
+    }
+
+    /// Verify that all PaneSpec fields survive TOML round-trip (catches
+    /// the "forgot to add new field" class of bugs).
+    #[test]
+    fn panespec_all_fields_roundtrip() {
+        let spec = PaneSpec {
+            id: Uuid::new_v4(),
+            title: Some("test".into()),
+            shell: "pwsh".into(),
+            cwd: Some("C:\\Users".into()),
+            startup_cmd: Some("echo hi".into()),
+            env: vec![("FOO".into(), "bar".into())],
+            pane_kind: PaneKind::Terminal,
+            url: None,
+            hotkeys: vec![HotKeyDef {
+                label: "build".into(),
+                command: "cargo build".into(),
+                batch: true,
+            }],
+            bg_color: "#1a2b3c".to_string(),
+        };
+        let config = Config {
+            version: CONFIG_VERSION,
+            active_workspace: 1,
+            shells: vec![],
+            workspaces: vec![Workspace {
+                id: 1,
+                name: "test".into(),
+                root: LayoutNode::Pane(spec.clone()),
+            }],
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let loaded_spec = loaded.workspaces[0].panes()[0];
+
+        assert_eq!(loaded_spec.id, spec.id);
+        assert_eq!(loaded_spec.title, spec.title);
+        assert_eq!(loaded_spec.shell, spec.shell);
+        assert_eq!(loaded_spec.cwd, spec.cwd);
+        assert_eq!(loaded_spec.startup_cmd, spec.startup_cmd);
+        assert_eq!(loaded_spec.env, spec.env);
+        assert_eq!(loaded_spec.hotkeys.len(), 1);
+        assert_eq!(loaded_spec.hotkeys[0].label, "build");
+        assert_eq!(loaded_spec.hotkeys[0].batch, true);
+        assert_eq!(loaded_spec.bg_color, "#1a2b3c");
+    }
+
+    /// Empty bg_color (default) must round-trip as empty string, not disappear.
+    #[test]
+    fn empty_bg_color_roundtrip() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let pane = loaded.workspaces[0].panes()[0];
+        assert_eq!(pane.bg_color, "", "empty bg_color must stay empty");
+    }
+
+    /// Split layout with mixed bg_color values must preserve each pane's color.
+    #[test]
+    fn split_layout_bg_color_roundtrip() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let config = Config {
+            version: CONFIG_VERSION,
+            active_workspace: 1,
+            shells: vec![],
+            workspaces: vec![Workspace {
+                id: 1,
+                name: "main".into(),
+                root: LayoutNode::Split {
+                    direction: SplitDir::Horizontal,
+                    ratio: 0.5,
+                    a: Box::new(LayoutNode::Pane(PaneSpec {
+                        id: a,
+                        bg_color: "#ff0000".to_string(),
+                        ..PaneSpec::new_default()
+                    })),
+                    b: Box::new(LayoutNode::Pane(PaneSpec {
+                        id: b,
+                        bg_color: String::new(),
+                        ..PaneSpec::new_default()
+                    })),
+                },
+            }],
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        let pa = panes.iter().find(|p| p.id == a).unwrap();
+        let pb = panes.iter().find(|p| p.id == b).unwrap();
+        assert_eq!(pa.bg_color, "#ff0000");
+        assert_eq!(pb.bg_color, "");
+    }
 }

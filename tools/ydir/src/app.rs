@@ -528,4 +528,75 @@ mod tests {
         assert!(dest.join("inner.txt").exists());
         assert!(dest.join("nested").join("deep.txt").exists());
     }
+
+    #[test]
+    fn executable_detection() {
+        assert!(super::is_executable("test.exe"));
+        assert!(super::is_executable("build.bat"));
+        assert!(super::is_executable("run.cmd"));
+        assert!(super::is_executable("script.ps1"));
+        assert!(super::is_executable("hello.py"));
+        assert!(super::is_executable("tool.sh"));
+        assert!(!super::is_executable("readme.md"));
+        assert!(!super::is_executable("data.json"));
+        assert!(!super::is_executable("noext"));
+    }
+
+    #[test]
+    fn run_dialog_opens_for_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("test.exe");
+        fs::write(&exe, "fake").unwrap();
+        let mut app = App::new(tmp.path().to_path_buf()).unwrap();
+        // Find the exe in entries
+        let idx = app.left.entries.iter().position(|e| e.name == "test.exe");
+        assert!(idx.is_some());
+        app.left.selected = idx.unwrap();
+        app.enter_dir().unwrap();
+        assert!(app.run_dialog.is_some());
+        assert_eq!(app.run_dialog.as_ref().unwrap().file_name, "test.exe");
+    }
+
+    #[test]
+    fn run_dialog_input_and_cancel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("test.exe");
+        fs::write(&exe, "fake").unwrap();
+        let mut app = App::new(tmp.path().to_path_buf()).unwrap();
+        app.left.selected = app
+            .left
+            .entries
+            .iter()
+            .position(|e| e.name == "test.exe")
+            .unwrap();
+        app.enter_dir().unwrap();
+
+        app.run_dialog_input('a');
+        app.run_dialog_input('r');
+        app.run_dialog_input('g');
+        assert_eq!(app.run_dialog.as_ref().unwrap().args_input, "arg");
+
+        app.run_dialog_backspace();
+        assert_eq!(app.run_dialog.as_ref().unwrap().args_input, "ar");
+
+        app.run_dialog_cancel();
+        assert!(app.run_dialog.is_none());
+    }
+
+    #[test]
+    fn enter_on_non_executable_shows_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("readme.md"), "# hi").unwrap();
+        let mut app = App::new(tmp.path().to_path_buf()).unwrap();
+        let idx = app
+            .left
+            .entries
+            .iter()
+            .position(|e| e.name == "readme.md")
+            .unwrap();
+        app.left.selected = idx;
+        app.enter_dir().unwrap();
+        assert!(app.run_dialog.is_none());
+        assert!(app.status_msg.as_ref().unwrap().contains("Not executable"));
+    }
 }

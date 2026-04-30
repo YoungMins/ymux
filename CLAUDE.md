@@ -138,19 +138,54 @@ Bump `CONFIG_VERSION` in `src-tauri/src/config/model.rs` when:
 
 Do NOT bump for additive fields with `#[serde(default)]` — they load transparently.
 
-## Testing
+## TDD / Testing
+
+### Quick run
+
+```sh
+pnpm test              # Full suite: fmt + tsc + clippy + tests
+# or individually:
+bash scripts/test.sh
+```
+
+### Test count (124 total)
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 43 | Config model, PTY, OSC 7, shell detect, updater, sysmonitor |
+| ymux_lib | 47 | Config model + TOML round-trip, PTY, OSC 7, shell detect, updater, sysmonitor |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
 | yipc | 10 | Protocol serialization, server/client, multi-client, broken pipe |
 | ymon | 11 | App state, tab cycling, scroll, memory values, process sort |
-| ydir | 10 | File listing, navigation, copy/paste/delete, hidden files |
-| ycode | 32 | Buffer ops, undo/redo, cursor movement, commands, CJK support |
+| ydir | 14 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog |
+| ycode | 37 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
 | ylauncher | 4 | Tool discovery, PATH scanning |
 
-Run all: `cargo test -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher && cargo test --no-default-features --lib -p ymux`
+### TDD workflow for new features
+
+1. **Write a failing test first** — in the relevant crate's `#[cfg(test)]` module
+2. **Run it**: `cargo test -p <crate> -- <test_name>`
+3. **Implement** until the test passes
+4. **Run full suite**: `pnpm test`
+5. **Commit**
+
+### What to test when adding a PaneSpec field
+
+```rust
+// In src-tauri/src/config/model.rs tests:
+#[test]
+fn new_field_toml_roundtrip() {
+    let mut config = Config::default();
+    let ws = config.workspace_mut(1);
+    if let LayoutNode::Pane(ref mut p) = ws.root {
+        p.new_field = "value".to_string();
+    }
+    let toml_str = toml::to_string_pretty(&config).unwrap();
+    let loaded: Config = toml::from_str(&toml_str).unwrap();
+    assert_eq!(loaded.workspaces[0].panes()[0].new_field, "value");
+}
+```
+
+Also update the `panespec_all_fields_roundtrip` test to include the new field.
 
 ## Release Process
 
