@@ -882,7 +882,7 @@ shell = "PowerShell 7"
         assert_eq!(loaded_spec.env, spec.env);
         assert_eq!(loaded_spec.hotkeys.len(), 1);
         assert_eq!(loaded_spec.hotkeys[0].label, "build");
-        assert_eq!(loaded_spec.hotkeys[0].batch, true);
+        assert!(loaded_spec.hotkeys[0].batch);
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
     }
 
