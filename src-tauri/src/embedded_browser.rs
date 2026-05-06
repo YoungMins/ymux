@@ -12,7 +12,9 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewBuilder, WebviewUrl, Window};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewBuilder, WebviewUrl, Window,
+};
 
 /// Tracks active embedded browser webview labels so the exit handler can
 /// close them even though they are not `WebviewWindow`s (and therefore

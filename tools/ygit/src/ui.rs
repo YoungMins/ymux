@@ -96,7 +96,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ),
     };
 
-    let status_widget =
-        Paragraph::new(status_text).style(Style::default().fg(status_color));
+    let status_widget = Paragraph::new(status_text).style(Style::default().fg(status_color));
     frame.render_widget(status_widget, status_area);
 }

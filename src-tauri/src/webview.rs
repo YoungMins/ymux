@@ -34,8 +34,16 @@ pub async fn create_webview(
     let label = format!("browser-{}", id);
     eprintln!(
         "[webview] create {} url={} pos=({},{}) size=({}x{}) ua={}",
-        label, url, x, y, width, height,
-        user_agent.as_deref().map(|s| if s.is_empty() { "default" } else { "custom" }).unwrap_or("default"),
+        label,
+        url,
+        x,
+        y,
+        width,
+        height,
+        user_agent
+            .as_deref()
+            .map(|s| if s.is_empty() { "default" } else { "custom" })
+            .unwrap_or("default"),
     );
     let parsed_url: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
     let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
@@ -50,15 +58,16 @@ pub async fn create_webview(
     tauri::async_runtime::spawn(async move {
         let _ = app_run.run_on_main_thread(move || {
             let main_win = app_builder.get_webview_window("main");
-            let builder = WebviewWindowBuilder::new(&app_builder, &label2, WebviewUrl::External(parsed_url))
-                .title("ymux browser")
-                .inner_size(width, height)
-                .position(x, y)
-                .decorations(false)
-                .resizable(false)
-                .skip_taskbar(true)
-                .focused(false)
-                .initialization_script(&init_js);
+            let builder =
+                WebviewWindowBuilder::new(&app_builder, &label2, WebviewUrl::External(parsed_url))
+                    .title("ymux browser")
+                    .inner_size(width, height)
+                    .position(x, y)
+                    .decorations(false)
+                    .resizable(false)
+                    .skip_taskbar(true)
+                    .focused(false)
+                    .initialization_script(&init_js);
             let builder = match user_agent.as_deref() {
                 Some(ua) if !ua.is_empty() => builder.user_agent(ua),
                 _ => builder,
@@ -66,7 +75,10 @@ pub async fn create_webview(
             let builder = match main_win {
                 Some(ref w) => match builder.owner(w) {
                     Ok(b) => b,
-                    Err(e) => { eprintln!("[webview] {} owner() failed: {}", label2, e); return; }
+                    Err(e) => {
+                        eprintln!("[webview] {} owner() failed: {}", label2, e);
+                        return;
+                    }
                 },
                 None => builder,
             };

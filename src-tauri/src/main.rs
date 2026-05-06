@@ -83,8 +83,8 @@ fn main() {
                 // Close embedded browser child webviews (eb-* labels).
                 // These are Webview instances, not WebviewWindows, so they
                 // don't appear in webview_windows() and need separate cleanup.
-                let registry = app_handle
-                    .state::<ymux_lib::embedded_browser::EmbeddedBrowserRegistry>();
+                let registry =
+                    app_handle.state::<ymux_lib::embedded_browser::EmbeddedBrowserRegistry>();
                 if let Ok(labels) = registry.labels.lock() {
                     for label in labels.iter() {
                         if let Some(wv) = app_handle.get_webview(label) {
