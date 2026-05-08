@@ -91,7 +91,28 @@ fn run(
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                             KeyCode::Home => app.move_to_top(),
                             KeyCode::End => app.move_to_bottom(),
-                            KeyCode::Enter => app.enter_dir()?,
+                            KeyCode::Enter => {
+                                app.enter_dir()?;
+                                if let Some(path) = app.open_in_ycode.take() {
+                                    disable_raw_mode()?;
+                                    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+                                    terminal.show_cursor()?;
+
+                                    let status = std::process::Command::new("ycode")
+                                        .arg(&path)
+                                        .status();
+                                    if let Err(e) = status {
+                                        eprintln!("\nFailed to launch ycode: {}", e);
+                                        eprintln!("Press Enter to return to yDir...");
+                                        let _ = std::io::stdin().read_line(&mut String::new());
+                                    }
+
+                                    enable_raw_mode()?;
+                                    terminal.backend_mut().execute(EnterAlternateScreen)?;
+                                    terminal.clear()?;
+                                    let _ = app.refresh();
+                                }
+                            }
                             KeyCode::Backspace => app.go_parent()?,
                             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.refresh()?;
