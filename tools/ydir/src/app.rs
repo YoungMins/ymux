@@ -86,6 +86,7 @@ pub struct App {
     pub clipboard: Option<(PathBuf, ClipboardOp)>,
     pub status_msg: Option<String>,
     pub run_dialog: Option<RunDialog>,
+    pub open_in_ycode: Option<PathBuf>,
 }
 
 impl App {
@@ -100,6 +101,7 @@ impl App {
             clipboard: None,
             status_msg: None,
             run_dialog: None,
+            open_in_ycode: None,
         })
     }
 
@@ -160,8 +162,10 @@ impl App {
                     file_path: entry.path.clone(),
                     args_input: String::new(),
                 });
+            } else if is_binary_file(&entry.path) {
+                self.status_msg = Some(format!("Binary file: {}", entry.name));
             } else {
-                self.status_msg = Some(format!("Not executable: {}", entry.name));
+                self.open_in_ycode = Some(entry.path.clone());
             }
         }
         Ok(())
@@ -295,6 +299,20 @@ impl App {
         }
         Ok(())
     }
+}
+
+pub fn is_binary_file(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let mut file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut buf = [0u8; 8192];
+    let n = match file.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    buf[..n].contains(&0u8)
 }
 
 fn is_executable(name: &str) -> bool {
@@ -586,17 +604,64 @@ mod tests {
     #[test]
     fn enter_on_non_executable_shows_status() {
         let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("readme.md"), "# hi").unwrap();
+        fs::write(tmp.path().join("data.bin"), b"bin\x00data").unwrap();
         let mut app = App::new(tmp.path().to_path_buf()).unwrap();
         let idx = app
             .left
             .entries
             .iter()
-            .position(|e| e.name == "readme.md")
+            .position(|e| e.name == "data.bin")
             .unwrap();
         app.left.selected = idx;
         app.enter_dir().unwrap();
         assert!(app.run_dialog.is_none());
-        assert!(app.status_msg.as_ref().unwrap().contains("Not executable"));
+        assert!(app.status_msg.as_ref().unwrap().contains("Binary file"));
+    }
+
+    #[test]
+    fn binary_detection_null_byte() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("data.bin");
+        fs::write(&bin, b"some\x00binary\x00data").unwrap();
+        assert!(super::is_binary_file(&bin), "should detect null bytes as binary");
+    }
+
+    #[test]
+    fn binary_detection_text_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let txt = tmp.path().join("readme.md");
+        fs::write(&txt, b"# Hello\nThis is plain text.\n").unwrap();
+        assert!(!super::is_binary_file(&txt), "plain text should not be binary");
+    }
+
+    #[test]
+    fn binary_detection_missing_file() {
+        let path = std::path::Path::new("/nonexistent/file.bin");
+        assert!(!super::is_binary_file(path));
+    }
+
+    #[test]
+    fn enter_on_text_file_sets_open_in_ycode() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("notes.txt"), "hello world").unwrap();
+        let mut app = App::new(tmp.path().to_path_buf()).unwrap();
+        let idx = app.left.entries.iter().position(|e| e.name == "notes.txt").unwrap();
+        app.left.selected = idx;
+        app.enter_dir().unwrap();
+        assert!(app.open_in_ycode.is_some());
+        assert!(app.run_dialog.is_none());
+        assert!(app.status_msg.is_none());
+    }
+
+    #[test]
+    fn enter_on_binary_file_shows_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("data.bin"), b"bin\x00data").unwrap();
+        let mut app = App::new(tmp.path().to_path_buf()).unwrap();
+        let idx = app.left.entries.iter().position(|e| e.name == "data.bin").unwrap();
+        app.left.selected = idx;
+        app.enter_dir().unwrap();
+        assert!(app.open_in_ycode.is_none());
+        assert!(app.status_msg.as_ref().unwrap().contains("Binary file"));
     }
 }
