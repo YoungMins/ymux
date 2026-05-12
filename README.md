@@ -72,6 +72,10 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   toolbar for a built-in cheat sheet. Supports English, 한국어, and 日本語.
 - **Command palette**: `Ctrl+Shift+P` opens a VS Code-style searchable
   command overlay. Fuzzy-match any built-in action by name or keybinding.
+- **Per-workspace notes**: every workspace has its own notes button right
+  next to the workspace number, plus `Ctrl+Alt+N` to toggle notes for the
+  active workspace. Notes persist across sessions via `localStorage`, and
+  the icon is highlighted in the accent color when notes exist.
 - **Clipboard paste**: `Ctrl+V` pastes clipboard text into the focused
   terminal (reads via `navigator.clipboard.readText()`).
 - **13-language i18n**: English, 한국어, 日本語, 中文, हिन्दी, Español,
@@ -125,6 +129,7 @@ close.
 | `Ctrl+Shift+Z`              | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+R`              | Rename focused pane                  |
 | `Ctrl+Shift+P`              | Open command palette                 |
+| `Ctrl+Alt+N`                | Toggle notes for active workspace    |
 | `Ctrl+V`                    | Paste clipboard into terminal        |
 | `Ctrl+F`                    | Search terminal scrollback           |
 | `Ctrl+Tab`                  | Focus next pane                      |
