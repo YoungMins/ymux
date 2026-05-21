@@ -62,6 +62,9 @@ fn main() {
             ymux_lib::embedded_browser::set_embedded_browser_visible,
             ymux_lib::embedded_browser::forward_keystroke,
             ymux_lib::embedded_browser::child_webview_focused,
+            ymux_lib::settings::load_syntax_theme,
+            ymux_lib::settings::save_syntax_theme,
+            ymux_lib::settings::open_config_path,
         ])
         .setup(|app| {
             let ipc_addr = start_ipc_server(app.handle().clone());

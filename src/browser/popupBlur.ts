@@ -43,3 +43,19 @@ export function popPopup(): void {
     for (const cb of listeners) cb(false);
   }
 }
+
+// Native `window.prompt()` displays a WebView2-level dialog that paints below
+// OS-level child webviews (same z-order problem as our HTML modals). Wrap it
+// so the dialog is shown with browser panes momentarily hidden. `try/finally`
+// guarantees the popup count is decremented even if the call throws.
+export function promptWithBlur(
+  message: string,
+  defaultValue?: string,
+): string | null {
+  pushPopup();
+  try {
+    return window.prompt(message, defaultValue);
+  } finally {
+    popPopup();
+  }
+}

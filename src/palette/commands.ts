@@ -1,6 +1,7 @@
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
+import { promptWithBlur } from "../browser/popupBlur";
 
 export interface CommandDef {
   id: string;
@@ -41,7 +42,7 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       keybinding: "Ctrl+Shift+R",
       action: () => {
         const current = manager.getFocusedTitle() ?? "";
-        const next = window.prompt(t("app.paneTitle"), current);
+        const next = promptWithBlur(t("app.paneTitle"), current);
         if (next !== null) manager.renameFocused(next);
       },
     },
@@ -78,7 +79,7 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => {
         const wsId = manager.activeIdValue;
         const current = manager.getWorkspaceName(wsId) ?? "";
-        const next = window.prompt(t("workspace.renamePrompt"), current);
+        const next = promptWithBlur(t("workspace.renamePrompt"), current);
         if (next !== null) manager.renameWorkspace(wsId, next);
       },
     },

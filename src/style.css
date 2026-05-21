@@ -1027,3 +1027,252 @@ body,
 .status-bar__lang:focus {
   border-color: var(--accent);
 }
+
+/* ── Settings modal (WinUI3-style sidebar + content) ──────────────────────── */
+
+.settings-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 100;
+}
+.settings-backdrop--visible {
+  display: block;
+}
+
+.settings-modal {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: min(820px, 92vw);
+  height: min(560px, 86vh);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-modal--visible {
+  display: flex;
+}
+
+.settings-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-modal__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.settings-modal__close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.settings-modal__close:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.settings-modal__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.settings-modal__sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 8px;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+  overflow-y: auto;
+}
+
+.settings-modal__section-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+.settings-modal__section-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.settings-modal__section-btn--active {
+  background: var(--bg-hover);
+  color: var(--accent);
+  font-weight: 600;
+  position: relative;
+}
+.settings-modal__section-btn--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.settings-modal__content {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 20px 24px;
+  overflow-y: auto;
+  color: var(--fg);
+}
+
+.settings-section h3 {
+  margin: 0 0 14px 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.settings-section h4 {
+  margin: 20px 0 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.settings-section p {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+  line-height: 1.55;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 160px auto 110px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+.settings-row__label {
+  font-size: 14px;
+  color: var(--fg);
+}
+.settings-row__hint {
+  grid-column: 2 / span 2;
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: -2px;
+}
+
+.settings-color-picker {
+  width: 32px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.settings-hex-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  padding: 5px 7px;
+  width: 100px;
+  outline: none;
+}
+.settings-hex-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+.settings-btn {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 13px;
+  padding: 7px 16px;
+  cursor: pointer;
+  outline: none;
+}
+.settings-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.settings-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+.settings-btn--primary:hover {
+  background: var(--bg-alt);
+  color: var(--accent);
+}
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.settings-table td {
+  padding: 6px 10px;
+  vertical-align: top;
+}
+.settings-table td.keys {
+  white-space: nowrap;
+  color: var(--accent);
+  width: 1%;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+.settings-table td.keys kbd {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.settings-table td.desc {
+  color: var(--fg);
+}

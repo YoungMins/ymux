@@ -1,13 +1,14 @@
 import type { ShellProfile } from "../types";
 import type { WorkspaceManager } from "./WorkspaceManager";
 import { api } from "../ipc/bridge";
-import { mountHelpButton } from "../help/HelpOverlay";
+import { mountSettings } from "../settings/SettingsOverlay";
 import {
   toggle as toggleNotes,
   hasNotes,
   onNotesChange,
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
+import { promptWithBlur } from "../browser/popupBlur";
 
 function wsTooltip(id: number, manager: WorkspaceManager): string {
   const name = manager.getWorkspaceName(id);
@@ -48,7 +49,7 @@ export function mountWorkspaceBar(
       ev.preventDefault();
       ev.stopPropagation();
       const current = manager.getWorkspaceName(i) ?? "";
-      const next = window.prompt(t("workspace.renamePrompt"), current);
+      const next = promptWithBlur(t("workspace.renamePrompt"), current);
       if (next !== null) {
         manager.renameWorkspace(i, next);
         highlight();
@@ -131,7 +132,7 @@ export function mountWorkspaceBar(
   });
   bar.appendChild(ghBtn);
 
-  const cleanupHelp = mountHelpButton(bar);
+  const cleanupHelp = mountSettings(bar);
 
   host.appendChild(bar);
 

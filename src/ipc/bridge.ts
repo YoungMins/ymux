@@ -12,6 +12,7 @@ import type {
   SpawnedPane,
   Uuid,
 } from "../types";
+import type { YTheme, ConfigPathKind } from "../settings/types";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -177,6 +178,21 @@ export const api = {
   /// frontend must re-emit real bounds via setEmbeddedBrowserBounds).
   setEmbeddedBrowserVisible: (id: string, visible: boolean): Promise<void> =>
     call("set_embedded_browser_visible", { id, visible }),
+
+  /// Load the shared ymux/yCode color palette from `<config_dir>/theme.toml`.
+  /// Returns the default Night Owl-inspired palette if no file exists yet.
+  loadSyntaxTheme: (): Promise<YTheme> => call("load_syntax_theme"),
+
+  /// Persist the palette back to `theme.toml`. Every y* TUI tool re-reads
+  /// it on next launch — no live reload yet.
+  saveSyntaxTheme: (theme: YTheme): Promise<void> =>
+    call("save_syntax_theme", { theme }),
+
+  /// Open the theme.toml file or the ymux config directory with the OS
+  /// default app. Path is selected on the Rust side from a known set so
+  /// the frontend can't smuggle in arbitrary paths.
+  openConfigPath: (kind: ConfigPathKind): Promise<void> =>
+    call("open_config_path", { kind }),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.

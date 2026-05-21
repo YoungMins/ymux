@@ -1,8 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
 use crate::buffer::Buffer;
+use crate::highlight::Highlighter;
+use crate::sidebar::Sidebar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitChoice {
@@ -23,6 +25,36 @@ impl ExitChoice {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+impl SwitchChoice {
+    pub const ALL: [SwitchChoice; 3] = [
+        SwitchChoice::Save,
+        SwitchChoice::Discard,
+        SwitchChoice::Cancel,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SwitchChoice::Save => "Save & Open",
+            SwitchChoice::Discard => "Discard & Open",
+            SwitchChoice::Cancel => "Cancel",
+        }
+    }
+}
+
+/// Active "current buffer is dirty — what now?" modal raised when the user
+/// picks a different file in the sidebar before saving the open one.
+pub struct SwitchPrompt {
+    pub target: PathBuf,
+    pub choice: usize,
+}
+
 pub struct App {
     pub buffer: Buffer,
     pub file_path: Option<PathBuf>,
@@ -36,6 +68,10 @@ pub struct App {
     pub status_msg: Option<String>,
     pub exit_dialog: bool,
     pub exit_choice: usize,
+    pub highlighter: Highlighter,
+    pub sidebar: Sidebar,
+    pub sidebar_open: bool,
+    pub switch_prompt: Option<SwitchPrompt>,
 }
 
 impl App {
@@ -51,6 +87,11 @@ impl App {
             Buffer::new()
         };
 
+        let theme = ytheme::load_theme();
+        let highlighter = Highlighter::new(file_path.as_deref(), &theme);
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let sidebar = Sidebar::new(cwd);
+
         Ok(Self {
             buffer,
             file_path,
@@ -64,6 +105,10 @@ impl App {
             status_msg: None,
             exit_dialog: false,
             exit_choice: 2, // default to Cancel
+            highlighter,
+            sidebar,
+            sidebar_open: false,
+            switch_prompt: None,
         })
     }
 
@@ -215,6 +260,101 @@ impl App {
         self.exit_dialog = false;
     }
 
+    // ── Sidebar ─────────────────────────────────────────────────────
+
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+    }
+
+    /// Enter pressed inside the sidebar. Dirs toggle expand/collapse;
+    /// files request open (which may surface the dirty-buffer prompt).
+    pub fn sidebar_enter(&mut self) -> Result<()> {
+        if self.sidebar.toggle_expand_selected() {
+            return Ok(());
+        }
+        let target = match self.sidebar.selected_entry() {
+            Some(e) if !e.is_dir => e.path.clone(),
+            _ => return Ok(()),
+        };
+        self.request_open(target)
+    }
+
+    fn request_open(&mut self, target: PathBuf) -> Result<()> {
+        if self.file_path.as_deref() == Some(target.as_path()) {
+            self.sidebar_open = false;
+            return Ok(());
+        }
+        if self.buffer.dirty {
+            self.switch_prompt = Some(SwitchPrompt { target, choice: 2 });
+            return Ok(());
+        }
+        self.load_file(&target)
+    }
+
+    /// Replace the open buffer with the file at `path`, reset cursor and
+    /// scroll, point the highlighter at the new extension, close the
+    /// sidebar. Failures (missing file, permission denied, etc.) surface
+    /// as a status message rather than crashing the editor.
+    fn load_file(&mut self, path: &Path) -> Result<()> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                self.buffer = Buffer::from_text(&text);
+                self.file_path = Some(path.to_path_buf());
+                self.cursor_row = 0;
+                self.cursor_col = 0;
+                self.scroll_row = 0;
+                self.scroll_col = 0;
+                self.highlighter.set_file(self.file_path.as_deref());
+                self.sidebar_open = false;
+                self.status_msg = Some(format!("Opened: {}", path.display()));
+            }
+            Err(e) => {
+                self.status_msg = Some(format!("Failed to open {}: {}", path.display(), e));
+            }
+        }
+        Ok(())
+    }
+
+    // ── Switch prompt (dirty buffer ↔ "open different file") ────────
+
+    pub fn switch_prompt_left(&mut self) {
+        if let Some(p) = &mut self.switch_prompt {
+            p.choice = p.choice.saturating_sub(1);
+        }
+    }
+
+    pub fn switch_prompt_right(&mut self) {
+        if let Some(p) = &mut self.switch_prompt {
+            p.choice = (p.choice + 1).min(SwitchChoice::ALL.len() - 1);
+        }
+    }
+
+    pub fn switch_prompt_confirm(&mut self) -> Result<()> {
+        let Some(p) = self.switch_prompt.take() else {
+            return Ok(());
+        };
+        match SwitchChoice::ALL[p.choice] {
+            SwitchChoice::Save => {
+                if self.file_path.is_none() {
+                    self.status_msg =
+                        Some("Untitled buffer — use :w <path> before opening another file".into());
+                    return Ok(());
+                }
+                self.save()?;
+                self.load_file(&p.target)?;
+            }
+            SwitchChoice::Discard => {
+                self.load_file(&p.target)?;
+            }
+            SwitchChoice::Cancel => {}
+        }
+        Ok(())
+    }
+
+    pub fn switch_prompt_cancel(&mut self) {
+        self.switch_prompt = None;
+    }
+
     pub fn enter_command_mode(&mut self) {
         self.command_mode = true;
         self.command_input.clear();
@@ -341,6 +481,9 @@ mod tests {
     use super::*;
 
     fn app_with_text(text: &str) -> App {
+        let highlighter = Highlighter::new(None, &ytheme::Theme::default());
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let sidebar = Sidebar::new(cwd);
         App {
             buffer: Buffer::from_text(text),
             file_path: None,
@@ -354,6 +497,10 @@ mod tests {
             status_msg: None,
             exit_dialog: false,
             exit_choice: 2,
+            highlighter,
+            sidebar,
+            sidebar_open: false,
+            switch_prompt: None,
         }
     }
 

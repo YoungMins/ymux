@@ -41,4 +41,10 @@ pub mod sysmonitor;
 #[cfg(feature = "desktop")]
 pub mod ipc_server;
 
+// Settings panel backend — ytheme load/save + open-with-default-app for
+// the Config Files section. Desktop-only because the commands plug into
+// the Tauri invoke handler.
+#[cfg(feature = "desktop")]
+pub mod settings;
+
 pub use error::{YmuxError, YmuxResult};

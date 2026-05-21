@@ -1,6 +1,6 @@
 [package]
 name = "ymux"
-version = "0.8.9"
+version = "0.8.10"
 description = "A lightweight tmux-inspired terminal multiplexer for Windows"
 edition = "2021"
 rust-version = "1.77"
@@ -30,6 +30,12 @@ sysinfo = "0.33"
 parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Shared theme palette read by every y* tool; ymux exposes load/save to the
+# settings UI so users can edit yCode's syntax colors without leaving the app.
+ytheme = { path = "../crates/ytheme" }
+# Cross-platform "open file/folder with the OS default app" used by the
+# Config Files settings section.
+opener = "0.7"
 
 # Tauri runtime is gated behind the `desktop` feature, which is on by default
 # so that `pnpm tauri dev` / `pnpm tauri build` work out of the box on the

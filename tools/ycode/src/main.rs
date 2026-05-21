@@ -11,6 +11,8 @@ use ratatui::prelude::*;
 
 mod app;
 mod buffer;
+mod highlight;
+mod sidebar;
 mod ui;
 
 use app::App;
@@ -50,6 +52,10 @@ fn run(
         // editor fills with "~" placeholders once the cursor passes line 24.
         let size = terminal.size()?;
         app.viewport_rows = size.height.saturating_sub(EDITOR_CHROME_ROWS).max(1) as usize;
+        if app.sidebar_open {
+            app.sidebar
+                .ensure_scroll(app.viewport_rows.saturating_sub(1));
+        }
 
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
@@ -67,6 +73,29 @@ fn run(
                                 }
                             }
                             KeyCode::Esc => app.exit_dialog_cancel(),
+                            _ => {}
+                        }
+                    } else if app.switch_prompt.is_some() {
+                        match key.code {
+                            KeyCode::Left | KeyCode::Char('h') => app.switch_prompt_left(),
+                            KeyCode::Right | KeyCode::Char('l') => app.switch_prompt_right(),
+                            KeyCode::Enter => app.switch_prompt_confirm()?,
+                            KeyCode::Esc => app.switch_prompt_cancel(),
+                            _ => {}
+                        }
+                    } else if app.sidebar_open {
+                        match key.code {
+                            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.toggle_sidebar();
+                            }
+                            KeyCode::Esc => app.toggle_sidebar(),
+                            KeyCode::Up => app.sidebar.move_up(),
+                            KeyCode::Down => app.sidebar.move_down(),
+                            KeyCode::PageUp => app.sidebar.page_up(app.viewport_rows),
+                            KeyCode::PageDown => app.sidebar.page_down(app.viewport_rows),
+                            KeyCode::Home => app.sidebar.move_home(),
+                            KeyCode::End => app.sidebar.move_end(),
+                            KeyCode::Enter => app.sidebar_enter()?,
                             _ => {}
                         }
                     } else if app.command_mode {
@@ -96,6 +125,9 @@ fn run(
                             }
                             KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.redo();
+                            }
+                            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.toggle_sidebar();
                             }
                             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.enter_command_mode_with("find ");

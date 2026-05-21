@@ -13,6 +13,7 @@ import { initLang, t } from "./i18n/i18n";
 import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandPalette";
 import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
+import { promptWithBlur } from "./browser/popupBlur";
 
 async function main(): Promise<void> {
   initLang();
@@ -171,7 +172,7 @@ async function main(): Promise<void> {
     if (ev.ctrlKey && ev.shiftKey && (key === "R" || key === "r")) {
       ev.preventDefault();
       const current = manager.getFocusedTitle() ?? "";
-      const next = window.prompt(t("app.paneTitle"), current);
+      const next = promptWithBlur(t("app.paneTitle"), current);
       if (next !== null) manager.renameFocused(next);
       return;
     }

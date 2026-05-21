@@ -54,6 +54,48 @@ export function t(key: string): string {
 type Translations = Record<string, Partial<Record<Lang, string>>>;
 
 const strings: Translations = {
+  // ── Settings panel (gear icon) ─────────────────────────────────
+  "settings.title": { en: "Settings", ko: "설정", ja: "設定" },
+  "settings.close": { en: "Close", ko: "닫기", ja: "閉じる" },
+  "settings.buttonTitle": { en: "Settings", ko: "설정", ja: "設定" },
+  "settings.section.general": { en: "General", ko: "일반", ja: "一般" },
+  "settings.section.syntax": { en: "Syntax Colors", ko: "구문 색상", ja: "シンタックスカラー" },
+  "settings.section.shortcuts": { en: "Shortcuts", ko: "단축키", ja: "ショートカット" },
+  "settings.section.tools": { en: "Tools", ko: "도구", ja: "ツール" },
+  "settings.section.config": { en: "Config Files", ko: "설정 파일", ja: "設定ファイル" },
+  "settings.general.heading": { en: "General", ko: "일반", ja: "一般" },
+  "settings.general.language": { en: "Language", ko: "언어", ja: "言語" },
+  "settings.general.about": { en: "About", ko: "정보", ja: "情報" },
+  "settings.syntax.heading": { en: "yCode Syntax Colors", ko: "yCode 구문 색상", ja: "yCode シンタックスカラー" },
+  "settings.syntax.hint": {
+    en: "Colors used by the yCode TUI editor. Saved to theme.toml — reopen yCode to see changes.",
+    ko: "yCode TUI 에디터에서 사용하는 색상. theme.toml에 저장되며 yCode 재실행 시 반영됩니다.",
+    ja: "yCode TUI エディタで使用する色。theme.toml に保存され、yCode 再起動時に反映されます。",
+  },
+  "settings.syntax.loading": { en: "Loading…", ko: "불러오는 중…", ja: "読み込み中…" },
+  "settings.syntax.keyword": { en: "Keyword", ko: "키워드", ja: "キーワード" },
+  "settings.syntax.string": { en: "String", ko: "문자열", ja: "文字列" },
+  "settings.syntax.comment": { en: "Comment", ko: "주석", ja: "コメント" },
+  "settings.syntax.number": { en: "Number", ko: "숫자", ja: "数値" },
+  "settings.syntax.function": { en: "Function", ko: "함수", ja: "関数" },
+  "settings.syntax.type_name": { en: "Type", ko: "타입", ja: "型" },
+  "settings.syntax.variable": { en: "Variable", ko: "변수", ja: "変数" },
+  "settings.syntax.punctuation": { en: "Punctuation", ko: "구두점", ja: "句読点" },
+  "settings.syntax.save": { en: "Save", ko: "저장", ja: "保存" },
+  "settings.syntax.saved": { en: "Saved", ko: "저장됨", ja: "保存済み" },
+  "settings.syntax.reset": { en: "Reset", ko: "되돌리기", ja: "リセット" },
+  "settings.shortcuts.heading": { en: "Keyboard Shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット" },
+  "settings.tools.heading": { en: "y* Tools", ko: "y* 도구", ja: "y* ツール" },
+  "settings.config.heading": { en: "Config Files", ko: "설정 파일", ja: "設定ファイル" },
+  "settings.config.hint": {
+    en: "Open the underlying TOML files with your default editor for power editing.",
+    ko: "내부 TOML 파일을 기본 편집기로 직접 편집할 수 있습니다.",
+    ja: "内部の TOML ファイルをデフォルトエディタで直接編集できます。",
+  },
+  "settings.config.open": { en: "Open", ko: "열기", ja: "開く" },
+  "settings.config.openFolder": { en: "Open Folder", ko: "폴더 열기", ja: "フォルダを開く" },
+  "settings.config.folder": { en: "Config folder", ko: "설정 폴더", ja: "設定フォルダ" },
+
   // ── Pane Settings (⚙ modal) ────────────────────────────────────
   "hotkey.bgColor": {
     en: "Background Color", ko: "배경 색상", ja: "背景色",

@@ -63,6 +63,46 @@ impl Default for HexColor {
     }
 }
 
+/// Colors used by yCode's syntax highlighter. Maps to TextMate-style scope
+/// selectors (keyword.*, string, comment, constant.numeric, entity.name.function,
+/// entity.name.type, etc.). Defaults are Night Owl-inspired and harmonize
+/// with the main palette.
+///
+/// Users override these by adding a `[syntax]` table to `theme.toml`:
+///
+/// ```toml
+/// [syntax]
+/// keyword = "#c792ea"
+/// string  = "#ecc48d"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SyntaxColors {
+    pub keyword: HexColor,
+    pub string: HexColor,
+    pub comment: HexColor,
+    pub number: HexColor,
+    pub function: HexColor,
+    pub type_name: HexColor,
+    pub variable: HexColor,
+    pub punctuation: HexColor,
+}
+
+impl Default for SyntaxColors {
+    fn default() -> Self {
+        Self {
+            keyword: HexColor::new("#c792ea"),     // purple
+            string: HexColor::new("#ecc48d"),      // soft yellow
+            comment: HexColor::new("#637777"),     // muted slate
+            number: HexColor::new("#f78c6c"),      // soft orange
+            function: HexColor::new("#82aaff"),    // bright blue
+            type_name: HexColor::new("#ffcb8b"),   // amber
+            variable: HexColor::new("#d6deeb"),    // default fg
+            punctuation: HexColor::new("#7fdbca"), // accent (teal)
+        }
+    }
+}
+
 /// The full theme definition shared across all y* tools.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -77,6 +117,7 @@ pub struct Theme {
     pub status_ok: HexColor,
     pub status_warn: HexColor,
     pub status_critical: HexColor,
+    pub syntax: SyntaxColors,
 }
 
 impl Default for Theme {
@@ -92,6 +133,7 @@ impl Default for Theme {
             status_ok: HexColor::new("#7fdbca"),
             status_warn: HexColor::new("#e5c07b"),
             status_critical: HexColor::new("#ef6b73"),
+            syntax: SyntaxColors::default(),
         }
     }
 }

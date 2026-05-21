@@ -1,0 +1,30 @@
+%YAML 1.2
+---
+# Minimal Svelte syntax — delegates everything to HTML and adds the
+# Svelte-specific block / directive markers on top so {#if}, on:event,
+# bind:prop, etc. light up. Loaded by ycode at startup via
+# `SyntaxDefinition::load_from_str` and merged into the bundled SyntaxSet.
+name: Svelte
+file_extensions:
+  - svelte
+scope: source.svelte
+
+contexts:
+  main:
+    - include: svelte-blocks
+    - include: svelte-directives
+    - include: scope:text.html.basic
+
+  svelte-blocks:
+    - match: '\{#(if|each|await|key|snippet)\b'
+      scope: keyword.control.svelte
+    - match: '\{/(if|each|await|key|snippet)\}'
+      scope: keyword.control.svelte
+    - match: '\{:(else|then|catch)\b'
+      scope: keyword.control.svelte
+    - match: '\{@(html|debug|const|render)\b'
+      scope: keyword.other.svelte
+
+  svelte-directives:
+    - match: '\b(on|bind|use|class|style|in|out|transition|animate|let):[a-zA-Z][a-zA-Z0-9_-]*'
+      scope: support.type.directive.svelte
