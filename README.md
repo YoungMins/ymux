@@ -64,12 +64,15 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   GPU / disk / network ↑↓ every 2 seconds. Values turn amber at 70% and red at
   90%. Multi-GPU and multi-disk rigs are handled (inline up to 3 entries, then
   collapsed with a tooltip breakdown).
-- **Support on Ko-fi**: a ☕ Support button next to `?` opens
+- **Support on Ko-fi**: a ☕ Support button next to `⚙` opens
   [ko-fi.com/youngminkim](https://ko-fi.com/youngminkim) in the system browser.
 - **Clickable URLs**: `Ctrl+Click` on any `http://` or `https://` link inside
   a terminal opens it in your default browser.
-- **Keyboard shortcut reference**: press `?` in the top-right corner of the
-  toolbar for a built-in cheat sheet. Supports English, 한국어, and 日本語.
+- **Settings panel (⚙)**: WinUI 3-style modal with a left sidebar (General,
+  Syntax Colors, Shortcuts, Tools, Config Files) and right content pane.
+  Pick the language, edit yCode's syntax color palette with live color
+  pickers, browse the built-in shortcut/tool reference, or jump straight
+  to the underlying `theme.toml` in your default editor.
 - **Command palette**: `Ctrl+Shift+P` opens a VS Code-style searchable
   command overlay. Fuzzy-match any built-in action by name or keybinding.
 - **Per-workspace notes**: every workspace has its own notes button right
@@ -95,7 +98,7 @@ alongside ymux or use the `y` launcher (`y mon`, `y dir`, `y code`, `y git`).
 |------|---------|-------------|
 | **ymon** | `ymon` | htop/btop-style system monitor (CPU, memory, disk, processes) |
 | **ydir** | `ydir` | Dual-pane file manager — navigate, copy/move/delete, run executables with args dialog |
-| **ycode** | `ycode <file>` | TUI code editor — undo/redo, search, goto, Esc exit dialog, full CJK/emoji support |
+| **ycode** | `ycode <file>` | TUI code editor — syntax highlighting (~200 languages incl. Svelte), `Ctrl+B` file-tree sidebar with dirty-buffer prompt, undo/redo, search, goto, Esc exit dialog, full CJK/emoji support |
 | **ygit** | `ygit` | Git log & branch viewer — colored commit graph, branch list, checkout |
 | **y** | `y help` | Launcher that lists and dispatches all y* tools |
 
@@ -119,6 +122,11 @@ PTY verification must be done on Windows.
 profiles. It is rewritten on every structural change (debounced) and on app
 close.
 
+`%APPDATA%\ymux\theme.toml` stores the shared color palette read by every
+y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
+**Settings → Syntax Colors** picker, or open the file directly via
+**Settings → Config Files → Open**.
+
 ## Keyboard shortcuts
 
 | Shortcut                    | Action                               |
@@ -137,10 +145,13 @@ close.
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | Switch workspace                    |
 | Double-click workspace button | Rename workspace                    |
 | `Ctrl+Click` on a URL       | Open link in default browser         |
-| `?` button (toolbar)        | Show / hide this shortcut reference  |
+| `⚙` button (toolbar)        | Open Settings (palette, shortcuts, syntax colors, config files) |
 
-> **Tip:** the `?` button in the top-right corner of the toolbar opens a
-> built-in reference popup where you can also switch the display language.
+> **Tip:** the `⚙` button in the top-right corner of the toolbar opens the
+> Settings modal — a WinUI 3-style sidebar/content layout where you can
+> switch the display language, edit yCode's syntax highlighting palette
+> with color pickers, and one-click open the underlying `theme.toml`
+> config file.
 
 ## Status
 
