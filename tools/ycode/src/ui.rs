@@ -189,10 +189,7 @@ fn visual_column(line: &str, char_col: usize) -> usize {
 fn draw_markdown_preview(frame: &mut Frame, app: &App, area: Rect) {
     // Same wide-char ghost-prevention as draw_editor — preview lines often
     // contain Korean text and the rendered widths can change line-to-line.
-    frame.render_widget(
-        Block::default().style(Style::default().bg(EDITOR_BG)),
-        area,
-    );
+    frame.render_widget(Block::default().style(Style::default().bg(EDITOR_BG)), area);
 
     let layout = Layout::default()
         .direction(Direction::Horizontal)
