@@ -1,11 +1,17 @@
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 use syntect::highlighting::{FontStyle, Style as SyntectStyle};
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, ExitChoice, SwitchChoice};
 use crate::markdown;
 
 const SIDEBAR_WIDTH: u16 = 28;
+/// Editor body background. Matched to the gutter so any wide-char ghost
+/// cell (the "right half" marker left over from a previous frame's CJK
+/// glyph) is overwritten with this color when we explicitly style every
+/// cell — without a bg here, ratatui's buffer diff can skip the ghost.
+const EDITOR_BG: Color = Color::Rgb(0x0b, 0x0f, 0x14);
 
 /// Map a syntect `Style` (colors + bold/italic/underline flags) onto a
 /// ratatui `Style`. Foreground is converted via `Color::Rgb`; background is
@@ -79,6 +85,16 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
         return;
     }
 
+    // Pre-fill the editor area with the body background so every cell carries
+    // an explicit attribute. This is what scrubs the right-half cell of a
+    // wide-char glyph (CJK) from the previous frame; without it, ratatui's
+    // buffer diff would leave that cell untouched and the old half-glyph
+    // would persist as a ghost when scrolling.
+    frame.render_widget(
+        Block::default().style(Style::default().bg(EDITOR_BG)),
+        editor_area,
+    );
+
     let line_num_width: u16 = format!("{}", app.buffer.line_count()).len() as u16 + 1;
 
     let editor_chunks = Layout::default()
@@ -108,8 +124,7 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
         })
         .collect();
 
-    let nums =
-        Paragraph::new(line_numbers).style(Style::default().bg(Color::Rgb(0x0b, 0x0f, 0x14)));
+    let nums = Paragraph::new(line_numbers).style(Style::default().bg(EDITOR_BG));
     frame.render_widget(nums, editor_chunks[0]);
 
     let start = app.scroll_row;
@@ -122,7 +137,7 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
     for line_spans in &highlighted {
         let spans: Vec<Span> = line_spans
             .iter()
-            .map(|(st, text)| Span::styled(text.clone(), syntect_to_ratatui(*st)))
+            .map(|(st, text)| Span::styled(text.clone(), syntect_to_ratatui(*st).bg(EDITOR_BG)))
             .collect();
         code_lines.push(Line::from(spans));
     }
@@ -131,14 +146,23 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
         code_lines.push(Line::default());
     }
 
-    let code = Paragraph::new(code_lines).style(Style::default().fg(Color::Rgb(0xd6, 0xde, 0xeb)));
+    let code = Paragraph::new(code_lines).style(
+        Style::default()
+            .fg(Color::Rgb(0xd6, 0xde, 0xeb))
+            .bg(EDITOR_BG),
+    );
     frame.render_widget(code, editor_chunks[1]);
 
     // No editor cursor when the sidebar holds focus — the cursor moves to
     // the sidebar instead so it's clear where input is going.
     if !app.sidebar_open {
         let cursor_screen_row = (app.cursor_row - app.scroll_row) as u16;
-        let cursor_screen_col = (app.cursor_col - app.scroll_col) as u16;
+        // `cursor_col` counts characters; the terminal positions the cursor
+        // by display cell. CJK chars are 2 cells wide, so without this
+        // conversion the cursor drifts left on lines that mix Korean with
+        // ASCII.
+        let visual_col = visual_column(app.buffer.line(app.cursor_row), app.cursor_col);
+        let cursor_screen_col = visual_col.saturating_sub(app.scroll_col) as u16;
         let cursor_x = editor_chunks[1].x + cursor_screen_col;
         let cursor_y = editor_chunks[1].y + cursor_screen_row;
         if cursor_x < editor_chunks[1].x + editor_chunks[1].width
@@ -149,16 +173,33 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
     }
 }
 
+/// Sum the display widths of the first `char_col` chars in `line`. Used
+/// to translate a character-based cursor column into the cell-based column
+/// the terminal expects. Combining marks / zero-width chars contribute 0.
+fn visual_column(line: &str, char_col: usize) -> usize {
+    line.chars()
+        .take(char_col)
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum()
+}
+
 /// Render the markdown preview into the editor area. A single-character
 /// left gutter keeps the rendered text from butting against the sidebar
 /// border, mirroring the gutter the source view uses for line numbers.
 fn draw_markdown_preview(frame: &mut Frame, app: &App, area: Rect) {
+    // Same wide-char ghost-prevention as draw_editor — preview lines often
+    // contain Korean text and the rendered widths can change line-to-line.
+    frame.render_widget(
+        Block::default().style(Style::default().bg(EDITOR_BG)),
+        area,
+    );
+
     let layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(2), Constraint::Min(0)])
         .split(area);
 
-    let gutter = Paragraph::new("").style(Style::default().bg(Color::Rgb(0x0b, 0x0f, 0x14)));
+    let gutter = Paragraph::new("").style(Style::default().bg(EDITOR_BG));
     frame.render_widget(gutter, layout[0]);
 
     let body_area = layout[1];
@@ -173,7 +214,11 @@ fn draw_markdown_preview(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let para = Paragraph::new(slice)
-        .style(Style::default().fg(Color::Rgb(0xd6, 0xde, 0xeb)))
+        .style(
+            Style::default()
+                .fg(Color::Rgb(0xd6, 0xde, 0xeb))
+                .bg(EDITOR_BG),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(para, body_area);
 }

@@ -6013,6 +6013,7 @@ dependencies = [
  "ratatui",
  "syntect",
  "tempfile",
+ "unicode-width 0.2.0",
  "ytheme",
 ]
 
@@ -6067,7 +6068,7 @@ dependencies = [
 
 [[package]]
 name = "ymux"
-version = "0.8.11"
+version = "0.8.12"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
