@@ -12,6 +12,7 @@ use ratatui::prelude::*;
 mod app;
 mod buffer;
 mod highlight;
+mod markdown;
 mod sidebar;
 mod ui;
 
@@ -111,6 +112,40 @@ fn run(
                             KeyCode::Char(c) => app.command_input(c),
                             _ => {}
                         }
+                    } else if app.preview_mode {
+                        // Read-only markdown preview: only navigation,
+                        // save, sidebar, and toggles. Esc exits preview
+                        // rather than opening the exit dialog so the user
+                        // can get back to editing without confirming.
+                        //
+                        // NOTE: Alt+M (not Ctrl+M) is the toggle. Ctrl+M is
+                        // indistinguishable from Enter in every terminal
+                        // that doesn't speak the kitty keyboard protocol —
+                        // both send the carriage-return byte.
+                        match key.code {
+                            KeyCode::Esc => app.toggle_preview(),
+                            KeyCode::Char('m') | KeyCode::Char('M')
+                                if key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                app.toggle_preview();
+                            }
+                            KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                return Ok(());
+                            }
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.save()?;
+                            }
+                            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.toggle_sidebar();
+                            }
+                            KeyCode::Up => app.preview_scroll_up(),
+                            KeyCode::Down => app.preview_scroll_down(),
+                            KeyCode::PageUp => app.preview_page_up(),
+                            KeyCode::PageDown => app.preview_page_down(),
+                            KeyCode::Home => app.preview_home(),
+                            KeyCode::End => app.preview_end(),
+                            _ => {}
+                        }
                     } else {
                         match key.code {
                             KeyCode::Esc => app.show_exit_dialog(),
@@ -135,7 +170,11 @@ fn run(
                             KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.enter_command_mode_with("goto ");
                             }
-                            KeyCode::Char(':') => app.enter_command_mode(),
+                            KeyCode::Char('m') | KeyCode::Char('M')
+                                if key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                app.toggle_preview();
+                            }
                             KeyCode::Up => app.move_cursor_up(),
                             KeyCode::Down => app.move_cursor_down(),
                             KeyCode::Left => app.move_cursor_left(),

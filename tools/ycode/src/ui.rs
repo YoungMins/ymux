@@ -3,6 +3,7 @@ use ratatui::widgets::*;
 use syntect::highlighting::{FontStyle, Style as SyntectStyle};
 
 use crate::app::{App, ExitChoice, SwitchChoice};
+use crate::markdown;
 
 const SIDEBAR_WIDTH: u16 = 28;
 
@@ -50,7 +51,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_title_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let title = format!(" ycode — {} ", app.title());
+    let suffix = if app.preview_mode { " [PREVIEW]" } else { "" };
+    let title = format!(" ycode — {}{} ", app.title(), suffix);
     let bar = Paragraph::new(title).style(
         Style::default()
             .bg(Color::Rgb(0x11, 0x18, 0x20))
@@ -71,6 +73,11 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
         draw_sidebar(frame, app, outer[0]);
     }
     let editor_area = outer[1];
+
+    if app.preview_mode {
+        draw_markdown_preview(frame, app, editor_area);
+        return;
+    }
 
     let line_num_width: u16 = format!("{}", app.buffer.line_count()).len() as u16 + 1;
 
@@ -140,6 +147,35 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect, _viewport_height: usize
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
     }
+}
+
+/// Render the markdown preview into the editor area. A single-character
+/// left gutter keeps the rendered text from butting against the sidebar
+/// border, mirroring the gutter the source view uses for line numbers.
+fn draw_markdown_preview(frame: &mut Frame, app: &App, area: Rect) {
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let gutter = Paragraph::new("").style(Style::default().bg(Color::Rgb(0x0b, 0x0f, 0x14)));
+    frame.render_widget(gutter, layout[0]);
+
+    let body_area = layout[1];
+    let visible = body_area.height as usize;
+
+    let all = markdown::render(&app.buffer.content());
+    let start = app.preview_scroll.min(all.len());
+    let end = (start + visible).min(all.len());
+    let mut slice: Vec<Line> = all[start..end].to_vec();
+    while slice.len() < visible {
+        slice.push(Line::default());
+    }
+
+    let para = Paragraph::new(slice)
+        .style(Style::default().fg(Color::Rgb(0xd6, 0xde, 0xeb)))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(para, body_area);
 }
 
 fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
@@ -313,8 +349,15 @@ fn draw_command_line(frame: &mut Frame, app: &App, area: Rect) {
         format!(":{}", app.command_input)
     } else if let Some(ref msg) = app.status_msg {
         msg.clone()
+    } else if app.preview_mode {
+        " Esc/Alt+M Exit Preview | ↑↓ PgUp/PgDn Scroll | Ctrl+S Save | Ctrl+Q Quit".to_string()
     } else {
-        " Esc Menu | Ctrl+S Save | Ctrl+Q Quit | Ctrl+B Files | : Commands".to_string()
+        let mut hint =
+            String::from(" Esc Menu | Ctrl+S Save | Ctrl+Q Quit | Ctrl+B Files | Ctrl+F Find");
+        if app.is_markdown() {
+            hint.push_str(" | Alt+M Preview");
+        }
+        hint
     };
 
     let style = if app.command_mode {

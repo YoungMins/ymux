@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::buffer::Buffer;
 use crate::highlight::Highlighter;
+use crate::markdown;
 use crate::sidebar::Sidebar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +73,13 @@ pub struct App {
     pub sidebar: Sidebar,
     pub sidebar_open: bool,
     pub switch_prompt: Option<SwitchPrompt>,
+    /// Markdown preview is active — UI swaps the source view for rendered
+    /// markdown and editing keys are inert.
+    pub preview_mode: bool,
+    /// Top-of-viewport row inside the rendered markdown. Kept separate from
+    /// `scroll_row` so toggling preview off restores the editor's prior
+    /// scroll position.
+    pub preview_scroll: usize,
 }
 
 impl App {
@@ -109,6 +117,8 @@ impl App {
             sidebar,
             sidebar_open: false,
             switch_prompt: None,
+            preview_mode: false,
+            preview_scroll: 0,
         })
     }
 
@@ -306,6 +316,11 @@ impl App {
                 self.scroll_col = 0;
                 self.highlighter.set_file(self.file_path.as_deref());
                 self.sidebar_open = false;
+                // Switching to a non-markdown file must not leave the editor
+                // in preview mode (Ctrl+M would otherwise be the only way
+                // out and the user wouldn't know that).
+                self.preview_mode = false;
+                self.preview_scroll = 0;
                 self.status_msg = Some(format!("Opened: {}", path.display()));
             }
             Err(e) => {
@@ -313,6 +328,68 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    // ── Markdown preview ────────────────────────────────────────────
+
+    /// True if the open file looks like markdown (case-insensitive
+    /// `.md` / `.markdown`). Untitled buffers don't qualify — there's no
+    /// signal that they're meant to be markdown.
+    pub fn is_markdown(&self) -> bool {
+        self.file_path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| {
+                let lower = e.to_ascii_lowercase();
+                lower == "md" || lower == "markdown"
+            })
+    }
+
+    /// Toggle the markdown preview. No-op for non-markdown files; we surface
+    /// a status hint instead of silently swallowing the key so the user
+    /// knows why nothing happened.
+    pub fn toggle_preview(&mut self) {
+        if !self.is_markdown() {
+            self.status_msg = Some("Preview only available for .md files".to_string());
+            return;
+        }
+        self.preview_mode = !self.preview_mode;
+        if self.preview_mode {
+            self.preview_scroll = 0;
+        }
+    }
+
+    fn preview_max_scroll(&self) -> usize {
+        let total = markdown::render(&self.buffer.content()).len();
+        let visible = self.viewport_rows.max(1);
+        total.saturating_sub(visible)
+    }
+
+    pub fn preview_scroll_up(&mut self) {
+        self.preview_scroll = self.preview_scroll.saturating_sub(1);
+    }
+
+    pub fn preview_scroll_down(&mut self) {
+        let max = self.preview_max_scroll();
+        self.preview_scroll = (self.preview_scroll + 1).min(max);
+    }
+
+    pub fn preview_page_up(&mut self) {
+        self.preview_scroll = self.preview_scroll.saturating_sub(self.viewport_rows);
+    }
+
+    pub fn preview_page_down(&mut self) {
+        let max = self.preview_max_scroll();
+        self.preview_scroll = (self.preview_scroll + self.viewport_rows).min(max);
+    }
+
+    pub fn preview_home(&mut self) {
+        self.preview_scroll = 0;
+    }
+
+    pub fn preview_end(&mut self) {
+        self.preview_scroll = self.preview_max_scroll();
     }
 
     // ── Switch prompt (dirty buffer ↔ "open different file") ────────
@@ -353,11 +430,6 @@ impl App {
 
     pub fn switch_prompt_cancel(&mut self) {
         self.switch_prompt = None;
-    }
-
-    pub fn enter_command_mode(&mut self) {
-        self.command_mode = true;
-        self.command_input.clear();
     }
 
     pub fn enter_command_mode_with(&mut self, prefix: &str) {
@@ -501,6 +573,8 @@ mod tests {
             sidebar,
             sidebar_open: false,
             switch_prompt: None,
+            preview_mode: false,
+            preview_scroll: 0,
         }
     }
 
@@ -563,9 +637,8 @@ mod tests {
     #[test]
     fn command_mode() {
         let mut app = app_with_text("hello");
-        app.enter_command_mode();
+        app.enter_command_mode_with("q");
         assert!(app.command_mode);
-        app.command_input('q');
         assert_eq!(app.command_input, "q");
         let quit = app.execute_command().unwrap();
         assert!(quit);
@@ -710,9 +783,74 @@ mod tests {
     }
 
     #[test]
+    fn is_markdown_detects_md_extensions() {
+        let mut app = app_with_text("hello");
+        assert!(!app.is_markdown());
+        app.file_path = Some(PathBuf::from("notes.md"));
+        assert!(app.is_markdown());
+        app.file_path = Some(PathBuf::from("readme.MARKDOWN"));
+        assert!(app.is_markdown());
+        app.file_path = Some(PathBuf::from("main.rs"));
+        assert!(!app.is_markdown());
+    }
+
+    #[test]
+    fn toggle_preview_only_on_markdown() {
+        let mut app = app_with_text("# hi\n");
+        // Untitled buffer — preview is rejected with a status hint.
+        app.toggle_preview();
+        assert!(!app.preview_mode);
+        assert!(app.status_msg.is_some());
+
+        app.file_path = Some(PathBuf::from("notes.md"));
+        app.toggle_preview();
+        assert!(app.preview_mode);
+        app.toggle_preview();
+        assert!(!app.preview_mode);
+    }
+
+    #[test]
+    fn preview_scroll_clamps_at_zero_and_end() {
+        let mut app = app_with_text("# title\n\nbody paragraph one\n\nbody paragraph two\n");
+        app.file_path = Some(PathBuf::from("doc.md"));
+        app.viewport_rows = 2;
+        app.toggle_preview();
+        assert_eq!(app.preview_scroll, 0);
+
+        app.preview_scroll_up();
+        assert_eq!(app.preview_scroll, 0, "saturates at top");
+
+        for _ in 0..50 {
+            app.preview_scroll_down();
+        }
+        assert_eq!(app.preview_scroll, app.preview_max_scroll());
+
+        app.preview_home();
+        assert_eq!(app.preview_scroll, 0);
+        app.preview_end();
+        assert_eq!(app.preview_scroll, app.preview_max_scroll());
+    }
+
+    #[test]
+    fn switching_files_drops_preview_mode() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        std::fs::write(&path, "plain text").unwrap();
+
+        let mut app = app_with_text("# hi");
+        app.file_path = Some(PathBuf::from("a.md"));
+        app.toggle_preview();
+        assert!(app.preview_mode);
+
+        // Simulate selecting a non-markdown file from the sidebar.
+        app.load_file(&path).unwrap();
+        assert!(!app.preview_mode);
+    }
+
+    #[test]
     fn esc_in_command_mode_exits_command_not_dialog() {
         let mut app = app_with_text("hello");
-        app.enter_command_mode();
+        app.enter_command_mode_with("find ");
         assert!(app.command_mode);
         app.show_exit_dialog(); // should exit command mode, not show dialog
         assert!(!app.command_mode);
