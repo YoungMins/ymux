@@ -5,7 +5,6 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -103,20 +102,10 @@ export class TerminalPane implements Pane {
     this.term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
-      // Prefer Cascadia Mono (strict monospace, ships with Windows Terminal)
-      // before Cascadia Code (which has ligatures and can widen some glyphs)
-      // so ambiguous-width characters land in their declared cell.
       fontFamily:
-        "Cascadia Mono, Cascadia Code, Consolas, 'Courier New', ui-monospace, monospace",
+        "Cascadia Code, Consolas, 'Courier New', ui-monospace, monospace",
       fontSize: 13,
       scrollback: 10_000,
-      // Rescale ambiguous-width glyphs (•, —, ─, │ in CJK-locale fallback
-      // fonts) so they fit their declared single cell. Without this,
-      // Korean-locale Windows draws these chars as 2-cell glyphs while
-      // xterm.js / the TUI tools treat them as 1-cell, leaving "ghost"
-      // half-glyphs in the adjacent cell after scrolling. Requires the
-      // WebGL (or canvas) renderer — DOES NOT work with DOM renderer.
-      rescaleOverlappingGlyphs: true,
       theme: {
         background: bgColor,
         foreground: "#d6deeb",
@@ -136,12 +125,6 @@ export class TerminalPane implements Pane {
     this.term.loadAddon(this.fit);
     this.search = new SearchAddon();
     this.term.loadAddon(this.search);
-    // WebGL renderer is required for `rescaleOverlappingGlyphs` to take
-    // effect — the DOM renderer ignores it. Disposing on context loss
-    // matches the pattern recommended in xterm.js's addon-webgl docs.
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
-    this.term.loadAddon(webgl);
 
     // Block xterm.js from consuming ymux-level hotkeys. Without this, Ctrl+F
     // etc. get translated into control bytes (Ctrl+F → 0x06) and written to

@@ -30,6 +30,9 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2.0.0
         version: 2.10.1
+      '@tauri-apps/cli-win32-x64-msvc':
+        specifier: ^2.11.2
+        version: 2.11.2
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -389,6 +392,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@tauri-apps/cli-win32-x64-msvc@2.11.2':
+    resolution: {integrity: sha512-d2JchlFIpZevZVReyqhQOekJmb1UH3rhZ5VX6sH3ty9ETE0TKQavpihvoScUXfKKpW6HZC0MrFGRU0ZtD+w3gA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
   '@tauri-apps/cli@2.10.1':
     resolution: {integrity: sha512-jQNGF/5quwORdZSSLtTluyKQ+o6SMa/AUICfhf4egCGFdMHqWssApVgYSbg+jmrZoc8e1DscNvjTnXtlHLS11g==}
     engines: {node: '>= 10'}
@@ -667,6 +676,8 @@ snapshots:
 
   '@tauri-apps/cli-win32-x64-msvc@2.10.1':
     optional: true
+
+  '@tauri-apps/cli-win32-x64-msvc@2.11.2': {}
 
   '@tauri-apps/cli@2.10.1':
     optionalDependencies:
