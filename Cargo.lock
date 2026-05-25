@@ -6015,6 +6015,7 @@ dependencies = [
  "tempfile",
  "unicode-width 0.2.0",
  "ytheme",
+ "yversion",
 ]
 
 [[package]]
@@ -6027,6 +6028,7 @@ dependencies = [
  "ratatui",
  "tempfile",
  "ytheme",
+ "yversion",
 ]
 
 [[package]]
@@ -6036,6 +6038,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "ratatui",
+ "yversion",
 ]
 
 [[package]]
@@ -6064,11 +6067,12 @@ dependencies = [
  "ratatui",
  "sysinfo",
  "ytheme",
+ "yversion",
 ]
 
 [[package]]
 name = "ymux"
-version = "0.8.16"
+version = "0.8.17"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -6123,6 +6127,10 @@ dependencies = [
  "serde",
  "toml 0.8.23",
 ]
+
+[[package]]
+name = "yversion"
+version = "0.1.0"
 
 [[package]]
 name = "zerocopy"

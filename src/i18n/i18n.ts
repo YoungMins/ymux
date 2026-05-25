@@ -66,6 +66,7 @@ const strings: Translations = {
   "settings.general.heading": { en: "General", ko: "일반", ja: "一般" },
   "settings.general.language": { en: "Language", ko: "언어", ja: "言語" },
   "settings.general.about": { en: "About", ko: "정보", ja: "情報" },
+  "settings.general.version": { en: "Version", ko: "버전", ja: "バージョン" },
   "settings.syntax.heading": { en: "yCode Syntax Colors", ko: "yCode 구문 색상", ja: "yCode シンタックスカラー" },
   "settings.syntax.hint": {
     en: "Colors used by the yCode TUI editor. Saved to theme.toml — reopen yCode to see changes.",

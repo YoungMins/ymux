@@ -1,4 +1,4 @@
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
@@ -96,6 +96,19 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ),
     };
 
+    // Right-aligned ymux release version. Same split pattern as the other
+    // y* tools.
+    let version = format!(" v{} ", yversion::VERSION);
+    let v_width = version.chars().count() as u16;
+    let [hint_area, version_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(v_width)]).areas(status_area);
+
     let status_widget = Paragraph::new(status_text).style(Style::default().fg(status_color));
-    frame.render_widget(status_widget, status_area);
+    frame.render_widget(status_widget, hint_area);
+    frame.render_widget(
+        Paragraph::new(version)
+            .style(Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca)))
+            .alignment(Alignment::Right),
+        version_area,
+    );
 }

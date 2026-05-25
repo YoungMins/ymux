@@ -323,9 +323,23 @@ fn draw_footer(frame: &mut Frame, area: Rect) {
         Span::styled("↑↓", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
         Span::raw(" Scroll"),
     ]);
+    // Split the footer so the hint text keeps its left position and the
+    // ymux release version sits flush against the right edge.
+    let version = format!(" v{} ", yversion::VERSION);
+    let v_width = version.chars().count() as u16;
+    let parts = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(v_width)])
+        .split(area);
     frame.render_widget(
         Paragraph::new(text).style(Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a))),
-        area,
+        parts[0],
+    );
+    frame.render_widget(
+        Paragraph::new(version)
+            .style(Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca)))
+            .alignment(Alignment::Right),
+        parts[1],
     );
 }
 

@@ -340,11 +340,12 @@ fn draw_status_line(frame: &mut Frame, app: &App, area: Rect) {
 
     let left = format!(" {}{}", file_info, dirty_marker);
     let right = format!(
-        "{}  Ln {}, Col {}  ({} lines) ",
+        "{}  Ln {}, Col {}  ({} lines)  v{} ",
         app.highlighter.language_name(),
         app.cursor_row + 1,
         app.cursor_col + 1,
-        app.buffer.line_count()
+        app.buffer.line_count(),
+        yversion::VERSION
     );
 
     let padding = (area.width as usize)

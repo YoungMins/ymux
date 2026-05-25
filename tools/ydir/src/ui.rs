@@ -186,7 +186,21 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(" Switch  "),
         Span::styled(status, Style::default().fg(Color::Rgb(0xe5, 0xc0, 0x7b))),
     ]);
-    frame.render_widget(Paragraph::new(text), area);
+    // Right-aligned ymux release version. See ymon::draw_footer for the
+    // same split pattern across the y* tool family.
+    let version = format!(" v{} ", yversion::VERSION);
+    let v_width = version.chars().count() as u16;
+    let parts = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(v_width)])
+        .split(area);
+    frame.render_widget(Paragraph::new(text), parts[0]);
+    frame.render_widget(
+        Paragraph::new(version)
+            .style(Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca)))
+            .alignment(Alignment::Right),
+        parts[1],
+    );
 }
 
 /// Pad or truncate `s` to exactly `width` characters.

@@ -1,6 +1,6 @@
 [package]
 name = "ymux"
-version = "0.8.16"
+version = "0.8.17"
 description = "A lightweight tmux-inspired terminal multiplexer for Windows"
 edition = "2021"
 rust-version = "1.77"

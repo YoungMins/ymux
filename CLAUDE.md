@@ -105,6 +105,7 @@ Update ALL of these (they must match):
 - `src-tauri/Cargo.toml` → `version`
 - `src-tauri/tauri.conf.json` → `version`
 - `package.json` → `version`
+- `crates/yversion/src/lib.rs` → `VERSION` const (footer of ymon/ydir/ycode/ygit reads this)
 - `README.md` / `README.ko.md` / `README.ja.md` → badge URL
 - Run `cargo check` to regenerate `Cargo.lock`
 

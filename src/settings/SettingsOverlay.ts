@@ -3,6 +3,8 @@
 // the language picker, keyboard reference, tool reference, yCode syntax
 // color editor, and quick-open links for the underlying config files.
 
+import { getVersion } from "@tauri-apps/api/app";
+
 import { t, getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n/i18n";
 import { api } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
@@ -213,6 +215,28 @@ export function mountSettings(parent: HTMLElement): () => void {
     const aboutP = document.createElement("p");
     aboutP.textContent = "yMux — A lightweight tmux-inspired terminal multiplexer.";
     host.appendChild(aboutP);
+
+    // Version row — mirrors the language row's layout so it lines up
+    // with the rest of the settings list. Tauri's getVersion() reads
+    // straight from tauri.conf.json so the value stays in sync with the
+    // shipped MSI without any manual wiring on this side.
+    const versionRow = document.createElement("div");
+    versionRow.className = "settings-row";
+    const versionLabel = document.createElement("div");
+    versionLabel.className = "settings-row__label";
+    versionLabel.textContent = t("settings.general.version");
+    versionRow.appendChild(versionLabel);
+    const versionValue = document.createElement("div");
+    versionValue.style.fontFamily = "Cascadia Mono, Cascadia Code, Consolas, monospace";
+    versionValue.style.color = "var(--accent, #7fdbca)";
+    versionValue.textContent = "…";
+    getVersion().then((v) => {
+      versionValue.textContent = `v${v}`;
+    });
+    versionRow.appendChild(versionValue);
+    const versionSpacer = document.createElement("div");
+    versionRow.appendChild(versionSpacer);
+    host.appendChild(versionRow);
   }
 
   // ── Section: Syntax Colors ──────────────────────────────────────────
