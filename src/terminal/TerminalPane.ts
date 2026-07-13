@@ -26,6 +26,11 @@ export interface TerminalPaneOptions {
   /// reorder) so the owner can persist the new list into the PaneSpec.
   onHotKeysChange?: (hotkeys: HotKeyDef[]) => void;
   onBgColorChange?: (color: string | null) => void;
+  /// Fired when the terminal emits a bell (BEL) or an OSC 9 notification —
+  /// the signal a long-running CLI (claude/codex/gemini) uses to say it
+  /// finished or needs attention. `message` is the OSC 9 text if present,
+  /// else null.
+  onAttention?: (message: string | null) => void;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -156,6 +161,8 @@ export class TerminalPane implements Pane {
         }
         if (!ev.shiftKey && k === "f") return false;
         if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p")) return false;
+        // Ctrl+Shift+Left/Right → swap pane position (handled at window level).
+        if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
         if (k === "tab") return false;
       }
       if (ev.ctrlKey && ev.altKey && /^Digit[1-9]$/.test(ev.code)) return false;
@@ -175,6 +182,18 @@ export class TerminalPane implements Pane {
       }),
     );
     this.term.open(this.termHost);
+
+    // Bell (BEL 0x07) → attention signal with no message.
+    this.term.onBell(() => opts.onAttention?.(null));
+    // OSC 9 → attention with the payload text as the message. Only the
+    // iTerm2-style plain-text form (`OSC 9 ; <message>`) is a completion
+    // notification. Windows Terminal / ConEmu reuse OSC 9 for progress
+    // (`9;4;…`), cwd (`9;9;…`), etc., whose payload starts with "<digit>;" —
+    // swallow those without alerting so long-running tools don't spam beeps.
+    this.term.parser.registerOscHandler(9, (data) => {
+      if (!/^\d+;/.test(data)) opts.onAttention?.(data || null);
+      return true;
+    });
 
     this.term.onData((data) => {
       if (!this.spawned) return;

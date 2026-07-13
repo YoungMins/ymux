@@ -4,6 +4,7 @@
   "description": "Default capability for ymux. Grants core IPC + event APIs.",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "notification:default"
   ]
 }

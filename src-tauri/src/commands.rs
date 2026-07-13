@@ -208,6 +208,14 @@ pub fn open_url(url: String) -> YmuxResult<()> {
     Ok(())
 }
 
+/// Show an OS desktop notification with the given title and body.
+#[tauri::command]
+pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(title).body(body).show();
+    Ok(())
+}
+
 /// Start the reader thread that drains PTY output and forwards it to the
 /// frontend as Tauri events. Must be called once, at startup, after the
 /// [`AppState`] is installed.

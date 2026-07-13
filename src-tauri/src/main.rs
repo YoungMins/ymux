@@ -49,6 +49,7 @@ fn main() {
             ymux_lib::commands::set_active_workspace,
             ymux_lib::commands::get_pane_cwd,
             ymux_lib::commands::open_url,
+            ymux_lib::commands::notify,
             ymux_lib::webview::create_webview,
             ymux_lib::webview::destroy_webview,
             ymux_lib::webview::navigate_webview,
@@ -66,6 +67,7 @@ fn main() {
             ymux_lib::settings::save_syntax_theme,
             ymux_lib::settings::open_config_path,
         ])
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let ipc_addr = start_ipc_server(app.handle().clone());
             // Inject YMUX_IPC into every PTY that will be spawned.

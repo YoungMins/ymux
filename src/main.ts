@@ -146,6 +146,20 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl+Shift+Left / Right swap the focused pane with the previous / next
+    // pane in depth-first order (wrapping). Arrow keys are layout-independent
+    // and unused elsewhere.
+    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && key === "ArrowLeft") {
+      ev.preventDefault();
+      manager.swapFocused(-1);
+      return;
+    }
+    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && key === "ArrowRight") {
+      ev.preventDefault();
+      manager.swapFocused(1);
+      return;
+    }
+
     // Ctrl+Shift+Z zoom / unzoom focused pane.
     if (ev.ctrlKey && ev.shiftKey && (key === "Z" || key === "z")) {
       ev.preventDefault();

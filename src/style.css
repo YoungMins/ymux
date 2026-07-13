@@ -111,6 +111,97 @@ body,
   background: var(--bg-hover);
 }
 
+.workspace-bar__ws-add {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workspace-bar__ws-add:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Per-tab delete affordance: collapsed until the tab is hovered. */
+.workspace-bar__ws-del {
+  width: 0;
+  height: 20px;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: opacity 0.1s ease, width 0.1s ease;
+}
+
+.workspace-bar__ws-pair:hover .workspace-bar__ws-del {
+  width: 16px;
+  opacity: 0.6;
+}
+
+.workspace-bar__ws-del:hover {
+  opacity: 1;
+  color: var(--danger, #e5534b);
+}
+
+/* Attention badge on a workspace tab: a bell/OSC 9 fired in one of its panes
+   (e.g. a CLI agent finished) while the user was on another workspace. */
+.workspace-bar__ws--attention {
+  position: relative;
+}
+
+.workspace-bar__ws--attention::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ymux-attention-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ymux-attention-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Pulsing border on a pane that raised an attention signal while unfocused.
+   Cleared as soon as the pane gains focus. */
+.pane--attention {
+  animation: ymux-pane-attention 1.2s ease-in-out infinite;
+}
+
+@keyframes ymux-pane-attention {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+}
+
 .workspace-bar__spacer {
   flex: 1 1 auto;
 }

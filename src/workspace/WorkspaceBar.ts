@@ -8,7 +8,7 @@ import {
   onNotesChange,
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
-import { promptWithBlur } from "../browser/popupBlur";
+import { promptWithBlur, confirmWithBlur } from "../browser/popupBlur";
 
 function wsTooltip(id: number, manager: WorkspaceManager): string {
   const name = manager.getWorkspaceName(id);
@@ -33,46 +33,95 @@ export function mountWorkspaceBar(
 
   const noteIconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>`;
 
-  for (let i = 1; i <= 9; i++) {
+  // "+" button that creates a new workspace at the lowest free id.
+  const addBtn = document.createElement("button");
+  addBtn.className = "workspace-bar__ws-add";
+  addBtn.type = "button";
+  addBtn.textContent = "+";
+  addBtn.title = t("workspace.addWorkspace");
+  addBtn.setAttribute("aria-label", t("workspace.addWorkspace"));
+  addBtn.addEventListener("click", () => {
+    void manager.addWorkspace(); // fires onWorkspacesChange → rebuild()
+  });
+
+  /// Build one workspace tab (switch button + note button + delete button) and
+  /// register its buttons into the highlight maps.
+  function makePair(id: number): HTMLElement {
     const pair = document.createElement("div");
     pair.className = "workspace-bar__ws-pair";
 
     const btn = document.createElement("button");
     btn.className = "workspace-bar__ws";
-    btn.textContent = String(i);
-    btn.title = wsTooltip(i, manager);
+    btn.textContent = String(id);
+    btn.title = wsTooltip(id, manager);
     btn.addEventListener("click", () => {
-      void manager.activate(i);
+      void manager.activate(id);
       highlight();
     });
     btn.addEventListener("dblclick", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      const current = manager.getWorkspaceName(i) ?? "";
+      const current = manager.getWorkspaceName(id) ?? "";
       const next = promptWithBlur(t("workspace.renamePrompt"), current);
       if (next !== null) {
-        manager.renameWorkspace(i, next);
+        manager.renameWorkspace(id, next);
         highlight();
       }
     });
     pair.appendChild(btn);
-    buttons.set(i, btn);
+    buttons.set(id, btn);
 
     const noteBtn = document.createElement("button");
     noteBtn.className = "workspace-bar__note-btn";
     noteBtn.type = "button";
     noteBtn.innerHTML = noteIconSvg;
-    noteBtn.title = `${t("notes.title")} — ${i}`;
-    noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${i}`);
+    noteBtn.title = `${t("notes.title")} — ${id}`;
+    noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${id}`);
     noteBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      toggleNotes(i, manager.getWorkspaceName(i));
+      toggleNotes(id, manager.getWorkspaceName(id));
     });
     pair.appendChild(noteBtn);
-    noteButtons.set(i, noteBtn);
+    noteButtons.set(id, noteBtn);
 
-    wsGroup.appendChild(pair);
+    // Delete button — hidden when only one workspace remains (can't delete the
+    // last one). Revealed on hover via CSS.
+    const delBtn = document.createElement("button");
+    delBtn.className = "workspace-bar__ws-del";
+    delBtn.type = "button";
+    delBtn.textContent = "×";
+    delBtn.title = t("workspace.deleteWorkspace");
+    delBtn.setAttribute("aria-label", t("workspace.deleteWorkspace"));
+    if (manager.workspaces.length <= 1) delBtn.style.display = "none";
+    delBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (manager.workspaces.length <= 1) return;
+      const name = manager.getWorkspaceName(id);
+      const label = name && name !== `workspace-${id}` ? `${id}: ${name}` : `${id}`;
+      const msg = t("workspace.deleteConfirm").replace("{name}", label);
+      if (confirmWithBlur(msg)) {
+        void manager.deleteWorkspace(id); // fires onWorkspacesChange → rebuild()
+      }
+    });
+    pair.appendChild(delBtn);
+
+    return pair;
   }
+
+  /// Rebuild the whole tab list from the manager's current workspaces (sorted
+  /// by id) plus the trailing "+" button. Called on any workspace add/delete.
+  function rebuild(): void {
+    buttons.clear();
+    noteButtons.clear();
+    while (wsGroup.firstChild) wsGroup.removeChild(wsGroup.firstChild);
+    const sorted = [...manager.workspaces].sort((a, b) => a.id - b.id);
+    for (const ws of sorted) wsGroup.appendChild(makePair(ws.id));
+    wsGroup.appendChild(addBtn);
+    highlight();
+  }
+
+  manager.onWorkspacesChange(rebuild);
+  manager.onAttentionChange(() => highlight());
 
   const cleanupNotesSub = onNotesChange(() => highlight());
 
@@ -132,7 +181,7 @@ export function mountWorkspaceBar(
   });
   bar.appendChild(ghBtn);
 
-  const cleanupHelp = mountSettings(bar);
+  const cleanupHelp = mountSettings(bar, manager);
 
   host.appendChild(bar);
 
@@ -144,6 +193,10 @@ export function mountWorkspaceBar(
       );
       const ws = manager.workspaces.find((w) => w.id === id);
       btn.classList.toggle("workspace-bar__ws--exists", !!ws);
+      btn.classList.toggle(
+        "workspace-bar__ws--attention",
+        manager.workspaceHasAttention(id),
+      );
       btn.title = wsTooltip(id, manager);
       const name = ws?.name;
       const isCustom = name && name !== `workspace-${id}` && name !== "main";
@@ -165,13 +218,14 @@ export function mountWorkspaceBar(
     }
   }
 
-  highlight();
+  rebuild();
 
   const cleanupLang = onLangChange(() => {
     shellPicker.title = t("workspace.shellTitle");
     browserBtn.textContent = t("workspace.addBrowser");
     browserBtn.title = t("workspace.addBrowserTitle");
     kofiBtn.title = t("workspace.supportTitle");
+    rebuild(); // refresh ws / add / delete button titles in the new language
   });
 
   (bar as unknown as { __ymuxHighlight: () => void }).__ymuxHighlight = highlight;

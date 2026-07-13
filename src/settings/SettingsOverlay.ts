@@ -9,6 +9,7 @@ import { t, getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n
 import { api } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 import type { YTheme, SettingsSection } from "./types";
+import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 
 interface ShortcutEntry {
   keys: string;
@@ -68,7 +69,7 @@ const SECTIONS: { id: SettingsSection; tKey: string; icon: string }[] = [
   { id: "config", tKey: "settings.section.config", icon: "📁" },
 ];
 
-export function mountSettings(parent: HTMLElement): () => void {
+export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): () => void {
   const btn = document.createElement("button");
   btn.type = "button";
   // Match the Ko-fi / GitHub buttons' class + SVG style so the hover
@@ -208,6 +209,23 @@ export function mountSettings(parent: HTMLElement): () => void {
     const spacer = document.createElement("div");
     langRow.appendChild(spacer);
     host.appendChild(langRow);
+
+    const notifyRow = document.createElement("div");
+    notifyRow.className = "settings-row";
+    const notifyLabel = document.createElement("div");
+    notifyLabel.className = "settings-row__label";
+    notifyLabel.textContent = t("settings.general.notifyOnBell");
+    notifyRow.appendChild(notifyLabel);
+    const notifyToggle = document.createElement("input");
+    notifyToggle.type = "checkbox";
+    notifyToggle.checked = manager.notifyOnBell;
+    notifyToggle.addEventListener("change", () => {
+      manager.setNotifyOnBell(notifyToggle.checked);
+    });
+    notifyRow.appendChild(notifyToggle);
+    const notifySpacer = document.createElement("div");
+    notifyRow.appendChild(notifySpacer);
+    host.appendChild(notifyRow);
 
     const aboutH = document.createElement("h4");
     aboutH.textContent = t("settings.general.about");

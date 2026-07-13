@@ -99,6 +99,10 @@ export const api = {
   setActiveWorkspace: (id: number): Promise<void> =>
     call("set_active_workspace", { id }),
 
+  /// Show an OS desktop notification with the given title and body.
+  notify: (title: string, body: string): Promise<void> =>
+    call("notify", { title, body }),
+
   /// Get the most recently reported working directory for a pane (via OSC 7).
   /// Returns `null` if the pane has not yet emitted a cwd sequence.
   getPaneCwd: (id: Uuid): Promise<string | null> =>

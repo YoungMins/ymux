@@ -26,8 +26,11 @@ import {
   removePane,
   setRatioByPath,
   splitPane,
+  swapPanes,
 } from "../layout/LayoutTree";
 import { render, type RenderContext } from "../layout/SplitContainer";
+import { beep } from "../util/beep";
+import { t } from "../i18n/i18n";
 
 const MAX_WORKSPACES = 9;
 
@@ -47,6 +50,17 @@ export class WorkspaceManager {
   /// Cache of workspace containers that have already had their panes spawned
   /// on first visit, so subsequent visits are zero-cost.
   private hydrated = new Set<number>();
+  /// Notified whenever the *set* of workspaces changes (add / delete / lazy
+  /// creation). The workspace bar registers here to rebuild its tab list.
+  private onWorkspacesChangeCb: (() => void) | null = null;
+  /// Workspaces with a pending "attention" signal (a bell/OSC 9 fired in one of
+  /// their panes while the user wasn't watching). Drives the tab badge.
+  private attentionWorkspaces = new Set<number>();
+  /// Notified when `attentionWorkspaces` changes so the bar can re-highlight.
+  private onAttentionChangeCb: (() => void) | null = null;
+  /// Whether the app window currently has focus. When it's unfocused, every
+  /// bell alerts (the user can't be watching any pane).
+  private windowFocused = true;
 
   constructor(
     private host: HTMLElement,
@@ -75,9 +89,13 @@ export class WorkspaceManager {
     }
     this._focusedPaneId = id;
     if (id !== null) {
-      this.host
-        .querySelector<HTMLElement>(`.pane[data-pane-id="${id}"]`)
-        ?.classList.add("pane--focused");
+      const el = this.host.querySelector<HTMLElement>(
+        `.pane[data-pane-id="${id}"]`,
+      );
+      el?.classList.add("pane--focused");
+      // Focusing a pane clears its pending attention badge — the user is now
+      // looking at it.
+      el?.classList.remove("pane--attention");
     }
   }
 
@@ -156,6 +174,16 @@ export class WorkspaceManager {
       true, // capture phase: run before xterm.js's own handlers
     );
 
+    // Track window focus so bell alerts can be suppressed only when the user is
+    // actually looking at the completing pane.
+    this.windowFocused = document.hasFocus();
+    window.addEventListener("focus", () => {
+      this.windowFocused = true;
+    });
+    window.addEventListener("blur", () => {
+      this.windowFocused = false;
+    });
+
     // Clicks on an embedded child webview (EmbeddedBrowserPane) bypass the
     // main webview's DOM entirely. The child's initialization_script (see
     // embedded_browser.rs) catches its own `pointerdown` / `focus` and
@@ -181,11 +209,14 @@ export class WorkspaceManager {
     await this.activate(this.activeId);
   }
 
-  /// Switch to workspace `id`, creating it lazily if needed (up to
-  /// MAX_WORKSPACES).
+  /// Switch to workspace `id`, creating it lazily if it doesn't exist yet.
+  /// There is no upper bound — `Ctrl+Alt+1..9` cover the first nine, the
+  /// toolbar `+` button reaches the rest.
   async activate(id: number): Promise<void> {
-    if (id < 1 || id > MAX_WORKSPACES) return;
+    if (id < 1) return;
+    let created = false;
     if (!this.workspaceContainers.has(id)) {
+      created = true;
       // New workspace on demand: seed an empty pane with the default shell.
       const defaultShell = this.shells[0]?.name ?? "";
       const ws: Workspace = {
@@ -221,6 +252,8 @@ export class WorkspaceManager {
 
     this.activeId = id;
     this.config.active_workspace = id;
+    // Switching to a workspace clears its pending attention badge.
+    if (this.attentionWorkspaces.delete(id)) this.onAttentionChangeCb?.();
 
     const next = this.workspaceContainers.get(id)!;
     next.style.display = "flex";
@@ -239,6 +272,57 @@ export class WorkspaceManager {
     for (const pane of cache.values()) pane.scheduleFit();
 
     void api.setActiveWorkspace(id).catch(() => {});
+    if (created) this.onWorkspacesChangeCb?.();
+    this.persistDebounced();
+  }
+
+  /// Register a callback fired whenever the set of workspaces changes. Used by
+  /// the workspace bar to rebuild its tab list.
+  onWorkspacesChange(cb: () => void): void {
+    this.onWorkspacesChangeCb = cb;
+  }
+
+  /// Lowest unused positive workspace id, so the bar numbering stays compact
+  /// (e.g. with {1,3} present the next add reuses 2).
+  private lowestFreeId(): number {
+    const used = new Set(this.config.workspaces.map((w) => w.id));
+    let id = 1;
+    while (used.has(id)) id += 1;
+    return id;
+  }
+
+  /// Create a new workspace at the lowest free id, seeded with one default
+  /// terminal pane, and switch to it. Returns the new id.
+  async addWorkspace(): Promise<number> {
+    const id = this.lowestFreeId();
+    await this.activate(id); // lazily creates the workspace + container
+    return id;
+  }
+
+  /// Delete workspace `id`, disposing its panes (killing their PTYs). Refuses
+  /// to delete the last remaining workspace. If the deleted workspace was
+  /// active, switches to the first remaining one.
+  async deleteWorkspace(id: number): Promise<void> {
+    if (this.config.workspaces.length <= 1) return;
+    const idx = this.config.workspaces.findIndex((w) => w.id === id);
+    if (idx < 0) return;
+
+    const cache = this.paneCaches.get(id);
+    if (cache) {
+      for (const pane of cache.values()) pane.dispose();
+    }
+    this.paneCaches.delete(id);
+    this.workspaceContainers.get(id)?.remove();
+    this.workspaceContainers.delete(id);
+    this.hydrated.delete(id);
+    this.config.workspaces.splice(idx, 1);
+
+    if (this.activeId === id) {
+      // The active container is gone; activate() skips hiding it (guarded) and
+      // shows the neighbour instead.
+      await this.activate(this.config.workspaces[0].id);
+    }
+    this.onWorkspacesChangeCb?.();
     this.persistDebounced();
   }
 
@@ -308,6 +392,7 @@ export class WorkspaceManager {
       onFocus: () => {
         this.focusedPaneId = spec.id;
       },
+      onAttention: (msg) => this.handleAttention(spec.id, msg),
       onHotKeysChange: (hotkeys) => {
         this.updatePaneSpec(spec.id, (p) => {
           p.hotkeys = hotkeys;
@@ -575,6 +660,95 @@ export class WorkspaceManager {
     if (!id) return;
     const pane = this.paneCaches.get(this.activeId)?.get(id);
     (pane as { toggleSearch?: () => void } | undefined)?.toggleSearch?.();
+  }
+
+  /// Swap the focused pane with the previous / next pane in depth-first order
+  /// (wrapping at both ends). Only the two panes' slots in the layout change;
+  /// their ids, cache entries, DOM elements, and PTYs are preserved, so
+  /// terminal scrollback survives and focus stays on the same pane.
+  swapFocused(delta: 1 | -1): void {
+    const ws = this.active;
+    const list = panes(ws.root);
+    if (list.length < 2) return;
+    const focusId = this.focusedPaneId ?? list[0].id;
+    const idx = list.findIndex((p) => p.id === focusId);
+    if (idx < 0) return;
+    const targetId = list[(idx + delta + list.length) % list.length].id;
+    if (targetId === focusId) return;
+    ws.root = swapPanes(ws.root, focusId, targetId);
+    this.renderWorkspace(ws);
+    // Same id → element is reused with its focus state; re-assert to be safe.
+    this.paneCaches.get(ws.id)?.get(focusId)?.focus();
+    this.persistDebounced();
+  }
+
+  /// Register a callback fired when the attention (bell) state of any workspace
+  /// changes, so the bar can re-highlight its tabs.
+  onAttentionChange(cb: () => void): void {
+    this.onAttentionChangeCb = cb;
+  }
+
+  /// Whether workspace `id` has a pending attention badge.
+  workspaceHasAttention(id: number): boolean {
+    return this.attentionWorkspaces.has(id);
+  }
+
+  /// Enable/disable bell-completion notifications and persist the choice.
+  setNotifyOnBell(enabled: boolean): void {
+    this.config.notify_on_bell = enabled;
+    this.persistDebounced();
+  }
+
+  get notifyOnBell(): boolean {
+    return this.config.notify_on_bell;
+  }
+
+  /// Which workspace owns pane `paneId`, or null if it isn't in any live cache.
+  private workspaceOfPane(paneId: Uuid): number | null {
+    for (const [wsId, cache] of this.paneCaches) {
+      if (cache.has(paneId)) return wsId;
+    }
+    return null;
+  }
+
+  /// Handle a bell / OSC 9 "attention" signal from a terminal pane — the way a
+  /// long-running CLI (claude/codex/gemini) says it finished. Suppressed when
+  /// the user is already watching the pane (focused pane, active workspace,
+  /// focused window); otherwise badges the pane / tab, fires an OS notification,
+  /// and beeps.
+  private handleAttention(paneId: Uuid, message: string | null): void {
+    if (!this.config.notify_on_bell) return;
+    const wsId = this.workspaceOfPane(paneId);
+    if (wsId === null) return;
+
+    const watching =
+      this.windowFocused &&
+      this.activeId === wsId &&
+      this.focusedPaneId === paneId;
+    if (watching) return;
+
+    // Pane badge.
+    this.host
+      .querySelector<HTMLElement>(`.pane[data-pane-id="${paneId}"]`)
+      ?.classList.add("pane--attention");
+
+    // Tab badge for a background workspace.
+    if (wsId !== this.activeId && !this.attentionWorkspaces.has(wsId)) {
+      this.attentionWorkspaces.add(wsId);
+      this.onAttentionChangeCb?.();
+    }
+
+    // OS notification + sound.
+    const name = this.getWorkspaceName(wsId);
+    const label =
+      name && name !== `workspace-${wsId}` ? `${wsId}: ${name}` : `${wsId}`;
+    const trimmed = message?.trim();
+    const body =
+      trimmed && trimmed.length > 0
+        ? trimmed
+        : t("notify.paneDone").replace("{ws}", label);
+    void api.notify(t("notify.title"), body).catch(() => {});
+    beep();
   }
 
   /// Move focus to the next pane in depth-first order.

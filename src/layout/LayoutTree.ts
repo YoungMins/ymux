@@ -177,6 +177,60 @@ export function setRatioByPath(
   return root;
 }
 
+/// Swap the positions of two leaf panes in the tree. Pane ids are preserved,
+/// so the caller's pane cache, DOM elements, and PTYs stay put — only their
+/// slots in the layout change, keeping terminal scrollback intact. Returns the
+/// same tree unchanged if `idA === idB` or either id is missing.
+export function swapPanes(root: LayoutNode, idA: Uuid, idB: Uuid): LayoutNode {
+  if (idA === idB) return root;
+  const nodeA = findNode(root, idA);
+  const nodeB = findNode(root, idB);
+  if (!nodeA || !nodeB) return root;
+  return swapLeaves(root, idA, nodeA, idB, nodeB);
+}
+
+function findNode(
+  root: LayoutNode,
+  id: Uuid,
+): (LayoutNode & { kind: "pane" }) | null {
+  let found: (LayoutNode & { kind: "pane" }) | null = null;
+  walk(root, (n) => {
+    if (!found && n.kind === "pane" && n.id === id) found = n;
+  });
+  return found;
+}
+
+/// Rebuild the tree placing `nodeB` where `idA` was and `nodeA` where `idB` was.
+function swapLeaves(
+  node: LayoutNode,
+  idA: Uuid,
+  nodeA: LayoutNode,
+  idB: Uuid,
+  nodeB: LayoutNode,
+): LayoutNode {
+  if (node.kind === "pane") {
+    if (node.id === idA) return nodeB;
+    if (node.id === idB) return nodeA;
+    return node;
+  }
+  if (node.kind === "split") {
+    return {
+      ...node,
+      a: swapLeaves(node.a, idA, nodeA, idB, nodeB),
+      b: swapLeaves(node.b, idA, nodeA, idB, nodeB),
+    };
+  }
+  if (node.kind === "tabs") {
+    return {
+      ...node,
+      children: node.children.map((c) =>
+        swapLeaves(c, idA, nodeA, idB, nodeB),
+      ),
+    };
+  }
+  return node;
+}
+
 /// Depth-first list of pane ids for focus cycling and persistence.
 export function panes(root: LayoutNode): PaneSpec[] {
   const out: PaneSpec[] = [];

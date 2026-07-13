@@ -19,6 +19,7 @@ const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+Tab",       tKey: "shortcut.nextPane" },
   { keys: "Ctrl+Shift+Tab", tKey: "shortcut.prevPane" },
   { keys: "Ctrl+Click (URL)", tKey: "shortcut.openLink" },
+  { keys: "Ctrl+Shift+←/→", tKey: "shortcut.swapPane" },
   { keys: "Ctrl+Shift+Z",   tKey: "shortcut.zoom" },
   { keys: "Ctrl+F",         tKey: "shortcut.search" },
   { keys: "Ctrl+Shift+R",   tKey: "shortcut.rename" },

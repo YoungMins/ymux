@@ -65,6 +65,18 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => manager.cycleFocus(-1),
     },
     {
+      id: "pane.swapPrev",
+      label: () => t("shortcut.swapPane"),
+      keybinding: "Ctrl+Shift+←",
+      action: () => manager.swapFocused(-1),
+    },
+    {
+      id: "pane.swapNext",
+      label: () => t("shortcut.swapPane"),
+      keybinding: "Ctrl+Shift+→",
+      action: () => manager.swapFocused(1),
+    },
+    {
       id: "notes.toggle",
       label: () => t("shortcut.notes"),
       keybinding: "Ctrl+Alt+N",
@@ -82,6 +94,16 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
         const next = promptWithBlur(t("workspace.renamePrompt"), current);
         if (next !== null) manager.renameWorkspace(wsId, next);
       },
+    },
+    {
+      id: "workspace.new",
+      label: () => t("workspace.addWorkspace"),
+      action: () => void manager.addWorkspace(),
+    },
+    {
+      id: "workspace.delete",
+      label: () => t("workspace.deleteWorkspace"),
+      action: () => void manager.deleteWorkspace(manager.activeIdValue),
     },
     ...Array.from({ length: 9 }, (_, i) => ({
       id: `workspace.${i + 1}`,

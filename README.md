@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.17-7fdbca?style=flat-square" alt="version 0.8.17" />
+  <img src="https://img.shields.io/badge/version-0.8.18-7fdbca?style=flat-square" alt="version 0.8.18" />
 </p>
 
 <p align="center">
@@ -35,10 +35,13 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
 - **Shell auto-detection**: scans the system for `cmd.exe`, Windows PowerShell,
   PowerShell 7 (`pwsh`), Git Bash, and WSL distros, and exposes them as
   selectable profiles.
-- **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between
-  workspaces. Every workspace saves its own layout. Panes stay alive across
-  switches (tmux-style) so your REPLs and tails don't die. Double-click a
-  workspace button to give it a custom name.
+- **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between the
+  first nine workspaces. Add more at any time with the `+` button in the
+  toolbar — there is no fixed limit — and remove one with the `×` that appears
+  when you hover a workspace tab (the last remaining one can't be deleted).
+  Every workspace saves its own layout. Panes stay alive across switches
+  (tmux-style) so your REPLs and tails don't die. Double-click a workspace
+  button to give it a custom name.
 - **Per-pane settings (⚙)**: the `⚙` button on each terminal opens a settings
   panel where you can set a **custom background color** (via native color picker)
   and manage **HotKey buttons** (single-line or batch multi-line commands bound
@@ -135,6 +138,7 @@ y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
 | `Ctrl+Shift+V`              | Split pane vertically                |
 | `Ctrl+Shift+W`              | Close focused pane                   |
 | `Ctrl+Shift+Z`              | Zoom / unzoom focused pane           |
+| `Ctrl+Shift+←/→`            | Swap pane with previous / next       |
 | `Ctrl+Shift+R`              | Rename focused pane                  |
 | `Ctrl+Shift+P`              | Open command palette                 |
 | `Ctrl+Alt+N`                | Toggle notes for active workspace    |

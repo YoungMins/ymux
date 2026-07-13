@@ -59,3 +59,13 @@ export function promptWithBlur(
     popPopup();
   }
 }
+
+// Same z-order workaround as `promptWithBlur`, for `window.confirm()`.
+export function confirmWithBlur(message: string): boolean {
+  pushPopup();
+  try {
+    return window.confirm(message);
+  } finally {
+    popPopup();
+  }
+}

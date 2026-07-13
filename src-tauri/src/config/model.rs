@@ -37,6 +37,8 @@ pub struct Config {
     pub shells: Vec<ShellProfile>,
     #[serde(default)]
     pub workspaces: Vec<Workspace>,
+    #[serde(default = "default_notify_on_bell")]
+    pub notify_on_bell: bool,
 }
 
 fn default_version() -> u32 {
@@ -44,6 +46,9 @@ fn default_version() -> u32 {
 }
 fn default_active_workspace() -> u32 {
     1
+}
+fn default_notify_on_bell() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -53,6 +58,7 @@ impl Default for Config {
             active_workspace: 1,
             shells: Vec::new(),
             workspaces: vec![Workspace::empty(1, "main")],
+            notify_on_bell: true,
         }
     }
 }
@@ -565,6 +571,13 @@ mod tests {
     }
 
     #[test]
+    fn notify_on_bell_defaults_true_when_absent() {
+        let toml_str = "version = 5\nactive_workspace = 1\n";
+        let parsed: Config = toml::from_str(toml_str).expect("deserialize");
+        assert!(parsed.notify_on_bell);
+    }
+
+    #[test]
     fn max_workspaces_is_nine() {
         assert_eq!(MAX_WORKSPACES, 9);
     }
@@ -585,12 +598,14 @@ mod tests {
                 color: None,
             }],
             workspaces: vec![Workspace::empty(1, "main")],
+            notify_on_bell: true,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
             active_workspace: 2,
             shells: vec![],
             workspaces: vec![Workspace::empty(2, "two")],
+            notify_on_bell: true,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -641,6 +656,7 @@ mod tests {
                     })),
                 },
             }],
+            notify_on_bell: true,
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -666,6 +682,7 @@ mod tests {
                 color: None,
             }],
             workspaces: vec![Workspace::empty(1, "main")],
+            notify_on_bell: true,
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -793,6 +810,7 @@ shell = "PowerShell 7"
                 color: None,
             }],
             workspaces: vec![Workspace::empty(1, "main")],
+            notify_on_bell: true,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -814,6 +832,7 @@ shell = "PowerShell 7"
                 },
             ],
             workspaces: vec![Workspace::empty(1, "main")],
+            notify_on_bell: true,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -869,6 +888,7 @@ shell = "PowerShell 7"
                 name: "test".into(),
                 root: LayoutNode::Pane(spec.clone()),
             }],
+            notify_on_bell: true,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -923,6 +943,7 @@ shell = "PowerShell 7"
                     })),
                 },
             }],
+            notify_on_bell: true,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

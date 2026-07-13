@@ -54,6 +54,7 @@ export interface Config {
   active_workspace: number;
   shells: ShellProfile[];
   workspaces: Workspace[];
+  notify_on_bell: boolean;
 }
 
 export interface BootstrapPayload {
