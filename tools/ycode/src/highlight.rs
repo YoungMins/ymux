@@ -316,9 +316,7 @@ mod tests {
                 .sum();
             if source_w != spans_w {
                 drift_rows.push((row, source_w, spans_w));
-                eprintln!(
-                    "DRIFT row {row}: source_width={source_w} spans_width={spans_w}"
-                );
+                eprintln!("DRIFT row {row}: source_width={source_w} spans_width={spans_w}");
                 eprintln!("  source: {:?}", source);
                 for (i, (_, t)) in spans.iter().enumerate() {
                     eprintln!(
