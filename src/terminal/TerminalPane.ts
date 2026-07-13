@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import "@xterm/xterm/css/xterm.css";
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -106,6 +107,11 @@ export class TerminalPane implements Pane {
         "Cascadia Code, Consolas, 'Courier New', ui-monospace, monospace",
       fontSize: 13,
       scrollback: 10_000,
+      // Squish ambiguous-width glyphs that the OS fallback font draws
+      // 2 cells wide back into their declared 1-cell slot, so they
+      // don't overflow into the next cell and leave ghost remnants
+      // after a redraw. Requires a non-DOM renderer (Canvas below).
+      rescaleOverlappingGlyphs: true,
       theme: {
         background: bgColor,
         foreground: "#d6deeb",
@@ -125,6 +131,13 @@ export class TerminalPane implements Pane {
     this.term.loadAddon(this.fit);
     this.search = new SearchAddon();
     this.term.loadAddon(this.search);
+    // Canvas renderer (not the default DOM one). xterm.js's
+    // `rescaleOverlappingGlyphs` option is a no-op under DOM; Canvas
+    // honors it and also tends to track per-cell repaints more
+    // precisely than DOM for fast-redraw patterns (PSReadLine prompts,
+    // ratatui paragraph redraws). We pick Canvas over WebGL because
+    // WebGL caused a cell-positioning regression in v0.8.14.
+    this.term.loadAddon(new CanvasAddon());
 
     // Block xterm.js from consuming ymux-level hotkeys. Without this, Ctrl+F
     // etc. get translated into control bytes (Ctrl+F → 0x06) and written to

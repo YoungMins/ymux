@@ -11,6 +11,9 @@ importers:
       '@tauri-apps/api':
         specifier: ^2.0.0
         version: 2.10.1
+      '@xterm/addon-canvas':
+        specifier: ^0.7.0
+        version: 0.7.0(@xterm/xterm@5.5.0)
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -406,6 +409,11 @@ packages:
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
+  '@xterm/addon-canvas@0.7.0':
+    resolution: {integrity: sha512-LF5LYcfvefJuJ7QotNRdRSPc9YASAVDeoT5uyXS/nZshZXjYplGXRECBGiznwvhNL2I8bq1Lf5MzRwstsYQ2Iw==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
   '@xterm/addon-fit@0.10.0':
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
     peerDependencies:
@@ -694,6 +702,10 @@ snapshots:
       '@tauri-apps/cli-win32-x64-msvc': 2.10.1
 
   '@types/estree@1.0.8': {}
+
+  '@xterm/addon-canvas@0.7.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
 
   '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:

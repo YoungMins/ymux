@@ -1,7 +1,0 @@
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"superpowers:brainstorming"}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"superpowers:writing-plans"}
-{"t":0,"agent":"a22fca7","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"superpowers:executing-plans"}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"superpowers:finishing-a-development-branch"}
-{"t":0,"agent":"a952f94","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"claude-mem:version-bump"}

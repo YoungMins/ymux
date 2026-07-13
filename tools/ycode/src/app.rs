@@ -276,9 +276,18 @@ impl App {
         self.sidebar_open = !self.sidebar_open;
     }
 
-    /// Enter pressed inside the sidebar. Dirs toggle expand/collapse;
-    /// files request open (which may surface the dirty-buffer prompt).
+    /// Enter pressed inside the sidebar. `..` re-roots to the parent
+    /// directory; dirs toggle expand/collapse; files request open (which
+    /// may surface the dirty-buffer prompt).
     pub fn sidebar_enter(&mut self) -> Result<()> {
+        let is_parent = self
+            .sidebar
+            .selected_entry()
+            .is_some_and(|e| e.is_parent_link);
+        if is_parent {
+            self.sidebar.re_root_to_parent();
+            return Ok(());
+        }
         if self.sidebar.toggle_expand_selected() {
             return Ok(());
         }

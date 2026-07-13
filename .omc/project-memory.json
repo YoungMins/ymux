@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778204467661,
+  "lastScanned": 1783936274790,
   "projectRoot": "D:\\Git\\ymux",
   "techStack": {
     "languages": [
@@ -40,8 +40,8 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "cargo build -p ydir -p ycode 2>&1",
-    "testCommand": "cargo test -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher 2>&1",
+    "buildCommand": "pnpm build",
+    "testCommand": "pnpm test",
     "lintCommand": "cargo clippy",
     "devCommand": "pnpm dev",
     "scripts": {
@@ -63,6 +63,7 @@
     "isMonorepo": false,
     "workspaces": [],
     "mainDirectories": [
+      "docs",
       "scripts",
       "src"
     ],
@@ -77,23 +78,30 @@
       "path": "crates",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778204467618,
+      "lastAccessed": 1783936274748,
       "keyFiles": []
     },
     "dist": {
       "path": "dist",
       "purpose": "Distribution/build output",
       "fileCount": 1,
-      "lastAccessed": 1778204467618,
+      "lastAccessed": 1783936274749,
       "keyFiles": [
         "index.html"
       ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 0,
+      "lastAccessed": 1783936274766,
+      "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 2,
-      "lastAccessed": 1778204467630,
+      "lastAccessed": 1783936274767,
       "keyFiles": [
         "build-tools.mjs",
         "test.sh"
@@ -103,7 +111,7 @@
       "path": "src",
       "purpose": "Source code",
       "fileCount": 3,
-      "lastAccessed": 1778204467630,
+      "lastAccessed": 1783936274767,
       "keyFiles": [
         "main.ts",
         "style.css",
@@ -114,7 +122,7 @@
       "path": "src-tauri",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1778204467631,
+      "lastAccessed": 1783936274768,
       "keyFiles": [
         "build.rs",
         "Cargo.toml",
@@ -125,7 +133,7 @@
       "path": "target",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1778204467631,
+      "lastAccessed": 1783936274768,
       "keyFiles": [
         "CACHEDIR.TAG"
       ]
@@ -134,24 +142,24 @@
       "path": "tools",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778204467631,
+      "lastAccessed": 1783936274769,
       "keyFiles": []
     },
     "dist\\assets": {
       "path": "dist\\assets",
       "purpose": "Static assets",
       "fileCount": 2,
-      "lastAccessed": 1778204467632,
+      "lastAccessed": 1783936274770,
       "keyFiles": [
-        "index-B0gmKsP4.css",
-        "index-BYJG8HQI.js"
+        "index-BpaTL_zY.css",
+        "index-CsNc1BqC.js"
       ]
     },
     "src-tauri\\src": {
       "path": "src-tauri\\src",
       "purpose": "Source code",
-      "fileCount": 9,
-      "lastAccessed": 1778204467633,
+      "fileCount": 10,
+      "lastAccessed": 1783936274772,
       "keyFiles": [
         "commands.rs",
         "embedded_browser.rs",
@@ -159,307 +167,6 @@
       ]
     }
   },
-  "hotPaths": [
-    {
-      "path": "src\\browser\\NativeBrowserPane.ts",
-      "accessCount": 45,
-      "lastAccessed": 1778043656850,
-      "type": "file"
-    },
-    {
-      "path": "src\\workspace\\WorkspaceManager.ts",
-      "accessCount": 28,
-      "lastAccessed": 1778066327704,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\Cargo.toml",
-      "accessCount": 24,
-      "lastAccessed": 1778217647397,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\src\\webview.rs",
-      "accessCount": 22,
-      "lastAccessed": 1778069662573,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\src\\main.rs",
-      "accessCount": 17,
-      "lastAccessed": 1778068953726,
-      "type": "file"
-    },
-    {
-      "path": "src\\i18n\\i18n.ts",
-      "accessCount": 13,
-      "lastAccessed": 1778056909817,
-      "type": "directory"
-    },
-    {
-      "path": "src\\ipc\\bridge.ts",
-      "accessCount": 13,
-      "lastAccessed": 1778066201726,
-      "type": "file"
-    },
-    {
-      "path": "src\\style.css",
-      "accessCount": 13,
-      "lastAccessed": 1778067765087,
-      "type": "directory"
-    },
-    {
-      "path": "src-tauri\\tauri.conf.json",
-      "accessCount": 13,
-      "lastAccessed": 1778217648447,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\src\\embedded_browser.rs",
-      "accessCount": 12,
-      "lastAccessed": 1778067615704,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\src\\lib.rs",
-      "accessCount": 10,
-      "lastAccessed": 1778066186036,
-      "type": "file"
-    },
-    {
-      "path": "src\\browser\\EmbeddedBrowserPane.ts",
-      "accessCount": 10,
-      "lastAccessed": 1778067778276,
-      "type": "file"
-    },
-    {
-      "path": "src\\layout\\LayoutTree.ts",
-      "accessCount": 8,
-      "lastAccessed": 1778038488510,
-      "type": "file"
-    },
-    {
-      "path": "src\\help\\HelpOverlay.ts",
-      "accessCount": 8,
-      "lastAccessed": 1778056633707,
-      "type": "file"
-    },
-    {
-      "path": "src\\types.ts",
-      "accessCount": 7,
-      "lastAccessed": 1778066243496,
-      "type": "file"
-    },
-    {
-      "path": "",
-      "accessCount": 7,
-      "lastAccessed": 1778217643739,
-      "type": "directory"
-    },
-    {
-      "path": "Cargo.lock",
-      "accessCount": 6,
-      "lastAccessed": 1777978091778,
-      "type": "directory"
-    },
-    {
-      "path": "package.json",
-      "accessCount": 6,
-      "lastAccessed": 1778217649458,
-      "type": "file"
-    },
-    {
-      "path": "src",
-      "accessCount": 5,
-      "lastAccessed": 1778044053891,
-      "type": "directory"
-    },
-    {
-      "path": "src-tauri\\capabilities\\default.json",
-      "accessCount": 5,
-      "lastAccessed": 1778066298115,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.claude\\settings.json",
-      "accessCount": 4,
-      "lastAccessed": 1777976628704,
-      "type": "file"
-    },
-    {
-      "path": "src\\browser\\BrowserPane.ts",
-      "accessCount": 4,
-      "lastAccessed": 1777977875499,
-      "type": "file"
-    },
-    {
-      "path": "Cargo.toml",
-      "accessCount": 4,
-      "lastAccessed": 1778048177119,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\src\\commands.rs",
-      "accessCount": 3,
-      "lastAccessed": 1777986368231,
-      "type": "file"
-    },
-    {
-      "path": "src\\workspace\\WorkspaceBar.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778044175524,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ymon\\Cargo.toml",
-      "accessCount": 3,
-      "lastAccessed": 1778047978879,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ymon\\src\\main.rs",
-      "accessCount": 3,
-      "lastAccessed": 1778047979077,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ydir\\src\\main.rs",
-      "accessCount": 3,
-      "lastAccessed": 1778217343602,
-      "type": "file"
-    },
-    {
-      "path": "src\\layout\\Pane.ts",
-      "accessCount": 2,
-      "lastAccessed": 1777977368390,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri",
-      "accessCount": 2,
-      "lastAccessed": 1777978383628,
-      "type": "directory"
-    },
-    {
-      "path": "src\\main.ts",
-      "accessCount": 2,
-      "lastAccessed": 1777986472749,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ymon\\src\\app.rs",
-      "accessCount": 2,
-      "lastAccessed": 1778047984307,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri\\capabilities",
-      "accessCount": 2,
-      "lastAccessed": 1778066294115,
-      "type": "directory"
-    },
-    {
-      "path": "tools\\ycode\\src\\main.rs",
-      "accessCount": 2,
-      "lastAccessed": 1778204517338,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.claude\\plugins\\cache\\omc\\oh-my-claudecode\\4.13.6\\skills\\omc-setup\\phases\\01-install-claude-md.md",
-      "accessCount": 1,
-      "lastAccessed": 1777976259421,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.claude\\plugins\\cache\\omc\\oh-my-claudecode\\4.13.6\\skills\\omc-setup\\phases\\02-configure.md",
-      "accessCount": 1,
-      "lastAccessed": 1777976389994,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.claude\\plugins\\cache\\omc\\oh-my-claudecode\\4.13.6\\skills\\omc-setup\\phases\\03-integrations.md",
-      "accessCount": 1,
-      "lastAccessed": 1777976589424,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.claude\\plugins\\cache\\omc\\oh-my-claudecode\\4.13.6\\skills\\omc-setup\\phases\\04-welcome.md",
-      "accessCount": 1,
-      "lastAccessed": 1777976691406,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\tauri-2.10.3\\src\\window\\mod.rs",
-      "accessCount": 1,
-      "lastAccessed": 1777978134937,
-      "type": "directory"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\tauri-2.10.3\\Cargo.toml",
-      "accessCount": 1,
-      "lastAccessed": 1777978136443,
-      "type": "directory"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\tauri-2.10.3",
-      "accessCount": 1,
-      "lastAccessed": 1777978138030,
-      "type": "directory"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\tauri-2.10.3\\src",
-      "accessCount": 1,
-      "lastAccessed": 1777978147256,
-      "type": "directory"
-    },
-    {
-      "path": "C:\\Users\\nanyo\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\tauri-2.10.3\\src\\webview",
-      "accessCount": 1,
-      "lastAccessed": 1777978148768,
-      "type": "directory"
-    },
-    {
-      "path": "CLAUDE.md",
-      "accessCount": 1,
-      "lastAccessed": 1777978149513,
-      "type": "file"
-    },
-    {
-      "path": "src\\layout",
-      "accessCount": 1,
-      "lastAccessed": 1778038322646,
-      "type": "directory"
-    },
-    {
-      "path": "tools\\ycode\\Cargo.toml",
-      "accessCount": 1,
-      "lastAccessed": 1778045813984,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ycode\\src\\app.rs",
-      "accessCount": 1,
-      "lastAccessed": 1778045818354,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ydir\\Cargo.toml",
-      "accessCount": 1,
-      "lastAccessed": 1778045821882,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ygit\\Cargo.toml",
-      "accessCount": 1,
-      "lastAccessed": 1778048119551,
-      "type": "file"
-    },
-    {
-      "path": "tools\\ygit\\src\\main.rs",
-      "accessCount": 1,
-      "lastAccessed": 1778048124772,
-      "type": "file"
-    }
-  ],
+  "hotPaths": [],
   "userDirectives": []
 }

@@ -7,6 +7,7 @@
 //! (depth = parent + 1) immediately after `i`; collapsing drains the
 //! contiguous run of entries with greater depth.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Max visible characters of an entry's name. Longer names are truncated
@@ -18,6 +19,9 @@ pub struct Sidebar {
     pub entries: Vec<TreeEntry>,
     pub selected: usize,
     pub scroll: usize,
+    /// When false (default), dotfiles/dotdirs are hidden. The user toggles
+    /// this with the `.` key while the sidebar has focus.
+    pub show_hidden: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -27,17 +31,88 @@ pub struct TreeEntry {
     pub depth: usize,
     pub is_dir: bool,
     pub expanded: bool,
+    /// True only for the synthetic `..` row at the top of the tree. Distinct
+    /// from a regular subdirectory because Enter on it re-roots the sidebar
+    /// rather than expanding in place.
+    pub is_parent_link: bool,
 }
 
 impl Sidebar {
     pub fn new(root: PathBuf) -> Self {
-        let entries = read_children(&root, 0);
+        let entries = build_root_entries(&root, false);
         Self {
             root,
             entries,
             selected: 0,
             scroll: 0,
+            show_hidden: false,
         }
+    }
+
+    /// Re-root the sidebar to the parent of the current root. After re-root
+    /// the selection lands on the row representing the directory we came
+    /// from when it's visible, otherwise on the `..` row (if any) or the
+    /// first entry — never out of bounds.
+    pub fn re_root_to_parent(&mut self) {
+        let Some(parent) = self.root.parent() else {
+            return;
+        };
+        let parent = parent.to_path_buf();
+        let old_root_name = self
+            .root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        self.root = parent;
+        self.entries = build_root_entries(&self.root, self.show_hidden);
+        self.scroll = 0;
+        self.selected = old_root_name
+            .and_then(|name| {
+                self.entries
+                    .iter()
+                    .position(|e| !e.is_parent_link && e.name == name)
+            })
+            .unwrap_or(0);
+    }
+
+    /// Toggle visibility of dotfiles/dotdirs. Rebuilds the entry list
+    /// from scratch but preserves every previously-expanded subdirectory
+    /// (recursively) and tries to keep the cursor on the same entry by
+    /// path. Falls back to entry 0 when the previously-selected path is
+    /// no longer visible (e.g. it was a dotfile and the user just hid
+    /// hidden entries).
+    pub fn toggle_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        let expanded_paths: HashSet<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir && !e.is_parent_link && e.expanded)
+            .map(|e| e.path.clone())
+            .collect();
+        let selected_path = self.entries.get(self.selected).map(|e| e.path.clone());
+
+        let mut entries: Vec<TreeEntry> = Vec::new();
+        if let Some(parent) = self.root.parent() {
+            entries.push(TreeEntry {
+                path: parent.to_path_buf(),
+                name: "..".to_string(),
+                depth: 0,
+                is_dir: true,
+                expanded: false,
+                is_parent_link: true,
+            });
+        }
+        entries.extend(build_expanded_subtree(
+            &self.root,
+            0,
+            self.show_hidden,
+            &expanded_paths,
+        ));
+        self.entries = entries;
+
+        self.selected = selected_path
+            .and_then(|p| self.entries.iter().position(|e| e.path == p))
+            .unwrap_or(0);
+        self.scroll = 0;
     }
 
     pub fn selected_entry(&self) -> Option<&TreeEntry> {
@@ -80,6 +155,12 @@ impl Sidebar {
         let Some(entry) = self.entries.get(i) else {
             return false;
         };
+        // The `..` row looks like a directory but doesn't expand — it
+        // re-roots. Callers handle that via `re_root_to_parent`; for the
+        // generic toggle path we treat it as a no-op.
+        if entry.is_parent_link {
+            return false;
+        }
         if !entry.is_dir {
             return false;
         }
@@ -100,7 +181,7 @@ impl Sidebar {
             entry.expanded = true;
             (entry.path.clone(), entry.depth)
         };
-        let children = read_children(&path, depth + 1);
+        let children = read_children(&path, depth + 1, self.show_hidden);
         for (offset, child) in children.into_iter().enumerate() {
             self.entries.insert(i + 1 + offset, child);
         }
@@ -129,7 +210,54 @@ impl Sidebar {
     }
 }
 
-fn read_children(dir: &Path, depth: usize) -> Vec<TreeEntry> {
+/// Compose the entries shown when `root` is the displayed top: an optional
+/// `..` parent-link row first, then the alphabetically-sorted child listing.
+fn build_root_entries(root: &Path, show_hidden: bool) -> Vec<TreeEntry> {
+    let mut entries: Vec<TreeEntry> = Vec::new();
+    if let Some(parent) = root.parent() {
+        entries.push(TreeEntry {
+            path: parent.to_path_buf(),
+            name: "..".to_string(),
+            depth: 0,
+            is_dir: true,
+            expanded: false,
+            is_parent_link: true,
+        });
+    }
+    entries.extend(read_children(root, 0, show_hidden));
+    entries
+}
+
+/// Build the children of `root` plus, recursively, the children of any
+/// previously-expanded subdirectory (path in `expanded_paths`). Used to
+/// rebuild the flat tree after toggling `show_hidden` so the user's
+/// expansion state survives the visibility flip.
+fn build_expanded_subtree(
+    root: &Path,
+    depth: usize,
+    show_hidden: bool,
+    expanded_paths: &HashSet<PathBuf>,
+) -> Vec<TreeEntry> {
+    let mut entries = read_children(root, depth, show_hidden);
+    let mut i = 0;
+    while i < entries.len() {
+        if entries[i].is_dir && expanded_paths.contains(&entries[i].path) {
+            entries[i].expanded = true;
+            let path = entries[i].path.clone();
+            let children = build_expanded_subtree(&path, depth + 1, show_hidden, expanded_paths);
+            let len = children.len();
+            for (offset, child) in children.into_iter().enumerate() {
+                entries.insert(i + 1 + offset, child);
+            }
+            i += len + 1;
+        } else {
+            i += 1;
+        }
+    }
+    entries
+}
+
+fn read_children(dir: &Path, depth: usize, show_hidden: bool) -> Vec<TreeEntry> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -137,8 +265,7 @@ fn read_children(dir: &Path, depth: usize) -> Vec<TreeEntry> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            // Skip dotfiles — the user can configure this later if needed.
-            if name.starts_with('.') {
+            if !show_hidden && name.starts_with('.') {
                 return None;
             }
             let path = e.path();
@@ -166,6 +293,7 @@ fn read_children(dir: &Path, depth: usize) -> Vec<TreeEntry> {
             depth,
             is_dir,
             expanded: false,
+            is_parent_link: false,
         })
         .collect()
 }
@@ -190,9 +318,12 @@ mod tests {
         let td = TempDir::new().unwrap();
         make_tree(&td);
         let sb = Sidebar::new(td.path().to_path_buf());
+        // `..` parent-link row prepended (TempDir always has a parent),
+        // then dirs alphabetical, then files alphabetical (dotfiles hidden).
         let names: Vec<&str> = sb.entries.iter().map(|e| e.name.as_str()).collect();
-        // Dirs first, then files alphabetical, dotfiles hidden.
-        assert_eq!(names, vec!["subdir", "a.rs", "b.md"]);
+        assert_eq!(names, vec!["..", "subdir", "a.rs", "b.md"]);
+        assert!(sb.entries[0].is_parent_link);
+        assert!(sb.entries.iter().skip(1).all(|e| !e.is_parent_link));
     }
 
     #[test]
@@ -200,16 +331,17 @@ mod tests {
         let td = TempDir::new().unwrap();
         make_tree(&td);
         let mut sb = Sidebar::new(td.path().to_path_buf());
-        assert_eq!(sb.entries.len(), 3);
-        // Select subdir (index 0) and expand.
-        assert_eq!(sb.selected, 0);
+        // 4 = `..` + subdir + 2 files. Move to subdir before toggling.
+        assert_eq!(sb.entries.len(), 4);
+        sb.move_down();
+        assert_eq!(sb.entries[sb.selected].name, "subdir");
         assert!(sb.toggle_expand_selected());
-        assert_eq!(sb.entries.len(), 4); // subdir + inner.txt + 2 files
-        assert_eq!(sb.entries[1].name, "inner.txt");
-        assert_eq!(sb.entries[1].depth, 1);
+        assert_eq!(sb.entries.len(), 5); // `..` + subdir + inner.txt + 2 files
+        assert_eq!(sb.entries[2].name, "inner.txt");
+        assert_eq!(sb.entries[2].depth, 1);
         // Collapse.
         assert!(sb.toggle_expand_selected());
-        assert_eq!(sb.entries.len(), 3);
+        assert_eq!(sb.entries.len(), 4);
     }
 
     #[test]
@@ -217,9 +349,78 @@ mod tests {
         let td = TempDir::new().unwrap();
         make_tree(&td);
         let mut sb = Sidebar::new(td.path().to_path_buf());
-        sb.move_down(); // select a.rs
+        // Skip `..` (idx 0) and subdir (idx 1), land on a.rs (idx 2).
+        sb.move_down();
+        sb.move_down();
+        assert_eq!(sb.entries[sb.selected].name, "a.rs");
         assert!(!sb.entries[sb.selected].is_dir);
         assert!(!sb.toggle_expand_selected());
+    }
+
+    #[test]
+    fn toggle_on_parent_link_returns_false() {
+        let td = TempDir::new().unwrap();
+        make_tree(&td);
+        let mut sb = Sidebar::new(td.path().to_path_buf());
+        assert_eq!(sb.selected, 0);
+        assert!(sb.entries[0].is_parent_link);
+        // toggle is a no-op on the parent link — the App handles `..`
+        // via `re_root_to_parent` instead.
+        assert!(!sb.toggle_expand_selected());
+        assert_eq!(sb.entries.len(), 4);
+    }
+
+    #[test]
+    fn toggle_hidden_reveals_and_hides_dotfiles() {
+        let td = TempDir::new().unwrap();
+        make_tree(&td);
+        let mut sb = Sidebar::new(td.path().to_path_buf());
+        // Default: dotfiles hidden.
+        let names: Vec<&str> = sb.entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(!names.iter().any(|n| *n == ".hidden"));
+
+        sb.toggle_hidden();
+        assert!(sb.show_hidden);
+        let names: Vec<&str> = sb.entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| *n == ".hidden"));
+
+        sb.toggle_hidden();
+        assert!(!sb.show_hidden);
+        let names: Vec<&str> = sb.entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(!names.iter().any(|n| *n == ".hidden"));
+    }
+
+    #[test]
+    fn toggle_hidden_preserves_subdir_expansion() {
+        let td = TempDir::new().unwrap();
+        make_tree(&td);
+        let mut sb = Sidebar::new(td.path().to_path_buf());
+        // Expand subdir so inner.txt is visible.
+        sb.move_down(); // past `..`
+        assert_eq!(sb.entries[sb.selected].name, "subdir");
+        assert!(sb.toggle_expand_selected());
+        assert!(sb.entries.iter().any(|e| e.name == "inner.txt"));
+
+        // Toggling hidden visibility must not collapse the subdir.
+        sb.toggle_hidden();
+        assert!(sb.entries.iter().any(|e| e.name == "inner.txt"));
+        sb.toggle_hidden();
+        assert!(sb.entries.iter().any(|e| e.name == "inner.txt"));
+    }
+
+    #[test]
+    fn re_root_to_parent_changes_root_and_selects_old_root_dir() {
+        let td = TempDir::new().unwrap();
+        make_tree(&td);
+        let inner = td.path().join("subdir");
+        let mut sb = Sidebar::new(inner.clone());
+        assert_eq!(sb.root, inner);
+        sb.re_root_to_parent();
+        assert_eq!(sb.root, td.path());
+        // After re-rooting, the row representing the directory we came
+        // from (`subdir`) should be selected so the user can navigate
+        // back in if they want.
+        assert_eq!(sb.entries[sb.selected].name, "subdir");
     }
 
     #[test]

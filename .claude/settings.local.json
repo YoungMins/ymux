@@ -22,7 +22,14 @@
       "Bash(cargo fmt *)",
       "Bash(git commit -m ' *)",
       "Bash(cargo clippy *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git tag *)",
+      "Bash(findstr /i \"i18n\")",
+      "Bash(powershell -Command \"\\(Get-Content D:\\\\Git\\\\ymux\\\\src\\\\i18n\\\\i18n.ts | Measure-Object -Line\\).Lines\")",
+      "Bash(findstr /N \"version\" src-tauri/Cargo.toml package.json src-tauri/tauri.conf.json)",
+      "Bash(findstr /V \"node_modules\")",
+      "Bash(powershell *)"
     ]
   }
 }

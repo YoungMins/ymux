@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"grep -m1 '\\\"version\\\"' D:\\\\Git\\\\ymux\\\\package.json && grep -m1 '^version' D:\\\\Git\\\\ymux\\\\src-tauri\\\\Cargo.toml\",\"description\":\"Check current version in package.json and Cargo.toml\"}",
-  "error": "Exit code 2\ngrep: D:Gitymuxpackage.json: No such file or directory",
-  "timestamp": "2026-05-08T05:20:22.241Z",
-  "retry_count": 1
-}

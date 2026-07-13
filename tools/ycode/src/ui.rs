@@ -225,7 +225,9 @@ fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     {
         let abs_i = scroll + offset;
         let indent = "  ".repeat(entry.depth);
-        let icon = if entry.is_dir {
+        let icon = if entry.is_parent_link {
+            "↑ "
+        } else if entry.is_dir {
             if entry.expanded {
                 "▾ "
             } else {

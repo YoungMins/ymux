@@ -97,6 +97,7 @@ fn run(
                             KeyCode::Home => app.sidebar.move_home(),
                             KeyCode::End => app.sidebar.move_end(),
                             KeyCode::Enter => app.sidebar_enter()?,
+                            KeyCode::Char('.') => app.sidebar.toggle_hidden(),
                             _ => {}
                         }
                     } else if app.command_mode {

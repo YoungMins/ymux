@@ -289,6 +289,53 @@ mod tests {
         assert_eq!(total, expected);
     }
 
+    /// Diagnostic probe: for the actual problem-report file, dump every
+    /// line's span widths and compare to the raw-source width. Any drift
+    /// (spans summing to a different cell count than the source line)
+    /// pinpoints where syntect's segmentation desyncs from ratatui's
+    /// width assumption — the mechanism behind the markdown scroll-ghost.
+    #[test]
+    fn probe_width_drift_for_release_notes_v0_8_11() {
+        use unicode_width::UnicodeWidthStr;
+        let path = PathBuf::from("../../.omc/release-notes-v0.8.11.md");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("skip: {} not present", path.display());
+            return;
+        };
+        let lines: Vec<String> = text.lines().map(String::from).collect();
+        let yt = YTheme::default();
+        let h = Highlighter::new(Some(&PathBuf::from("test.md")), &yt);
+        let highlighted = h.highlight_range(&lines, 0, lines.len());
+
+        let mut drift_rows: Vec<(usize, usize, usize)> = Vec::new();
+        for (row, (source, spans)) in lines.iter().zip(highlighted.iter()).enumerate() {
+            let source_w = UnicodeWidthStr::width(source.as_str());
+            let spans_w: usize = spans
+                .iter()
+                .map(|(_, t)| UnicodeWidthStr::width(t.as_str()))
+                .sum();
+            if source_w != spans_w {
+                drift_rows.push((row, source_w, spans_w));
+                eprintln!(
+                    "DRIFT row {row}: source_width={source_w} spans_width={spans_w}"
+                );
+                eprintln!("  source: {:?}", source);
+                for (i, (_, t)) in spans.iter().enumerate() {
+                    eprintln!(
+                        "  span[{i}] w={} text={:?}",
+                        UnicodeWidthStr::width(t.as_str()),
+                        t
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "{} drift rows out of {} highlighted",
+            drift_rows.len(),
+            highlighted.len()
+        );
+    }
+
     #[test]
     fn highlight_range_emits_only_requested_window() {
         let yt = YTheme::default();
