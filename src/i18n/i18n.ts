@@ -639,6 +639,21 @@ const strings: Translations = {
     de: "Arbeitsbereich {ws}: Aufgabe abgeschlossen",
     vi: "Không gian làm việc {ws}: đã xong",
   },
+  "status.running": {
+    en: "Running", ko: "실행 중", ja: "実行中", zh: "运行中", hi: "चल रहा है",
+    es: "En ejecución", fr: "En cours", ar: "قيد التشغيل", pt: "Em execução",
+    ru: "Выполняется", tr: "Çalışıyor", de: "Läuft", vi: "Đang chạy",
+  },
+  "status.done": {
+    en: "Done", ko: "완료", ja: "完了", zh: "完成", hi: "पूर्ण",
+    es: "Listo", fr: "Terminé", ar: "تم", pt: "Concluído",
+    ru: "Готово", tr: "Tamamlandı", de: "Fertig", vi: "Xong",
+  },
+  "status.attention": {
+    en: "Needs attention", ko: "확인 필요", ja: "要確認", zh: "需要注意", hi: "ध्यान दें",
+    es: "Requiere atención", fr: "Attention requise", ar: "يتطلب انتباهاً", pt: "Requer atenção",
+    ru: "Требует внимания", tr: "Dikkat gerekli", de: "Aufmerksamkeit nötig", vi: "Cần chú ý",
+  },
   "shortcut.swapPane": {
     en: "Swap pane with previous / next",
     ko: "이전 / 다음 창과 자리 바꾸기",

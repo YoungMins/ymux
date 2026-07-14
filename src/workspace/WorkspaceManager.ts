@@ -31,6 +31,7 @@ import {
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
+import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
 
@@ -61,6 +62,13 @@ export class WorkspaceManager {
   /// Whether the app window currently has focus. When it's unfocused, every
   /// bell alerts (the user can't be watching any pane).
   private windowFocused = true;
+  /// Per-pane derived status (idle/running/done/attention), driven by each
+  /// TerminalPane's `PaneStatusMachine`. Backs both the pane's border colour
+  /// and the workspace tab's status dot. Browser panes never appear here.
+  paneStatus = new Map<Uuid, PaneStatus>();
+  /// Notified with the owning workspace id whenever a pane's status changes,
+  /// so the workspace bar can re-colour that workspace's tab dot.
+  onPaneStatusChange?: (workspaceId: number) => void;
 
   constructor(
     private host: HTMLElement,
@@ -83,6 +91,11 @@ export class WorkspaceManager {
   private set focusedPaneId(id: Uuid | null) {
     if (this._focusedPaneId === id) return;
     if (this._focusedPaneId !== null) {
+      // Tell the outgoing pane it lost focus so its status machine can clear
+      // a pending done/attention flag on refocus-elsewhere. Only TerminalPane
+      // implements blur()/status — browser panes don't track a status.
+      const prev = this.findPaneById(this._focusedPaneId);
+      if (prev instanceof TerminalPane) prev.blur();
       this.host
         .querySelector<HTMLElement>(`.pane[data-pane-id="${this._focusedPaneId}"]`)
         ?.classList.remove("pane--focused");
@@ -310,6 +323,7 @@ export class WorkspaceManager {
     const cache = this.paneCaches.get(id);
     if (cache) {
       for (const pane of cache.values()) pane.dispose();
+      for (const paneId of cache.keys()) this.paneStatus.delete(paneId);
     }
     this.paneCaches.delete(id);
     this.workspaceContainers.get(id)?.remove();
@@ -393,6 +407,12 @@ export class WorkspaceManager {
         this.focusedPaneId = spec.id;
       },
       onAttention: (msg) => this.handleAttention(spec.id, msg),
+      onStatusChange: (status) => {
+        this.paneStatus.set(spec.id, status);
+        this.applyPaneStatusClass(spec.id, status);
+        const wsId = this.workspaceOfPane(spec.id);
+        if (wsId !== null) this.onPaneStatusChange?.(wsId);
+      },
       onHotKeysChange: (hotkeys) => {
         this.updatePaneSpec(spec.id, (p) => {
           p.hotkeys = hotkeys;
@@ -545,6 +565,7 @@ export class WorkspaceManager {
     const pane = cache.get(id);
     pane?.dispose();
     cache.delete(id);
+    this.paneStatus.delete(id);
 
     if (newRoot === null) {
       // Workspace would be empty; create a replacement pane so there is
@@ -709,6 +730,52 @@ export class WorkspaceManager {
       if (cache.has(paneId)) return wsId;
     }
     return null;
+  }
+
+  /// Look up a live `Pane` instance by id across every workspace's cache
+  /// (the focused pane may belong to a currently-hidden workspace).
+  private findPaneById(paneId: Uuid): Pane | undefined {
+    for (const cache of this.paneCaches.values()) {
+      const pane = cache.get(paneId);
+      if (pane) return pane;
+    }
+    return undefined;
+  }
+
+  /// Repaint pane `id`'s status border + tooltip. Called whenever a
+  /// TerminalPane's derived status (idle/running/done/attention) changes.
+  private applyPaneStatusClass(id: Uuid, status: PaneStatus): void {
+    const el = this.host.querySelector<HTMLElement>(`.pane[data-pane-id="${id}"]`);
+    if (!el) return;
+    el.classList.remove(
+      "pane--status-idle",
+      "pane--status-running",
+      "pane--status-done",
+      "pane--status-attention",
+    );
+    el.classList.add(`pane--status-${status}`);
+    // "idle" has no dedicated i18n key (it's the common resting state) — leave
+    // the tooltip empty rather than showing the raw translation key.
+    el.title = status === "idle" ? "" : t(`status.${status}`);
+  }
+
+  /// Highest-priority pane status among all live panes in workspace `wsId`
+  /// (attention > running > done > idle). Drives the workspace tab's status
+  /// dot colour.
+  workspaceStatus(wsId: number): PaneStatus {
+    const cache = this.paneCaches.get(wsId);
+    if (!cache) return "idle";
+    let sawRunning = false;
+    let sawDone = false;
+    for (const id of cache.keys()) {
+      const status = this.paneStatus.get(id) ?? "idle";
+      if (status === "attention") return "attention";
+      if (status === "running") sawRunning = true;
+      else if (status === "done") sawDone = true;
+    }
+    if (sawRunning) return "running";
+    if (sawDone) return "done";
+    return "idle";
   }
 
   /// Handle a bell / OSC 9 "attention" signal from a terminal pane — the way a

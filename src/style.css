@@ -81,6 +81,7 @@ body,
 }
 
 .workspace-bar__ws {
+  position: relative;
   min-width: 24px;
   max-width: 200px;
   height: 20px;
@@ -200,6 +201,57 @@ body,
   50% {
     box-shadow: inset 0 0 0 2px var(--accent);
   }
+}
+
+/* Agent status: per-pane border colour (idle/running/done/attention), driven
+   by TerminalPane's PaneStatusMachine. Reuses the pulse keyframes above
+   instead of redefining new ones — `ymux-pane-attention` already animates
+   `box-shadow`, which is exactly what a pulsing border needs. */
+.pane--status-running {
+  box-shadow: inset 0 0 0 2px var(--status-running, #3b82f6);
+}
+
+.pane--status-done {
+  box-shadow: inset 0 0 0 2px var(--status-done, #22c55e);
+}
+
+.pane--status-attention {
+  box-shadow: inset 0 0 0 2px var(--status-attention, #f59e0b);
+  animation: ymux-pane-attention 1.2s ease-in-out infinite;
+}
+
+.pane--status-idle {
+  box-shadow: none;
+}
+
+/* Workspace tab status dot: highest-priority status among that workspace's
+   panes (attention > running > done > idle). Sits bottom-right of the tab
+   number; the existing top-right `::after` bell badge above is unaffected. */
+.ws-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.ws-dot--running {
+  background: var(--status-running, #3b82f6);
+}
+
+.ws-dot--done {
+  background: var(--status-done, #22c55e);
+}
+
+.ws-dot--attention {
+  background: var(--status-attention, #f59e0b);
+  animation: ymux-attention-pulse 1.2s ease-in-out infinite;
+}
+
+.ws-dot--idle {
+  background: transparent;
 }
 
 .workspace-bar__spacer {
