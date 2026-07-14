@@ -54,11 +54,6 @@ export class WorkspaceManager {
   /// Notified whenever the *set* of workspaces changes (add / delete / lazy
   /// creation). The workspace bar registers here to rebuild its tab list.
   private onWorkspacesChangeCb: (() => void) | null = null;
-  /// Workspaces with a pending "attention" signal (a bell/OSC 9 fired in one of
-  /// their panes while the user wasn't watching). Drives the tab badge.
-  private attentionWorkspaces = new Set<number>();
-  /// Notified when `attentionWorkspaces` changes so the bar can re-highlight.
-  private onAttentionChangeCb: (() => void) | null = null;
   /// Whether the app window currently has focus. When it's unfocused, every
   /// bell alerts (the user can't be watching any pane).
   private windowFocused = true;
@@ -106,9 +101,6 @@ export class WorkspaceManager {
         `.pane[data-pane-id="${id}"]`,
       );
       el?.classList.add("pane--focused");
-      // Focusing a pane clears its pending attention badge — the user is now
-      // looking at it.
-      el?.classList.remove("pane--attention");
     }
   }
 
@@ -265,8 +257,6 @@ export class WorkspaceManager {
 
     this.activeId = id;
     this.config.active_workspace = id;
-    // Switching to a workspace clears its pending attention badge.
-    if (this.attentionWorkspaces.delete(id)) this.onAttentionChangeCb?.();
 
     const next = this.workspaceContainers.get(id)!;
     next.style.display = "flex";
@@ -703,17 +693,6 @@ export class WorkspaceManager {
     this.persistDebounced();
   }
 
-  /// Register a callback fired when the attention (bell) state of any workspace
-  /// changes, so the bar can re-highlight its tabs.
-  onAttentionChange(cb: () => void): void {
-    this.onAttentionChangeCb = cb;
-  }
-
-  /// Whether workspace `id` has a pending attention badge.
-  workspaceHasAttention(id: number): boolean {
-    return this.attentionWorkspaces.has(id);
-  }
-
   /// Enable/disable bell-completion notifications and persist the choice.
   setNotifyOnBell(enabled: boolean): void {
     this.config.notify_on_bell = enabled;
@@ -781,8 +760,11 @@ export class WorkspaceManager {
   /// Handle a bell / OSC 9 "attention" signal from a terminal pane — the way a
   /// long-running CLI (claude/codex/gemini) says it finished. Suppressed when
   /// the user is already watching the pane (focused pane, active workspace,
-  /// focused window); otherwise badges the pane / tab, fires an OS notification,
-  /// and beeps.
+  /// focused window); otherwise fires an OS notification and beeps. The visual
+  /// "needs attention" indicator itself is owned entirely by
+  /// `PaneStatusMachine`/`pane--status-attention`/`ws-dot--attention` (v0.8.19's
+  /// unified 4-state status system) — this handler no longer touches the DOM
+  /// directly, it only gates the notification/beep side effects.
   private handleAttention(paneId: Uuid, message: string | null): void {
     if (!this.config.notify_on_bell) return;
     const wsId = this.workspaceOfPane(paneId);
@@ -793,17 +775,6 @@ export class WorkspaceManager {
       this.activeId === wsId &&
       this.focusedPaneId === paneId;
     if (watching) return;
-
-    // Pane badge.
-    this.host
-      .querySelector<HTMLElement>(`.pane[data-pane-id="${paneId}"]`)
-      ?.classList.add("pane--attention");
-
-    // Tab badge for a background workspace.
-    if (wsId !== this.activeId && !this.attentionWorkspaces.has(wsId)) {
-      this.attentionWorkspaces.add(wsId);
-      this.onAttentionChangeCb?.();
-    }
 
     // OS notification + sound.
     const name = this.getWorkspaceName(wsId);

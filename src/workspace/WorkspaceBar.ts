@@ -130,7 +130,6 @@ export function mountWorkspaceBar(
   }
 
   manager.onWorkspacesChange(rebuild);
-  manager.onAttentionChange(() => highlight());
   manager.onPaneStatusChange = () => highlight();
 
   const cleanupNotesSub = onNotesChange(() => highlight());
@@ -203,10 +202,6 @@ export function mountWorkspaceBar(
       );
       const ws = manager.workspaces.find((w) => w.id === id);
       btn.classList.toggle("workspace-bar__ws--exists", !!ws);
-      btn.classList.toggle(
-        "workspace-bar__ws--attention",
-        manager.workspaceHasAttention(id),
-      );
       btn.title = wsTooltip(id, manager);
       const name = ws?.name;
       const isCustom = name && name !== `workspace-${id}` && name !== "main";
