@@ -703,6 +703,16 @@ export class WorkspaceManager {
     return this.config.notify_on_bell;
   }
 
+  /// Enable/disable persisting terminal scrollback to disk and persist the choice.
+  setPersistScrollback(enabled: boolean): void {
+    this.config.persist_scrollback = enabled;
+    this.persistDebounced();
+  }
+
+  get persistScrollback(): boolean {
+    return this.config.persist_scrollback;
+  }
+
   /// Which workspace owns pane `paneId`, or null if it isn't in any live cache.
   private workspaceOfPane(paneId: Uuid): number | null {
     for (const [wsId, cache] of this.paneCaches) {

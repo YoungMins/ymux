@@ -197,6 +197,18 @@ export const api = {
   /// the frontend can't smuggle in arbitrary paths.
   openConfigPath: (kind: ConfigPathKind): Promise<void> =>
     call("open_config_path", { kind }),
+
+  /// Persist `blob` (serialized terminal scrollback) for a pane to disk.
+  saveScrollback: (id: Uuid, blob: string): Promise<void> =>
+    call("save_scrollback", { paneId: id, blob }),
+
+  /// Load the persisted scrollback for a pane, or "" if none was saved.
+  loadScrollback: (id: Uuid): Promise<string> =>
+    call("load_scrollback", { paneId: id }),
+
+  /// Delete the persisted scrollback for a pane, if any.
+  deleteScrollback: (id: Uuid): Promise<void> =>
+    call("delete_scrollback", { paneId: id }),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.

@@ -55,6 +55,7 @@ export interface Config {
   shells: ShellProfile[];
   workspaces: Workspace[];
   notify_on_bell: boolean;
+  persist_scrollback: boolean;
 }
 
 export interface BootstrapPayload {
