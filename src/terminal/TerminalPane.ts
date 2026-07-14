@@ -15,6 +15,7 @@ import type { Pane } from "../layout/Pane";
 import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
+import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -31,6 +32,9 @@ export interface TerminalPaneOptions {
   /// finished or needs attention. `message` is the OSC 9 text if present,
   /// else null.
   onAttention?: (message: string | null) => void;
+  /// Fired whenever this pane's derived status (idle/running/done/attention)
+  /// changes, so the owner can render a per-pane status indicator.
+  onStatusChange?: (status: PaneStatus) => void;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -56,6 +60,9 @@ export class TerminalPane implements Pane {
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
   private cleanupLang: () => void = () => {};
+  private statusMachine = new PaneStatusMachine((s) => this.opts.onStatusChange?.(s));
+  private isFocused = false;
+  private statusTimer: number | undefined;
 
   constructor(opts: TerminalPaneOptions) {
     this.id = opts.spec.id;
@@ -183,19 +190,34 @@ export class TerminalPane implements Pane {
     );
     this.term.open(this.termHost);
 
+    // Drive the derived idle/running/done/attention status from a 1s
+    // ticker so `running` decays back to `idle` after a quiet period even
+    // when no new output/input arrives to trigger a recheck.
+    this.statusTimer = window.setInterval(
+      () => this.statusMachine.tick(Date.now()),
+      1000,
+    );
+
     // Bell (BEL 0x07) → attention signal with no message.
-    this.term.onBell(() => opts.onAttention?.(null));
+    this.term.onBell(() => {
+      opts.onAttention?.(null);
+      this.statusMachine.onAttention(this.isFocused);
+    });
     // OSC 9 → attention with the payload text as the message. Only the
     // iTerm2-style plain-text form (`OSC 9 ; <message>`) is a completion
     // notification. Windows Terminal / ConEmu reuse OSC 9 for progress
     // (`9;4;…`), cwd (`9;9;…`), etc., whose payload starts with "<digit>;" —
     // swallow those without alerting so long-running tools don't spam beeps.
     this.term.parser.registerOscHandler(9, (data) => {
-      if (!/^\d+;/.test(data)) opts.onAttention?.(data || null);
+      if (!/^\d+;/.test(data)) {
+        opts.onAttention?.(data || null);
+        this.statusMachine.onAttention(this.isFocused);
+      }
       return true;
     });
 
     this.term.onData((data) => {
+      if (data.includes("\r")) this.statusMachine.onSubmit(Date.now());
       if (!this.spawned) return;
       const bytes = ENCODER.encode(data);
       void api.writePane(this.id, bytes);
@@ -271,6 +293,7 @@ export class TerminalPane implements Pane {
     // full redraw.
     const dataUnlisten = await onPaneData(this.id, (bytes) => {
       this.term.write(bytes);
+      this.statusMachine.onOutput(Date.now());
     });
     const exitUnlisten = await onPaneExit(this.id, (code) => {
       this.term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`);
@@ -323,9 +346,23 @@ export class TerminalPane implements Pane {
   }
 
   focus(): void {
+    this.isFocused = true;
+    this.statusMachine.onFocus();
     this.element.focus({ preventScroll: true });
     this.term.focus();
     this.opts.onFocus?.();
+  }
+
+  /// Called when this pane loses focus (another pane is focused instead).
+  /// There is no DOM blur event we can rely on here — xterm's hidden helper
+  /// textarea moves focus around internally — so the owner (WorkspaceManager)
+  /// calls this explicitly from its focused-pane tracking.
+  blur(): void {
+    this.isFocused = false;
+  }
+
+  get status(): PaneStatus {
+    return this.statusMachine.status;
   }
 
   /// Toggle the search bar. Once shown, pressing Enter calls `findNext`,
@@ -449,6 +486,7 @@ export class TerminalPane implements Pane {
 
   dispose(): void {
     this.cleanupLang();
+    if (this.statusTimer !== undefined) window.clearInterval(this.statusTimer);
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     if (this.spawned) {

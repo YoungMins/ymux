@@ -37,6 +37,15 @@ describe("PaneStatusMachine", () => {
     expect(m.status).toBe("idle");
   });
 
+  it("done clears to idle on focus", () => {
+    const m = new PaneStatusMachine(() => {});
+    m.onSubmit(0);
+    m.onAttention(true); // focused -> done
+    expect(m.status).toBe("done");
+    m.onFocus();
+    expect(m.status).toBe("idle");
+  });
+
   it("running -> idle after idle timeout with no output", () => {
     const m = new PaneStatusMachine(() => {}, 4000);
     m.onSubmit(1000);

@@ -40,9 +40,9 @@ export class PaneStatusMachine {
     this.set(focused ? "done" : "attention");
   }
 
-  /// Pane gained focus — clear a pending attention flag.
+  /// Pane gained focus — clear a pending attention or done flag.
   onFocus(): void {
-    if (this._status === "attention") this.set("idle");
+    if (this._status === "attention" || this._status === "done") this.set("idle");
   }
 
   /// Called on a timer; drops running→idle once the idle window elapses.
