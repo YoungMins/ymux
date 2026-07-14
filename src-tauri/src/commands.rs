@@ -216,6 +216,28 @@ pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
     Ok(())
 }
 
+/// Persist `blob` (serialized terminal scrollback) for `pane_id` to disk.
+/// Thin wrapper — the actual fs logic lives in [`crate::scrollback`] so it
+/// can be unit-tested without a running webview (and on Linux CI, where this
+/// `desktop`-gated module doesn't even compile).
+#[tauri::command]
+pub fn save_scrollback(pane_id: String, blob: String) -> YmuxResult<()> {
+    crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
+}
+
+/// Load the persisted scrollback for `pane_id`, or an empty string if none
+/// has been saved yet.
+#[tauri::command]
+pub fn load_scrollback(pane_id: String) -> YmuxResult<String> {
+    crate::scrollback::load_blob(&pane_id).map_err(YmuxError::Io)
+}
+
+/// Delete the persisted scrollback for `pane_id`, if any.
+#[tauri::command]
+pub fn delete_scrollback(pane_id: String) -> YmuxResult<()> {
+    crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io)
+}
+
 /// Start the reader thread that drains PTY output and forwards it to the
 /// frontend as Tauri events. Must be called once, at startup, after the
 /// [`AppState`] is installed.

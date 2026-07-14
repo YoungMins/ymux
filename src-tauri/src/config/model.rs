@@ -39,6 +39,8 @@ pub struct Config {
     pub workspaces: Vec<Workspace>,
     #[serde(default = "default_notify_on_bell")]
     pub notify_on_bell: bool,
+    #[serde(default = "default_persist_scrollback")]
+    pub persist_scrollback: bool,
 }
 
 fn default_version() -> u32 {
@@ -50,6 +52,9 @@ fn default_active_workspace() -> u32 {
 fn default_notify_on_bell() -> bool {
     true
 }
+fn default_persist_scrollback() -> bool {
+    true
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -59,6 +64,7 @@ impl Default for Config {
             shells: Vec::new(),
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
+            persist_scrollback: true,
         }
     }
 }
@@ -578,6 +584,13 @@ mod tests {
     }
 
     #[test]
+    fn persist_scrollback_defaults_true_when_absent() {
+        let toml_str = "version = 5\nactive_workspace = 1\n";
+        let parsed: Config = toml::from_str(toml_str).expect("deserialize");
+        assert!(parsed.persist_scrollback);
+    }
+
+    #[test]
     fn max_workspaces_is_nine() {
         assert_eq!(MAX_WORKSPACES, 9);
     }
@@ -599,6 +612,7 @@ mod tests {
             }],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -606,6 +620,7 @@ mod tests {
             shells: vec![],
             workspaces: vec![Workspace::empty(2, "two")],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -657,6 +672,7 @@ mod tests {
                 },
             }],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -683,6 +699,7 @@ mod tests {
             }],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -811,6 +828,7 @@ shell = "PowerShell 7"
             }],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -833,6 +851,7 @@ shell = "PowerShell 7"
             ],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -889,6 +908,7 @@ shell = "PowerShell 7"
                 root: LayoutNode::Pane(spec.clone()),
             }],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -944,6 +964,7 @@ shell = "PowerShell 7"
                 },
             }],
             notify_on_bell: true,
+            persist_scrollback: true,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

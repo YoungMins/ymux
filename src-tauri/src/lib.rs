@@ -7,6 +7,7 @@
 pub mod config;
 pub mod error;
 pub mod pty;
+pub mod scrollback;
 pub mod shell;
 
 // `commands` exists only when the desktop feature is enabled, because it
