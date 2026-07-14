@@ -458,6 +458,21 @@ const strings: Translations = {
     de: "Schließen (Esc)",
     vi: "Đóng (Esc)",
   },
+  "terminal.sessionRestored": {
+    en: "── session restored ──",
+    ko: "── 세션 복원됨 ──",
+    ja: "── セッション復元 ──",
+    zh: "── 会话已恢复 ──",
+    hi: "── सत्र पुनर्स्थापित ──",
+    es: "── sesión restaurada ──",
+    fr: "── session restaurée ──",
+    ar: "── تمت استعادة الجلسة ──",
+    pt: "── sessão restaurada ──",
+    ru: "── сессия восстановлена ──",
+    tr: "── oturum geri yüklendi ──",
+    de: "── Sitzung wiederhergestellt ──",
+    vi: "── phiên đã khôi phục ──",
+  },
 
   // ── Update banner ───────────────────────────────────────────────
   "update.available": {

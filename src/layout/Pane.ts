@@ -15,6 +15,10 @@ export interface Pane {
   /// Bring the underlying resource online (spawn PTY / navigate iframe). Must
   /// be idempotent: calling twice should not double-spawn.
   spawn(): Promise<void>;
-  /// Release every resource. DOM element is removed.
-  dispose(): void;
+  /// Release every resource. DOM element is removed. `permanent` (default
+  /// false) distinguishes an explicit user close (kill pane / delete
+  /// workspace) from app shutdown; implementations that persist per-pane
+  /// state keyed by pane id (e.g. TerminalPane's scrollback file) use it to
+  /// delete that state only on a true permanent close.
+  dispose(permanent?: boolean): void;
 }

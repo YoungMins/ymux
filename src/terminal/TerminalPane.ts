@@ -6,6 +6,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { CanvasAddon } from "@xterm/addon-canvas";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -35,6 +36,10 @@ export interface TerminalPaneOptions {
   /// Fired whenever this pane's derived status (idle/running/done/attention)
   /// changes, so the owner can render a per-pane status indicator.
   onStatusChange?: (status: PaneStatus) => void;
+  /// Returns whether scrollback persistence is currently enabled (read live
+  /// from WorkspaceManager's toggle rather than snapshotted at pane-creation
+  /// time, so flipping the setting takes effect immediately).
+  persistScrollback?: () => boolean;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -52,6 +57,7 @@ export class TerminalPane implements Pane {
   private term: Terminal;
   private fit: FitAddon;
   private search: SearchAddon;
+  private serializeAddon = new SerializeAddon();
   private searchBar: HTMLElement | null = null;
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
@@ -63,6 +69,12 @@ export class TerminalPane implements Pane {
   private statusMachine = new PaneStatusMachine((s) => this.opts.onStatusChange?.(s));
   private isFocused = false;
   private statusTimer: number | undefined;
+  private scrollbackSaveTimer: number | undefined;
+  private flushScrollbackOnUnload = (): void => {
+    if (this.opts.persistScrollback?.()) {
+      void api.saveScrollback(this.id, this.serializeAddon.serialize());
+    }
+  };
 
   constructor(opts: TerminalPaneOptions) {
     this.id = opts.spec.id;
@@ -189,6 +201,16 @@ export class TerminalPane implements Pane {
       }),
     );
     this.term.open(this.termHost);
+    // Serialize addon: snapshots the buffer (text + escape sequences) so it
+    // can be replayed on next mount when scrollback persistence is enabled.
+    this.term.loadAddon(this.serializeAddon);
+
+    // Flush the current buffer to disk on app shutdown (normal window
+    // close), *without* deleting it — that's what makes restore-on-mount
+    // possible next launch. This is intentionally separate from `dispose()`,
+    // which is only invoked from explicit user-close paths (kill pane /
+    // delete workspace) and therefore deletes instead.
+    window.addEventListener("beforeunload", this.flushScrollbackOnUnload);
 
     // Drive the derived idle/running/done/attention status from a 1s
     // ticker so `running` decays back to `idle` after a quiet period even
@@ -282,6 +304,22 @@ export class TerminalPane implements Pane {
     }
     const { cols, rows } = this.currentDims();
 
+    // Restore prior scrollback (if persistence is enabled and a save exists)
+    // BEFORE the live PTY listener is registered below, so replayed history
+    // always renders above anything the shell writes this session. A load
+    // failure must never block spawn, hence the try/catch swallow.
+    if (this.opts.persistScrollback?.()) {
+      try {
+        const prior = await api.loadScrollback(this.id);
+        if (prior) {
+          this.term.write(prior);
+          this.term.write(`\r\n\x1b[2m${t("terminal.sessionRestored")}\x1b[0m\r\n`);
+        }
+      } catch {
+        // No prior scrollback (or load failed) — start clean.
+      }
+    }
+
     // Register data + exit listeners *before* spawning the PTY. Tauri's
     // `emit` is fire-and-forget — events for `pty:data:{id}` that arrive
     // while no listener is registered are dropped on the floor. TUI apps
@@ -294,6 +332,7 @@ export class TerminalPane implements Pane {
     const dataUnlisten = await onPaneData(this.id, (bytes) => {
       this.term.write(bytes);
       this.statusMachine.onOutput(Date.now());
+      this.scheduleScrollbackSave();
     });
     const exitUnlisten = await onPaneExit(this.id, (code) => {
       this.term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`);
@@ -484,13 +523,47 @@ export class TerminalPane implements Pane {
     return { cols, rows };
   }
 
-  dispose(): void {
+  /// Debounce scrollback saves to ~2s after output settles, instead of
+  /// serializing the whole buffer on every chunk (which would thrash disk
+  /// I/O during a fast-scrolling build log or `cat` of a large file).
+  private scheduleScrollbackSave(): void {
+    if (!this.opts.persistScrollback?.()) return;
+    if (this.scrollbackSaveTimer !== undefined) {
+      window.clearTimeout(this.scrollbackSaveTimer);
+    }
+    this.scrollbackSaveTimer = window.setTimeout(() => {
+      void api.saveScrollback(this.id, this.serializeAddon.serialize());
+    }, 2000);
+  }
+
+  /// Tear down this pane. `permanent` distinguishes the two callers:
+  ///  - `true`  — the user explicitly closed this pane (WorkspaceManager's
+  ///    `closeFocused`) or deleted its workspace (`deleteWorkspace`). The PTY
+  ///    is killed AND its saved scrollback is deleted, since there is no
+  ///    "next mount" to restore into.
+  ///  - `false` (default) — app shutdown. WorkspaceManager never calls
+  ///    `dispose()` on this path (see `main.ts`'s `beforeunload` → `flush()`,
+  ///    which only persists config); this default exists so `dispose()` is
+  ///    safe-by-default (no accidental scrollback deletion) if a future
+  ///    caller is added without reading this comment.
+  dispose(permanent = false): void {
     this.cleanupLang();
     if (this.statusTimer !== undefined) window.clearInterval(this.statusTimer);
+    if (this.scrollbackSaveTimer !== undefined) {
+      window.clearTimeout(this.scrollbackSaveTimer);
+    }
+    window.removeEventListener("beforeunload", this.flushScrollbackOnUnload);
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     if (this.spawned) {
       void api.killPane(this.id).catch(() => {});
+    }
+    if (permanent) {
+      // Unconditional (not gated on the live toggle): a file may exist from
+      // when persistence was previously on, and the backend delete is a
+      // no-op if there's nothing to remove, so this can't leave an orphaned
+      // scrollback file behind after the user permanently closes the pane.
+      void api.deleteScrollback(this.id);
     }
     this.term.dispose();
     this.element.remove();

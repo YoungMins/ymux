@@ -312,7 +312,9 @@ export class WorkspaceManager {
 
     const cache = this.paneCaches.get(id);
     if (cache) {
-      for (const pane of cache.values()) pane.dispose();
+      // Permanent: the whole workspace is being deleted, so any persisted
+      // scrollback for its panes has no future mount to restore into.
+      for (const pane of cache.values()) pane.dispose(true);
       for (const paneId of cache.keys()) this.paneStatus.delete(paneId);
     }
     this.paneCaches.delete(id);
@@ -397,6 +399,7 @@ export class WorkspaceManager {
         this.focusedPaneId = spec.id;
       },
       onAttention: (msg) => this.handleAttention(spec.id, msg),
+      persistScrollback: () => this.persistScrollback,
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
         this.applyPaneStatusClass(spec.id, status);
@@ -553,7 +556,9 @@ export class WorkspaceManager {
     const newRoot = removePane(ws.root, id);
     const cache = this.paneCaches.get(ws.id)!;
     const pane = cache.get(id);
-    pane?.dispose();
+    // Permanent: the user explicitly closed this pane (kill_pane), so its
+    // persisted scrollback (if any) should not survive it.
+    pane?.dispose(true);
     cache.delete(id);
     this.paneStatus.delete(id);
 
