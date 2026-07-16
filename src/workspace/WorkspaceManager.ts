@@ -556,7 +556,8 @@ export class WorkspaceManager {
       wtPath = await api.gitWorktreeAdd(baseCwd, branch, this.worktreeBaseDir);
     } catch (e) {
       console.error("worktree add failed", e);
-      void api.notify(t("worktree.command"), t("worktree.addFailed") + " " + String(e)).catch(() => {});
+      const reason = e instanceof Error ? e.message : String(e);
+      void api.notify(t("worktree.command"), `${t("worktree.addFailed")} ${reason}`).catch(() => {});
       return;
     }
 

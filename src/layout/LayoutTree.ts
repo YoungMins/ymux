@@ -50,6 +50,8 @@ export function paneNode(spec: PaneSpec): LayoutNode {
     pane_kind: spec.pane_kind ?? "terminal",
     url: spec.url ?? null,
     hotkeys: spec.hotkeys ?? [],
+    bg_color: spec.bg_color ?? "",
+    worktree_path: spec.worktree_path ?? "",
   };
 }
 
