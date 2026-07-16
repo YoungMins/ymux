@@ -889,6 +889,7 @@ function findAndMutatePane(
         url: root.url ?? null,
         hotkeys: root.hotkeys ?? [],
         bg_color: root.bg_color ?? "",
+        worktree_path: root.worktree_path ?? "",
       };
       patch(snapshot);
       root.title = snapshot.title;
@@ -900,6 +901,7 @@ function findAndMutatePane(
       root.url = snapshot.url;
       root.hotkeys = snapshot.hotkeys;
       root.bg_color = snapshot.bg_color;
+      root.worktree_path = snapshot.worktree_path;
       return true;
     }
     return false;

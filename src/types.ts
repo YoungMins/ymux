@@ -34,6 +34,7 @@ export interface PaneSpec {
   url?: string | null;
   hotkeys?: HotKeyDef[];
   bg_color?: string;
+  worktree_path?: string;
 }
 
 export type SplitDir = "horizontal" | "vertical";
@@ -56,6 +57,7 @@ export interface Config {
   workspaces: Workspace[];
   notify_on_bell: boolean;
   persist_scrollback: boolean;
+  worktree_base_dir: string;
 }
 
 export interface BootstrapPayload {

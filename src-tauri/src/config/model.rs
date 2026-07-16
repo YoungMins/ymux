@@ -41,6 +41,10 @@ pub struct Config {
     pub notify_on_bell: bool,
     #[serde(default = "default_persist_scrollback")]
     pub persist_scrollback: bool,
+    /// Base directory under which ymux creates git worktrees for panes opened
+    /// via "open in worktree". Empty means no base dir configured yet.
+    #[serde(default)]
+    pub worktree_base_dir: String,
 }
 
 fn default_version() -> u32 {
@@ -65,6 +69,7 @@ impl Default for Config {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         }
     }
 }
@@ -368,6 +373,10 @@ pub struct PaneSpec {
     /// Custom background color for this pane (hex like "#1a2b3c", or "" for default).
     #[serde(default)]
     pub bg_color: String,
+    /// Non-empty when this pane is rooted in a git worktree created by ymux.
+    /// Holds the worktree directory; used to offer cleanup when the pane closes.
+    #[serde(default)]
+    pub worktree_path: String,
 }
 
 impl PaneSpec {
@@ -383,6 +392,7 @@ impl PaneSpec {
             url: None,
             hotkeys: Vec::new(),
             bg_color: String::new(),
+            worktree_path: String::new(),
         }
     }
 
@@ -400,6 +410,7 @@ impl PaneSpec {
             url: None,
             hotkeys: Vec::new(),
             bg_color: String::new(),
+            worktree_path: String::new(),
         }
     }
 
@@ -415,6 +426,7 @@ impl PaneSpec {
             url: Some(url.into()),
             hotkeys: Vec::new(),
             bg_color: String::new(),
+            worktree_path: String::new(),
         }
     }
 }
@@ -447,6 +459,7 @@ mod tests {
             url: None,
             hotkeys: Vec::new(),
             bg_color: String::new(),
+            worktree_path: String::new(),
         })
     }
 
@@ -613,6 +626,7 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -621,6 +635,7 @@ mod tests {
             workspaces: vec![Workspace::empty(2, "two")],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -656,6 +671,7 @@ mod tests {
                         url: None,
                         hotkeys: vec![],
                         bg_color: String::new(),
+                        worktree_path: String::new(),
                     })),
                     b: Box::new(LayoutNode::Pane(PaneSpec {
                         id: b,
@@ -668,11 +684,13 @@ mod tests {
                         url: None,
                         hotkeys: vec![],
                         bg_color: String::new(),
+                        worktree_path: String::new(),
                     })),
                 },
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -700,6 +718,7 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -829,6 +848,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -852,6 +872,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -897,6 +918,7 @@ shell = "PowerShell 7"
                 batch: true,
             }],
             bg_color: "#1a2b3c".to_string(),
+            worktree_path: "C:\\wt\\agent-1".to_string(),
         };
         let config = Config {
             version: CONFIG_VERSION,
@@ -909,6 +931,7 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -924,6 +947,27 @@ shell = "PowerShell 7"
         assert_eq!(loaded_spec.hotkeys[0].label, "build");
         assert!(loaded_spec.hotkeys[0].batch);
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
+        assert_eq!(loaded_spec.worktree_path, "C:\\wt\\agent-1");
+    }
+
+    /// Regression: worktree_path must survive a full Config → TOML → Config
+    /// round-trip, mirroring the bg_color coverage above.
+    #[test]
+    fn panespec_worktree_field_roundtrip() {
+        let mut config = Config::default();
+        let ws = config.workspace_mut(1);
+        if let LayoutNode::Pane(ref mut p) = ws.root {
+            p.worktree_path = "C:\\wt\\agent-1".to_string();
+        }
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        // The toml crate's pretty printer emits TOML literal strings (single
+        // quotes) for values containing backslashes, so no escaping needed.
+        assert!(toml_str.contains("worktree_path = 'C:\\wt\\agent-1'"));
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(
+            loaded.workspaces[0].panes()[0].worktree_path,
+            "C:\\wt\\agent-1"
+        );
     }
 
     /// Empty bg_color (default) must round-trip as empty string, not disappear.
@@ -965,6 +1009,7 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            worktree_base_dir: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
