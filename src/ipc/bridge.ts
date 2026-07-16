@@ -30,6 +30,13 @@ export interface ResizeArgs {
   pixelHeight: number;
 }
 
+/// A single entry from `git worktree list --porcelain` (mirrors
+/// `src-tauri/src/git/mod.rs::WorktreeEntry`).
+export interface WorktreeEntry {
+  path: string;
+  branch: string;
+}
+
 /// Best-effort conversion of any thrown / rejected value into a human
 /// readable string. Tauri can reject with strings, plain objects, Errors,
 /// or `undefined` (the last one happens when a permission is denied without a
@@ -209,6 +216,22 @@ export const api = {
   /// Delete the persisted scrollback for a pane, if any.
   deleteScrollback: (id: Uuid): Promise<void> =>
     call("delete_scrollback", { paneId: id }),
+
+  /// Check whether `cwd` is inside a git repository.
+  gitIsRepo: (cwd: string): Promise<boolean> => call("git_is_repo", { cwd }),
+
+  /// Create a new git worktree for `branch` (based on `base`) under the
+  /// repo rooted at `cwd`. Returns the absolute path of the new worktree.
+  gitWorktreeAdd: (cwd: string, branch: string, base: string): Promise<string> =>
+    call("git_worktree_add", { cwd, branch, base }),
+
+  /// Remove a git worktree at `path`. `force` matches `git worktree remove --force`.
+  gitWorktreeRemove: (path: string, force: boolean): Promise<void> =>
+    call("git_worktree_remove", { path, force }),
+
+  /// List all worktrees for the repo rooted at `cwd`.
+  gitWorktreeList: (cwd: string): Promise<WorktreeEntry[]> =>
+    call("git_worktree_list", { cwd }),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.
