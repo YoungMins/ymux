@@ -10,8 +10,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
+use std::path::Path;
+
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
+use crate::git;
 use crate::pty::{PtyManager, SpawnedPane};
 use crate::shell;
 
@@ -236,6 +239,38 @@ pub fn load_scrollback(pane_id: String) -> YmuxResult<String> {
 #[tauri::command]
 pub fn delete_scrollback(pane_id: String) -> YmuxResult<()> {
     crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io)
+}
+
+/// Check whether `cwd` sits inside a git repository (main worktree or a
+/// linked worktree). Thin wrapper over [`crate::git::is_git_repo`].
+#[tauri::command]
+pub fn git_is_repo(cwd: String) -> bool {
+    git::is_git_repo(Path::new(&cwd))
+}
+
+/// Create a new git worktree for `branch`, rooted at the repo containing
+/// `cwd`, under a suggested sibling path derived from `base`. Returns the
+/// created worktree's path.
+#[tauri::command]
+pub fn git_worktree_add(cwd: String, branch: String, base: String) -> YmuxResult<String> {
+    let repo = git::repo_root(Path::new(&cwd))?;
+    let path = git::suggested_worktree_path(&repo, &branch, &base);
+    git::worktree_add(&repo, &branch, &path)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Remove the worktree at `path`. `force` is passed through to `git worktree
+/// remove --force` for worktrees with uncommitted changes.
+#[tauri::command]
+pub fn git_worktree_remove(path: String, force: bool) -> YmuxResult<()> {
+    git::worktree_remove(Path::new(&path), force)
+}
+
+/// List all worktrees (main + linked) for the repository containing `cwd`.
+#[tauri::command]
+pub fn git_worktree_list(cwd: String) -> YmuxResult<Vec<git::WorktreeEntry>> {
+    let repo = git::repo_root(Path::new(&cwd))?;
+    git::worktree_list(&repo)
 }
 
 /// Start the reader thread that drains PTY output and forwards it to the
