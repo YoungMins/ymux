@@ -227,6 +227,23 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     notifyRow.appendChild(notifySpacer);
     host.appendChild(notifyRow);
 
+    const scrollbackRow = document.createElement("div");
+    scrollbackRow.className = "settings-row";
+    const scrollbackLabel = document.createElement("div");
+    scrollbackLabel.className = "settings-row__label";
+    scrollbackLabel.textContent = t("settings.general.persistScrollback");
+    scrollbackRow.appendChild(scrollbackLabel);
+    const scrollbackToggle = document.createElement("input");
+    scrollbackToggle.type = "checkbox";
+    scrollbackToggle.checked = manager.persistScrollback;
+    scrollbackToggle.addEventListener("change", () => {
+      manager.setPersistScrollback(scrollbackToggle.checked);
+    });
+    scrollbackRow.appendChild(scrollbackToggle);
+    const scrollbackSpacer = document.createElement("div");
+    scrollbackRow.appendChild(scrollbackSpacer);
+    host.appendChild(scrollbackRow);
+
     const aboutH = document.createElement("h4");
     aboutH.textContent = t("settings.general.about");
     host.appendChild(aboutH);

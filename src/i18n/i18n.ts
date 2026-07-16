@@ -73,6 +73,12 @@ const strings: Translations = {
     fr: "Notifier quand une CLI se termine (cloche)", ar: "تنبيه عند انتهاء واجهة سطر الأوامر (جرس)", pt: "Notificar quando uma CLI terminar (sino)",
     ru: "Уведомлять о завершении CLI (звонок)", tr: "CLI bittiğinde bildir (zil)", de: "Benachrichtigen, wenn eine CLI fertig ist (Glocke)", vi: "Thông báo khi CLI hoàn tất (chuông)",
   },
+  "settings.general.persistScrollback": {
+    en: "Persist terminal scrollback", ko: "터미널 스크롤백 유지", ja: "ターミナルのスクロールバックを保持",
+    zh: "保留终端回滚缓冲", hi: "टर्मिनल स्क्रॉलबैक सहेजें", es: "Conservar el historial del terminal",
+    fr: "Conserver l'historique du terminal", ar: "الاحتفاظ بمخزّن التمرير للطرفية", pt: "Manter o histórico do terminal",
+    ru: "Сохранять историю терминала", tr: "Terminal kaydırma geçmişini koru", de: "Terminal-Scrollback beibehalten", vi: "Giữ lịch sử cuộn terminal",
+  },
   "settings.syntax.heading": { en: "yCode Syntax Colors", ko: "yCode 구문 색상", ja: "yCode シンタックスカラー" },
   "settings.syntax.hint": {
     en: "Colors used by the yCode TUI editor. Saved to theme.toml — reopen yCode to see changes.",
