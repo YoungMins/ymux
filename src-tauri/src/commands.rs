@@ -132,6 +132,7 @@ pub fn spawn_pane(state: State<'_, AppState>, args: SpawnArgs) -> YmuxResult<Spa
         url: None,
         hotkeys: Vec::new(),
         bg_color: String::new(),
+        worktree_path: String::new(),
     };
 
     state.pty.spawn(

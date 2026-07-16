@@ -980,6 +980,19 @@ shell = "PowerShell 7"
         assert_eq!(pane.bg_color, "", "empty bg_color must stay empty");
     }
 
+    /// Empty worktree_path (default) must round-trip as empty string, not disappear.
+    #[test]
+    fn empty_worktree_path_roundtrip() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let pane = loaded.workspaces[0].panes()[0];
+        assert_eq!(
+            pane.worktree_path, "",
+            "empty worktree_path must stay empty"
+        );
+    }
+
     /// Split layout with mixed bg_color values must preserve each pane's color.
     #[test]
     fn split_layout_bg_color_roundtrip() {
