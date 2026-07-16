@@ -33,6 +33,9 @@ pub enum YmuxError {
     #[error("pty: {0}")]
     Pty(String),
 
+    #[error("git: {0}")]
+    Git(String),
+
     #[error("config: {0}")]
     Config(String),
 
