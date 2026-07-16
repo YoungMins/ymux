@@ -25,6 +25,11 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => void manager.splitFocused("vertical"),
     },
     {
+      id: "pane.worktree",
+      label: () => t("worktree.command"),
+      action: () => void manager.openWorktreePane("horizontal"),
+    },
+    {
       id: "pane.close",
       label: () => t("shortcut.close"),
       keybinding: "Ctrl+Shift+W",

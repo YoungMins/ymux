@@ -917,4 +917,36 @@ const strings: Translations = {
     fr: "Ouvrir la boîte de dialogue des notes", ar: "فتح مربع حوار الملاحظات", pt: "Abrir caixa de notas",
     ru: "Открыть окно заметок", tr: "Notlar iletişim kutusunu aç", de: "Notizen-Dialog öffnen", vi: "Mở hộp thoại ghi chú",
   },
+
+  // ── Worktree ───────────────────────────────────────────────────
+  "worktree.command": {
+    en: "Open pane in new git worktree", ko: "새 git worktree에서 pane 열기", ja: "新しい git worktree でペインを開く",
+    zh: "在新的 git worktree 中打开窗格", hi: "नए git worktree में पेन खोलें", es: "Abrir panel en un nuevo git worktree",
+    fr: "Ouvrir un volet dans un nouveau worktree git", ar: "افتح لوحة في git worktree جديد", pt: "Abrir painel em novo git worktree",
+    ru: "Открыть панель в новом git worktree", tr: "Yeni git worktree'de bölme aç", de: "Bereich in neuem Git-Worktree öffnen", vi: "Mở ô trong git worktree mới",
+  },
+  "worktree.branchPrompt": {
+    en: "New branch name for the worktree:", ko: "worktree에 사용할 새 브랜치 이름:", ja: "worktree の新しいブランチ名:",
+    zh: "worktree 的新分支名称：", hi: "worktree के लिए नई ब्रांच का नाम:", es: "Nombre de la nueva rama para el worktree:",
+    fr: "Nom de la nouvelle branche pour le worktree :", ar: "اسم الفرع الجديد لـ worktree:", pt: "Nome do novo branch para o worktree:",
+    ru: "Имя новой ветки для worktree:", tr: "Worktree için yeni dal adı:", de: "Neuer Branch-Name für das Worktree:", vi: "Tên nhánh mới cho worktree:",
+  },
+  "worktree.notRepo": {
+    en: "Current directory is not a git repository", ko: "현재 디렉터리가 git 저장소가 아닙니다", ja: "現在のディレクトリは git リポジトリではありません",
+    zh: "当前目录不是 git 仓库", hi: "वर्तमान डायरेक्टरी git रिपॉज़िटरी नहीं है", es: "El directorio actual no es un repositorio git",
+    fr: "Le répertoire actuel n'est pas un dépôt git", ar: "الدليل الحالي ليس مستودع git", pt: "O diretório atual não é um repositório git",
+    ru: "Текущий каталог не является репозиторием git", tr: "Geçerli dizin bir git deposu değil", de: "Aktuelles Verzeichnis ist kein Git-Repository", vi: "Thư mục hiện tại không phải kho git",
+  },
+  "worktree.noCwd": {
+    en: "Could not determine the pane's directory", ko: "pane의 디렉터리를 확인할 수 없습니다", ja: "ペインのディレクトリを特定できません",
+    zh: "无法确定窗格的目录", hi: "पेन की डायरेक्टरी निर्धारित नहीं हो सकी", es: "No se pudo determinar el directorio del panel",
+    fr: "Impossible de déterminer le répertoire du volet", ar: "تعذّر تحديد دليل اللوحة", pt: "Não foi possível determinar o diretório do painel",
+    ru: "Не удалось определить каталог панели", tr: "Bölmenin dizini belirlenemedi", de: "Verzeichnis des Bereichs konnte nicht ermittelt werden", vi: "Không xác định được thư mục của ô",
+  },
+  "worktree.addFailed": {
+    en: "Failed to create worktree:", ko: "worktree 생성 실패:", ja: "worktree の作成に失敗しました:",
+    zh: "创建 worktree 失败：", hi: "worktree बनाने में विफल:", es: "No se pudo crear el worktree:",
+    fr: "Échec de création du worktree :", ar: "فشل إنشاء worktree:", pt: "Falha ao criar o worktree:",
+    ru: "Не удалось создать worktree:", tr: "Worktree oluşturulamadı:", de: "Worktree konnte nicht erstellt werden:", vi: "Không tạo được worktree:",
+  },
 };

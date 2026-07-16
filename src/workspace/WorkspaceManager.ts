@@ -31,6 +31,7 @@ import {
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
+import { promptWorktreeBranch } from "./WorktreeModal";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -516,6 +517,67 @@ export class WorkspaceManager {
     this.persistDebounced();
   }
 
+  /// Split the focused pane into a fresh git worktree rooted shell. Prompts
+  /// for a branch name, creates the worktree via the backend, then spawns a
+  /// terminal pane whose cwd is the new worktree directory.
+  async openWorktreePane(direction: SplitDir): Promise<void> {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const existing = findPane(ws.root, focusId);
+
+    // Resolve the same way `splitFocused` does: prefer the live cwd tracked
+    // by the backend (OSC 7), fall back to the config-stored cwd.
+    let liveCwd: string | null = null;
+    try {
+      liveCwd = await api.getPaneCwd(focusId);
+    } catch {
+      // Backend didn't have a cwd (pane not spawned yet, or shell never
+      // emitted OSC 7). Fall through to the config-stored cwd below.
+    }
+    const baseCwd = liveCwd ?? existing?.cwd ?? null;
+    if (!baseCwd) {
+      console.warn("worktree: could not resolve base cwd for pane", focusId);
+      void api.notify(t("worktree.command"), t("worktree.noCwd")).catch(() => {});
+      return;
+    }
+
+    if (!(await api.gitIsRepo(baseCwd))) {
+      console.warn("worktree: not a git repo", baseCwd);
+      void api.notify(t("worktree.command"), t("worktree.notRepo")).catch(() => {});
+      return;
+    }
+
+    const branch = promptWorktreeBranch(`agent/${crypto.randomUUID().slice(0, 6)}`);
+    if (!branch) return;
+
+    let wtPath: string;
+    try {
+      wtPath = await api.gitWorktreeAdd(baseCwd, branch, this.worktreeBaseDir);
+    } catch (e) {
+      console.error("worktree add failed", e);
+      void api.notify(t("worktree.command"), t("worktree.addFailed") + " " + String(e)).catch(() => {});
+      return;
+    }
+
+    const shellName = this.resolveShell(this.shells[0]?.name ?? "");
+    const spec = newPane(shellName, wtPath);
+    spec.worktree_path = wtPath;
+    ws.root = splitPane(ws.root, focusId, direction, spec);
+
+    const cache = this.paneCaches.get(ws.id)!;
+    const pane = this.createPane(spec);
+    cache.set(spec.id, pane);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("worktree spawn failed", e);
+    }
+    this.persistDebounced();
+  }
+
   /// Split the focused pane and drop a browser pane into the new slot instead
   /// of a terminal. URL defaults to `about:blank` so the user can type into
   /// the URL bar.
@@ -716,6 +778,11 @@ export class WorkspaceManager {
 
   get persistScrollback(): boolean {
     return this.config.persist_scrollback;
+  }
+
+  /// Directory new worktrees are created under (see `openWorktreePane`).
+  get worktreeBaseDir(): string {
+    return this.config.worktree_base_dir;
   }
 
   /// Which workspace owns pane `paneId`, or null if it isn't in any live cache.
