@@ -949,4 +949,16 @@ const strings: Translations = {
     fr: "Échec de création du worktree :", ar: "فشل إنشاء worktree:", pt: "Falha ao criar o worktree:",
     ru: "Не удалось создать worktree:", tr: "Worktree oluşturulamadı:", de: "Worktree konnte nicht erstellt werden:", vi: "Không tạo được worktree:",
   },
+  "worktree.removeConfirm": {
+    en: "Remove the git worktree at {path}? The branch is kept.", ko: "{path}의 git worktree를 삭제할까요? 브랜치는 유지됩니다.", ja: "{path} の git worktree を削除しますか？ブランチは残ります。",
+    zh: "删除 {path} 处的 git worktree？分支将保留。", hi: "{path} पर git worktree हटाएँ? ब्रांच बनी रहेगी।", es: "¿Eliminar el worktree git en {path}? La rama se conserva.",
+    fr: "Supprimer le worktree git dans {path} ? La branche est conservée.", ar: "إزالة git worktree في {path}؟ يبقى الفرع.", pt: "Remover o worktree git em {path}? O branch é mantido.",
+    ru: "Удалить git worktree в {path}? Ветка сохранится.", tr: "{path} konumundaki git worktree kaldırılsın mı? Dal korunur.", de: "Git-Worktree unter {path} entfernen? Der Branch bleibt erhalten.", vi: "Xóa git worktree tại {path}? Nhánh được giữ lại.",
+  },
+  "worktree.removeForce": {
+    en: "Worktree has uncommitted changes. Force removal?", ko: "worktree에 커밋되지 않은 변경이 있습니다. 강제로 삭제할까요?", ja: "worktree に未コミットの変更があります。強制的に削除しますか？",
+    zh: "worktree 有未提交的更改。强制删除？", hi: "worktree में बिना कमिट किए बदलाव हैं। जबरन हटाएँ?", es: "El worktree tiene cambios sin confirmar. ¿Forzar la eliminación?",
+    fr: "Le worktree a des modifications non validées. Forcer la suppression ?", ar: "يحتوي worktree على تغييرات غير مُودعة. فرض الإزالة؟", pt: "O worktree tem alterações não confirmadas. Forçar remoção?",
+    ru: "В worktree есть незакоммиченные изменения. Удалить принудительно?", tr: "Worktree'de kaydedilmemiş değişiklikler var. Zorla kaldırılsın mı?", de: "Worktree hat nicht committete Änderungen. Entfernung erzwingen?", vi: "Worktree có thay đổi chưa commit. Buộc xóa?",
+  },
 };

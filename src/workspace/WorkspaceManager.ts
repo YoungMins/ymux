@@ -32,6 +32,7 @@ import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
 import { promptWorktreeBranch } from "./WorktreeModal";
+import { confirmWithBlur } from "../browser/popupBlur";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -616,6 +617,9 @@ export class WorkspaceManager {
     const ws = this.active;
     if (!this.focusedPaneId) return;
     const id = this.focusedPaneId;
+    // Capture before the tree is mutated below — once the pane is removed
+    // from the layout, its spec (and worktree_path) is gone.
+    const wtPath = findPane(ws.root, id)?.worktree_path ?? "";
     const newRoot = removePane(ws.root, id);
     const cache = this.paneCaches.get(ws.id)!;
     const pane = cache.get(id);
@@ -659,6 +663,31 @@ export class WorkspaceManager {
       next?.focus();
     }
     this.persistDebounced();
+
+    // The pane is fully closed at this point (PTY killed, tree updated,
+    // focus settled) regardless of what happens below. Offer to remove its
+    // git worktree now that dispose(true) has released any OS-level lock on
+    // the worktree directory (important on Windows). A removal failure here
+    // must never be surfaced as a close failure.
+    if (wtPath) {
+      const ok = confirmWithBlur(
+        t("worktree.removeConfirm").replace("{path}", wtPath),
+      );
+      if (ok) {
+        try {
+          await api.gitWorktreeRemove(wtPath, false);
+        } catch {
+          // Dirty worktree or similar — offer a forced removal.
+          if (confirmWithBlur(t("worktree.removeForce"))) {
+            try {
+              await api.gitWorktreeRemove(wtPath, true);
+            } catch (e) {
+              console.error("worktree remove failed", e);
+            }
+          }
+        }
+      }
+    }
   }
 
   /// Toggle "zoom" on the focused pane: hide every other pane in the workspace
