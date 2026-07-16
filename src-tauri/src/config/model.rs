@@ -184,6 +184,13 @@ impl Workspace {
 /// | "tabs"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// PaneSpec has grown several string/optional fields (worktree, scrollback,
+// etc.) and now trips clippy::large_enum_variant against the much smaller
+// Split/Tabs variants. Boxing PaneSpec would ripple through every
+// `LayoutNode::Pane(...)` construction/match across the crate for a
+// pane-tree data model that isn't allocated in hot loops, so it's not worth
+// the churn right now.
+#[allow(clippy::large_enum_variant)]
 pub enum LayoutNode {
     Pane(PaneSpec),
     Split {

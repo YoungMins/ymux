@@ -12,6 +12,10 @@ echo "=== TypeScript typecheck ==="
 npx tsc --noEmit
 
 echo ""
+echo "=== vitest (frontend unit tests) ==="
+pnpm exec vitest run
+
+echo ""
 echo "=== cargo clippy (tools + shared crates) ==="
 cargo clippy -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher -- -D warnings
 

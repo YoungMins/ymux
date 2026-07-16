@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.18-7fdbca?style=flat-square" alt="version 0.8.18" />
+  <img src="https://img.shields.io/badge/version-0.8.19-7fdbca?style=flat-square" alt="version 0.8.19" />
 </p>
 
 <p align="center">
