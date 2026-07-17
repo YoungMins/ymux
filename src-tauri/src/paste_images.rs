@@ -11,11 +11,16 @@
 
 use std::path::{Path, PathBuf};
 
-/// Directory pasted images are written to: `<config_dir>/ymux/paste-images`,
-/// falling back to a relative directory if the OS config dir can't be
-/// determined (mirrors `scrollback::scrollback_dir`).
+/// Directory pasted images are written to: `<cache_dir>/ymux/paste-images`,
+/// falling back to a relative directory if the OS cache dir can't be
+/// determined. Unlike `scrollback::scrollback_dir` (which intentionally
+/// lives under `config_dir` because scrollback is user data worth keeping),
+/// pasted images are transient, self-pruning, and can be multi-MB — putting
+/// them under `config_dir` (Windows: Roaming AppData) would sync them to a
+/// corporate profile server on every logoff. `cache_dir` (Windows: Local
+/// AppData) is the correct home for this kind of disposable temp data.
 pub fn paste_images_dir() -> PathBuf {
-    dirs::config_dir()
+    dirs::cache_dir()
         .map(|p| p.join("ymux").join("paste-images"))
         .unwrap_or_else(|| PathBuf::from("./ymux-paste-images"))
 }
@@ -46,9 +51,13 @@ fn save_under(base: &Path, millis: u128, bytes: &[u8]) -> std::io::Result<PathBu
 }
 
 /// Delete every `clip-<millis>.png` in `base` whose embedded timestamp is
-/// older than `retention_millis` relative to `now_millis`. Non-matching files
-/// are left untouched. A per-file removal error is ignored so one locked file
-/// can't abort pruning the rest.
+/// older than `retention_millis` relative to `now_millis`. Also reclaims
+/// stale `clip-<millis>.png.tmp` files using the same age rule — `save_under`
+/// writes that name before its rename to `.png`, so a crash between the two
+/// would otherwise leave an orphan that `parse_millis` (which only matches
+/// `.png`) skips forever. Non-matching files (anything that isn't a
+/// `clip-<millis>.png[.tmp]`) are left untouched. A per-file removal error is
+/// ignored so one locked file can't abort pruning the rest.
 fn prune_under(base: &Path, now_millis: u128, retention_millis: u128) -> std::io::Result<()> {
     let entries = match std::fs::read_dir(base) {
         Ok(e) => e,
@@ -58,7 +67,9 @@ fn prune_under(base: &Path, now_millis: u128, retention_millis: u128) -> std::io
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if let Some(millis) = parse_millis(name) {
+        let millis =
+            parse_millis(name).or_else(|| name.strip_suffix(".tmp").and_then(parse_millis));
+        if let Some(millis) = millis {
             if now_millis.saturating_sub(millis) > retention_millis {
                 let _ = std::fs::remove_file(entry.path());
             }
@@ -76,8 +87,26 @@ pub fn save(bytes: &[u8], retention: std::time::Duration) -> std::io::Result<Pat
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let _ = prune_under(&dir, now_millis, retention.as_millis());
+    if let Err(e) = prune_under(&dir, now_millis, retention.as_millis()) {
+        // A prune failure must never fail the user's paste — but it should
+        // still be diagnosable, so log it instead of silently swallowing it.
+        tracing::warn!(error = %e, "failed to prune old paste images");
+    }
     save_under(&dir, now_millis, bytes)
+}
+
+/// Prune old pasted images under the real OS paste-images directory without
+/// saving a new one. Intended to be called once at app startup so images
+/// left over from a previous session don't outlive `retention` just because
+/// no new paste ever triggered the prune in `save`. Mirrors the prune half
+/// of `save`.
+pub fn prune(retention: std::time::Duration) -> std::io::Result<()> {
+    let dir = paste_images_dir();
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    prune_under(&dir, now_millis, retention.as_millis())
 }
 
 #[cfg(test)]
@@ -145,6 +174,39 @@ mod tests {
         assert!(
             base.join("keepme.txt").exists(),
             "unrelated files must be left alone"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn prune_reclaims_stale_tmp_but_not_unrelated_files() {
+        let base = tempdir();
+        std::fs::write(base.join("keepme.txt"), b"x").unwrap();
+        // Simulate a crash between save_under's write and rename: a stale
+        // orphaned tmp file with an old embedded timestamp.
+        std::fs::write(base.join("clip-1000.png.tmp"), b"orphan").unwrap();
+        prune_under(&base, 10_000, 2_000).expect("prune should succeed");
+        assert!(
+            !base.join("clip-1000.png.tmp").exists(),
+            "stale orphaned .tmp file should be reclaimed"
+        );
+        assert!(
+            base.join("keepme.txt").exists(),
+            "unrelated files must still be left alone"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn prune_keeps_file_exactly_at_retention_boundary() {
+        let base = tempdir();
+        // now - millis == retention_millis exactly: the strict `>` check
+        // means this is NOT yet past retention, so it must be kept.
+        save_under(&base, 8_000, b"boundary").expect("save boundary");
+        prune_under(&base, 10_000, 2_000).expect("prune should succeed");
+        assert!(
+            file_under(&base, 8_000).exists(),
+            "file exactly at the retention boundary should be kept"
         );
         let _ = std::fs::remove_dir_all(&base);
     }

@@ -517,8 +517,12 @@ export class TerminalPane implements Pane {
           const bytes = new Uint8Array(await blob.arrayBuffer());
           const path = await api.savePasteImage(Array.from(bytes));
           if (path && this.spawned) {
-            // Path only — no trailing newline; the user presses Enter.
-            void api.writePane(this.id, ENCODER.encode(path));
+            // Always quote: the path can contain spaces (e.g. a profile
+            // directory like "C:\Users\John Smith\..."), which the
+            // receiving shell/CLI would otherwise split into two
+            // arguments. Path only — no trailing newline; the user
+            // presses Enter.
+            void api.writePane(this.id, ENCODER.encode(`"${path}"`));
           }
           return;
         }

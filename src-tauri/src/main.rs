@@ -81,6 +81,16 @@ fn main() {
             // Inject YMUX_IPC into every PTY that will be spawned.
             let state = app.state::<AppState>();
             state.pty.set_extra_env(vec![("YMUX_IPC".into(), ipc_addr)]);
+            // Prune paste-image temp files left over from a previous
+            // session — otherwise the last paste of a session would outlive
+            // its retention window forever, since `save` only prunes on the
+            // *next* paste. Best-effort: a prune failure must never block
+            // startup.
+            let retention_hours = state.config.snapshot().paste_image_retention_hours;
+            let retention = std::time::Duration::from_secs(u64::from(retention_hours) * 3600);
+            if let Err(e) = ymux_lib::paste_images::prune(retention) {
+                tracing::warn!(error = %e, "failed to prune old paste images at startup");
+            }
             start_pty_event_pump(app.handle().clone());
             start_update_checker(app.handle().clone());
             start_sysmonitor(app.handle().clone());
