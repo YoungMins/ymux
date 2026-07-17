@@ -507,6 +507,27 @@ export class TerminalPane implements Pane {
   }
 
   private async pasteClipboard(): Promise<void> {
+    // Image first: if the clipboard holds a PNG, save it to a temp file and
+    // paste the file's path (so an in-pane CLI can read the image).
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        if (item.types.includes("image/png")) {
+          const blob = await item.getType("image/png");
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const path = await api.savePasteImage(Array.from(bytes));
+          if (path && this.spawned) {
+            // Path only — no trailing newline; the user presses Enter.
+            void api.writePane(this.id, ENCODER.encode(path));
+          }
+          return;
+        }
+      }
+    } catch {
+      // clipboard.read() unsupported/denied, or save failed — fall through to
+      // the text path below.
+    }
+    // Existing text-paste behaviour, unchanged.
     try {
       const text = await navigator.clipboard.readText();
       if (text && this.spawned) {
