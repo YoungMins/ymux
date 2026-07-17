@@ -217,6 +217,10 @@ export const api = {
   deleteScrollback: (id: Uuid): Promise<void> =>
     call("delete_scrollback", { paneId: id }),
 
+  /// Save a pasted clipboard image (PNG bytes) to a temp file; returns its path.
+  savePasteImage: (bytes: number[]): Promise<string> =>
+    call("save_paste_image", { bytes }),
+
   /// Check whether `cwd` is inside a git repository.
   gitIsRepo: (cwd: string): Promise<boolean> => call("git_is_repo", { cwd }),
 
