@@ -57,6 +57,7 @@ export interface Config {
   workspaces: Workspace[];
   notify_on_bell: boolean;
   persist_scrollback: boolean;
+  paste_image_retention_hours: number;
   worktree_base_dir: string;
 }
 

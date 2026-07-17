@@ -41,6 +41,8 @@ pub struct Config {
     pub notify_on_bell: bool,
     #[serde(default = "default_persist_scrollback")]
     pub persist_scrollback: bool,
+    #[serde(default = "default_paste_image_retention_hours")]
+    pub paste_image_retention_hours: u32,
     /// Base directory under which ymux creates git worktrees for panes opened
     /// via "open in worktree". Empty means no base dir configured yet.
     #[serde(default)]
@@ -59,6 +61,9 @@ fn default_notify_on_bell() -> bool {
 fn default_persist_scrollback() -> bool {
     true
 }
+fn default_paste_image_retention_hours() -> u32 {
+    24
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -69,6 +74,7 @@ impl Default for Config {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         }
     }
@@ -611,6 +617,13 @@ mod tests {
     }
 
     #[test]
+    fn paste_image_retention_hours_defaults_to_24_when_absent() {
+        let toml_str = "version = 5\nactive_workspace = 1\n";
+        let parsed: Config = toml::from_str(toml_str).expect("deserialize");
+        assert_eq!(parsed.paste_image_retention_hours, 24);
+    }
+
+    #[test]
     fn max_workspaces_is_nine() {
         assert_eq!(MAX_WORKSPACES, 9);
     }
@@ -633,6 +646,7 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         let frontend_save = Config {
@@ -642,6 +656,7 @@ mod tests {
             workspaces: vec![Workspace::empty(2, "two")],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
@@ -697,6 +712,7 @@ mod tests {
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         let mut cwds = std::collections::HashMap::new();
@@ -725,6 +741,7 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         cfg.migrate();
@@ -855,6 +872,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         let frontend_save = Config {
@@ -879,6 +897,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
@@ -938,6 +957,7 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
@@ -1029,6 +1049,7 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
