@@ -53,6 +53,7 @@ fn main() {
             ymux_lib::commands::save_scrollback,
             ymux_lib::commands::load_scrollback,
             ymux_lib::commands::delete_scrollback,
+            ymux_lib::commands::save_paste_image,
             ymux_lib::commands::git_is_repo,
             ymux_lib::commands::git_worktree_add,
             ymux_lib::commands::git_worktree_remove,

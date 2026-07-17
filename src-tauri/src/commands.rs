@@ -242,6 +242,17 @@ pub fn delete_scrollback(pane_id: String) -> YmuxResult<()> {
     crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io)
 }
 
+/// Save a pasted clipboard image (raw PNG bytes) to the paste-images dir,
+/// pruning images older than the configured retention window first, and
+/// return the absolute path so the frontend can type it into the PTY.
+#[tauri::command]
+pub fn save_paste_image(state: State<'_, AppState>, bytes: Vec<u8>) -> YmuxResult<String> {
+    let hours = state.config.snapshot().paste_image_retention_hours;
+    let retention = std::time::Duration::from_secs(u64::from(hours) * 3600);
+    let path = crate::paste_images::save(&bytes, retention).map_err(YmuxError::Io)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Check whether `cwd` sits inside a git repository (main worktree or a
 /// linked worktree). Thin wrapper over [`crate::git::is_git_repo`].
 #[tauri::command]
