@@ -42,6 +42,21 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   Every workspace saves its own layout. Panes stay alive across switches
   (tmux-style) so your REPLs and tails don't die. Double-click a workspace
   button to give it a custom name.
+- **Git worktree panes**: the command palette's **"Open pane in new git
+  worktree"** prompts for a branch name, creates a git worktree (default: a
+  sibling `.ymux-worktrees/<branch>` dir next to the repo, override with
+  `worktree_base_dir`), and opens a terminal pane already cd'd into it — an
+  isolated checkout per AI agent or experiment. Closing the pane — or deleting
+  the whole workspace — offers to remove the worktree again (branches and
+  commits are never touched).
+- **Persistent scrollback**: terminal output survives app restarts. Each
+  pane's buffer (colors included) is restored beneath a dimmed *"session
+  restored"* separator on the next launch. Toggle under **Settings → General**.
+- **Agent status at a glance**: every terminal pane tracks its process —
+  idle / running / done / needs-attention — from output activity and the
+  bell / OSC 9 completion signal, shown as a colored pane border plus a dot on
+  the workspace tab. When a CLI finishes out of sight you also get an OS
+  notification and a short beep (toggleable in Settings).
 - **Per-pane settings (⚙)**: the `⚙` button on each terminal opens a settings
   panel where you can set a **custom background color** (via native color picker)
   and manage **HotKey buttons** (single-line or batch multi-line commands bound
@@ -82,8 +97,12 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   next to the workspace number, plus `Ctrl+Alt+N` to toggle notes for the
   active workspace. Notes persist across sessions via `localStorage`, and
   the icon is highlighted in the accent color when notes exist.
-- **Clipboard paste**: `Ctrl+V` pastes clipboard text into the focused
-  terminal (reads via `navigator.clipboard.readText()`).
+- **Clipboard paste — text and images**: `Ctrl+V` pastes clipboard text into
+  the focused terminal. If the clipboard holds an **image** (e.g. a
+  `Win+Shift+S` screenshot), it is saved to a self-cleaning temp file and its
+  quoted path is typed instead — hand screenshots straight to an in-pane AI
+  CLI like Claude Code. Pasted images are pruned after 24 h (configurable via
+  `paste_image_retention_hours`).
 - **13-language i18n**: English, 한국어, 日本語, 中文, हिन्दी, Español,
   Français, العربية, Português, Русский, Türkçe, Deutsch, Tiếng Việt.
   Switch from the language selector in the bottom-right status bar.
@@ -142,7 +161,7 @@ y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
 | `Ctrl+Shift+R`              | Rename focused pane                  |
 | `Ctrl+Shift+P`              | Open command palette                 |
 | `Ctrl+Alt+N`                | Toggle notes for active workspace    |
-| `Ctrl+V`                    | Paste clipboard into terminal        |
+| `Ctrl+V`                    | Paste clipboard text (image → temp-file path) |
 | `Ctrl+F`                    | Search terminal scrollback           |
 | `Ctrl+Tab`                  | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | Focus previous pane                  |
@@ -159,4 +178,6 @@ y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
 
 ## Status
 
-Early MVP. See `docs/` (TBD) for the roadmap.
+Actively developed — new releases ship regularly with an automated
+Linux-test + Windows-MSI CI pipeline behind every tag. See
+[Releases](https://github.com/YoungMins/ymux/releases) for the changelog.
