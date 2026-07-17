@@ -27,6 +27,7 @@ import {
   setRatioByPath,
   splitPane,
   swapPanes,
+  worktreePaths,
 } from "../layout/LayoutTree";
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
@@ -312,6 +313,10 @@ export class WorkspaceManager {
     const idx = this.config.workspaces.findIndex((w) => w.id === id);
     if (idx < 0) return;
 
+    // Capture before the workspace is spliced out below — once it's gone,
+    // its layout tree (and every pane's worktree_path) is gone with it.
+    const wtPaths = worktreePaths(this.config.workspaces[idx].root);
+
     const cache = this.paneCaches.get(id);
     if (cache) {
       // Permanent: the whole workspace is being deleted, so any persisted
@@ -332,6 +337,14 @@ export class WorkspaceManager {
     }
     this.onWorkspacesChangeCb?.();
     this.persistDebounced();
+
+    // The workspace is fully deleted at this point. Offer to remove each
+    // pane's git worktree now that dispose(true) has released any OS-level
+    // lock on the worktree directories (important on Windows). A removal
+    // failure must never be surfaced as a delete failure.
+    for (const wtPath of wtPaths) {
+      await this.offerWorktreeRemoval(wtPath);
+    }
   }
 
   /// Spawn PTYs for every pane in the workspace. Called exactly once the
@@ -670,21 +683,28 @@ export class WorkspaceManager {
     // the worktree directory (important on Windows). A removal failure here
     // must never be surfaced as a close failure.
     if (wtPath) {
-      const ok = confirmWithBlur(
-        t("worktree.removeConfirm").replace("{path}", wtPath),
-      );
-      if (ok) {
+      await this.offerWorktreeRemoval(wtPath);
+    }
+  }
+
+  /// Ask the user whether to remove the git worktree at `wtPath`, and do so
+  /// if confirmed. A dirty worktree gets a second, forced-removal prompt.
+  /// Errors are logged, never thrown — worktree cleanup is best-effort and
+  /// must not fail the pane close / workspace delete that triggered it.
+  private async offerWorktreeRemoval(wtPath: string): Promise<void> {
+    const ok = confirmWithBlur(
+      t("worktree.removeConfirm").replace("{path}", wtPath),
+    );
+    if (!ok) return;
+    try {
+      await api.gitWorktreeRemove(wtPath, false);
+    } catch {
+      // Dirty worktree or similar — offer a forced removal.
+      if (confirmWithBlur(t("worktree.removeForce"))) {
         try {
-          await api.gitWorktreeRemove(wtPath, false);
-        } catch {
-          // Dirty worktree or similar — offer a forced removal.
-          if (confirmWithBlur(t("worktree.removeForce"))) {
-            try {
-              await api.gitWorktreeRemove(wtPath, true);
-            } catch (e) {
-              console.error("worktree remove failed", e);
-            }
-          }
+          await api.gitWorktreeRemove(wtPath, true);
+        } catch (e) {
+          console.error("worktree remove failed", e);
         }
       }
     }

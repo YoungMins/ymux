@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { newPane, paneNode, splitPane, nodeToSpec } from "./LayoutTree";
+import { newPane, paneNode, splitPane, nodeToSpec, worktreePaths } from "./LayoutTree";
 import type { LayoutNode } from "../types";
 
 describe("paneNode / splitPane field persistence", () => {
@@ -34,5 +34,38 @@ describe("paneNode / splitPane field persistence", () => {
 
     expect(insertedSpec.worktree_path).toBe("/repo/.worktrees/feature-x");
     expect(insertedSpec.bg_color).toBe("#445566");
+  });
+});
+
+describe("worktreePaths", () => {
+  it("collects worktree paths from every pane in the tree, skipping panes without one", () => {
+    const wtSpec = newPane("bash", "/repo/.worktrees/feature-x");
+    wtSpec.worktree_path = "/repo/.worktrees/feature-x";
+    const plainSpec = newPane("bash", "/repo");
+    const otherWtSpec = newPane("bash", "/repo/.worktrees/feature-y");
+    otherWtSpec.worktree_path = "/repo/.worktrees/feature-y";
+
+    const tree: LayoutNode = {
+      kind: "split",
+      direction: "horizontal",
+      ratio: 0.5,
+      a: paneNode(wtSpec),
+      b: {
+        kind: "split",
+        direction: "vertical",
+        ratio: 0.5,
+        a: paneNode(plainSpec),
+        b: paneNode(otherWtSpec),
+      },
+    };
+
+    expect(worktreePaths(tree)).toEqual([
+      "/repo/.worktrees/feature-x",
+      "/repo/.worktrees/feature-y",
+    ]);
+  });
+
+  it("returns an empty list for a tree with no worktree panes", () => {
+    expect(worktreePaths(paneNode(newPane("bash", "/repo")))).toEqual([]);
   });
 });

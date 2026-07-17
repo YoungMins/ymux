@@ -243,6 +243,17 @@ export function panes(root: LayoutNode): PaneSpec[] {
   return out;
 }
 
+/// Depth-first list of the non-empty `worktree_path`s of every pane in the
+/// tree, so callers tearing down a whole workspace can offer to remove each
+/// git worktree (mirrors the single-pane path in `closeFocused`).
+export function worktreePaths(root: LayoutNode): string[] {
+  const out: string[] = [];
+  walk(root, (node) => {
+    if (node.kind === "pane" && node.worktree_path) out.push(node.worktree_path);
+  });
+  return out;
+}
+
 export function findPane(root: LayoutNode, id: Uuid): PaneSpec | null {
   let found: PaneSpec | null = null;
   walk(root, (node) => {
