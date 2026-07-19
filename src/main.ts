@@ -6,7 +6,8 @@ import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
-import { mountWorkspaceBar, refreshWorkspaceBar } from "./workspace/WorkspaceBar";
+import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
+import { mountWorkspacePanel, refreshWorkspacePanel } from "./workspace/WorkspacePanel";
 import { mountUpdateBanner } from "./update/UpdateBanner";
 import { mountStatusBar } from "./statusbar/StatusBar";
 import { initLang, t } from "./i18n/i18n";
@@ -30,15 +31,25 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Left workspace panel (full height) + main column (top bar, panes, status).
+  const panelEl = document.createElement("div");
+  panelEl.className = "workspace-panel-host";
+  const appMain = document.createElement("div");
+  appMain.className = "app-main";
+  app.appendChild(panelEl);
+  app.appendChild(appMain);
+
   const host = document.createElement("div");
   host.className = "workspace-host";
-  app.appendChild(host);
+  appMain.appendChild(host);
 
   const manager = new WorkspaceManager(host, bootstrap.config, bootstrap.shells);
-  mountWorkspaceBar(app, manager, bootstrap.shells);
-  // The bar was appended after the host; move it to the top.
-  const bar = app.querySelector(".workspace-bar");
-  if (bar) app.insertBefore(bar, host);
+  mountWorkspaceBar(appMain, manager, bootstrap.shells);
+  // The bar was appended after the host; move it to the top of the column.
+  const bar = appMain.querySelector(".workspace-bar");
+  if (bar) appMain.insertBefore(bar, host);
+
+  mountWorkspacePanel(panelEl, manager);
 
   await manager.start();
 
@@ -49,7 +60,7 @@ async function main(): Promise<void> {
   );
 
   // System monitor status bar — sits at the bottom of #app.
-  void mountStatusBar(app).catch((e) =>
+  void mountStatusBar(appMain).catch((e) =>
     console.warn("mountStatusBar failed:", e),
   );
 
@@ -98,7 +109,7 @@ async function main(): Promise<void> {
       const id = Number.parseInt(ev.code.slice(-1), 10);
       if (id >= 1 && id <= MAX_WORKSPACES) {
         ev.preventDefault();
-        void manager.activate(id).then(() => refreshWorkspaceBar(app));
+        void manager.activate(id).then(() => refreshWorkspacePanel(app));
       }
       return;
     }
@@ -109,7 +120,7 @@ async function main(): Promise<void> {
       ev.preventDefault();
       const wsId = manager.activeIdValue;
       toggleNotes(wsId, manager.getWorkspaceName(wsId));
-      refreshWorkspaceBar(app);
+      refreshWorkspacePanel(app);
       return;
     }
 
