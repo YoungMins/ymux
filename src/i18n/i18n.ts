@@ -347,6 +347,18 @@ const strings: Translations = {
     de: "Fokussiertes Pane in Browser-Pane aufteilen",
     vi: "Chia khung đang chọn thành khung trình duyệt",
   },
+  "workspace.panelTitle": {
+    en: "Workspaces", ko: "작업공간", ja: "ワークスペース",
+    zh: "工作区", hi: "कार्यक्षेत्र", es: "Espacios",
+    fr: "Espaces", ar: "مساحات العمل", pt: "Espaços",
+    ru: "Пространства", tr: "Çalışma alanları", de: "Arbeitsbereiche", vi: "Không gian",
+  },
+  "workspace.togglePanel": {
+    en: "Toggle workspace panel", ko: "작업공간 패널 토글", ja: "ワークスペースパネルの切り替え",
+    zh: "切换工作区面板", hi: "कार्यक्षेत्र पैनल टॉगल करें", es: "Alternar panel de espacios",
+    fr: "Basculer le panneau des espaces", ar: "تبديل لوحة مساحات العمل", pt: "Alternar painel de espaços",
+    ru: "Переключить панель пространств", tr: "Çalışma alanı panelini aç/kapat", de: "Arbeitsbereichsleiste umschalten", vi: "Bật/tắt bảng không gian",
+  },
   "workspace.addWorkspace": {
     en: "New workspace",
     ko: "새 작업공간",
