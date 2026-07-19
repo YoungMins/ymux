@@ -5,4 +5,4 @@
 //! sync with `src-tauri/Cargo.toml :: version` — the release checklist in
 //! `CLAUDE.md` lists this file alongside the others to bump.
 
-pub const VERSION: &str = "0.8.20";
+pub const VERSION: &str = "0.8.21";
