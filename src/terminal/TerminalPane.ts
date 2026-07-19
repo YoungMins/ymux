@@ -17,6 +17,7 @@ import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
+import { restoreScrollGuard } from "./restoreGuard";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -314,6 +315,14 @@ export class TerminalPane implements Pane {
         if (prior) {
           this.term.write(prior);
           this.term.write(`\r\n\x1b[2m${t("terminal.sessionRestored")}\x1b[0m\r\n`);
+          // ConPTY opens every session by emitting `\x1b[2J\x1b[H` (clear
+          // screen + home). That erases the viewport rows — and if the
+          // restored history is shorter than the viewport, it lives entirely
+          // in those rows and gets wiped, so the restore flashes in then
+          // vanishes as if `cls` ran. Scroll the restored block up into the
+          // scrollback ring (which `\x1b[2J` leaves untouched) first, so the
+          // shell clears a blank viewport instead of the restored text.
+          this.term.write(restoreScrollGuard(this.term.rows));
         }
       } catch {
         // No prior scrollback (or load failed) — start clean.
