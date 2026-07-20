@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Terminal } from "@xterm/headless";
-import { restoreScrollGuard } from "./restoreGuard";
+import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
 
 function write(term: Terminal, data: string): Promise<void> {
   return new Promise((resolve) => term.write(data, resolve));
@@ -37,6 +37,43 @@ describe("restoreScrollGuard", () => {
     // restored history intact in scrollback directly above it.
     expect(buf.getLine(buf.baseY)?.translateToString(true)).toContain("PS D:\\>");
     term.dispose();
+  });
+
+  it("reveals the restored history in the viewport after the reveal scroll", async () => {
+    const rows = 8;
+    const term = new Terminal({ rows, cols: 40, scrollback: 200, allowProposedApi: true });
+    // A history longer than the viewport, so there is plenty to reveal.
+    for (let i = 1; i <= 12; i++) await write(term, `line-${i}\r\n`);
+    await write(term, "-- restored --\r\n");
+    await write(term, restoreScrollGuard(term.rows));
+    await write(term, CONPTY_STARTUP_BURST);
+
+    const buf = term.buffer.active;
+    // Before revealing, the viewport shows only the fresh prompt — this is the
+    // "looks like cls ran" state the user reported.
+    const viewportBefore: string[] = [];
+    for (let y = buf.viewportY; y < buf.viewportY + rows; y++) {
+      viewportBefore.push(buf.getLine(y)?.translateToString(true) ?? "");
+    }
+    expect(viewportBefore.join("\n")).not.toContain("-- restored --");
+
+    term.scrollLines(-restoreRevealLines(rows));
+
+    const after = term.buffer.active;
+    const viewportAfter: string[] = [];
+    for (let y = after.viewportY; y < after.viewportY + rows; y++) {
+      viewportAfter.push(after.getLine(y)?.translateToString(true) ?? "");
+    }
+    const text = viewportAfter.join("\n");
+    expect(text).toContain("-- restored --");
+    expect(text).toContain("line-12");
+    term.dispose();
+  });
+
+  it("restoreRevealLines leaves room for the separator and never goes negative", () => {
+    expect(restoreRevealLines(8)).toBe(6);
+    expect(restoreRevealLines(2)).toBe(0);
+    expect(restoreRevealLines(1)).toBe(0);
   });
 
   it("without the guard the same burst erases a viewport-sized history (documents the bug)", async () => {

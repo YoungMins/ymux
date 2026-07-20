@@ -16,3 +16,17 @@
 export function restoreScrollGuard(rows: number): string {
   return "\r\n".repeat(Math.max(0, rows));
 }
+
+/// How far to scroll the viewport up once the shell has painted its first
+/// prompt, so the restored history is actually VISIBLE on open instead of
+/// sitting silently in scrollback (which reads to the user as "nothing was
+/// restored" — the screen shows only a bare prompt).
+///
+/// The guard above leaves the separator two lines above the viewport top
+/// (one blank line, then the separator), so scrolling by `rows - 2` puts the
+/// separator near the bottom of the view with the tail of the history filling
+/// the rest. Typing scrolls back to the prompt on its own (xterm's
+/// scroll-on-input), so this only affects what you see on open.
+export function restoreRevealLines(rows: number): number {
+  return Math.max(0, rows - 2);
+}

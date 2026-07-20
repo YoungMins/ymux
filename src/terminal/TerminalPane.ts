@@ -17,7 +17,7 @@ import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
-import { restoreScrollGuard } from "./restoreGuard";
+import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -66,6 +66,9 @@ export class TerminalPane implements Pane {
   private spec: PaneSpec;
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
+  /// Lines to scroll up once the shell has painted its first output, to bring
+  /// restored scrollback back into view. 0 = nothing to reveal.
+  private pendingRestoreReveal = 0;
   private cleanupLang: () => void = () => {};
   private statusMachine = new PaneStatusMachine((s) => this.opts.onStatusChange?.(s));
   private isFocused = false;
@@ -323,6 +326,11 @@ export class TerminalPane implements Pane {
           // scrollback ring (which `\x1b[2J` leaves untouched) first, so the
           // shell clears a blank viewport instead of the restored text.
           this.term.write(restoreScrollGuard(this.term.rows));
+          // The guard keeps the history safe but parks it above the viewport,
+          // so the pane opens showing only a bare prompt — indistinguishable
+          // from "nothing was restored". Reveal it by scrolling up once the
+          // shell has painted (see the data listener below).
+          this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
         }
       } catch {
         // No prior scrollback (or load failed) — start clean.
@@ -339,7 +347,16 @@ export class TerminalPane implements Pane {
     // overlapping output ("화면이 깨진다") that never recovers until a
     // full redraw.
     const dataUnlisten = await onPaneData(this.id, (bytes) => {
-      this.term.write(bytes);
+      // The write callback fires once xterm has parsed this chunk, so a reveal
+      // scheduled here happens strictly after the shell's opening burst (with
+      // its `\x1b[2J` clear) has been applied — scrolling any earlier would be
+      // undone by that clear.
+      this.term.write(bytes, () => {
+        if (this.pendingRestoreReveal > 0) {
+          this.term.scrollLines(-this.pendingRestoreReveal);
+          this.pendingRestoreReveal = 0;
+        }
+      });
       this.statusMachine.onOutput(Date.now());
       this.scheduleScrollbackSave();
     });
