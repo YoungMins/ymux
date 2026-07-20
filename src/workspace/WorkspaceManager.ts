@@ -943,6 +943,21 @@ export class WorkspaceManager {
     for (const pane of cache.values()) pane.scheduleFit();
   }
 
+  /// Type `text` into whichever terminal pane sits under the given viewport
+  /// point, focusing it first. Used by the file drag-and-drop handler so a
+  /// drop lands in the pane the user aimed at rather than the focused one.
+  /// Non-terminal panes (browser) and points outside any pane are ignored.
+  typeIntoPaneAt(clientX: number, clientY: number, text: string): void {
+    if (!text) return;
+    const hit = document.elementFromPoint(clientX, clientY);
+    const paneId = hit?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+    if (!paneId) return;
+    const pane = this.paneCaches.get(this.activeId)?.get(paneId);
+    if (!(pane instanceof TerminalPane)) return;
+    pane.focus();
+    pane.typeText(text);
+  }
+
   /// Save the current config to disk. Debounced by 500 ms so rapid changes
   /// collapse into a single write.
   private persistDebounced(): void {

@@ -518,6 +518,14 @@ export class TerminalPane implements Pane {
     this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
   }
 
+  /// Write literal text into the PTY as if the user had typed it — no
+  /// trailing newline, so nothing is executed until they press Enter.
+  /// Used by the file drag-and-drop handler to insert dropped paths.
+  typeText(text: string): void {
+    if (!this.spawned || !text) return;
+    void api.writePane(this.id, ENCODER.encode(text));
+  }
+
   /// Recompute size based on the container. Debounced to one call per
   /// animation frame.
   scheduleFit(): void {

@@ -4,6 +4,8 @@
 
 import "./style.css";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { formatDroppedPaths } from "./terminal/dropPaths";
 import { api } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
@@ -202,6 +204,25 @@ async function main(): Promise<void> {
       return;
     }
   });
+
+  // Dropping files onto a terminal types their quoted paths, so an in-pane
+  // CLI can act on them (same idea as the Ctrl+V image paste). Tauri owns the
+  // OS drop — HTML5 drag events never fire for files — and hands us real
+  // filesystem paths plus a PHYSICAL-pixel position, which we convert to CSS
+  // pixels to hit-test the pane under the cursor. No Enter is sent.
+  void getCurrentWebview()
+    .onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const text = formatDroppedPaths(event.payload.paths ?? []);
+      if (!text) return;
+      const dpr = window.devicePixelRatio || 1;
+      manager.typeIntoPaneAt(
+        event.payload.position.x / dpr,
+        event.payload.position.y / dpr,
+        text,
+      );
+    })
+    .catch((e) => console.warn("drag-drop listener failed:", e));
 
   window.addEventListener("resize", () => manager.refitActive());
   window.addEventListener("beforeunload", () => {
