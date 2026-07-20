@@ -103,6 +103,9 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
   quoted path is typed instead — hand screenshots straight to an in-pane AI
   CLI like Claude Code. Pasted images are pruned after 24 h (configurable via
   `paste_image_retention_hours`).
+- **Drag files in for their paths**: drop files or folders onto a terminal
+  pane and their quoted paths are typed at the cursor — the pane you dropped
+  on, not just the focused one. Nothing is executed until you press Enter.
 - **13-language i18n**: English, 한국어, 日本語, 中文, हिन्दी, Español,
   Français, العربية, Português, Русский, Türkçe, Deutsch, Tiếng Việt.
   Switch from the language selector in the bottom-right status bar.
