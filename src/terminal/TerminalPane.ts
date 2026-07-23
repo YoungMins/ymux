@@ -18,7 +18,7 @@ import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
-import { shouldSaveScrollback } from "./scrollbackPersist";
+import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -253,11 +253,20 @@ export class TerminalPane implements Pane {
     });
 
     this.term.onData((data) => {
-      // A keystroke means the user is actually working in this pane this
-      // session, which gates scrollback persistence (see scheduleScrollbackSave)
-      // so an idle, untouched terminal never re-saves and can't pile up its own
-      // restored history across open/close cycles.
-      this.hadUserActivity = true;
+      // Real typing (not terminal auto-responses like focus/cursor reports,
+      // which also arrive here) marks the pane as worked-in this session. That
+      // gates scrollback persistence (see scheduleScrollbackSave) so an idle,
+      // untouched terminal never re-saves and can't pile up its own restored
+      // history across open/close cycles.
+      if (!this.hadUserActivity && isUserActivity(data)) {
+        this.hadUserActivity = true;
+        // TEMPORARY diagnostic — remove once idle no-save is confirmed. Shows
+        // exactly what first tripped the activity flag, so if an idle pane
+        // still saves we can see whether typing or a stray sequence did it.
+        console.log(
+          `[scrollback-diag] activity set by onData: ${JSON.stringify(data)}`,
+        );
+      }
       if (data.includes("\r")) this.statusMachine.onSubmit(Date.now());
       if (!this.spawned) return;
       const bytes = ENCODER.encode(data);
