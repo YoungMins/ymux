@@ -18,6 +18,7 @@ import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
+import { shouldSaveScrollback } from "./scrollbackPersist";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -69,13 +70,22 @@ export class TerminalPane implements Pane {
   /// Lines to scroll up once the shell has painted its first output, to bring
   /// restored scrollback back into view. 0 = nothing to reveal.
   private pendingRestoreReveal = 0;
+  /// Whether the user has typed in this pane during this app run. Gates
+  /// scrollback persistence so an idle, restored-but-untouched pane never
+  /// re-saves and can't compound its own history across restarts.
+  private hadUserActivity = false;
   private cleanupLang: () => void = () => {};
   private statusMachine = new PaneStatusMachine((s) => this.opts.onStatusChange?.(s));
   private isFocused = false;
   private statusTimer: number | undefined;
   private scrollbackSaveTimer: number | undefined;
   private flushScrollbackOnUnload = (): void => {
-    if (this.opts.persistScrollback?.()) {
+    if (
+      shouldSaveScrollback({
+        persistEnabled: this.opts.persistScrollback?.() ?? false,
+        hadUserActivity: this.hadUserActivity,
+      })
+    ) {
       void api.saveScrollback(this.id, this.serializeAddon.serialize());
     }
   };
@@ -243,6 +253,11 @@ export class TerminalPane implements Pane {
     });
 
     this.term.onData((data) => {
+      // A keystroke means the user is actually working in this pane this
+      // session, which gates scrollback persistence (see scheduleScrollbackSave)
+      // so an idle, untouched terminal never re-saves and can't pile up its own
+      // restored history across open/close cycles.
+      this.hadUserActivity = true;
       if (data.includes("\r")) this.statusMachine.onSubmit(Date.now());
       if (!this.spawned) return;
       const bytes = ENCODER.encode(data);
@@ -586,7 +601,14 @@ export class TerminalPane implements Pane {
   /// serializing the whole buffer on every chunk (which would thrash disk
   /// I/O during a fast-scrolling build log or `cat` of a large file).
   private scheduleScrollbackSave(): void {
-    if (!this.opts.persistScrollback?.()) return;
+    if (
+      !shouldSaveScrollback({
+        persistEnabled: this.opts.persistScrollback?.() ?? false,
+        hadUserActivity: this.hadUserActivity,
+      })
+    ) {
+      return;
+    }
     if (this.scrollbackSaveTimer !== undefined) {
       window.clearTimeout(this.scrollbackSaveTimer);
     }
