@@ -18,6 +18,7 @@ import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
+import { resyncNudge } from "./viewportSync";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 
 export interface TerminalPaneOptions {
@@ -67,6 +68,10 @@ export class TerminalPane implements Pane {
   private spec: PaneSpec;
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
+  /// xterm's scrollable viewport `<div>`, resolved lazily after `term.open()`
+  /// created it. Cached because `resyncViewportScroll` runs per animation
+  /// frame while a gutter is being dragged.
+  private viewportEl: HTMLElement | null = null;
   /// Lines to scroll up once the shell has painted its first output, to bring
   /// restored scrollback back into view. 0 = nothing to reveal.
   private pendingRestoreReveal = 0;
@@ -558,10 +563,30 @@ export class TerminalPane implements Pane {
       this.pendingResizeRaf = 0;
       try {
         this.fit.fit();
+        // Every caller of this method runs right after the pane became
+        // visible again or was re-parented by a layout rebuild — both of
+        // which reset the DOM scrollbar behind xterm's back.
+        this.resyncViewportScroll();
       } catch {
         // fit throws when the element has zero size; ignore.
       }
     });
+  }
+
+  /// Put xterm's DOM scrollbar back in step with the buffer after a layout
+  /// rebuild or a `display: none` round trip reset it to 0. Without this the
+  /// next wheel notch is measured from the wrong origin and jumps the view to
+  /// the top of the scrollback. See `viewportSync.ts` for the full mechanism.
+  resyncViewportScroll(): void {
+    const buf = this.term.buffer.active;
+    this.viewportEl ??=
+      this.termHost.querySelector<HTMLElement>(".xterm-viewport");
+    const steps = resyncNudge(
+      buf.viewportY,
+      buf.baseY,
+      this.viewportEl?.scrollTop ?? null,
+    );
+    for (const step of steps) this.term.scrollLines(step);
   }
 
   private async pasteClipboard(): Promise<void> {

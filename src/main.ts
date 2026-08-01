@@ -225,6 +225,11 @@ async function main(): Promise<void> {
     .catch((e) => console.warn("drag-drop listener failed:", e));
 
   window.addEventListener("resize", () => manager.refitActive());
+  // Coming back from another app is the moment the user is most likely to
+  // reach for the wheel first. Refitting also re-syncs each pane's scrollbar
+  // with its buffer, so that first notch can't jump to the top of the
+  // scrollback (see terminal/viewportSync.ts).
+  window.addEventListener("focus", () => manager.refitActive());
   window.addEventListener("beforeunload", () => {
     void manager.flush();
   });
