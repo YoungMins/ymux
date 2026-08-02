@@ -139,6 +139,34 @@ Bump `CONFIG_VERSION` in `src-tauri/src/config/model.rs` when:
 
 Do NOT bump for additive fields with `#[serde(default)]` — they load transparently.
 
+### 9. Vendored WiX template
+
+`src-tauri/wix/main.wxs` is a **copy of Tauri's stock MSI template** (extracted from
+`@tauri-apps/cli` 2.10.1), wired in via `bundle.windows.wix.template`. It carries exactly
+one deviation, marked by a comment: `ApplicationStartMenuShortcut` has no `Icon` attribute.
+
+Why: `Icon="ProductIcon"` writes `C:\Windows\Installer\{ProductCode}\ProductIcon` into the
+`.lnk`. Tauri mints a new ProductCode per version, so a major upgrade deletes that folder —
+and any user copy of the shortcut (the **taskbar pin**, which no installer rewrites) is left
+pointing at a missing file and renders as a blank page icon. Without the attribute the shell
+resolves the icon from the target exe instead, which survives upgrades.
+
+**When bumping the Tauri CLI:** re-extract the stock template, re-apply the one-line removal,
+and diff — a stale vendored template silently loses new installer features. Extract with:
+
+```powershell
+$bin = "node_modules\@tauri-apps\cli-win32-x64-msvc\cli.win32-x64-msvc.node"
+$s = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($bin))
+$st = $s.IndexOf('<?if $(sys.BUILDARCH)="x86"?>')
+$e  = $s.IndexOf("</Wix>", $s.IndexOf("ApplicationStartMenuShortcut"))
+[System.IO.File]::WriteAllText("stock-main.wxs", $s.Substring($st, ($e + 6) - $st))
+```
+
+Also note: `src-tauri/icons/icon.ico` must stay **multi-resolution with 32×32 first** —
+`tauri-codegen` takes `entries()[0]` verbatim as the window icon, so a 256-only `.ico`
+gives the window a 256×256 icon. Regenerate with `pnpm tauri icon src-tauri/icons/icon.png -o <tmp>`
+and copy the resulting `icon.ico`.
+
 ## TDD / Testing
 
 ### Quick run
