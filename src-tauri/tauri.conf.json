@@ -49,6 +49,7 @@
         "type": "embedBootstrapper"
       },
       "wix": {
+        "template": "wix/main.wxs",
         "fragmentPaths": ["wix/path-env.wxs"],
         "componentGroupRefs": ["PathEnvGroup"]
       }
