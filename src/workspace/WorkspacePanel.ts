@@ -1,5 +1,6 @@
 import type { WorkspaceManager } from "./WorkspaceManager";
-import { formatWorkspaceLabel, sortWorkspacesById } from "./workspaceLabel";
+import { formatWorkspaceLabel } from "./workspaceLabel";
+import { insertIndexFromMidpoints } from "./reorder";
 import {
   toggle as toggleNotes,
   hasNotes,
@@ -10,12 +11,16 @@ import { promptWithBlur, confirmWithBlur } from "../browser/popupBlur";
 
 const COLLAPSE_KEY = "ymux:workspace-panel:collapsed";
 
+/// Vertical travel (px) before a press turns into a reorder drag. Below this a
+/// press is still a plain click, so switching workspaces stays a single tap.
+const DRAG_THRESHOLD_PX = 4;
+
 const noteIconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>`;
 
 function wsTooltip(id: number, manager: WorkspaceManager): string {
   const name = manager.getWorkspaceName(id);
   const base = name ? `${id}: ${name}` : `Workspace ${id}`;
-  return `${base} (Ctrl+Alt+${id}) — ${t("workspace.dblclickRename")}`;
+  return `${base} (Ctrl+Alt+${id}) — ${t("workspace.dblclickRename")}, ${t("workspace.dragReorder")}`;
 }
 
 /// Read the persisted collapsed flag (default: expanded). localStorage may
@@ -66,19 +71,107 @@ export function mountWorkspacePanel(
 
   const buttons = new Map<number, HTMLButtonElement>();
   const noteButtons = new Map<number, HTMLButtonElement>();
-  const statusDots = new Map<number, HTMLElement>();
+  /// Rows in render order, so a row's array index *is* its position in
+  /// `manager.workspaces` — what `moveWorkspace` takes.
+  const rows: HTMLElement[] = [];
 
-  /// Build one vertical row: switch button (label + status dot) with a note
+  // ── Drag-to-reorder ────────────────────────────────────────────────
+  // Pointer events, not the HTML5 drag-and-drop API: Tauri's native
+  // drag-drop is enabled (main.ts's `onDragDropEvent` powers file-drop-onto-
+  // terminal), and on Windows/WebView2 that disables HTML5 DnD inside the
+  // webview entirely. Pointer events are unaffected by it.
+  let drag: {
+    fromIndex: number;
+    row: HTMLElement;
+    startY: number;
+    started: boolean;
+    insertBefore: number;
+  } | null = null;
+  /// Set when a real drag ends so the trailing `click` doesn't also read as a
+  /// press that switches workspaces. Cleared on the next pointerdown rather
+  /// than a timer — the click/timer ordering isn't guaranteed, the next
+  /// pointerdown always is. Only matters when the drop was a no-op (no
+  /// rebuild, so the pressed button is still in the DOM to receive the click).
+  let dragJustEnded = false;
+
+  function clearDropMarkers(): void {
+    for (const r of rows) {
+      r.classList.remove(
+        "workspace-panel__row--drop-above",
+        "workspace-panel__row--drop-below",
+      );
+    }
+  }
+
+  /// Recompute where the dragged row would land from the pointer's Y against
+  /// each row's live midpoint, and draw the insertion line there.
+  function updateDropTarget(y: number): void {
+    if (!drag) return;
+    const midpoints = rows.map((r) => {
+      const box = r.getBoundingClientRect();
+      return box.top + box.height / 2;
+    });
+    drag.insertBefore = insertIndexFromMidpoints(midpoints, y);
+    clearDropMarkers();
+    if (drag.insertBefore < rows.length) {
+      rows[drag.insertBefore].classList.add("workspace-panel__row--drop-above");
+    } else if (rows.length > 0) {
+      rows[rows.length - 1].classList.add("workspace-panel__row--drop-below");
+    }
+  }
+
+  const onDragMove = (ev: PointerEvent): void => {
+    if (!drag) return;
+    if (!drag.started) {
+      if (Math.abs(ev.clientY - drag.startY) < DRAG_THRESHOLD_PX) return;
+      drag.started = true;
+      drag.row.classList.add("workspace-panel__row--dragging");
+    }
+    ev.preventDefault();
+    updateDropTarget(ev.clientY);
+  };
+
+  const onDragEnd = (): void => {
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
+    const d = drag;
+    drag = null;
+    if (!d) return;
+    d.row.classList.remove("workspace-panel__row--dragging");
+    clearDropMarkers();
+    if (!d.started) return;
+    dragJustEnded = true;
+    // Fires onWorkspacesChange → rebuild() when it actually moved something.
+    manager.moveWorkspace(d.fromIndex, d.insertBefore);
+  };
+
+  /// Build one vertical row: switch button (label + status tint) with a note
   /// button and a delete button trailing it.
   function makeRow(id: number): HTMLElement {
     const row = document.createElement("div");
     row.className = "workspace-panel__row";
+    row.addEventListener("pointerdown", (ev) => {
+      dragJustEnded = false; // a fresh press always re-arms clicking
+      if (ev.button !== 0) return;
+      // Never start a drag off the delete button — that click must stay exact.
+      if ((ev.target as HTMLElement | null)?.closest(".workspace-panel__del")) {
+        return;
+      }
+      const fromIndex = rows.indexOf(row);
+      if (fromIndex < 0) return;
+      drag = { fromIndex, row, startY: ev.clientY, started: false, insertBefore: fromIndex };
+      window.addEventListener("pointermove", onDragMove);
+      window.addEventListener("pointerup", onDragEnd);
+      window.addEventListener("pointercancel", onDragEnd);
+    });
 
     const btn = document.createElement("button");
     btn.className = "workspace-panel__ws";
     btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
     btn.title = wsTooltip(id, manager);
     btn.addEventListener("click", () => {
+      if (dragJustEnded) return;
       void manager.activate(id);
       highlight();
     });
@@ -92,11 +185,6 @@ export function mountWorkspacePanel(
         highlight();
       }
     });
-
-    const statusDot = document.createElement("span");
-    statusDot.className = "ws-dot ws-dot--idle";
-    btn.appendChild(statusDot);
-    statusDots.set(id, statusDot);
     row.appendChild(btn);
     buttons.set(id, btn);
 
@@ -108,6 +196,7 @@ export function mountWorkspacePanel(
     noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${id}`);
     noteBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
+      if (dragJustEnded) return;
       toggleNotes(id, manager.getWorkspaceName(id));
     });
     row.appendChild(noteBtn);
@@ -137,26 +226,30 @@ export function mountWorkspacePanel(
   function rebuild(): void {
     buttons.clear();
     noteButtons.clear();
-    statusDots.clear();
+    rows.length = 0;
     while (list.firstChild) list.removeChild(list.firstChild);
-    for (const ws of sortWorkspacesById(manager.workspaces)) {
-      list.appendChild(makeRow(ws.id));
+    // Render in `config.workspaces` order — that array *is* the user's order,
+    // set by drag-to-reorder and persisted by TOML's `[[workspaces]]`.
+    for (const ws of manager.workspaces) {
+      const row = makeRow(ws.id);
+      rows.push(row);
+      list.appendChild(row);
     }
     highlight();
   }
 
   function highlight(): void {
     for (const [id, btn] of buttons) {
-      btn.classList.toggle("workspace-panel__ws--active", id === manager.activeIdValue);
-      btn.title = wsTooltip(id, manager);
-      btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
-      const dot = statusDots.get(id);
-      if (dot) btn.appendChild(dot); // textContent above wiped children
-    }
-    for (const [id, dot] of statusDots) {
       const status = manager.workspaceStatus(id);
-      dot.className = `ws-dot ws-dot--${status}`;
-      dot.title = status === "idle" ? "" : t(`status.${status}`);
+      btn.classList.toggle("workspace-panel__ws--active", id === manager.activeIdValue);
+      btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
+      // The whole row is tinted by status (idle = no tint); CSS keys off this.
+      btn.dataset.status = status;
+      // "idle" has no i18n key — it's the resting state, so no status suffix.
+      btn.title =
+        status === "idle"
+          ? wsTooltip(id, manager)
+          : `${wsTooltip(id, manager)} — ${t(`status.${status}`)}`;
     }
     for (const [id, noteBtn] of noteButtons) {
       const label = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
@@ -184,11 +277,14 @@ export function mountWorkspacePanel(
   return () => {
     cleanupLang();
     cleanupNotesSub();
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
     panel.remove();
   };
 }
 
-/// Re-run the panel's highlight pass (active state, labels, status dots,
+/// Re-run the panel's highlight pass (active state, labels, status tint,
 /// has-notes) — mirrors the old refreshWorkspaceBar so main.ts's keyboard
 /// paths can force an update.
 export function refreshWorkspacePanel(host: HTMLElement): void {

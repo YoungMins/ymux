@@ -36,6 +36,12 @@ export interface TerminalPaneOptions {
   /// finished or needs attention. `message` is the OSC 9 text if present,
   /// else null.
   onAttention?: (message: string | null) => void;
+  /// Whether the user is actually watching this pane right now (window
+  /// focused + this workspace visible + this pane focused). Only the owner
+  /// knows all three, so it supplies the answer; falling back to the pane's
+  /// own `isFocused` would report "watched" for a pane in a hidden workspace
+  /// or while the app is in the background.
+  isWatched?: () => boolean;
   /// Fired whenever this pane's derived status (idle/running/done/attention)
   /// changes, so the owner can render a per-pane status indicator.
   onStatusChange?: (status: PaneStatus) => void;
@@ -124,6 +130,7 @@ export class TerminalPane implements Pane {
       paneId: this.id,
       initial: opts.spec.hotkeys ?? [],
       initialBgColor: opts.spec.bg_color ?? null,
+      onSubmit: () => this.statusMachine.onSubmit(Date.now()),
       onChange: (next) => {
         this.spec = { ...this.spec, hotkeys: next };
         this.opts.onHotKeysChange?.(next);
@@ -242,7 +249,7 @@ export class TerminalPane implements Pane {
     // Bell (BEL 0x07) → attention signal with no message.
     this.term.onBell(() => {
       opts.onAttention?.(null);
-      this.statusMachine.onAttention(this.isFocused);
+      this.statusMachine.onAttention(this.watched());
     });
     // OSC 9 → attention with the payload text as the message. Only the
     // iTerm2-style plain-text form (`OSC 9 ; <message>`) is a completion
@@ -252,7 +259,7 @@ export class TerminalPane implements Pane {
     this.term.parser.registerOscHandler(9, (data) => {
       if (!/^\d+;/.test(data)) {
         opts.onAttention?.(data || null);
-        this.statusMachine.onAttention(this.isFocused);
+        this.statusMachine.onAttention(this.watched());
       }
       return true;
     });
@@ -417,6 +424,10 @@ export class TerminalPane implements Pane {
       // output.
       if (this.spec.startup_cmd) {
         setTimeout(() => {
+          // Same reason as the HotKeyBar's onSubmit: this write bypasses
+          // xterm's onData, so tell the status machine a command started or
+          // the pane would sit at `idle` while the command runs.
+          this.statusMachine.onSubmit(Date.now());
           void api.writePane(
             this.id,
             ENCODER.encode(`${this.spec.startup_cmd}\r`),
@@ -457,6 +468,12 @@ export class TerminalPane implements Pane {
 
   get status(): PaneStatus {
     return this.statusMachine.status;
+  }
+
+  /// "Is the user looking at me?" — the owner's answer when it supplies one,
+  /// otherwise this pane's own focus flag (standalone/test use).
+  private watched(): boolean {
+    return this.opts.isWatched?.() ?? this.isFocused;
   }
 
   /// Toggle the search bar. Once shown, pressing Enter calls `findNext`,

@@ -10,6 +10,18 @@
   --status-ok: #7fdbca;
   --status-warn: #e5c07b;
   --status-critical: #ef6b73;
+  /* Agent status palette (idle has no colour). The solid values draw pane
+     borders; the `-bg` values tint a whole workspace row in the left panel,
+     kept low-alpha so the label stays readable on top of them. Written as
+     literal rgba rather than color-mix() so they don't depend on a
+     Chromium 111+ WebView2. */
+  --status-running: #3b82f6;
+  --status-done: #22c55e;
+  --status-attention: #f59e0b;
+  --status-running-bg: rgba(59, 130, 246, 0.24);
+  --status-done-bg: rgba(34, 197, 94, 0.24);
+  --status-attention-bg: rgba(245, 158, 11, 0.18);
+  --status-attention-bg-strong: rgba(245, 158, 11, 0.58);
 }
 
 html,
@@ -50,16 +62,6 @@ body,
   user-select: none;
 }
 
-@keyframes ymux-attention-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
 /* Agent status: per-pane border colour (idle/running/done/attention), driven
    by TerminalPane's PaneStatusMachine. This is the single, unified visual
    "needs attention" indicator (v0.8.18's separate pane--attention /
@@ -91,37 +93,6 @@ body,
 
 .pane--status-idle {
   box-shadow: none;
-}
-
-/* Workspace tab status dot: highest-priority status among that workspace's
-   panes (attention > running > done > idle). Sits bottom-right of the tab
-   number — the sole "needs attention" indicator on the tab now that the old
-   top-right `::after` bell badge has been retired. */
-.ws-dot {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.ws-dot--running {
-  background: var(--status-running, #3b82f6);
-}
-
-.ws-dot--done {
-  background: var(--status-done, #22c55e);
-}
-
-.ws-dot--attention {
-  background: var(--status-attention, #f59e0b);
-  animation: ymux-attention-pulse 1.2s ease-in-out infinite;
-}
-
-.ws-dot--idle {
-  background: transparent;
 }
 
 .workspace-bar__spacer {
@@ -1335,6 +1306,7 @@ body,
 }
 
 .workspace-panel__row {
+  position: relative; /* anchors the drag drop-line pseudo-elements */
   display: flex;
   align-items: center;
   gap: 1px;
@@ -1361,12 +1333,76 @@ body,
 
 .workspace-panel__ws:hover {
   background: var(--bg-hover);
+  /* Also brightens a status-tinted row, whose background rule below wins the
+     `background` declaration. */
+  filter: brightness(1.15);
 }
 
 .workspace-panel__ws--active {
   background: var(--bg-hover);
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* Agent status tint across the whole row — replaces the old 5px `ws-dot`,
+   which was too small to read at a glance. The colour is the highest-priority
+   pane status in that workspace (attention > running > done > idle), from
+   WorkspaceManager.workspaceStatus(). Declared AFTER `--active` on purpose:
+   the tint must survive on the active row, while `--active`'s accent text
+   and border still say which workspace is showing. Alphas stay low so the
+   label keeps contrast in both light and dark themes. */
+.workspace-panel__ws[data-status="running"] {
+  background: var(--status-running-bg);
+}
+
+.workspace-panel__ws[data-status="done"] {
+  background: var(--status-done-bg);
+}
+
+.workspace-panel__ws[data-status="attention"] {
+  animation: ymux-ws-attention-bg 1.2s ease-in-out infinite;
+}
+
+@keyframes ymux-ws-attention-bg {
+  0%,
+  100% {
+    background: var(--status-attention-bg);
+  }
+  50% {
+    background: var(--status-attention-bg-strong);
+  }
+}
+
+/* Drag-to-reorder feedback. The drop line is drawn on the row the dragged
+   workspace would land before (`--drop-above`), or under the last row when
+   dropping at the end (`--drop-below`). */
+.workspace-panel__row--dragging,
+.workspace-panel__row--dragging .workspace-panel__ws {
+  cursor: grabbing;
+}
+
+.workspace-panel__row--dragging {
+  opacity: 0.5;
+}
+
+.workspace-panel__row--drop-above::before,
+.workspace-panel__row--drop-below::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.workspace-panel__row--drop-above::before {
+  top: -2px;
+}
+
+.workspace-panel__row--drop-below::after {
+  bottom: -2px;
 }
 
 .workspace-panel__note-btn,

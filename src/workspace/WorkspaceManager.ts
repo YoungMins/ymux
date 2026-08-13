@@ -34,6 +34,7 @@ import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
 import { promptWorktreeBranch } from "./WorktreeModal";
 import { confirmWithBlur } from "../browser/popupBlur";
+import { moveItem } from "./reorder";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -288,6 +289,22 @@ export class WorkspaceManager {
     this.onWorkspacesChangeCb = cb;
   }
 
+  /// Reorder the workspace list: move the workspace at `fromIndex` so it lands
+  /// before the one at `insertBefore` (`workspaces.length` = move to the end).
+  /// Display order *is* `config.workspaces` order, which TOML's
+  /// `[[workspaces]]` array preserves — so this needs no model change. Ids are
+  /// untouched, so `Ctrl+Alt+N` keeps pointing at the workspace showing `N`.
+  /// Returns whether anything actually moved.
+  moveWorkspace(fromIndex: number, insertBefore: number): boolean {
+    const next = moveItem(this.config.workspaces, fromIndex, insertBefore);
+    if (!next) return false;
+    // Mutate in place — the `workspaces` getter hands out this live array.
+    this.config.workspaces.splice(0, this.config.workspaces.length, ...next);
+    this.onWorkspacesChangeCb?.();
+    this.persistDebounced();
+    return true;
+  }
+
   /// Lowest unused positive workspace id, so the bar numbering stays compact
   /// (e.g. with {1,3} present the next add reuses 2).
   private lowestFreeId(): number {
@@ -414,6 +431,7 @@ export class WorkspaceManager {
         this.focusedPaneId = spec.id;
       },
       onAttention: (msg) => this.handleAttention(spec.id, msg),
+      isWatched: () => this.isWatching(spec.id),
       persistScrollback: () => this.persistScrollback,
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
@@ -835,6 +853,20 @@ export class WorkspaceManager {
     return this.config.worktree_base_dir;
   }
 
+  /// Is the user actually looking at pane `paneId` right now? True only when
+  /// the window has focus, the pane's workspace is the visible one, and the
+  /// pane is the focused one. This is the single source of truth for "they
+  /// already saw it" — it gates the bell notification *and* whether an
+  /// attention signal is classified `done` (seen) or `attention` (unseen).
+  /// A pane's own `isFocused` flag is not enough: nothing blurs it when the
+  /// user switches workspaces or alt-tabs away, so an agent finishing in a
+  /// hidden workspace would otherwise be mis-classified as `done`.
+  private isWatching(paneId: Uuid): boolean {
+    if (!this.windowFocused) return false;
+    if (this.focusedPaneId !== paneId) return false;
+    return this.workspaceOfPane(paneId) === this.activeId;
+  }
+
   /// Which workspace owns pane `paneId`, or null if it isn't in any live cache.
   private workspaceOfPane(paneId: Uuid): number | null {
     for (const [wsId, cache] of this.paneCaches) {
@@ -902,11 +934,7 @@ export class WorkspaceManager {
     const wsId = this.workspaceOfPane(paneId);
     if (wsId === null) return;
 
-    const watching =
-      this.windowFocused &&
-      this.activeId === wsId &&
-      this.focusedPaneId === paneId;
-    if (watching) return;
+    if (this.isWatching(paneId)) return;
 
     // OS notification + sound.
     const name = this.getWorkspaceName(wsId);

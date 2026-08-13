@@ -897,6 +897,12 @@ const strings: Translations = {
     fr: "double-clic pour renommer", ar: "انقر مرتين لإعادة التسمية", pt: "clique duplo para renomear",
     ru: "двойной клик для переименования", tr: "yeniden adlandırmak için çift tıklayın", de: "Doppelklick zum Umbenennen", vi: "nhấp đúp để đổi tên",
   },
+  "workspace.dragReorder": {
+    en: "drag to reorder", ko: "드래그로 순서 변경", ja: "ドラッグで並び替え",
+    zh: "拖动以重新排序", hi: "क्रम बदलने के लिए खींचें", es: "arrastra para reordenar",
+    fr: "glisser pour réordonner", ar: "اسحب لإعادة الترتيب", pt: "arraste para reordenar",
+    ru: "перетащите для изменения порядка", tr: "sıralamak için sürükleyin", de: "zum Umsortieren ziehen", vi: "kéo để sắp xếp lại",
+  },
 
   // ── Notes overlay ──────────────────────────────────────────────
   "notes.title": {
