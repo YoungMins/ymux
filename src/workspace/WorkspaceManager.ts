@@ -431,7 +431,7 @@ export class WorkspaceManager {
         this.focusedPaneId = spec.id;
       },
       onAttention: (msg) => this.handleAttention(spec.id, msg),
-      isWatched: () => this.isWatching(spec.id),
+      isVisible: () => this.isPaneVisible(spec.id),
       persistScrollback: () => this.persistScrollback,
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
@@ -853,18 +853,28 @@ export class WorkspaceManager {
     return this.config.worktree_base_dir;
   }
 
-  /// Is the user actually looking at pane `paneId` right now? True only when
-  /// the window has focus, the pane's workspace is the visible one, and the
-  /// pane is the focused one. This is the single source of truth for "they
-  /// already saw it" — it gates the bell notification *and* whether an
-  /// attention signal is classified `done` (seen) or `attention` (unseen).
-  /// A pane's own `isFocused` flag is not enough: nothing blurs it when the
-  /// user switches workspaces or alt-tabs away, so an agent finishing in a
-  /// hidden workspace would otherwise be mis-classified as `done`.
-  private isWatching(paneId: Uuid): boolean {
+  /// Can the user see pane `paneId` right now — window focused and its
+  /// workspace the visible one? This drives the *status* classification
+  /// (`done` = you saw it finish, `attention` = you didn't) and how long a
+  /// `done` marker is held.
+  ///
+  /// Deliberately does NOT require the pane to be the focused one: every pane
+  /// in a split is on screen simultaneously, so keyboard focus says nothing
+  /// about whether the user saw it. Nor can the pane's own `isFocused` flag
+  /// stand in — nothing lowers it when the user switches workspaces or
+  /// alt-tabs away, which is exactly how an agent finishing out of sight used
+  /// to get classified as `done`.
+  private isPaneVisible(paneId: Uuid): boolean {
     if (!this.windowFocused) return false;
-    if (this.focusedPaneId !== paneId) return false;
     return this.workspaceOfPane(paneId) === this.activeId;
+  }
+
+  /// Stricter: is the user looking at *this exact pane*? Gates the OS
+  /// notification and beep, where the bar is higher — being able to see a
+  /// pane in a corner of a split is not a reason to swallow the alert that
+  /// the thing you launched has finished.
+  private isWatching(paneId: Uuid): boolean {
+    return this.isPaneVisible(paneId) && this.focusedPaneId === paneId;
   }
 
   /// Which workspace owns pane `paneId`, or null if it isn't in any live cache.
