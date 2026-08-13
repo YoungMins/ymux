@@ -12,11 +12,3 @@ export function formatWorkspaceLabel(
 ): string {
   return isCustomName(id, name) ? `${id}: ${name}` : String(id);
 }
-
-/// Ascending-by-id copy of a workspace list, so the panel order is stable and
-/// independent of Map/insertion order. Does not mutate the input.
-export function sortWorkspacesById<T extends { id: number }>(
-  list: readonly T[],
-): T[] {
-  return [...list].sort((a, b) => a.id - b.id);
-}

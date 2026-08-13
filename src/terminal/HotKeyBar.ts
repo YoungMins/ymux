@@ -16,6 +16,11 @@ export interface HotKeyBarOptions {
   initialBgColor: string | null;
   onChange: (next: HotKeyDef[]) => void;
   onBgColorChange: (color: string | null) => void;
+  /// Fired when a hotkey submits a command to the PTY. These writes go
+  /// straight to `writePane` and never pass through xterm's `onData`, so
+  /// without this the pane's status machine would never see the submission
+  /// and a hotkey-launched command would stay `idle`.
+  onSubmit?: () => void;
 }
 
 export class HotKeyBar {
@@ -83,6 +88,7 @@ export class HotKeyBar {
   }
 
   private async execute(def: HotKeyDef): Promise<void> {
+    this.opts.onSubmit?.();
     if (def.batch) {
       const lines = def.command.split(/\r?\n/).map((l) => l.trimEnd());
       for (const line of lines) {
