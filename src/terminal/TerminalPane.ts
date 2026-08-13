@@ -36,12 +36,13 @@ export interface TerminalPaneOptions {
   /// finished or needs attention. `message` is the OSC 9 text if present,
   /// else null.
   onAttention?: (message: string | null) => void;
-  /// Whether the user is actually watching this pane right now (window
-  /// focused + this workspace visible + this pane focused). Only the owner
-  /// knows all three, so it supplies the answer; falling back to the pane's
-  /// own `isFocused` would report "watched" for a pane in a hidden workspace
-  /// or while the app is in the background.
-  isWatched?: () => boolean;
+  /// Whether this pane is on screen right now — the app window is focused and
+  /// this pane's workspace is the visible one. Only the owner knows both, so
+  /// it supplies the answer; the pane's own `isFocused` flag can't stand in,
+  /// because nothing lowers it when the user switches workspaces or alt-tabs
+  /// away, and because split panes are all visible at once whether or not
+  /// they hold the keyboard focus.
+  isVisible?: () => boolean;
   /// Fired whenever this pane's derived status (idle/running/done/attention)
   /// changes, so the owner can render a per-pane status indicator.
   onStatusChange?: (status: PaneStatus) => void;
@@ -242,14 +243,14 @@ export class TerminalPane implements Pane {
     // ticker so `running` decays back to `idle` after a quiet period even
     // when no new output/input arrives to trigger a recheck.
     this.statusTimer = window.setInterval(
-      () => this.statusMachine.tick(Date.now()),
+      () => this.statusMachine.tick(Date.now(), this.visible()),
       1000,
     );
 
     // Bell (BEL 0x07) → attention signal with no message.
     this.term.onBell(() => {
       opts.onAttention?.(null);
-      this.statusMachine.onAttention(this.watched());
+      this.statusMachine.onAttention(this.visible(), Date.now());
     });
     // OSC 9 → attention with the payload text as the message. Only the
     // iTerm2-style plain-text form (`OSC 9 ; <message>`) is a completion
@@ -259,7 +260,7 @@ export class TerminalPane implements Pane {
     this.term.parser.registerOscHandler(9, (data) => {
       if (!/^\d+;/.test(data)) {
         opts.onAttention?.(data || null);
-        this.statusMachine.onAttention(this.watched());
+        this.statusMachine.onAttention(this.visible(), Date.now());
       }
       return true;
     });
@@ -470,10 +471,10 @@ export class TerminalPane implements Pane {
     return this.statusMachine.status;
   }
 
-  /// "Is the user looking at me?" — the owner's answer when it supplies one,
-  /// otherwise this pane's own focus flag (standalone/test use).
-  private watched(): boolean {
-    return this.opts.isWatched?.() ?? this.isFocused;
+  /// "Am I on screen?" — the owner's answer when it supplies one, otherwise
+  /// this pane's own focus flag (standalone/test use).
+  private visible(): boolean {
+    return this.opts.isVisible?.() ?? this.isFocused;
   }
 
   /// Toggle the search bar. Once shown, pressing Enter calls `findNext`,
