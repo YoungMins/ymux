@@ -210,6 +210,32 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     langRow.appendChild(spacer);
     host.appendChild(langRow);
 
+    // Default shell for new panes / workspaces. Same value as the toolbar
+    // picker; `setDefaultShell` persists it and notifies the other control.
+    const shellRow = document.createElement("div");
+    shellRow.className = "settings-row";
+    const shellLabel = document.createElement("div");
+    shellLabel.className = "settings-row__label";
+    shellLabel.textContent = t("settings.general.defaultShell");
+    shellRow.appendChild(shellLabel);
+    const shellSel = document.createElement("select");
+    shellSel.className = "settings-hex-input";
+    shellSel.style.width = "auto";
+    for (const s of manager.allShells) {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      opt.textContent = s.name;
+      shellSel.appendChild(opt);
+    }
+    shellSel.value = manager.defaultShell;
+    shellSel.addEventListener("change", () => {
+      manager.setDefaultShell(shellSel.value);
+    });
+    shellRow.appendChild(shellSel);
+    const shellSpacer = document.createElement("div");
+    shellRow.appendChild(shellSpacer);
+    host.appendChild(shellRow);
+
     const notifyRow = document.createElement("div");
     notifyRow.className = "settings-row";
     const notifyLabel = document.createElement("div");

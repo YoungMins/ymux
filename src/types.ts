@@ -59,6 +59,9 @@ export interface Config {
   persist_scrollback: boolean;
   paste_image_retention_hours: number;
   worktree_base_dir: string;
+  /// `ShellProfile.name` used for new panes and workspaces. Empty (or a name
+  /// that no longer exists) means "the first detected shell".
+  default_shell: string;
 }
 
 export interface BootstrapPayload {

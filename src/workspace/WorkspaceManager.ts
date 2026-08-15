@@ -34,10 +34,21 @@ import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
 import { promptWorktreeBranch } from "./WorktreeModal";
 import { confirmWithBlur } from "../browser/popupBlur";
+import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
+
+/// Companion tools offered in the terminal right-click menu. These ship as
+/// sidecars next to ymux.exe and the installer puts that directory on PATH,
+/// so the command is all that's needed. Names are proper nouns — not i18n'd.
+const TOOL_MENU: { label: string; command: string }[] = [
+  { label: "yDir", command: "ydir" },
+  { label: "yMon", command: "ymon" },
+  { label: "yCode", command: "ycode" },
+  { label: "yGit", command: "ygit" },
+];
 
 export class WorkspaceManager {
   private config: Config;
@@ -68,6 +79,9 @@ export class WorkspaceManager {
   /// Notified with the owning workspace id whenever a pane's status changes,
   /// so the workspace bar can re-colour that workspace's tab dot.
   onPaneStatusChange?: (workspaceId: number) => void;
+  /// Notified when the default shell changes, so whichever of the two UIs
+  /// (toolbar picker / Settings) didn't make the change can follow along.
+  onDefaultShellChange?: (name: string) => void;
 
   constructor(
     private host: HTMLElement,
@@ -77,6 +91,7 @@ export class WorkspaceManager {
     this.config = config;
     this.shells = shells;
     this.activeId = config.active_workspace;
+    this.orderShellsByDefault();
   }
 
   /// Active pane within the active workspace. Setting this toggles the
@@ -432,6 +447,7 @@ export class WorkspaceManager {
       },
       onAttention: (msg) => this.handleAttention(spec.id, msg),
       isVisible: () => this.isPaneVisible(spec.id),
+      onContextMenu: (ev) => this.showPaneContextMenu(spec.id, ev),
       persistScrollback: () => this.persistScrollback,
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
@@ -506,6 +522,38 @@ export class WorkspaceManager {
   private resolveShell(name: string): string {
     if (this.shells.some((s) => s.name === name)) return name;
     return this.shells[0]?.name ?? name;
+  }
+
+  /// Build and open the terminal right-click menu for `paneId`.
+  ///
+  /// The companion tools run *in the clicked pane*, the same way the HotKey
+  /// bar submits a command — they are ordinary CLIs on PATH, so this is the
+  /// shortest path from "I want yDir" to having it, and Ctrl+C backs out.
+  private showPaneContextMenu(paneId: Uuid, ev: MouseEvent): void {
+    const pane = this.findPaneById(paneId);
+    if (!(pane instanceof TerminalPane)) return;
+    // Right-click targets this pane, so split/close act on it. pointerdown
+    // has normally focused it already; this makes that independent of
+    // whether the platform fires contextmenu on press or on release.
+    this.focusedPaneId = paneId;
+
+    const entries: ContextMenuEntry[] = [
+      {
+        label: t("menu.copy"),
+        disabled: !pane.hasSelection(),
+        onSelect: () => void pane.copySelection(),
+      },
+      { label: t("menu.paste"), onSelect: () => void pane.paste() },
+      "separator",
+      { label: t("shortcut.splitH"), onSelect: () => void this.splitFocused("horizontal") },
+      { label: t("shortcut.splitV"), onSelect: () => void this.splitFocused("vertical") },
+      "separator",
+      ...TOOL_MENU.map((tool) => ({
+        label: tool.label,
+        onSelect: () => pane.runCommand(tool.command),
+      })),
+    ];
+    showContextMenu(ev.clientX, ev.clientY, entries);
   }
 
   /// Split the currently focused pane.
@@ -1019,15 +1067,35 @@ export class WorkspaceManager {
     await api.saveConfig(this.config).catch(() => {});
   }
 
-  /// Replace the default shell used for newly created panes.
+  /// Shell profile new panes and workspaces are created with, resolved
+  /// against what is actually installed.
+  get defaultShell(): string {
+    return this.resolveShell(this.config.default_shell);
+  }
+
+  /// Replace the default shell used for newly created panes, and persist it.
+  /// Two UIs set this — the toolbar picker and Settings → General — so the
+  /// one that didn't initiate the change is notified through
+  /// `onDefaultShellChange`.
   setDefaultShell(name: string): void {
-    if (this.shells.some((s) => s.name === name)) {
-      // Reorder so `name` is first — subsequent splits inherit it.
-      this.shells = [
-        ...this.shells.filter((s) => s.name === name),
-        ...this.shells.filter((s) => s.name !== name),
-      ];
-    }
+    if (!this.shells.some((s) => s.name === name)) return;
+    if (this.config.default_shell === name) return;
+    this.config.default_shell = name;
+    this.orderShellsByDefault();
+    this.persistDebounced();
+    this.onDefaultShellChange?.(name);
+  }
+
+  /// Move the configured default to the front of `this.shells`. Every
+  /// new-pane path already reads `this.shells[0]`, so ordering the list is
+  /// all it takes for the setting to apply everywhere.
+  private orderShellsByDefault(): void {
+    const name = this.config.default_shell;
+    if (!name || !this.shells.some((s) => s.name === name)) return;
+    this.shells = [
+      ...this.shells.filter((s) => s.name === name),
+      ...this.shells.filter((s) => s.name !== name),
+    ];
   }
 }
 

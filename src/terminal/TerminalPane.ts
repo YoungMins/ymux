@@ -43,6 +43,10 @@ export interface TerminalPaneOptions {
   /// away, and because split panes are all visible at once whether or not
   /// they hold the keyboard focus.
   isVisible?: () => boolean;
+  /// Right-click inside this pane. The default webview menu is already
+  /// suppressed; the owner supplies the replacement because the useful
+  /// entries (split, launch a tool) need workspace-level context.
+  onContextMenu?: (ev: MouseEvent) => void;
   /// Fired whenever this pane's derived status (idle/running/done/attention)
   /// changes, so the owner can render a per-pane status indicator.
   onStatusChange?: (status: PaneStatus) => void;
@@ -117,6 +121,15 @@ export class TerminalPane implements Pane {
     // `event.target.closest('.pane')` and update the focused pane id without
     // having to thread an `onFocus` callback through every render.
     this.element.dataset.paneId = this.id;
+
+    // Right-click opens ymux's own menu. Text inputs living inside the pane
+    // (the search bar) keep the native one, where cut/copy/paste on an input
+    // is what the user expects.
+    this.element.addEventListener("contextmenu", (ev) => {
+      if ((ev.target as HTMLElement | null)?.closest("input, textarea")) return;
+      ev.preventDefault();
+      this.opts.onContextMenu?.(ev);
+    });
 
     // Title label shown above the hotkey bar. Falls back to the shell name
     // when no user title has been set (via `Ctrl+Shift+R`).
@@ -475,6 +488,38 @@ export class TerminalPane implements Pane {
   /// this pane's own focus flag (standalone/test use).
   private visible(): boolean {
     return this.opts.isVisible?.() ?? this.isFocused;
+  }
+
+  /// Whether the terminal currently has selected text, for enabling "Copy".
+  hasSelection(): boolean {
+    return this.term.hasSelection();
+  }
+
+  /// Copy the current selection to the clipboard. No-op without a selection.
+  async copySelection(): Promise<void> {
+    const text = this.term.getSelection();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      console.warn("clipboard write failed:", e);
+    }
+  }
+
+  /// Paste the clipboard into the PTY — the same path as Ctrl+V, images
+  /// included.
+  async paste(): Promise<void> {
+    await this.pasteClipboard();
+  }
+
+  /// Submit `cmd` to the shell as if the user had typed it and pressed Enter.
+  /// Tells the status machine first: this write bypasses xterm's `onData`, so
+  /// without it the pane would stay `idle` while the command runs (the same
+  /// gap the HotKey bar and `startup_cmd` had).
+  runCommand(cmd: string): void {
+    if (!this.spawned) return;
+    this.statusMachine.onSubmit(Date.now());
+    void api.writePane(this.id, ENCODER.encode(`${cmd}\r`));
   }
 
   /// Toggle the search bar. Once shown, pressing Enter calls `findNext`,
