@@ -47,6 +47,13 @@ pub struct Config {
     /// via "open in worktree". Empty means no base dir configured yet.
     #[serde(default)]
     pub worktree_base_dir: String,
+    /// [`ShellProfile::name`] used for newly created panes and workspaces.
+    /// Empty means "the first detected shell", which is also the fallback when
+    /// the named profile no longer exists (e.g. pwsh was uninstalled).
+    /// `String` rather than `Option<String>` per the tagged-enum TOML caveat
+    /// the rest of this model follows.
+    #[serde(default)]
+    pub default_shell: String,
 }
 
 fn default_version() -> u32 {
@@ -76,6 +83,7 @@ impl Default for Config {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         }
     }
 }
@@ -115,6 +123,16 @@ impl Config {
         self.version = incoming.version;
         self.active_workspace = incoming.active_workspace;
         self.workspaces = incoming.workspaces;
+        // Plain user settings: the frontend owns these outright — it received
+        // them at bootstrap and is the only thing that edits them — so they
+        // have to be copied back or every save silently reverts the user's
+        // choice to whatever was on disk at launch. `shells` below is the one
+        // exception, being a backend-owned detection cache.
+        self.notify_on_bell = incoming.notify_on_bell;
+        self.persist_scrollback = incoming.persist_scrollback;
+        self.paste_image_retention_hours = incoming.paste_image_retention_hours;
+        self.worktree_base_dir = incoming.worktree_base_dir;
+        self.default_shell = incoming.default_shell;
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
         }
@@ -624,6 +642,47 @@ mod tests {
     }
 
     #[test]
+    fn default_shell_defaults_to_empty_when_absent() {
+        let toml_str = "version = 5\nactive_workspace = 1\n";
+        let parsed: Config = toml::from_str(toml_str).expect("deserialize");
+        assert_eq!(parsed.default_shell, "");
+    }
+
+    #[test]
+    fn default_shell_toml_roundtrip() {
+        let config = Config {
+            default_shell: "Git Bash".into(),
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(loaded.default_shell, "Git Bash");
+    }
+
+    /// The frontend is the only editor of the plain settings fields, so a save
+    /// has to carry them back onto the backend copy. Before this, toggling
+    /// "notify on bell" (or picking a default shell) looked like it worked and
+    /// then reverted on the next launch.
+    #[test]
+    fn merge_layouts_carries_user_settings_back() {
+        let mut backend = Config::default();
+        let frontend_save = Config {
+            notify_on_bell: false,
+            persist_scrollback: false,
+            paste_image_retention_hours: 72,
+            worktree_base_dir: "D:\\wt".into(),
+            default_shell: "pwsh".into(),
+            ..Config::default()
+        };
+        backend.merge_layouts_from(frontend_save);
+        assert!(!backend.notify_on_bell);
+        assert!(!backend.persist_scrollback);
+        assert_eq!(backend.paste_image_retention_hours, 72);
+        assert_eq!(backend.worktree_base_dir, "D:\\wt");
+        assert_eq!(backend.default_shell, "pwsh");
+    }
+
+    #[test]
     fn max_workspaces_is_nine() {
         assert_eq!(MAX_WORKSPACES, 9);
     }
@@ -648,6 +707,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -658,6 +718,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -714,6 +775,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -743,6 +805,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -874,6 +937,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -899,6 +963,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -959,6 +1024,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1051,6 +1117,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            default_shell: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

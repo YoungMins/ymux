@@ -205,6 +205,16 @@ async function main(): Promise<void> {
     }
   });
 
+  // Suppress the webview's own context menu app-wide — it offers browser
+  // actions (Reload, Inspect, Back) that mean nothing in a terminal
+  // multiplexer. Terminal panes put their own menu up in its place; text
+  // inputs keep the native one, where cut/copy/paste on a field is exactly
+  // what the user is reaching for.
+  document.addEventListener("contextmenu", (ev) => {
+    if ((ev.target as HTMLElement | null)?.closest("input, textarea")) return;
+    ev.preventDefault();
+  });
+
   // Dropping files onto a terminal types their quoted paths, so an in-pane
   // CLI can act on them (same idea as the Ctrl+V image paste). Tauri owns the
   // OS drop — HTML5 drag events never fire for files — and hands us real

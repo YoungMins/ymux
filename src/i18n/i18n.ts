@@ -672,6 +672,12 @@ const strings: Translations = {
     de: "Arbeitsbereich {ws}: Aufgabe abgeschlossen",
     vi: "Không gian làm việc {ws}: đã xong",
   },
+  "settings.general.defaultShell": {
+    en: "Default shell", ko: "기본 셸", ja: "既定のシェル",
+    zh: "默认 Shell", hi: "डिफ़ॉल्ट शेल", es: "Shell predeterminada",
+    fr: "Shell par défaut", ar: "الصدفة الافتراضية", pt: "Shell padrão",
+    ru: "Оболочка по умолчанию", tr: "Varsayılan kabuk", de: "Standard-Shell", vi: "Shell mặc định",
+  },
   "status.running": {
     en: "Running", ko: "실행 중", ja: "実行中", zh: "运行中", hi: "चल रहा है",
     es: "En ejecución", fr: "En cours", ar: "قيد التشغيل", pt: "Em execução",
@@ -896,6 +902,19 @@ const strings: Translations = {
     zh: "双击重命名", hi: "नाम बदलने के लिए डबल-क्लिक", es: "doble clic para renombrar",
     fr: "double-clic pour renommer", ar: "انقر مرتين لإعادة التسمية", pt: "clique duplo para renomear",
     ru: "двойной клик для переименования", tr: "yeniden adlandırmak için çift tıklayın", de: "Doppelklick zum Umbenennen", vi: "nhấp đúp để đổi tên",
+  },
+  // ── Terminal right-click menu ───────────────────────────────────
+  "menu.copy": {
+    en: "Copy", ko: "복사", ja: "コピー",
+    zh: "复制", hi: "कॉपी करें", es: "Copiar",
+    fr: "Copier", ar: "نسخ", pt: "Copiar",
+    ru: "Копировать", tr: "Kopyala", de: "Kopieren", vi: "Sao chép",
+  },
+  "menu.paste": {
+    en: "Paste", ko: "붙여넣기", ja: "貼り付け",
+    zh: "粘贴", hi: "पेस्ट करें", es: "Pegar",
+    fr: "Coller", ar: "لصق", pt: "Colar",
+    ru: "Вставить", tr: "Yapıştır", de: "Einfügen", vi: "Dán",
   },
   "workspace.dragReorder": {
     en: "drag to reorder", ko: "드래그로 순서 변경", ja: "ドラッグで並び替え",

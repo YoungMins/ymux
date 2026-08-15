@@ -18,10 +18,10 @@
   --status-running: #3b82f6;
   --status-done: #22c55e;
   --status-attention: #f59e0b;
-  --status-running-bg: rgba(59, 130, 246, 0.24);
-  --status-done-bg: rgba(34, 197, 94, 0.24);
-  --status-attention-bg: rgba(245, 158, 11, 0.18);
-  --status-attention-bg-strong: rgba(245, 158, 11, 0.58);
+  --status-running-bg: rgba(59, 130, 246, 0.46);
+  --status-done-bg: rgba(34, 197, 94, 0.46);
+  --status-attention-bg: rgba(245, 158, 11, 0.3);
+  --status-attention-bg-strong: rgba(245, 158, 11, 0.8);
 }
 
 html,
@@ -1259,6 +1259,54 @@ body,
 }
 .settings-table td.desc {
   color: var(--fg);
+}
+
+/* Terminal right-click menu -------------------------------------------
+   Lives on document.body (see ContextMenu.ts) so it escapes any pane's
+   overflow clipping and the workspace host's capture-phase focus handler. */
+.context-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 168px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  user-select: none;
+}
+
+.context-menu__item {
+  appearance: none;
+  text-align: left;
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-menu__item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.context-menu__item:disabled {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.context-menu__separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 /* Workspace left panel ------------------------------------------------ */

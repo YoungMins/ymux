@@ -41,7 +41,12 @@ export function mountWorkspaceBar(
   shellPicker.addEventListener("change", () => {
     manager.setDefaultShell(shellPicker.value);
   });
-  if (shells.length > 0) shellPicker.value = shells[0].name;
+  // Reflect the persisted default, and follow along when Settings → General
+  // changes it — the two controls edit the same value.
+  if (shells.length > 0) shellPicker.value = manager.defaultShell;
+  manager.onDefaultShellChange = (name) => {
+    shellPicker.value = name;
+  };
   bar.appendChild(shellPicker);
 
   const browserBtn = document.createElement("button");
