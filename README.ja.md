@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.27-7fdbca?style=flat-square" alt="version 0.8.27" />
+  <img src="https://img.shields.io/badge/version-0.8.28-7fdbca?style=flat-square" alt="version 0.8.28" />
 </p>
 
 <p align="center">
@@ -170,6 +170,8 @@ Linux/macOS でクロスプラットフォームのロジックを開発でき�
 | `Ctrl+Shift+Tab`                 | 前のペインにフォーカス                |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9`     | ワークスペースを切り替え              |
 | ワークスペースボタンをダブルクリック | ワークスペース名を変更                |
+| ワークスペース行をドラッグ       | ワークスペースの並び替え              |
+| ターミナルで右クリック           | コンテキストメニュー — コピー/貼り付け、分割、y* ツール起動 |
 | URL 上で `Ctrl+クリック`         | リンクをデフォルトブラウザで開く      |
 | ツールバーの `⚙` ボタン          | 設定を開く（言語、ショートカット、シンタックスカラー、設定ファイル）|
 

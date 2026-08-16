@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.27-7fdbca?style=flat-square" alt="version 0.8.27" />
+  <img src="https://img.shields.io/badge/version-0.8.28-7fdbca?style=flat-square" alt="version 0.8.28" />
 </p>
 
 <p align="center">
@@ -170,6 +170,8 @@ y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
 | `Ctrl+Shift+Tab`            | Focus previous pane                  |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | Switch workspace                    |
 | Double-click workspace button | Rename workspace                    |
+| Drag a workspace row        | Reorder workspaces                   |
+| Right-click in a terminal   | Context menu — copy/paste, split, launch a y* tool |
 | `Ctrl+Click` on a URL       | Open link in default browser         |
 | `⚙` button (toolbar)        | Open Settings (palette, shortcuts, syntax colors, config files) |
 

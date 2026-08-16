@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.27-7fdbca?style=flat-square" alt="version 0.8.27" />
+  <img src="https://img.shields.io/badge/version-0.8.28-7fdbca?style=flat-square" alt="version 0.8.28" />
 </p>
 
 <p align="center">
@@ -165,6 +165,8 @@ Linux/macOS 에서 플랫폼 독립적인 로직을 작업할 수 있습니다. 
 | `Ctrl+Shift+Tab`               | 이전 pane으로 포커스 이동           |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9`   | 워크스페이스 전환                   |
 | 워크스페이스 버튼 더블클릭       | 워크스페이스 이름 변경              |
+| 워크스페이스 행 드래그           | 워크스페이스 순서 변경              |
+| 터미널에서 마우스 오른쪽 클릭    | 컨텍스트 메뉴 — 복사/붙여넣기, 분할, y* 도구 실행 |
 | URL 위에서 `Ctrl+클릭`         | 기본 브라우저로 링크 열기           |
 | 툴바의 `⚙` 버튼                | 설정 열기 (언어, 단축키, 구문 색상, 설정 파일) |
 
