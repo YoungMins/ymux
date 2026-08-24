@@ -214,29 +214,65 @@ jobs:
       - name: cargo test (ymux lib, macOS)
         run: cargo test --no-default-features --lib -p ymux
 
+      # Tauri decides *whether* to sign with a certificate by checking that
+      # APPLE_CERTIFICATE is present, not that it holds anything. A missing
+      # GitHub secret interpolates to the empty string — which is still
+      # present — so declaring these inline on the build step makes the
+      # bundler try to import an empty certificate and die with
+      # "failed to run command security import". Hence this step: export the
+      # Apple variables only when they actually carry a value.
+      - name: Configure Apple code signing
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # Heredoc form so a multi-line base64 certificate survives intact.
+          put() {
+            printf '%s<<YMUX_ENV_EOF\n%s\nYMUX_ENV_EOF\n' "$1" "$2" >> "$GITHUB_ENV"
+          }
+
+          if [ -n "$CERT" ] && [ -n "$CERT_PASSWORD" ]; then
+            put APPLE_CERTIFICATE "$CERT"
+            put APPLE_CERTIFICATE_PASSWORD "$CERT_PASSWORD"
+            if [ -n "$IDENTITY" ]; then
+              put APPLE_SIGNING_IDENTITY "$IDENTITY"
+            else
+              echo "APPLE_CERTIFICATE is set but APPLE_SIGNING_IDENTITY is not" >&2
+              exit 1
+            fi
+            echo "Signing with a Developer ID certificate."
+          else
+            # Ad-hoc. arm64 macOS refuses to launch a wholly unsigned binary,
+            # and "-" satisfies that. It does NOT satisfy Gatekeeper for a
+            # downloaded file — the release notes carry the xattr workaround.
+            put APPLE_SIGNING_IDENTITY "-"
+            echo "No certificate secret set — signing ad-hoc, not notarized."
+          fi
+
+          # Tauri only notarizes when the full trio is present, and the same
+          # present-but-empty trap applies, so gate it the same way.
+          if [ -n "$NOTARY_APPLE_ID" ] && [ -n "$NOTARY_PASSWORD" ] && [ -n "$NOTARY_TEAM_ID" ]; then
+            put APPLE_ID "$NOTARY_APPLE_ID"
+            put APPLE_PASSWORD "$NOTARY_PASSWORD"
+            put APPLE_TEAM_ID "$NOTARY_TEAM_ID"
+            echo "Notarization credentials present."
+          else
+            echo "Notarization credentials absent — skipping notarization."
+          fi
+
       - name: Build .app + .dmg
         uses: tauri-apps/tauri-action@v0
         id: tauri
         env:
           # Keeps `scripts/build-tools.mjs` (which stages the sidecar binaries
           # under a triple-suffixed name) in lockstep with the `--target` below.
+          # The Apple signing vars come from the step above, via $GITHUB_ENV.
           YMUX_TARGET_TRIPLE: aarch64-apple-darwin
-          # Ad-hoc signature ("-") by default: arm64 macOS refuses to launch a
-          # wholly unsigned binary, and ad-hoc is enough for that. It does NOT
-          # satisfy Gatekeeper for a downloaded file — see the release notes
-          # for the quarantine workaround.
-          #
-          # Drop a Developer ID cert into these secrets and this same step
-          # switches to real signing plus notarization with no edits:
-          # tauri-action imports APPLE_CERTIFICATE into a temp keychain, and
-          # Tauri notarizes when the APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
-          # trio is present.
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           # No tagName/releaseId: this step only builds. Uploading is done
           # below so the artifact can be renamed to carry its architecture.
