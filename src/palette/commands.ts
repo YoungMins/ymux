@@ -1,7 +1,7 @@
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
-import { promptWithBlur } from "../browser/popupBlur";
+import { askText } from "../ui/Dialog";
 
 export interface CommandDef {
   id: string;
@@ -45,9 +45,9 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       id: "pane.rename",
       label: () => t("shortcut.rename"),
       keybinding: "Ctrl+Shift+R",
-      action: () => {
+      action: async () => {
         const current = manager.getFocusedTitle() ?? "";
-        const next = promptWithBlur(t("app.paneTitle"), current);
+        const next = await askText(t("app.paneTitle"), current);
         if (next !== null) manager.renameFocused(next);
       },
     },
@@ -93,10 +93,10 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
     {
       id: "workspace.rename",
       label: () => t("workspace.renamePrompt"),
-      action: () => {
+      action: async () => {
         const wsId = manager.activeIdValue;
         const current = manager.getWorkspaceName(wsId) ?? "";
-        const next = promptWithBlur(t("workspace.renamePrompt"), current);
+        const next = await askText(t("workspace.renamePrompt"), current);
         if (next !== null) manager.renameWorkspace(wsId, next);
       },
     },

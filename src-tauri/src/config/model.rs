@@ -26,7 +26,10 @@ use uuid::Uuid;
 ///       configs still load), and the unix detector now spawns zsh/bash with
 ///       shell-integration args that emit OSC 7. A v5 cache holds the old
 ///       argument-free unix profiles, so clearing forces a re-detect.
-pub const CONFIG_VERSION: u32 = 6;
+///   7 — POSIX shells (`sh`, `dash`, `ksh`) gained an `$ENV`-based OSC 7
+///       hook. A v6 cache holds an `sh` profile with an empty `env`, so
+///       those panes would keep reporting no cwd until a re-detect.
+pub const CONFIG_VERSION: u32 = 7;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
@@ -1060,6 +1063,45 @@ shell = "PowerShell 7"
         assert!(loaded_spec.hotkeys[0].batch);
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
         assert_eq!(loaded_spec.worktree_path, "C:\\wt\\agent-1");
+    }
+
+    /// `cwd` and `title` must survive the round-trip for a pane nested inside
+    /// a split, not just for a lone root pane.
+    ///
+    /// This is the shape that actually matters — the moment you split, every
+    /// pane lives under `LayoutNode::Split`, and `LayoutNode` is a
+    /// `#[serde(tag = "kind")]` enum, which is the construct the TOML caveat
+    /// in CLAUDE.md warns about for `Option<T>`. "Reopen where you left off"
+    /// is exactly `cwd` making it back out of this file.
+    #[test]
+    fn nested_pane_cwd_and_title_roundtrip() {
+        let mut a = PaneSpec::new_default();
+        a.cwd = Some("/Users/alice/projects".into());
+        a.title = Some("build".into());
+        let mut b = PaneSpec::new_default();
+        b.cwd = Some("/tmp".into());
+
+        let mut config = Config::default();
+        config.workspaces[0].root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Pane(a.clone())),
+            b: Box::new(LayoutNode::Split {
+                direction: SplitDir::Vertical,
+                ratio: 0.5,
+                a: Box::new(LayoutNode::Pane(b.clone())),
+                b: Box::new(LayoutNode::Pane(PaneSpec::new_default())),
+            }),
+        };
+
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        assert_eq!(panes.len(), 3);
+        assert_eq!(panes[0].cwd.as_deref(), Some("/Users/alice/projects"));
+        assert_eq!(panes[0].title.as_deref(), Some("build"));
+        assert_eq!(panes[1].cwd.as_deref(), Some("/tmp"));
+        assert_eq!(panes[2].cwd, None);
     }
 
     /// Regression: worktree_path must survive a full Config → TOML → Config

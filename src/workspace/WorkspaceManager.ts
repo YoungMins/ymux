@@ -33,7 +33,7 @@ import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
 import { promptWorktreeBranch } from "./WorktreeModal";
-import { confirmWithBlur } from "../browser/popupBlur";
+import { askConfirm } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import type { PaneStatus } from "../terminal/paneStatus";
@@ -628,7 +628,7 @@ export class WorkspaceManager {
       return;
     }
 
-    const branch = promptWorktreeBranch(`agent/${crypto.randomUUID().slice(0, 6)}`);
+    const branch = await promptWorktreeBranch(`agent/${crypto.randomUUID().slice(0, 6)}`);
     if (!branch) return;
 
     let wtPath: string;
@@ -758,7 +758,7 @@ export class WorkspaceManager {
   /// Errors are logged, never thrown — worktree cleanup is best-effort and
   /// must not fail the pane close / workspace delete that triggered it.
   private async offerWorktreeRemoval(wtPath: string): Promise<void> {
-    const ok = confirmWithBlur(
+    const ok = await askConfirm(
       t("worktree.removeConfirm").replace("{path}", wtPath),
     );
     if (!ok) return;
@@ -766,7 +766,7 @@ export class WorkspaceManager {
       await api.gitWorktreeRemove(wtPath, false);
     } catch {
       // Dirty worktree or similar — offer a forced removal.
-      if (confirmWithBlur(t("worktree.removeForce"))) {
+      if (await askConfirm(t("worktree.removeForce"))) {
         try {
           await api.gitWorktreeRemove(wtPath, true);
         } catch (e) {

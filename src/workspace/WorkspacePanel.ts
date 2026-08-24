@@ -7,7 +7,7 @@ import {
   onNotesChange,
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
-import { promptWithBlur, confirmWithBlur } from "../browser/popupBlur";
+import { askText, askConfirm } from "../ui/Dialog";
 
 const COLLAPSE_KEY = "ymux:workspace-panel:collapsed";
 
@@ -179,11 +179,12 @@ export function mountWorkspacePanel(
       ev.preventDefault();
       ev.stopPropagation();
       const current = manager.getWorkspaceName(id) ?? "";
-      const next = promptWithBlur(t("workspace.renamePrompt"), current);
-      if (next !== null) {
-        manager.renameWorkspace(id, next);
-        highlight();
-      }
+      void askText(t("workspace.renamePrompt"), current).then((next) => {
+        if (next !== null) {
+          manager.renameWorkspace(id, next);
+          highlight();
+        }
+      });
     });
     row.appendChild(btn);
     buttons.set(id, btn);
@@ -214,9 +215,9 @@ export function mountWorkspacePanel(
       if (manager.workspaces.length <= 1) return;
       const label = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
       const msg = t("workspace.deleteConfirm").replace("{name}", label);
-      if (confirmWithBlur(msg)) {
-        void manager.deleteWorkspace(id); // fires onWorkspacesChange → rebuild()
-      }
+      void askConfirm(msg).then((ok) => {
+        if (ok) void manager.deleteWorkspace(id); // → onWorkspacesChange → rebuild()
+      });
     });
     row.appendChild(delBtn);
 

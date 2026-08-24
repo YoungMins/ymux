@@ -163,6 +163,16 @@ const strings: Translations = {
     de: "+ HotKey hinzufügen",
     vi: "+ Thêm phím tắt",
   },
+  "dialog.ok": {
+    en: "OK", ko: "확인", ja: "OK", zh: "确定",
+    hi: "ठीक है", es: "Aceptar", fr: "OK", ar: "موافق",
+    pt: "OK", ru: "ОК", tr: "Tamam", de: "OK", vi: "OK",
+  },
+  "dialog.cancel": {
+    en: "Cancel", ko: "취소", ja: "キャンセル", zh: "取消",
+    hi: "रद्द करें", es: "Cancelar", fr: "Annuler", ar: "إلغاء",
+    pt: "Cancelar", ru: "Отмена", tr: "İptal", de: "Abbrechen", vi: "Hủy",
+  },
   "hotkey.cancel": {
     en: "Cancel", ko: "취소", ja: "キャンセル", zh: "取消",
     hi: "रद्द करें", es: "Cancelar", fr: "Annuler", ar: "إلغاء",
