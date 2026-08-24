@@ -54,6 +54,11 @@ pub struct Config {
     /// via "open in worktree". Empty means no base dir configured yet.
     #[serde(default)]
     pub worktree_base_dir: String,
+    /// Terminal font size in CSS pixels, shared by every pane. Additive with
+    /// a serde default, so older configs load untouched and need no
+    /// `CONFIG_VERSION` bump.
+    #[serde(default = "default_font_size")]
+    pub font_size: u32,
     /// [`ShellProfile::name`] used for newly created panes and workspaces.
     /// Empty means "the first detected shell", which is also the fallback when
     /// the named profile no longer exists (e.g. pwsh was uninstalled).
@@ -78,6 +83,15 @@ fn default_persist_scrollback() -> bool {
 fn default_paste_image_retention_hours() -> u32 {
     24
 }
+fn default_font_size() -> u32 {
+    13
+}
+
+/// Clamp bounds for [`Config::font_size`]. Below ~6px xterm's glyph metrics
+/// collapse and `fit()` starts computing absurd column counts; above ~40px a
+/// pane can no longer hold a usable terminal.
+pub const MIN_FONT_SIZE: u32 = 6;
+pub const MAX_FONT_SIZE: u32 = 40;
 
 impl Default for Config {
     fn default() -> Self {
@@ -90,6 +104,7 @@ impl Default for Config {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: default_font_size(),
             default_shell: String::new(),
         }
     }
@@ -139,6 +154,7 @@ impl Config {
         self.persist_scrollback = incoming.persist_scrollback;
         self.paste_image_retention_hours = incoming.paste_image_retention_hours;
         self.worktree_base_dir = incoming.worktree_base_dir;
+        self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
@@ -667,6 +683,7 @@ mod tests {
     #[test]
     fn default_shell_toml_roundtrip() {
         let config = Config {
+            font_size: 13,
             default_shell: "Git Bash".into(),
             ..Config::default()
         };
@@ -687,6 +704,7 @@ mod tests {
             persist_scrollback: false,
             paste_image_retention_hours: 72,
             worktree_base_dir: "D:\\wt".into(),
+            font_size: 18,
             default_shell: "pwsh".into(),
             ..Config::default()
         };
@@ -695,7 +713,27 @@ mod tests {
         assert!(!backend.persist_scrollback);
         assert_eq!(backend.paste_image_retention_hours, 72);
         assert_eq!(backend.worktree_base_dir, "D:\\wt");
+        assert_eq!(backend.font_size, 18);
         assert_eq!(backend.default_shell, "pwsh");
+    }
+
+    /// A config written before `font_size` existed must load with the default
+    /// rather than 0, which would render an invisible terminal.
+    #[test]
+    fn font_size_defaults_when_absent() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert_eq!(parsed.font_size, 13);
+    }
+
+    #[test]
+    fn font_size_roundtrips() {
+        let config = Config {
+            font_size: 20,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(loaded.font_size, 20);
     }
 
     #[test]
@@ -724,6 +762,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let frontend_save = Config {
@@ -735,6 +774,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
@@ -792,6 +832,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let mut cwds = std::collections::HashMap::new();
@@ -823,6 +864,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         cfg.migrate();
@@ -957,6 +999,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let frontend_save = Config {
@@ -985,6 +1028,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
@@ -1046,6 +1090,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
@@ -1178,6 +1223,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");

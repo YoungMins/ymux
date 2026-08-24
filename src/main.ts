@@ -192,6 +192,28 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl/Cmd + `+` / `-` / `0` resize the terminal font, the near-universal
+    // terminal zoom binding. `ev.code` is layout-independent, and both the
+    // main row and the numpad are accepted; Shift is allowed because `+` on
+    // most layouts *is* Shift+Equal.
+    if (mod && !ev.altKey) {
+      if (ev.code === "Equal" || ev.code === "NumpadAdd") {
+        ev.preventDefault();
+        manager.bumpFontSize(1);
+        return;
+      }
+      if (ev.code === "Minus" || ev.code === "NumpadSubtract") {
+        ev.preventDefault();
+        manager.bumpFontSize(-1);
+        return;
+      }
+      if (!ev.shiftKey && (ev.code === "Digit0" || ev.code === "Numpad0")) {
+        ev.preventDefault();
+        manager.resetFontSize();
+        return;
+      }
+    }
+
     // Ctrl+Shift+P command palette.
     if (mod && ev.shiftKey && (key === "P" || key === "p")) {
       ev.preventDefault();

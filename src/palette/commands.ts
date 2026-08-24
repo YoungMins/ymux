@@ -52,6 +52,24 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       },
     },
     {
+      id: "font.increase",
+      label: () => t("shortcut.fontIncrease"),
+      keybinding: "Ctrl++",
+      action: () => manager.bumpFontSize(1),
+    },
+    {
+      id: "font.decrease",
+      label: () => t("shortcut.fontDecrease"),
+      keybinding: "Ctrl+-",
+      action: () => manager.bumpFontSize(-1),
+    },
+    {
+      id: "font.reset",
+      label: () => t("shortcut.fontReset"),
+      keybinding: "Ctrl+0",
+      action: () => manager.resetFontSize(),
+    },
+    {
       id: "pane.search",
       label: () => t("shortcut.search"),
       keybinding: "Ctrl+F",

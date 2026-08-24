@@ -163,6 +163,37 @@ const strings: Translations = {
     de: "+ HotKey hinzufügen",
     vi: "+ Thêm phím tắt",
   },
+  "settings.general.fontSize": {
+    en: "Terminal font size", ko: "터미널 글자 크기", ja: "ターミナルの文字サイズ", zh: "终端字体大小",
+    hi: "टर्मिनल फ़ॉन्ट आकार", es: "Tamaño de fuente del terminal", fr: "Taille de police du terminal",
+    ar: "حجم خط الطرفية", pt: "Tamanho da fonte do terminal", ru: "Размер шрифта терминала",
+    tr: "Terminal yazı tipi boyutu", de: "Terminal-Schriftgröße", vi: "Cỡ chữ terminal",
+  },
+  "shortcut.fontSize": {
+    en: "Increase / decrease font size", ko: "글자 크기 확대 / 축소", ja: "文字サイズを拡大 / 縮小",
+    zh: "增大 / 减小字体", hi: "फ़ॉन्ट आकार बढ़ाएँ / घटाएँ", es: "Aumentar / reducir tamaño de fuente",
+    fr: "Augmenter / réduire la taille de police", ar: "تكبير / تصغير حجم الخط",
+    pt: "Aumentar / diminuir tamanho da fonte", ru: "Увеличить / уменьшить шрифт",
+    tr: "Yazı tipini büyüt / küçült", de: "Schrift vergrößern / verkleinern", vi: "Tăng / giảm cỡ chữ",
+  },
+  "shortcut.fontIncrease": {
+    en: "Increase font size", ko: "글자 크기 확대", ja: "文字サイズを拡大", zh: "增大字体",
+    hi: "फ़ॉन्ट आकार बढ़ाएँ", es: "Aumentar tamaño de fuente", fr: "Augmenter la taille de police",
+    ar: "تكبير حجم الخط", pt: "Aumentar tamanho da fonte", ru: "Увеличить шрифт",
+    tr: "Yazı tipini büyüt", de: "Schrift vergrößern", vi: "Tăng cỡ chữ",
+  },
+  "shortcut.fontDecrease": {
+    en: "Decrease font size", ko: "글자 크기 축소", ja: "文字サイズを縮小", zh: "减小字体",
+    hi: "फ़ॉन्ट आकार घटाएँ", es: "Reducir tamaño de fuente", fr: "Réduire la taille de police",
+    ar: "تصغير حجم الخط", pt: "Diminuir tamanho da fonte", ru: "Уменьшить шрифт",
+    tr: "Yazı tipini küçült", de: "Schrift verkleinern", vi: "Giảm cỡ chữ",
+  },
+  "shortcut.fontReset": {
+    en: "Reset font size", ko: "글자 크기 초기화", ja: "文字サイズをリセット", zh: "重置字体大小",
+    hi: "फ़ॉन्ट आकार रीसेट करें", es: "Restablecer tamaño de fuente", fr: "Réinitialiser la taille de police",
+    ar: "إعادة تعيين حجم الخط", pt: "Redefinir tamanho da fonte", ru: "Сбросить размер шрифта",
+    tr: "Yazı tipi boyutunu sıfırla", de: "Schriftgröße zurücksetzen", vi: "Đặt lại cỡ chữ",
+  },
   "dialog.ok": {
     en: "OK", ko: "확인", ja: "OK", zh: "确定",
     hi: "ठीक है", es: "Aceptar", fr: "OK", ar: "موافق",

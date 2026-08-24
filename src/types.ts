@@ -62,6 +62,8 @@ export interface Config {
   persist_scrollback: boolean;
   paste_image_retention_hours: number;
   worktree_base_dir: string;
+  /// Terminal font size in CSS pixels, shared by every pane.
+  font_size?: number;
   /// `ShellProfile.name` used for new panes and workspaces. Empty (or a name
   /// that no longer exists) means "the first detected shell".
   default_shell: string;

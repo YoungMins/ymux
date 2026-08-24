@@ -16,6 +16,7 @@ import type {
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { api } from "../ipc/bridge";
 import { TerminalPane } from "../terminal/TerminalPane";
+import { clampFontSize, DEFAULT_FONT_SIZE } from "./fontSize";
 import { BrowserPane } from "../browser/BrowserPane";
 import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
 import type { Pane } from "../layout/Pane";
@@ -82,6 +83,8 @@ export class WorkspaceManager {
   /// Notified when the default shell changes, so whichever of the two UIs
   /// (toolbar picker / Settings) didn't make the change can follow along.
   onDefaultShellChange?: (name: string) => void;
+  /// Fired after `setFontSize` so an open Settings panel can follow along.
+  onFontSizeChange?: (px: number) => void;
 
   constructor(
     private host: HTMLElement,
@@ -442,6 +445,7 @@ export class WorkspaceManager {
     const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
     return new TerminalPane({
       spec: finalSpec,
+      fontSize: this.fontSize,
       onFocus: () => {
         this.focusedPaneId = spec.id;
       },
@@ -1086,6 +1090,40 @@ export class WorkspaceManager {
     this.onDefaultShellChange?.(name);
   }
 
+  /// Terminal font size in CSS pixels, clamped to the range the backend
+  /// model documents. Older configs have no value, hence the fallback.
+  get fontSize(): number {
+    return clampFontSize(this.config.font_size ?? DEFAULT_FONT_SIZE);
+  }
+
+  /// Set the terminal font size, apply it to every live pane, and persist.
+  ///
+  /// Applies across *all* workspaces, not just the active one: panes stay
+  /// alive in the background (that is the whole point of workspaces here), so
+  /// skipping the hidden ones would leave them on the old size until they
+  /// happened to be rebuilt.
+  setFontSize(px: number): void {
+    const next = clampFontSize(px);
+    if (next === this.fontSize) return;
+    this.config.font_size = next;
+    for (const cache of this.paneCaches.values()) {
+      for (const pane of cache.values()) {
+        if (pane instanceof TerminalPane) pane.setFontSize(next);
+      }
+    }
+    this.persistDebounced();
+    this.onFontSizeChange?.(next);
+  }
+
+  /// Nudge the font size by `delta` steps. Used by the zoom shortcuts.
+  bumpFontSize(delta: number): void {
+    this.setFontSize(this.fontSize + delta);
+  }
+
+  resetFontSize(): void {
+    this.setFontSize(DEFAULT_FONT_SIZE);
+  }
+
   /// Move the configured default to the front of `this.shells`. Every
   /// new-pane path already reads `this.shells[0]`, so ordering the list is
   /// all it takes for the setting to apply everywhere.
@@ -1102,6 +1140,9 @@ export class WorkspaceManager {
 // Re-export a helper for the rest of the app. Not used internally but used by
 // unit tests and the main module.
 export { MAX_WORKSPACES };
+// Re-exported so callers that already hold the manager don't need a second
+// import path for the bounds.
+export { clampFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE, DEFAULT_FONT_SIZE } from "./fontSize";
 // Needed to satisfy `import type { LayoutNode }` at the top-level in other
 // files that import from this module.
 export type { LayoutNode };
