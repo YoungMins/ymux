@@ -20,6 +20,7 @@ import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
+import { hasMod, isWorkspaceSwitch } from "../platform";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -209,9 +210,13 @@ export class TerminalPane implements Pane {
     // tells xterm to skip its own handling; the DOM event still bubbles up.
     this.term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown") return true;
-      if (ev.ctrlKey && !ev.altKey) {
+      // Everything ymux claims hangs off the primary modifier — Cmd on
+      // macOS, Ctrl elsewhere. Keying off `hasMod` rather than `ev.ctrlKey`
+      // is what leaves Ctrl+F / Ctrl+V free to reach the shell on macOS,
+      // where they mean forward-char and literal-next.
+      if (hasMod(ev) && !ev.altKey) {
         const k = ev.key.toLowerCase();
-        // Ctrl+V → paste clipboard text into the PTY instead of
+        // Ctrl/Cmd+V → paste clipboard text into the PTY instead of
         // letting xterm send the raw 0x16 byte.
         if (!ev.shiftKey && k === "v") {
           ev.preventDefault();
@@ -220,19 +225,22 @@ export class TerminalPane implements Pane {
         }
         if (!ev.shiftKey && k === "f") return false;
         if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p")) return false;
-        // Ctrl+Shift+Left/Right → swap pane position (handled at window level).
+        // Ctrl/Cmd+Shift+Left/Right → swap pane position (window level).
         if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
-        if (k === "tab") return false;
       }
-      if (ev.ctrlKey && ev.altKey && /^Digit[1-9]$/.test(ev.code)) return false;
+      // Pane cycling stays on Ctrl+Tab on every platform (Cmd+Tab belongs to
+      // the macOS app switcher), so it is checked outside the block above.
+      if (ev.ctrlKey && !ev.altKey && ev.key.toLowerCase() === "tab") return false;
+      if (isWorkspaceSwitch(ev)) return false;
       return true;
     });
-    // Custom link handler: Ctrl+click opens the URL in the system browser via
-    // the Rust backend instead of the default WebLinksAddon behaviour (which
-    // tries `window.open` — unreliable inside WebView2).
+    // Custom link handler: Ctrl+click (Cmd+click on macOS) opens the URL in
+    // the system browser via the Rust backend instead of the default
+    // WebLinksAddon behaviour (which tries `window.open` — unreliable inside
+    // WebView2).
     this.term.loadAddon(
       new WebLinksAddon((ev, uri) => {
-        if (ev.ctrlKey) {
+        if (hasMod(ev)) {
           ev.preventDefault();
           void api.openUrl(uri).catch((e) =>
             console.warn("openUrl failed:", e),

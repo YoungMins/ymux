@@ -11,6 +11,9 @@ export interface ShellProfile {
   args: string[];
   icon?: string | null;
   color?: string | null;
+  /// Env vars applied to the PTY before the pane's own `env`. Used by the
+  /// macOS zsh profile to point ZDOTDIR at ymux's shell-integration shim.
+  env?: [string, string][];
 }
 
 export type PaneKind = "terminal" | "browser" | "native_browser" | "embedded_browser";

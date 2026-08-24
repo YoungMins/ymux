@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.28-7fdbca?style=flat-square" alt="version 0.8.28" />
+  <img src="https://img.shields.io/badge/version-0.9.0-7fdbca?style=flat-square" alt="version 0.9.0" />
 </p>
 
 <p align="center">
@@ -16,14 +16,44 @@
 
 ---
 
-Windows용 경량 tmux 스타일 터미널 멀티플렉서.
+Windows와 macOS용 경량 tmux 스타일 터미널 멀티플렉서.
 
 https://github.com/user-attachments/assets/705fff59-0bda-4460-a87f-d7ba6f50993a
 
-Tauri 2 (Rust) + WebView2 + xterm.js 로 만들어졌습니다. Windows에서 가볍고 빠르게
-네이티브로 동작하면서, 레이아웃 저장, pane별 작업 디렉터리와 실행 명령,
-여러 셸 선택 (cmd / PowerShell / pwsh / Git Bash / WSL), 그리고 각자 자신만의
-레이아웃을 기억하는 번호 매겨진 워크스페이스를 제공합니다.
+Tauri 2 (Rust) + xterm.js 로 만들어졌고, Windows에서는 WebView2, macOS에서는
+WKWebView 위에서 동작합니다. 가볍고 빠르게 네이티브로 동작하면서, 레이아웃 저장,
+pane별 작업 디렉터리와 실행 명령, 여러 셸 선택 (Windows: cmd / PowerShell /
+pwsh / Git Bash / WSL, macOS: zsh / bash / fish), 그리고 각자 자신만의 레이아웃을
+기억하는 번호 매겨진 워크스페이스를 제공합니다.
+
+## 설치
+
+### Windows
+
+[Releases](https://github.com/YoungMins/ymux/releases) 에서 `ymux_*_x64_en-US.msi`
+를 받아 실행하세요. 인스톨러가 WebView2 부트스트래퍼를 포함하고 설치 경로를
+`PATH` 에 등록하므로, 설치 직후부터 아무 터미널에서나 `ymux`, `ymon`, `ydir`,
+`ycode`, `ygit`, `y` 를 쓸 수 있습니다.
+
+### macOS (Apple Silicon, macOS 11+)
+
+[Releases](https://github.com/YoungMins/ymux/releases) 에서
+`ymux_*_macos_aarch64.dmg` 를 받아 열고, ymux 를 Applications 로 끌어다 놓으세요.
+
+앱은 ad-hoc 서명만 되어 있고 **공증(notarization)은 되어 있지 않습니다.** 그래서
+처음 실행할 때 Gatekeeper 가 "손상되었다" 또는 "확인되지 않은 개발자" 라며
+차단합니다. 다운로드 격리 속성을 한 번만 제거하면 됩니다:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ymux.app
+```
+
+macOS 인스톨러에는 `PATH` 등록 단계가 없습니다. 동반 도구들을 `PATH` 에 올리려면
+`~/.zshrc` 에 다음을 추가하세요:
+
+```sh
+export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
+```
 
 ## 기능
 
@@ -32,8 +62,12 @@ Tauri 2 (Rust) + WebView2 + xterm.js 로 만들어졌습니다. Windows에서 �
 - **현재 경로 계승**: pane을 분할하면 부모 셸이 현재 있는 경로에서 새 pane이
   열립니다. 처음 시작 경로가 아니라 실시간으로 추적된 경로를 계승합니다.
   OSC 7 이스케이프 시퀀스 추적 방식을 사용합니다.
-- **셸 자동 감지**: `cmd.exe`, Windows PowerShell, PowerShell 7 (`pwsh`),
-  Git Bash, WSL 배포판을 시스템에서 찾아내서 선택 가능한 프로필로 노출합니다.
+- **셸 자동 감지**: Windows에서는 `cmd.exe`, Windows PowerShell,
+  PowerShell 7 (`pwsh`), Git Bash, WSL 배포판을 찾아냅니다. macOS에서는 로그인
+  셸과 함께 발견된 zsh / bash / fish (Homebrew 설치본 포함) 를 노출합니다.
+  zsh 와 bash 는 자동 생성된 셸 통합 shim 을 거쳐 실행되는데, 이 shim 은 사용자
+  본인의 dotfile 을 먼저 읽은 뒤 OSC 7 훅을 덧붙입니다. 덕분에 설정 파일을
+  직접 건드리지 않아도 실시간 `cwd` 계승이 동작합니다.
 - **번호 매겨진 워크스페이스**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` 로 처음 9개
   워크스페이스 사이를 전환합니다. 툴바의 `+` 버튼으로 개수 제한 없이 언제든
   추가할 수 있고, 워크스페이스 탭에 마우스를 올리면 나타나는 `×` 로 삭제할 수
@@ -129,46 +163,64 @@ ymux 터미널 pane 안에서 실행되는 독립 바이너리. `y` 런처로 �
 ```sh
 pnpm install
 pnpm tauri dev          # 개발 모드로 실행
-pnpm tauri build        # Windows MSI 인스톨러 빌드 (Windows에서 실행)
+pnpm tauri build        # Windows에서는 MSI, macOS에서는 .app + .dmg
 ```
 
-Windows가 아닌 호스트에서도 Rust 크레이트는 `cargo check` 가 깨끗하게 통과해서
-Linux/macOS 에서 플랫폼 독립적인 로직을 작업할 수 있습니다. 하지만 전체
-`tauri build` 와 엔드투엔드 PTY 검증은 반드시 Windows 에서 수행해야 합니다.
+`tauri build` 는 실행한 호스트에 맞는 인스톨러를 만듭니다. MSI 번들러는
+Windows 전용이고 DMG 번들러는 macOS 전용이라, 각 인스톨러는 해당 플랫폼에서
+빌드해야 합니다 (릴리스 워크플로가 그렇게 동작합니다).
+
+Linux 에서도 Rust 크레이트는 `cargo check` 가 깨끗하게 통과하므로 플랫폼 독립적인
+로직은 거기서 작업할 수 있습니다. 다만 데스크톱 앱 자체는 Linux 로 배포하지
+않습니다.
 
 ## 설정
 
-`%APPDATA%\ymux\config.toml` 에 워크스페이스, 레이아웃, 캐시된 셸 프로필이
-저장됩니다. 구조 변경이 있을 때마다 (디바운싱 적용) 그리고 앱 종료 시 다시
-쓰여집니다.
+`config.toml` 에 워크스페이스, 레이아웃, 캐시된 셸 프로필이 저장됩니다. 구조
+변경이 있을 때마다 (디바운싱 적용) 그리고 앱 종료 시 다시 쓰여집니다.
 
-`%APPDATA%\ymux\theme.toml` 에는 모든 y* 도구가 공유하는 색상 팔레트가
-저장됩니다 (yMux UI, yCode 구문 강조 등). **설정 → 구문 색상** 의
-컬러 피커로 편집하거나 **설정 → 설정 파일 → 열기** 로 파일을 바로
-열 수 있습니다.
+`theme.toml` 에는 모든 y* 도구가 공유하는 색상 팔레트가 저장됩니다 (yMux UI,
+yCode 구문 강조 등). **설정 → 구문 색상** 의 컬러 피커로 편집하거나
+**설정 → 설정 파일 → 열기** 로 파일을 바로 열 수 있습니다.
+
+두 파일 모두 ymux 설정 디렉터리에 있습니다:
+
+| 플랫폼   | 경로 |
+|----------|------|
+| Windows  | `%APPDATA%\ymux\` |
+| macOS    | `~/Library/Application Support/ymux/` |
+
+macOS 에서는 같은 디렉터리에 자동 생성된 셸 통합 파일(`zsh-init/`,
+`bash-init.sh`)도 함께 들어갑니다. 셸을 감지할 때마다 새로 쓰이므로 지워도
+괜찮습니다.
 
 ## 키보드 단축키
 
-| 단축키                         | 동작                                |
-|--------------------------------|-------------------------------------|
-| `Ctrl+Shift+H`                 | 현재 pane을 가로로 분할             |
-| `Ctrl+Shift+V`                 | 현재 pane을 세로로 분할             |
-| `Ctrl+Shift+W`                 | 포커스된 pane 닫기                  |
-| `Ctrl+Shift+Z`                 | 포커스된 pane 확대 / 원복           |
-| `Ctrl+Shift+←/→`               | 이전 / 다음 pane과 자리 바꾸기      |
-| `Ctrl+Shift+R`                 | 포커스된 pane 이름 변경             |
-| `Ctrl+Shift+P`                 | 커맨드 팔레트 열기                  |
-| `Ctrl+Alt+N`                   | 현재 워크스페이스 노트 토글         |
-| `Ctrl+V`                       | 클립보드 텍스트 붙여넣기 (이미지 → 임시 파일 경로) |
-| `Ctrl+F`                       | 터미널 스크롤백 검색                |
-| `Ctrl+Tab`                     | 다음 pane으로 포커스 이동           |
-| `Ctrl+Shift+Tab`               | 이전 pane으로 포커스 이동           |
-| `Ctrl+Alt+1` .. `Ctrl+Alt+9`   | 워크스페이스 전환                   |
-| 워크스페이스 버튼 더블클릭       | 워크스페이스 이름 변경              |
-| 워크스페이스 행 드래그           | 워크스페이스 순서 변경              |
-| 터미널에서 마우스 오른쪽 클릭    | 컨텍스트 메뉴 — 복사/붙여넣기, 분할, y* 도구 실행 |
-| URL 위에서 `Ctrl+클릭`         | 기본 브라우저로 링크 열기           |
-| 툴바의 `⚙` 버튼                | 설정 열기 (언어, 단축키, 구문 색상, 설정 파일) |
+macOS 에서는 아래의 모든 `Ctrl` 이 `Cmd` 로 바뀝니다. 그래야 `Ctrl` 이 셸
+본래의 용도(`Ctrl+C`, `Ctrl+D`, `Ctrl+R`)로 그대로 남습니다. 예외는 표에 적힌
+두 가지입니다. pane 순환은 macOS 가 `Cmd+Tab` 을 앱 전환기로 쓰기 때문에
+`Ctrl+Tab` 을 유지하고, 워크스페이스 전환은 `Alt` 를 뺍니다.
+
+| 단축키 (Windows)               | macOS              | 동작                                |
+|--------------------------------|--------------------|-------------------------------------|
+| `Ctrl+Shift+H`                 | `Cmd+Shift+H`      | 현재 pane을 가로로 분할             |
+| `Ctrl+Shift+V`                 | `Cmd+Shift+V`      | 현재 pane을 세로로 분할             |
+| `Ctrl+Shift+W`                 | `Cmd+Shift+W`      | 포커스된 pane 닫기                  |
+| `Ctrl+Shift+Z`                 | `Cmd+Shift+Z`      | 포커스된 pane 확대 / 원복           |
+| `Ctrl+Shift+←/→`               | `Cmd+Shift+←/→`    | 이전 / 다음 pane과 자리 바꾸기      |
+| `Ctrl+Shift+R`                 | `Cmd+Shift+R`      | 포커스된 pane 이름 변경             |
+| `Ctrl+Shift+P`                 | `Cmd+Shift+P`      | 커맨드 팔레트 열기                  |
+| `Ctrl+Alt+N`                   | `Cmd+Opt+N`        | 현재 워크스페이스 노트 토글         |
+| `Ctrl+V`                       | `Cmd+V`            | 클립보드 텍스트 붙여넣기 (이미지 → 임시 파일 경로) |
+| `Ctrl+F`                       | `Cmd+F`            | 터미널 스크롤백 검색                |
+| `Ctrl+Tab`                     | `Ctrl+Tab`         | 다음 pane으로 포커스 이동           |
+| `Ctrl+Shift+Tab`               | `Ctrl+Shift+Tab`   | 이전 pane으로 포커스 이동           |
+| `Ctrl+Alt+1` .. `Ctrl+Alt+9`   | `Cmd+1` .. `Cmd+9` | 워크스페이스 전환                   |
+| URL 위에서 `Ctrl+클릭`         | `Cmd+클릭`         | 기본 브라우저로 링크 열기           |
+| 워크스페이스 버튼 더블클릭       | —                  | 워크스페이스 이름 변경              |
+| 워크스페이스 행 드래그           | —                  | 워크스페이스 순서 변경              |
+| 터미널에서 마우스 오른쪽 클릭    | —                  | 컨텍스트 메뉴 — 복사/붙여넣기, 분할, y* 도구 실행 |
+| 툴바의 `⚙` 버튼                | —                  | 설정 열기 (언어, 단축키, 구문 색상, 설정 파일) |
 
 > **팁:** 툴바 오른쪽 상단의 `⚙` 버튼을 누르면 WinUI 3 스타일의 설정 모달이
 > 열립니다. 왼쪽 사이드바에서 표시 언어 변경, yCode 구문 강조 팔레트 편집,
@@ -176,6 +228,6 @@ Linux/macOS 에서 플랫폼 독립적인 로직을 작업할 수 있습니다. 
 
 ## 상태
 
-활발히 개발 중 — 모든 태그마다 Linux 테스트 + Windows MSI 빌드 CI 파이프라인을
+활발히 개발 중 — 모든 태그마다 Linux 테스트 + Windows MSI + macOS DMG 빌드 CI 파이프라인을
 거쳐 정기적으로 릴리스됩니다. 변경 내역은
 [Releases](https://github.com/YoungMins/ymux/releases) 를 참고하세요.

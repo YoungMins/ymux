@@ -130,6 +130,7 @@ esac
                 ],
                 icon: Some("pwsh".into()),
                 color: Some("#012456".into()),
+                env: Vec::new(),
             });
         }
 
@@ -146,6 +147,7 @@ esac
                 ],
                 icon: Some("powershell".into()),
                 color: Some("#012456".into()),
+                env: Vec::new(),
             });
         }
 
@@ -159,6 +161,7 @@ esac
                 args: vec!["/Q".into(), "/K".into(), CMD_OSC7_PROMPT.into()],
                 icon: Some("cmd".into()),
                 color: Some("#0c0c0c".into()),
+                env: Vec::new(),
             });
         }
 
@@ -185,6 +188,7 @@ esac
                 args,
                 icon: Some("gitbash".into()),
                 color: Some("#4e4e4e".into()),
+                env: Vec::new(),
             });
         }
 
@@ -199,6 +203,7 @@ esac
                 args: vec![],
                 icon: Some("nu".into()),
                 color: Some("#4e9a06".into()),
+                env: Vec::new(),
             });
         }
 
@@ -349,6 +354,7 @@ esac
                 args: vec!["-d".into(), name.clone()],
                 icon: Some("wsl".into()),
                 color: Some("#4e9a06".into()),
+                env: Vec::new(),
             });
         }
         profiles
@@ -450,6 +456,7 @@ esac
                         args: vec!["/Q".into(), "/K".into(), joined],
                         icon: Some("vsdev-cmd".into()),
                         color: Some("#5c2d91".into()),
+                        env: Vec::new(),
                     });
                 }
             }
@@ -479,6 +486,7 @@ esac
                         ],
                         icon: Some("vsdev-ps".into()),
                         color: Some("#5c2d91".into()),
+                        env: Vec::new(),
                     });
                 }
             }
@@ -574,42 +582,278 @@ esac
 
 #[cfg(not(windows))]
 mod unix_detect {
-    use super::{is_file, which, PathBuf, ShellProfile};
+    use super::{is_file, which, Path, PathBuf, ShellProfile};
+
+    /// Directory name (below the ymux config dir) holding the zsh startup-file
+    /// shim. zsh only offers one injection point for a non-interactive caller
+    /// — `ZDOTDIR` — and it swaps out *all* of `.zshenv` / `.zprofile` /
+    /// `.zshrc` / `.zlogin` at once. So the shim has to re-source each of the
+    /// user's real counterparts itself, or launching a pane would silently
+    /// drop their aliases, `PATH` edits, and prompt.
+    const ZSH_SHIM_DIR: &str = "zsh-init";
+
+    /// `.zshenv` — the first file zsh reads, for every kind of shell.
+    ///
+    /// `YMUX_USER_ZDOTDIR` is seeded by the spawned profile's env (see
+    /// [`zsh_profile`]) so a user who already sets `ZDOTDIR` keeps their own
+    /// dotfile location. After sourcing their `.zshenv` we force `ZDOTDIR`
+    /// back to the shim, because zsh re-reads it before *each* remaining
+    /// startup file and their `.zshenv` may well have pointed it elsewhere.
+    const ZSH_ZSHENV: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+#
+# ymux starts zsh with ZDOTDIR pointing here so it can install an OSC 7
+# "current directory" hook without editing your dotfiles. Each file in this
+# directory sources its real counterpart first, so your own configuration
+# still applies exactly as it would in Terminal.app.
+YMUX_SHIM_ZDOTDIR="${ZDOTDIR:-$HOME}"
+: "${YMUX_USER_ZDOTDIR:=$HOME}"
+[ -f "$YMUX_USER_ZDOTDIR/.zshenv" ] && . "$YMUX_USER_ZDOTDIR/.zshenv"
+# Their .zshenv may set ZDOTDIR for their own layout; adopt it as the "user"
+# location, then point zsh back at the shim for the rest of startup.
+if [ -n "$ZDOTDIR" ] && [ "$ZDOTDIR" != "$YMUX_SHIM_ZDOTDIR" ]; then
+    YMUX_USER_ZDOTDIR="$ZDOTDIR"
+fi
+ZDOTDIR="$YMUX_SHIM_ZDOTDIR"
+"#;
+
+    /// `.zprofile` — login shells only. ymux spawns login shells on macOS so
+    /// `/usr/libexec/path_helper` runs and `PATH` matches Terminal.app's.
+    const ZSH_ZPROFILE: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+[ -f "$YMUX_USER_ZDOTDIR/.zprofile" ] && . "$YMUX_USER_ZDOTDIR/.zprofile"
+ZDOTDIR="${YMUX_SHIM_ZDOTDIR:-$ZDOTDIR}"
+"#;
+
+    /// `.zshrc` — interactive shells. Sources the user's rc first so their
+    /// prompt is already installed, *then* appends the OSC 7 reporter as a
+    /// `precmd` hook. Appending matters: a prompt framework that assigns to
+    /// `precmd_functions` wholesale (starship, p10k) would otherwise drop us.
+    ///
+    /// The final `ZDOTDIR` restore hands the user's own value back before
+    /// they get a prompt, so anything they run later — including a nested
+    /// zsh — sees what they configured rather than ymux's shim.
+    const ZSH_ZSHRC: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+[ -f "$YMUX_USER_ZDOTDIR/.zshrc" ] && . "$YMUX_USER_ZDOTDIR/.zshrc"
+_ymux_osc7() {
+    printf '\033]7;file://%s%s\033\\' "${HOST:-localhost}" "$PWD"
+}
+if autoload -Uz add-zsh-hook 2>/dev/null; then
+    add-zsh-hook precmd _ymux_osc7
+else
+    precmd_functions+=(_ymux_osc7)
+fi
+_ymux_osc7
+ZDOTDIR="${YMUX_USER_ZDOTDIR:-$HOME}"
+"#;
+
+    /// `.zlogin` — read after `.zshrc`. By then `.zshrc` has usually restored
+    /// `ZDOTDIR`, so zsh reads the user's own `.zlogin` directly and this file
+    /// is never used. It exists for the login-but-not-interactive case, where
+    /// `.zshrc` never ran and `ZDOTDIR` still points at the shim.
+    const ZSH_ZLOGIN: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+[ -f "${YMUX_USER_ZDOTDIR:-$HOME}/.zlogin" ] && . "${YMUX_USER_ZDOTDIR:-$HOME}/.zlogin"
+"#;
+
+    /// Bash init snippet, written to a temp rcfile and passed via `--rcfile`.
+    ///
+    /// `--rcfile` is only honoured for interactive *non-login* shells, so the
+    /// profile spawns bash without `-l` and this file sources the login files
+    /// itself — otherwise a macOS user would lose everything in
+    /// `~/.bash_profile`. This mirrors the Git Bash rcfile on Windows, minus
+    /// the MSYS drive-letter rewriting, which has no meaning here.
+    const BASH_OSC7_RCFILE: &str = r#"# ymux OSC 7 cwd reporter — auto-generated, safe to delete.
+if [ -f "$HOME/.bash_profile" ]; then
+    . "$HOME/.bash_profile"
+elif [ -f "$HOME/.profile" ]; then
+    . "$HOME/.profile"
+fi
+if [ -f "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+_ymux_osc7() {
+    printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-localhost}" "$PWD"
+}
+case ";${PROMPT_COMMAND:-};" in
+    *";_ymux_osc7;"*) ;;
+    *) PROMPT_COMMAND="_ymux_osc7;${PROMPT_COMMAND:-}" ;;
+esac
+"#;
+
+    /// `<config_dir>/ymux`, created on demand. Shared with `theme.toml` and
+    /// the rest of the y* family via `ytheme::config_dir`.
+    fn ymux_dir() -> Option<PathBuf> {
+        let dir = dirs::config_dir()?.join("ymux");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(error = %e, "failed to create ymux config dir for shell integration");
+            return None;
+        }
+        Some(dir)
+    }
+
+    /// Write (or refresh) the four zsh shim files and return the directory to
+    /// hand zsh as `ZDOTDIR`. Errors are logged and swallowed — a pane still
+    /// opens without cwd tracking, which beats refusing to spawn a shell.
+    fn ensure_zsh_shim() -> Option<PathBuf> {
+        let dir = ymux_dir()?.join(ZSH_SHIM_DIR);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(error = %e, "failed to create zsh shim dir");
+            return None;
+        }
+        for (name, body) in [
+            (".zshenv", ZSH_ZSHENV),
+            (".zprofile", ZSH_ZPROFILE),
+            (".zshrc", ZSH_ZSHRC),
+            (".zlogin", ZSH_ZLOGIN),
+        ] {
+            if let Err(e) = std::fs::write(dir.join(name), body) {
+                tracing::warn!(error = %e, file = name, "failed to write zsh shim file");
+                return None;
+            }
+        }
+        Some(dir)
+    }
+
+    /// Write (or refresh) the bash rcfile and return its absolute path.
+    fn ensure_bash_rcfile() -> Option<PathBuf> {
+        let path = ymux_dir()?.join("bash-init.sh");
+        if let Err(e) = std::fs::write(&path, BASH_OSC7_RCFILE) {
+            tracing::warn!(error = %e, "failed to write bash rcfile");
+            return None;
+        }
+        Some(path)
+    }
+
+    /// zsh profile: login + interactive, with `ZDOTDIR` aimed at the shim.
+    fn zsh_profile(name: String, exe: &Path) -> ShellProfile {
+        let mut env = Vec::new();
+        if let Some(shim) = ensure_zsh_shim() {
+            // Preserve a ZDOTDIR the user already exported, so the shim knows
+            // where their real dotfiles live.
+            let user_zdotdir = std::env::var("ZDOTDIR")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .or_else(|| dirs::home_dir().map(|h| h.display().to_string()));
+            if let Some(u) = user_zdotdir {
+                env.push(("YMUX_USER_ZDOTDIR".to_string(), u));
+            }
+            env.push(("ZDOTDIR".to_string(), shim.display().to_string()));
+        }
+        ShellProfile {
+            name,
+            executable: exe.to_string_lossy().into_owned(),
+            args: vec!["-l".into(), "-i".into()],
+            icon: Some("zsh".into()),
+            color: Some("#2d8a3e".into()),
+            env,
+        }
+    }
+
+    /// bash profile: interactive with an explicit `--rcfile` (see the rcfile
+    /// doc comment for why this is not a login shell).
+    fn bash_profile(name: String, exe: &Path) -> ShellProfile {
+        let mut args = Vec::new();
+        if let Some(rc) = ensure_bash_rcfile() {
+            args.push("--rcfile".to_string());
+            args.push(rc.display().to_string());
+        }
+        args.push("-i".to_string());
+        ShellProfile {
+            name,
+            executable: exe.to_string_lossy().into_owned(),
+            args,
+            icon: Some("bash".into()),
+            color: Some("#4e9a06".into()),
+            env: Vec::new(),
+        }
+    }
+
+    /// Build the profile for `exe`, choosing the shell integration by
+    /// basename. fish needs none: it has emitted OSC 7 on every `PWD` change
+    /// since 3.1, so a plain login shell already reports its cwd.
+    fn profile_for(name: String, exe: &Path) -> ShellProfile {
+        let base = exe
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match base.as_str() {
+            "zsh" => zsh_profile(name, exe),
+            "bash" => bash_profile(name, exe),
+            "fish" => ShellProfile {
+                name,
+                executable: exe.to_string_lossy().into_owned(),
+                args: vec!["-l".into(), "-i".into()],
+                icon: Some("fish".into()),
+                color: Some("#3a9fbf".into()),
+                env: Vec::new(),
+            },
+            // sh, dash, ksh, and anything else the user points $SHELL at.
+            // No integration available, so no cwd tracking — the pane still
+            // works, it just opens splits in the parent's *startup* dir.
+            _ => ShellProfile {
+                name,
+                executable: exe.to_string_lossy().into_owned(),
+                args: vec!["-l".into()],
+                icon: None,
+                color: None,
+                env: Vec::new(),
+            },
+        }
+    }
+
+    /// Resolve symlinks so `/bin/zsh` and a `$SHELL` of `/bin/zsh` don't
+    /// produce two entries for the same binary. Falls back to the original
+    /// path when the target can't be canonicalised.
+    fn canonical(p: &Path) -> PathBuf {
+        std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+    }
 
     pub fn run() -> Vec<ShellProfile> {
-        let mut out = Vec::new();
+        let mut out: Vec<ShellProfile> = Vec::new();
+        let mut seen: Vec<PathBuf> = Vec::new();
 
-        // Respect $SHELL first so dev shells feel normal.
+        let push = |exe: PathBuf, out: &mut Vec<ShellProfile>, seen: &mut Vec<PathBuf>| {
+            if !is_file(&exe) {
+                return;
+            }
+            let canon = canonical(&exe);
+            if seen.contains(&canon) {
+                return;
+            }
+            let mut name = exe
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "shell".into());
+            // Names are the key the frontend spawns by, so they have to be
+            // unique even when e.g. Homebrew zsh sits alongside /bin/zsh.
+            if out.iter().any(|p| p.name == name) {
+                name = format!("{name} ({})", exe.display());
+                if out.iter().any(|p| p.name == name) {
+                    return;
+                }
+            }
+            seen.push(canon);
+            out.push(profile_for(name, &exe));
+        };
+
+        // 1. The user's login shell, listed first so it becomes the default.
         if let Ok(s) = std::env::var("SHELL") {
-            let path = PathBuf::from(&s);
-            if is_file(&path) {
-                out.push(ShellProfile {
-                    name: path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "shell".into()),
-                    executable: s,
-                    args: vec!["-l".into()],
-                    icon: None,
-                    color: None,
-                });
+            if !s.is_empty() {
+                push(PathBuf::from(&s), &mut out, &mut seen);
             }
         }
 
-        for name in ["bash", "zsh", "fish", "sh"] {
-            if out.iter().any(|p| p.executable.ends_with(name)) {
-                continue;
-            }
+        // 2. The usual suspects from PATH, then the system copies. Homebrew
+        //    installs (`/opt/homebrew/bin`, `/usr/local/bin`) land via PATH;
+        //    the absolute fallbacks cover a stripped PATH in a GUI-launched
+        //    app bundle, where launchd hands us only `/usr/bin:/bin:...`.
+        for name in ["zsh", "bash", "fish", "sh"] {
             if let Some(p) = which(name) {
-                out.push(ShellProfile {
-                    name: name.to_string(),
-                    executable: p.to_string_lossy().into_owned(),
-                    args: vec![],
-                    icon: None,
-                    color: None,
-                });
+                push(p, &mut out, &mut seen);
+            }
+            for prefix in ["/opt/homebrew/bin", "/usr/local/bin", "/bin", "/usr/bin"] {
+                push(PathBuf::from(prefix).join(name), &mut out, &mut seen);
             }
         }
+
         out
     }
 }

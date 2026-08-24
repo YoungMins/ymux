@@ -5,7 +5,7 @@
 // Usage: node scripts/build-tools.mjs
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, rmSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,13 @@ function run(cmd) {
 }
 
 function detectTargetTriple() {
+  // An explicit triple wins. Tauri's `--target` and this script have to agree
+  // — Tauri looks for sidecars suffixed with the triple it is building for,
+  // so a mismatch surfaces as a confusing "sidecar not found" at bundle time
+  // rather than at the point the two diverged. CI sets this once and passes
+  // the same value to both.
+  const explicit = process.env.YMUX_TARGET_TRIPLE;
+  if (explicit) return explicit;
   try {
     const out = execSync("rustc -vV", { encoding: "utf-8" });
     const match = out.match(/^host:\s*(\S+)/m);
@@ -63,6 +70,12 @@ for (const tool of TOOLS) {
   // it as `<basename><.exe?>` next to the main binary.
   const destPath = join(binariesDir, `${tool.bin}-${triple}${exeSuffix}`);
   copyFileSync(srcPath, destPath);
+  if (!isWindows) {
+    // Tauri copies sidecars into `ymux.app/Contents/MacOS/` verbatim. If the
+    // executable bit is lost along the way the tools silently fail to launch
+    // from a pane, so set it explicitly rather than trusting copy semantics.
+    chmodSync(destPath, 0o755);
+  }
   console.log(`copied ${srcPath} → ${destPath}`);
 }
 

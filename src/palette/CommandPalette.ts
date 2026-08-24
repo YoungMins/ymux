@@ -1,6 +1,7 @@
 import { type CommandDef, fuzzyMatch } from "./commands";
 import { t, onLangChange } from "../i18n/i18n";
 import { pushPopup, popPopup } from "../browser/popupBlur";
+import { shortcutLabel } from "../platform";
 
 let paletteEl: HTMLElement | null = null;
 let backdropEl: HTMLElement | null = null;
@@ -88,7 +89,7 @@ function onInput(): void {
   } else {
     filtered = commands.filter((cmd) => {
       const label = cmd.label();
-      const kb = cmd.keybinding ?? "";
+      const kb = shortcutLabel(cmd.keybinding ?? "");
       return fuzzyMatch(query, label) || fuzzyMatch(query, kb) || fuzzyMatch(query, cmd.id);
     });
   }
@@ -137,7 +138,7 @@ function renderList(): void {
     if (cmd.keybinding) {
       const kb = document.createElement("span");
       kb.className = "palette__keybinding";
-      kb.textContent = cmd.keybinding;
+      kb.textContent = shortcutLabel(cmd.keybinding);
       row.appendChild(kb);
     }
 

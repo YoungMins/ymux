@@ -1,5 +1,6 @@
 import { t, getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n/i18n";
 import { pushPopup, popPopup } from "../browser/popupBlur";
+import { shortcutLabel } from "../platform";
 
 interface ShortcutEntry {
   keys: string;
@@ -104,7 +105,9 @@ export function mountHelpButton(parent: HTMLElement): () => void {
 
       const tdKeys = document.createElement("td");
       tdKeys.className = "help-modal__keys";
-      const segments = s.keys.split("+");
+      // Render for the host platform (Cmd on macOS) — the table above stores
+      // the canonical Windows form.
+      const segments = shortcutLabel(s.keys).split("+");
       segments.forEach((seg, i) => {
         if (i > 0) {
           tdKeys.appendChild(document.createTextNode(" + "));

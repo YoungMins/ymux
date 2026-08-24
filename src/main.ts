@@ -17,6 +17,7 @@ import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandP
 import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { promptWithBlur } from "./browser/popupBlur";
+import { hasMod, isWorkspaceSwitch } from "./platform";
 
 async function main(): Promise<void> {
   initLang();
@@ -101,13 +102,15 @@ async function main(): Promise<void> {
   // window-local bindings — plain DOM events are sufficient inside WebView2.
   window.addEventListener("keydown", (ev) => {
     const key = ev.key;
+    // Primary modifier: Cmd on macOS, Ctrl elsewhere. See src/platform.ts.
+    const mod = hasMod(ev);
 
-    // Ctrl+Alt+1..9 switch workspaces. We use Ctrl+Alt instead of Ctrl+Shift
-    // (which some Windows apps intercept at the OS level) and check both the
-    // key value and the digit codes so Korean / AZERTY / etc. users who
-    // produce a different character on the number row still get the correct
-    // workspace. `ev.code` is layout-independent ("Digit1"…"Digit9").
-    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && /^Digit[1-9]$/.test(ev.code)) {
+    // Switch workspaces: Ctrl+Alt+1..9 on Windows (Ctrl+Shift+digit is
+    // intercepted at the OS level by some apps), plain Cmd+1..9 on macOS.
+    // Either way the digit comes from `ev.code`, which is layout-independent
+    // ("Digit1"…"Digit9"), so Korean / AZERTY / etc. users who produce a
+    // different character on the number row still get the right workspace.
+    if (isWorkspaceSwitch(ev)) {
       const id = Number.parseInt(ev.code.slice(-1), 10);
       if (id >= 1 && id <= MAX_WORKSPACES) {
         ev.preventDefault();
@@ -116,9 +119,10 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Ctrl+Alt+N toggle notes for the active workspace. Layout-independent
-    // via ev.code so non-QWERTY users still hit the same physical key.
-    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && ev.code === "KeyN") {
+    // Ctrl+Alt+N (Cmd+Opt+N on macOS) toggle notes for the active workspace.
+    // Layout-independent via ev.code so non-QWERTY users still hit the same
+    // physical key.
+    if (mod && ev.altKey && !ev.shiftKey && ev.code === "KeyN") {
       ev.preventDefault();
       const wsId = manager.activeIdValue;
       toggleNotes(wsId, manager.getWorkspaceName(wsId));
@@ -127,27 +131,28 @@ async function main(): Promise<void> {
     }
 
     // Ctrl+Shift+H horizontal split.
-    if (ev.ctrlKey && ev.shiftKey && (key === "H" || key === "h")) {
+    if (mod && ev.shiftKey && (key === "H" || key === "h")) {
       ev.preventDefault();
       void manager.splitFocused("horizontal");
       return;
     }
 
     // Ctrl+Shift+V vertical split.
-    if (ev.ctrlKey && ev.shiftKey && (key === "V" || key === "v")) {
+    if (mod && ev.shiftKey && (key === "V" || key === "v")) {
       ev.preventDefault();
       void manager.splitFocused("vertical");
       return;
     }
 
     // Ctrl+Shift+W close focused pane.
-    if (ev.ctrlKey && ev.shiftKey && (key === "W" || key === "w")) {
+    if (mod && ev.shiftKey && (key === "W" || key === "w")) {
       ev.preventDefault();
       void manager.closeFocused();
       return;
     }
 
-    // Ctrl+Tab cycle.
+    // Ctrl+Tab cycle. Deliberately Ctrl on macOS too: Cmd+Tab is the OS
+    // application switcher and never reaches the webview.
     if (ev.ctrlKey && !ev.shiftKey && key === "Tab") {
       ev.preventDefault();
       manager.cycleFocus(1);
@@ -162,33 +167,33 @@ async function main(): Promise<void> {
     // Ctrl+Shift+Left / Right swap the focused pane with the previous / next
     // pane in depth-first order (wrapping). Arrow keys are layout-independent
     // and unused elsewhere.
-    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && key === "ArrowLeft") {
+    if (mod && ev.shiftKey && !ev.altKey && key === "ArrowLeft") {
       ev.preventDefault();
       manager.swapFocused(-1);
       return;
     }
-    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && key === "ArrowRight") {
+    if (mod && ev.shiftKey && !ev.altKey && key === "ArrowRight") {
       ev.preventDefault();
       manager.swapFocused(1);
       return;
     }
 
     // Ctrl+Shift+Z zoom / unzoom focused pane.
-    if (ev.ctrlKey && ev.shiftKey && (key === "Z" || key === "z")) {
+    if (mod && ev.shiftKey && (key === "Z" || key === "z")) {
       ev.preventDefault();
       manager.toggleZoomFocused();
       return;
     }
 
     // Ctrl+F scrollback search on the focused terminal pane.
-    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && (key === "F" || key === "f")) {
+    if (mod && !ev.shiftKey && !ev.altKey && (key === "F" || key === "f")) {
       ev.preventDefault();
       manager.toggleSearchOnFocused();
       return;
     }
 
     // Ctrl+Shift+P command palette.
-    if (ev.ctrlKey && ev.shiftKey && (key === "P" || key === "p")) {
+    if (mod && ev.shiftKey && (key === "P" || key === "p")) {
       ev.preventDefault();
       togglePalette();
       return;
@@ -196,7 +201,7 @@ async function main(): Promise<void> {
 
     // Ctrl+Shift+R rename focused pane (prompt). Keeping it under Ctrl+Shift
     // so a stray lowercase `r` in a shell still reaches the PTY.
-    if (ev.ctrlKey && ev.shiftKey && (key === "R" || key === "r")) {
+    if (mod && ev.shiftKey && (key === "R" || key === "r")) {
       ev.preventDefault();
       const current = manager.getFocusedTitle() ?? "";
       const next = promptWithBlur(t("app.paneTitle"), current);

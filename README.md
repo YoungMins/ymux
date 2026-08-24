@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.28-7fdbca?style=flat-square" alt="version 0.8.28" />
+  <img src="https://img.shields.io/badge/version-0.9.0-7fdbca?style=flat-square" alt="version 0.9.0" />
 </p>
 
 <p align="center">
@@ -16,14 +16,45 @@
 
 ---
 
-A lightweight, tmux-inspired terminal multiplexer for Windows.
+A lightweight, tmux-inspired terminal multiplexer for Windows and macOS.
 
 https://github.com/user-attachments/assets/705fff59-0bda-4460-a87f-d7ba6f50993a
 
-Built with Tauri 2 (Rust) + WebView2 + xterm.js. Designed to stay small, fast, and
-native on Windows while giving you saved layouts, per-pane working directories
-and startup commands, a pluggable shell picker (cmd / PowerShell / pwsh / Git
-Bash / WSL), and numbered workspaces that each remember their own layout.
+Built with Tauri 2 (Rust) + xterm.js, on WebView2 (Windows) and WKWebView
+(macOS). Designed to stay small, fast, and native while giving you saved
+layouts, per-pane working directories and startup commands, a pluggable shell
+picker (cmd / PowerShell / pwsh / Git Bash / WSL on Windows; zsh / bash / fish
+on macOS), and numbered workspaces that each remember their own layout.
+
+## Install
+
+### Windows
+
+Download `ymux_*_x64_en-US.msi` from
+[Releases](https://github.com/YoungMins/ymux/releases) and run it. The installer
+bundles a WebView2 bootstrapper and adds the install directory to `PATH`, so
+`ymux`, `ymon`, `ydir`, `ycode`, `ygit`, and `y` work from any terminal.
+
+### macOS (Apple Silicon, macOS 11+)
+
+Download `ymux_*_macos_aarch64.dmg` from
+[Releases](https://github.com/YoungMins/ymux/releases), open it, and drag ymux
+to Applications.
+
+The app is signed ad-hoc but **not notarized**, so Gatekeeper blocks it on first
+launch with a "damaged" or "unidentified developer" message. Clear the download
+quarantine flag once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ymux.app
+```
+
+macOS has no `PATH` registration step in the installer. To get the companion
+tools on your `PATH`, add this to your `~/.zshrc`:
+
+```sh
+export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
+```
 
 ## Features
 
@@ -32,9 +63,12 @@ Bash / WSL), and numbered workspaces that each remember their own layout.
 - **Live cwd inheritance**: splitting a pane opens the new pane in the same
   working directory the parent shell is currently in — not the stale startup
   directory. Powered by OSC 7 escape-sequence tracking.
-- **Shell auto-detection**: scans the system for `cmd.exe`, Windows PowerShell,
-  PowerShell 7 (`pwsh`), Git Bash, and WSL distros, and exposes them as
-  selectable profiles.
+- **Shell auto-detection**: on Windows, scans for `cmd.exe`, Windows
+  PowerShell, PowerShell 7 (`pwsh`), Git Bash, and WSL distros. On macOS, your
+  login shell plus any zsh / bash / fish it finds (Homebrew installs included).
+  zsh and bash are launched through a generated shell-integration shim that
+  sources your own dotfiles first and then adds the OSC 7 hook, so live `cwd`
+  inheritance works without you editing anything.
 - **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between the
   first nine workspaces. Add more at any time with the `+` button in the
   toolbar — there is no fixed limit — and remove one with the `×` that appears
@@ -134,46 +168,63 @@ Requires: Rust (stable), Node 20+, pnpm (or npm).
 ```sh
 pnpm install
 pnpm tauri dev          # run in dev mode
-pnpm tauri build        # produce Windows MSI installer (run on Windows)
+pnpm tauri build        # MSI on Windows, .app + .dmg on macOS
 ```
 
-On non-Windows hosts the Rust crate still `cargo check`s cleanly so you can work
-on cross-platform logic from Linux/macOS, but a full `tauri build` and end-to-end
-PTY verification must be done on Windows.
+`tauri build` produces the installer for whatever host you run it on — the MSI
+bundler is Windows-only and the DMG bundler is macOS-only, so each installer has
+to be built on its own platform (which is what the release workflow does).
+
+On Linux the Rust crate still `cargo check`s cleanly, so cross-platform logic can
+be developed there; the desktop app itself is not shipped for Linux.
 
 ## Config
 
-`%APPDATA%\ymux\config.toml` stores workspaces, layouts, and cached shell
-profiles. It is rewritten on every structural change (debounced) and on app
-close.
+`config.toml` stores workspaces, layouts, and cached shell profiles. It is
+rewritten on every structural change (debounced) and on app close.
 
-`%APPDATA%\ymux\theme.toml` stores the shared color palette read by every
-y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
-**Settings → Syntax Colors** picker, or open the file directly via
-**Settings → Config Files → Open**.
+`theme.toml` stores the shared color palette read by every y* tool (yMux UI,
+yCode syntax highlighting, etc.). Edit it with the **Settings → Syntax Colors**
+picker, or open the file directly via **Settings → Config Files → Open**.
+
+Both live in the ymux config directory:
+
+| Platform | Path |
+|----------|------|
+| Windows  | `%APPDATA%\ymux\` |
+| macOS    | `~/Library/Application Support/ymux/` |
+
+On macOS the same directory also holds the generated shell-integration files
+(`zsh-init/`, `bash-init.sh`). They are rewritten on every shell detection and
+are safe to delete.
 
 ## Keyboard shortcuts
 
-| Shortcut                    | Action                               |
-|-----------------------------|--------------------------------------|
-| `Ctrl+Shift+H`              | Split pane horizontally              |
-| `Ctrl+Shift+V`              | Split pane vertically                |
-| `Ctrl+Shift+W`              | Close focused pane                   |
-| `Ctrl+Shift+Z`              | Zoom / unzoom focused pane           |
-| `Ctrl+Shift+←/→`            | Swap pane with previous / next       |
-| `Ctrl+Shift+R`              | Rename focused pane                  |
-| `Ctrl+Shift+P`              | Open command palette                 |
-| `Ctrl+Alt+N`                | Toggle notes for active workspace    |
-| `Ctrl+V`                    | Paste clipboard text (image → temp-file path) |
-| `Ctrl+F`                    | Search terminal scrollback           |
-| `Ctrl+Tab`                  | Focus next pane                      |
-| `Ctrl+Shift+Tab`            | Focus previous pane                  |
-| `Ctrl+Alt+1` .. `Ctrl+Alt+9` | Switch workspace                    |
-| Double-click workspace button | Rename workspace                    |
-| Drag a workspace row        | Reorder workspaces                   |
-| Right-click in a terminal   | Context menu — copy/paste, split, launch a y* tool |
-| `Ctrl+Click` on a URL       | Open link in default browser         |
-| `⚙` button (toolbar)        | Open Settings (palette, shortcuts, syntax colors, config files) |
+On macOS every `Ctrl` below becomes `Cmd`, which leaves `Ctrl` free for the
+shell (`Ctrl+C`, `Ctrl+D`, `Ctrl+R`). Two exceptions are called out in the
+table: pane cycling stays on `Ctrl+Tab` because macOS reserves `Cmd+Tab` for
+the application switcher, and workspace switching drops the `Alt`.
+
+| Shortcut (Windows)          | macOS              | Action                               |
+|-----------------------------|--------------------|--------------------------------------|
+| `Ctrl+Shift+H`              | `Cmd+Shift+H`      | Split pane horizontally              |
+| `Ctrl+Shift+V`              | `Cmd+Shift+V`      | Split pane vertically                |
+| `Ctrl+Shift+W`              | `Cmd+Shift+W`      | Close focused pane                   |
+| `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
+| `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | Swap pane with previous / next       |
+| `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
+| `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |
+| `Ctrl+Alt+N`                | `Cmd+Opt+N`        | Toggle notes for active workspace    |
+| `Ctrl+V`                    | `Cmd+V`            | Paste clipboard text (image → temp-file path) |
+| `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback           |
+| `Ctrl+Tab`                  | `Ctrl+Tab`         | Focus next pane                      |
+| `Ctrl+Shift+Tab`            | `Ctrl+Shift+Tab`   | Focus previous pane                  |
+| `Ctrl+Alt+1` .. `Ctrl+Alt+9` | `Cmd+1` .. `Cmd+9` | Switch workspace                    |
+| `Ctrl+Click` on a URL       | `Cmd+Click`        | Open link in default browser         |
+| Double-click workspace button | —                | Rename workspace                     |
+| Drag a workspace row        | —                  | Reorder workspaces                   |
+| Right-click in a terminal   | —                  | Context menu — copy/paste, split, launch a y* tool |
+| `⚙` button (toolbar)        | —                  | Open Settings (palette, shortcuts, syntax colors, config files) |
 
 > **Tip:** the `⚙` button in the top-right corner of the toolbar opens the
 > Settings modal — a WinUI 3-style sidebar/content layout where you can
@@ -184,5 +235,5 @@ y* tool (yMux UI, yCode syntax highlighting, etc.). Edit it with the
 ## Status
 
 Actively developed — new releases ship regularly with an automated
-Linux-test + Windows-MSI CI pipeline behind every tag. See
+Linux-test + Windows-MSI + macOS-DMG CI pipeline behind every tag. See
 [Releases](https://github.com/YoungMins/ymux/releases) for the changelog.
