@@ -16,7 +16,7 @@ import { initLang, t } from "./i18n/i18n";
 import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandPalette";
 import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
-import { promptWithBlur } from "./browser/popupBlur";
+import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
 
 async function main(): Promise<void> {
@@ -192,6 +192,28 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl/Cmd + `+` / `-` / `0` resize the terminal font, the near-universal
+    // terminal zoom binding. `ev.code` is layout-independent, and both the
+    // main row and the numpad are accepted; Shift is allowed because `+` on
+    // most layouts *is* Shift+Equal.
+    if (mod && !ev.altKey) {
+      if (ev.code === "Equal" || ev.code === "NumpadAdd") {
+        ev.preventDefault();
+        manager.bumpFontSize(1);
+        return;
+      }
+      if (ev.code === "Minus" || ev.code === "NumpadSubtract") {
+        ev.preventDefault();
+        manager.bumpFontSize(-1);
+        return;
+      }
+      if (!ev.shiftKey && (ev.code === "Digit0" || ev.code === "Numpad0")) {
+        ev.preventDefault();
+        manager.resetFontSize();
+        return;
+      }
+    }
+
     // Ctrl+Shift+P command palette.
     if (mod && ev.shiftKey && (key === "P" || key === "p")) {
       ev.preventDefault();
@@ -204,8 +226,9 @@ async function main(): Promise<void> {
     if (mod && ev.shiftKey && (key === "R" || key === "r")) {
       ev.preventDefault();
       const current = manager.getFocusedTitle() ?? "";
-      const next = promptWithBlur(t("app.paneTitle"), current);
-      if (next !== null) manager.renameFocused(next);
+      void askText(t("app.paneTitle"), current).then((next) => {
+        if (next !== null) manager.renameFocused(next);
+      });
       return;
     }
   });

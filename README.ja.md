@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.0-7fdbca?style=flat-square" alt="version 0.9.0" />
+  <img src="https://img.shields.io/badge/version-0.9.1-7fdbca?style=flat-square" alt="version 0.9.1" />
 </p>
 
 <p align="center">
@@ -222,6 +222,8 @@ macOS では以下の `Ctrl` はすべて `Cmd` になります。そうする�
 | `Ctrl+Alt+N`                   | `Cmd+Opt+N`        | 現在のワークスペースのノートを切替  |
 | `Ctrl+V`                       | `Cmd+V`            | クリップボードのテキストを貼り付け (画像 → 一時ファイルのパス) |
 | `Ctrl+F`                       | `Cmd+F`            | ターミナルのスクロールバックを検索  |
+| `Ctrl++` / `Ctrl+-`            | `Cmd++` / `Cmd+-`  | ターミナルの文字サイズを拡大 / 縮小 |
+| `Ctrl+0`                       | `Cmd+0`            | ターミナルの文字サイズをリセット    |
 | `Ctrl+Tab`                     | `Ctrl+Tab`         | 次のペインにフォーカス              |
 | `Ctrl+Shift+Tab`               | `Ctrl+Shift+Tab`   | 前のペインにフォーカス              |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9`   | `Cmd+1` .. `Cmd+9` | ワークスペース切り替え              |

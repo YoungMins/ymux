@@ -21,9 +21,13 @@ import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
+import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
+  /// Terminal font size in CSS pixels. Global, not per-pane — the owner reads
+  /// it from config and passes the same value to every pane it builds.
+  fontSize?: number;
   /// Called when the child exits so the shell can be annotated in the UI.
   onExit?: (code: number) => void;
   /// Called when the user focuses this pane (via pointerdown or key).
@@ -170,7 +174,7 @@ export class TerminalPane implements Pane {
       cursorBlink: true,
       fontFamily:
         "Cascadia Code, Consolas, 'Courier New', ui-monospace, monospace",
-      fontSize: 13,
+      fontSize: opts.fontSize ?? DEFAULT_FONT_SIZE,
       scrollback: 10_000,
       // Squish ambiguous-width glyphs that the OS fallback font draws
       // 2 cells wide back into their declared 1-cell slot, so they
@@ -227,6 +231,19 @@ export class TerminalPane implements Pane {
         if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p")) return false;
         // Ctrl/Cmd+Shift+Left/Right → swap pane position (window level).
         if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
+      }
+      // Font zoom. Checked by `code` for the same layout-independence reason
+      // as the window-level handler, and outside the `!ev.shiftKey` guards
+      // above because `+` is Shift+Equal on most layouts.
+      if (
+        ev.code === "Equal" ||
+        ev.code === "Minus" ||
+        ev.code === "NumpadAdd" ||
+        ev.code === "NumpadSubtract" ||
+        ev.code === "Digit0" ||
+        ev.code === "Numpad0"
+      ) {
+        return false;
       }
       // Pane cycling stays on Ctrl+Tab on every platform (Cmd+Tab belongs to
       // the macOS app switcher), so it is checked outside the block above.
@@ -606,6 +623,15 @@ export class TerminalPane implements Pane {
 
   /// Set the visible title for this pane. Used by the rename flow; the new
   /// title is also written back into the PaneSpec by WorkspaceManager.
+  /// Change the terminal font size and re-fit. Re-fitting is the load-bearing
+  /// half: xterm keeps its row/column count when the glyph size changes, so
+  /// without it the terminal keeps the old grid and the PTY is told the wrong
+  /// size — long lines wrap in the wrong place until the window is resized.
+  setFontSize(px: number): void {
+    this.term.options.fontSize = px;
+    this.scheduleFit();
+  }
+
   setBgColor(color: string | null): void {
     const bg = color || "#0b0f14";
     this.spec = { ...this.spec, bg_color: color ?? "" };

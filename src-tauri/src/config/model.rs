@@ -26,7 +26,10 @@ use uuid::Uuid;
 ///       configs still load), and the unix detector now spawns zsh/bash with
 ///       shell-integration args that emit OSC 7. A v5 cache holds the old
 ///       argument-free unix profiles, so clearing forces a re-detect.
-pub const CONFIG_VERSION: u32 = 6;
+///   7 — POSIX shells (`sh`, `dash`, `ksh`) gained an `$ENV`-based OSC 7
+///       hook. A v6 cache holds an `sh` profile with an empty `env`, so
+///       those panes would keep reporting no cwd until a re-detect.
+pub const CONFIG_VERSION: u32 = 7;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
@@ -51,6 +54,11 @@ pub struct Config {
     /// via "open in worktree". Empty means no base dir configured yet.
     #[serde(default)]
     pub worktree_base_dir: String,
+    /// Terminal font size in CSS pixels, shared by every pane. Additive with
+    /// a serde default, so older configs load untouched and need no
+    /// `CONFIG_VERSION` bump.
+    #[serde(default = "default_font_size")]
+    pub font_size: u32,
     /// [`ShellProfile::name`] used for newly created panes and workspaces.
     /// Empty means "the first detected shell", which is also the fallback when
     /// the named profile no longer exists (e.g. pwsh was uninstalled).
@@ -75,6 +83,15 @@ fn default_persist_scrollback() -> bool {
 fn default_paste_image_retention_hours() -> u32 {
     24
 }
+fn default_font_size() -> u32 {
+    13
+}
+
+/// Clamp bounds for [`Config::font_size`]. Below ~6px xterm's glyph metrics
+/// collapse and `fit()` starts computing absurd column counts; above ~40px a
+/// pane can no longer hold a usable terminal.
+pub const MIN_FONT_SIZE: u32 = 6;
+pub const MAX_FONT_SIZE: u32 = 40;
 
 impl Default for Config {
     fn default() -> Self {
@@ -87,6 +104,7 @@ impl Default for Config {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: default_font_size(),
             default_shell: String::new(),
         }
     }
@@ -136,6 +154,7 @@ impl Config {
         self.persist_scrollback = incoming.persist_scrollback;
         self.paste_image_retention_hours = incoming.paste_image_retention_hours;
         self.worktree_base_dir = incoming.worktree_base_dir;
+        self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
@@ -664,6 +683,7 @@ mod tests {
     #[test]
     fn default_shell_toml_roundtrip() {
         let config = Config {
+            font_size: 13,
             default_shell: "Git Bash".into(),
             ..Config::default()
         };
@@ -684,6 +704,7 @@ mod tests {
             persist_scrollback: false,
             paste_image_retention_hours: 72,
             worktree_base_dir: "D:\\wt".into(),
+            font_size: 18,
             default_shell: "pwsh".into(),
             ..Config::default()
         };
@@ -692,7 +713,27 @@ mod tests {
         assert!(!backend.persist_scrollback);
         assert_eq!(backend.paste_image_retention_hours, 72);
         assert_eq!(backend.worktree_base_dir, "D:\\wt");
+        assert_eq!(backend.font_size, 18);
         assert_eq!(backend.default_shell, "pwsh");
+    }
+
+    /// A config written before `font_size` existed must load with the default
+    /// rather than 0, which would render an invisible terminal.
+    #[test]
+    fn font_size_defaults_when_absent() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert_eq!(parsed.font_size, 13);
+    }
+
+    #[test]
+    fn font_size_roundtrips() {
+        let config = Config {
+            font_size: 20,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(loaded.font_size, 20);
     }
 
     #[test]
@@ -721,6 +762,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let frontend_save = Config {
@@ -732,6 +774,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
@@ -789,6 +832,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let mut cwds = std::collections::HashMap::new();
@@ -820,6 +864,7 @@ mod tests {
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         cfg.migrate();
@@ -954,6 +999,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let frontend_save = Config {
@@ -982,6 +1028,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         backend.merge_layouts_from(frontend_save);
@@ -1043,6 +1090,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
@@ -1060,6 +1108,45 @@ shell = "PowerShell 7"
         assert!(loaded_spec.hotkeys[0].batch);
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
         assert_eq!(loaded_spec.worktree_path, "C:\\wt\\agent-1");
+    }
+
+    /// `cwd` and `title` must survive the round-trip for a pane nested inside
+    /// a split, not just for a lone root pane.
+    ///
+    /// This is the shape that actually matters — the moment you split, every
+    /// pane lives under `LayoutNode::Split`, and `LayoutNode` is a
+    /// `#[serde(tag = "kind")]` enum, which is the construct the TOML caveat
+    /// in CLAUDE.md warns about for `Option<T>`. "Reopen where you left off"
+    /// is exactly `cwd` making it back out of this file.
+    #[test]
+    fn nested_pane_cwd_and_title_roundtrip() {
+        let mut a = PaneSpec::new_default();
+        a.cwd = Some("/Users/alice/projects".into());
+        a.title = Some("build".into());
+        let mut b = PaneSpec::new_default();
+        b.cwd = Some("/tmp".into());
+
+        let mut config = Config::default();
+        config.workspaces[0].root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Pane(a.clone())),
+            b: Box::new(LayoutNode::Split {
+                direction: SplitDir::Vertical,
+                ratio: 0.5,
+                a: Box::new(LayoutNode::Pane(b.clone())),
+                b: Box::new(LayoutNode::Pane(PaneSpec::new_default())),
+            }),
+        };
+
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        assert_eq!(panes.len(), 3);
+        assert_eq!(panes[0].cwd.as_deref(), Some("/Users/alice/projects"));
+        assert_eq!(panes[0].title.as_deref(), Some("build"));
+        assert_eq!(panes[1].cwd.as_deref(), Some("/tmp"));
+        assert_eq!(panes[2].cwd, None);
     }
 
     /// Regression: worktree_path must survive a full Config → TOML → Config
@@ -1136,6 +1223,7 @@ shell = "PowerShell 7"
             persist_scrollback: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
+            font_size: 13,
             default_shell: String::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");

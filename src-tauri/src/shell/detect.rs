@@ -722,6 +722,35 @@ esac
         Some(path)
     }
 
+    /// `$ENV` script for POSIX shells (`sh`, `dash`, `ksh`). Read on
+    /// interactive startup — the only injection point these shells share.
+    ///
+    /// `PS1` is deliberately left alone: emitting OSC 7 from a `PS1` prefix is
+    /// the portable trick, but it would also overwrite whatever prompt the
+    /// user configured. `PROMPT_COMMAND` covers macOS's `/bin/sh` (bash in
+    /// POSIX mode) and ksh; a shell with neither simply reports its startup
+    /// directory once, which is still better than never reporting at all.
+    const POSIX_ENV_INIT: &str = r#"# ymux OSC 7 cwd reporter — auto-generated, safe to delete.
+_ymux_osc7() {
+    printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-localhost}" "$PWD"
+}
+case ";${PROMPT_COMMAND:-};" in
+    *";_ymux_osc7;"*) ;;
+    *) PROMPT_COMMAND="_ymux_osc7;${PROMPT_COMMAND:-}" ;;
+esac
+_ymux_osc7
+"#;
+
+    /// Write (or refresh) the POSIX `$ENV` script and return its path.
+    fn ensure_posix_env_file() -> Option<PathBuf> {
+        let path = ymux_dir()?.join("posix-init.sh");
+        if let Err(e) = std::fs::write(&path, POSIX_ENV_INIT) {
+            tracing::warn!(error = %e, "failed to write posix env file");
+            return None;
+        }
+        Some(path)
+    }
+
     /// zsh profile: login + interactive, with `ZDOTDIR` aimed at the shim.
     fn zsh_profile(name: String, exe: &Path) -> ShellProfile {
         let mut env = Vec::new();
@@ -786,16 +815,25 @@ esac
                 env: Vec::new(),
             },
             // sh, dash, ksh, and anything else the user points $SHELL at.
-            // No integration available, so no cwd tracking — the pane still
-            // works, it just opens splits in the parent's *startup* dir.
-            _ => ShellProfile {
-                name,
-                executable: exe.to_string_lossy().into_owned(),
-                args: vec!["-l".into()],
-                icon: None,
-                color: None,
-                env: Vec::new(),
-            },
+            // POSIX shells read `$ENV` when they start interactively, which
+            // is the one hook point they all agree on, so cwd tracking works
+            // here too. It matters more than it looks: a pane on a shell with
+            // no integration silently loses split-inherits-cwd *and*
+            // reopen-where-you-left-off, with nothing to hint at why.
+            _ => {
+                let mut env = Vec::new();
+                if let Some(init) = ensure_posix_env_file() {
+                    env.push(("ENV".to_string(), init.display().to_string()));
+                }
+                ShellProfile {
+                    name,
+                    executable: exe.to_string_lossy().into_owned(),
+                    args: vec!["-l".into()],
+                    icon: None,
+                    color: None,
+                    env,
+                }
+            }
         }
     }
 

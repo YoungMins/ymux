@@ -44,28 +44,10 @@ export function popPopup(): void {
   }
 }
 
-// Native `window.prompt()` displays a WebView2-level dialog that paints below
-// OS-level child webviews (same z-order problem as our HTML modals). Wrap it
-// so the dialog is shown with browser panes momentarily hidden. `try/finally`
-// guarantees the popup count is decremented even if the call throws.
-export function promptWithBlur(
-  message: string,
-  defaultValue?: string,
-): string | null {
-  pushPopup();
-  try {
-    return window.prompt(message, defaultValue);
-  } finally {
-    popPopup();
-  }
-}
-
-// Same z-order workaround as `promptWithBlur`, for `window.confirm()`.
-export function confirmWithBlur(message: string): boolean {
-  pushPopup();
-  try {
-    return window.confirm(message);
-  } finally {
-    popPopup();
-  }
-}
+// NOTE: this module used to export `promptWithBlur` / `confirmWithBlur`,
+// thin wrappers around `window.prompt` / `window.confirm` that bracketed the
+// call with pushPopup/popPopup. They are gone: WKWebView shows a JavaScript
+// dialog only if the host implements the matching `WKUIDelegate` method, and
+// wry implements none — so on macOS both calls returned their "cancelled"
+// value without ever drawing anything. `src/ui/Dialog.ts` renders real DOM
+// instead and drives the same popup counter itself.

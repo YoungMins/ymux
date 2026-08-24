@@ -1509,3 +1509,90 @@ body,
   background: var(--bg-hover);
   color: var(--accent);
 }
+
+/* ── Dialogs ──────────────────────────────────────────────────────────────
+   Replacements for window.prompt / window.confirm, which WKWebView refuses
+   to show (wry implements no WKUIDelegate dialog methods). Sits above the
+   command palette's z-index so a dialog raised from a palette command is
+   not painted behind it. */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 300;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 18vh;
+}
+
+.dialog {
+  width: 460px;
+  max-width: 90vw;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dialog__message {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  /* Paths and branch names are the usual content and can be long with no
+     spaces to break on. */
+  overflow-wrap: anywhere;
+}
+
+.dialog__input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.dialog__input:focus {
+  border-color: var(--accent);
+}
+
+.dialog__buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog__btn {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dialog__btn:hover {
+  border-color: var(--accent);
+}
+
+.dialog__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dialog__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}

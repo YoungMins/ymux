@@ -10,6 +10,7 @@ import { api } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 import type { YTheme, SettingsSection } from "./types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
+import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
 
 interface ShortcutEntry {
   keys: string;
@@ -235,6 +236,39 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     const shellSpacer = document.createElement("div");
     shellRow.appendChild(shellSpacer);
     host.appendChild(shellRow);
+
+    // Terminal font size. Number input rather than a dropdown so the range
+    // stays open-ended within the clamp; `setFontSize` applies it to every
+    // live pane across every workspace and persists.
+    const fontRow = document.createElement("div");
+    fontRow.className = "settings-row";
+    const fontLabel = document.createElement("div");
+    fontLabel.className = "settings-row__label";
+    fontLabel.textContent = t("settings.general.fontSize");
+    fontRow.appendChild(fontLabel);
+    const fontInput = document.createElement("input");
+    fontInput.type = "number";
+    fontInput.className = "settings-hex-input";
+    fontInput.style.width = "auto";
+    fontInput.min = String(MIN_FONT_SIZE);
+    fontInput.max = String(MAX_FONT_SIZE);
+    fontInput.step = "1";
+    fontInput.value = String(manager.fontSize);
+    const applyFont = () => {
+      manager.setFontSize(Number(fontInput.value));
+      // Reflect the clamp back, so typing 200 visibly settles at the max
+      // rather than leaving the field disagreeing with the terminal.
+      fontInput.value = String(manager.fontSize);
+    };
+    fontInput.addEventListener("change", applyFont);
+    fontRow.appendChild(fontInput);
+    // Keep in sync when the zoom shortcuts change the size behind this panel.
+    manager.onFontSizeChange = (px) => {
+      fontInput.value = String(px);
+    };
+    const fontSpacer = document.createElement("div");
+    fontRow.appendChild(fontSpacer);
+    host.appendChild(fontRow);
 
     const notifyRow = document.createElement("div");
     notifyRow.className = "settings-row";

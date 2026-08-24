@@ -74,7 +74,31 @@ impl PtySession {
         for a in &profile.args {
             cmd.arg(a);
         }
-        if let Some(cwd) = &spec.cwd {
+
+        // ymux *is* the terminal emulator, so it owes the child a `TERM`.
+        // Nothing else sets one: `portable-pty` doesn't, and a GUI-launched
+        // `.app` inherits launchd's environment, which has no `TERM` at all.
+        // Without it zsh, ls, git and friends all decide they're not talking
+        // to a terminal and disable colour, so every pane renders monochrome.
+        // Set before the profile and pane env below so either can override.
+        #[cfg(unix)]
+        {
+            cmd.env("TERM", "xterm-256color");
+            cmd.env("COLORTERM", "truecolor");
+        }
+
+        // Fall back to the home directory when the pane has no usable cwd —
+        // either it never recorded one, or the directory has since been
+        // deleted. Inheriting ymux's own cwd instead lands the shell wherever
+        // the OS happened to start the app, which for a `.app` opened from
+        // Finder is `/`.
+        let cwd = spec
+            .cwd
+            .as_deref()
+            .filter(|p| std::path::Path::new(p).is_dir())
+            .map(|p| p.to_string())
+            .or_else(|| dirs::home_dir().map(|p| p.display().to_string()));
+        if let Some(cwd) = cwd {
             cmd.cwd(cwd);
         }
         // Shell-profile env first (e.g. the macOS zsh profile's ZDOTDIR shim),
@@ -257,6 +281,136 @@ mod tests {
         );
     }
 
+    /// A pane with no inherited `TERM` must still get one.
+    ///
+    /// Nothing upstream sets it — `portable-pty` doesn't, and a GUI-launched
+    /// `.app` inherits launchd's environment, which has none. Without `TERM`
+    /// every colour-capable tool in the pane (ls, git, grep, the prompt)
+    /// decides it isn't talking to a terminal and renders monochrome, which
+    /// is exactly how this surfaced: a whole terminal in plain white.
+    #[cfg(unix)]
+    #[test]
+    fn pty_child_gets_a_term_even_when_the_parent_has_none() {
+        let profile = ShellProfile {
+            name: "sh".into(),
+            executable: "/bin/sh".into(),
+            args: vec![],
+            icon: None,
+            color: None,
+            env: Vec::new(),
+        };
+        if !std::path::Path::new(&profile.executable).exists() {
+            eprintln!("skipping: /bin/sh not present");
+            return;
+        }
+        // The test binary itself usually has TERM set; drop it so this
+        // reproduces the Finder-launch environment rather than the shell one.
+        std::env::remove_var("TERM");
+        std::env::remove_var("COLORTERM");
+
+        let spec = PaneSpec::new_default();
+        let (tx, rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session = PtySession::spawn(
+            &spec,
+            &profile,
+            PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            tx,
+            Arc::clone(&cwds),
+            &[],
+        )
+        .expect("spawn");
+        session
+            .write(b"printf 'ymux-term=[%s]\n' \"$TERM\"\nexit\n")
+            .expect("write");
+
+        let mut captured = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                Ok(PaneEvent::Exit(_, _)) => break,
+                Err(_) if std::time::Instant::now() > deadline => break,
+                Err(_) => continue,
+            }
+        }
+        let text = String::from_utf8_lossy(&captured);
+        assert!(
+            text.contains("ymux-term=[xterm-256color]"),
+            "child should see TERM=xterm-256color, got: {text:?}"
+        );
+    }
+
+    /// A pane whose recorded cwd is gone — or was never recorded — must land
+    /// in the home directory, not wherever the OS started ymux. For a `.app`
+    /// opened from Finder that inherited directory is `/`, which is how this
+    /// showed up: every pane reopening at the filesystem root.
+    #[cfg(unix)]
+    #[test]
+    fn pty_falls_back_to_home_when_cwd_is_missing_or_stale() {
+        let home = match dirs::home_dir() {
+            Some(h) => h,
+            None => return,
+        };
+        let profile = ShellProfile {
+            name: "sh".into(),
+            executable: "/bin/sh".into(),
+            args: vec![],
+            icon: None,
+            color: None,
+            env: Vec::new(),
+        };
+        if !std::path::Path::new(&profile.executable).exists() {
+            return;
+        }
+
+        for cwd in [None, Some("/definitely/not/a/real/directory".to_string())] {
+            let mut spec = PaneSpec::new_default();
+            spec.cwd = cwd.clone();
+            let (tx, rx) = mpsc::channel();
+            let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+            let session = PtySession::spawn(
+                &spec,
+                &profile,
+                PtySize {
+                    rows: 24,
+                    cols: 80,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+                tx,
+                Arc::clone(&cwds),
+                &[],
+            )
+            .unwrap_or_else(|e| panic!("spawn with cwd {cwd:?} failed: {e}"));
+            session
+                .write(b"printf 'ymux-pwd=[%s]\n' \"$PWD\"\nexit\n")
+                .expect("write");
+
+            let mut captured = Vec::new();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                    Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                    Ok(PaneEvent::Exit(_, _)) => break,
+                    Err(_) if std::time::Instant::now() > deadline => break,
+                    Err(_) => continue,
+                }
+            }
+            let text = String::from_utf8_lossy(&captured);
+            let expected = format!("ymux-pwd=[{}]", home.display());
+            assert!(
+                text.contains(&expected),
+                "cwd {cwd:?} should fall back to {expected}, got: {text:?}"
+            );
+        }
+    }
+
     /// End-to-end check that the macOS shell integration actually reports a
     /// live cwd: spawn a *detected* profile (so the zsh ZDOTDIR shim / bash
     /// `--rcfile` really is in play), `cd` somewhere, and assert the OSC 7
@@ -280,15 +434,21 @@ mod tests {
         };
 
         for profile in crate::shell::detect_shells() {
-            // Only profiles that carry a shell integration can report a cwd.
-            // `sh` / `dash` / `ksh` deliberately get none (no portable hook
-            // point), so there is nothing to assert for them.
-            let integrated = profile.env.iter().any(|(k, _)| k == "ZDOTDIR")
+            // Every macOS profile carries a shell integration: zsh via
+            // ZDOTDIR, bash via --rcfile, POSIX shells via $ENV, and fish
+            // natively. Assert that rather than skipping anything, so a
+            // profile that quietly loses its hook fails the test.
+            let integrated = profile
+                .env
+                .iter()
+                .any(|(k, _)| k == "ZDOTDIR" || k == "ENV")
                 || profile.args.iter().any(|a| a == "--rcfile")
                 || profile.executable.ends_with("/fish");
-            if !integrated {
-                continue;
-            }
+            assert!(
+                integrated,
+                "{} has no shell integration, so it can never report a cwd",
+                profile.name
+            );
             let spec = PaneSpec::new_default();
             let (tx, rx) = mpsc::channel();
             let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.0-7fdbca?style=flat-square" alt="version 0.9.0" />
+  <img src="https://img.shields.io/badge/version-0.9.1-7fdbca?style=flat-square" alt="version 0.9.1" />
 </p>
 
 <p align="center">
@@ -217,6 +217,8 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Alt+N`                | `Cmd+Opt+N`        | Toggle notes for active workspace    |
 | `Ctrl+V`                    | `Cmd+V`            | Paste clipboard text (image → temp-file path) |
 | `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback           |
+| `Ctrl++` / `Ctrl+-`         | `Cmd++` / `Cmd+-`  | Increase / decrease terminal font size |
+| `Ctrl+0`                    | `Cmd+0`            | Reset terminal font size             |
 | `Ctrl+Tab`                  | `Ctrl+Tab`         | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | `Ctrl+Shift+Tab`   | Focus previous pane                  |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | `Cmd+1` .. `Cmd+9` | Switch workspace                    |
