@@ -16,14 +16,45 @@
 
 ---
 
-Windows 向けの軽量な tmux スタイルのターミナルマルチプレクサ。
+Windows と macOS 向けの軽量な tmux スタイルのターミナルマルチプレクサ。
 
 https://github.com/user-attachments/assets/705fff59-0bda-4460-a87f-d7ba6f50993a
 
-Tauri 2 (Rust) + WebView2 + xterm.js で構築されています。Windows 上で軽量かつ
-高速にネイティブ動作しながら、保存されるレイアウト、ペインごとの作業ディレクトリ
-と起動コマンド、切り替え可能なシェル (cmd / PowerShell / pwsh / Git Bash / WSL)、
+Tauri 2 (Rust) + xterm.js で構築され、Windows では WebView2、macOS では
+WKWebView 上で動作します。軽量かつ高速にネイティブ動作しながら、保存される
+レイアウト、ペインごとの作業ディレクトリと起動コマンド、切り替え可能なシェル
+(Windows: cmd / PowerShell / pwsh / Git Bash / WSL、macOS: zsh / bash / fish)、
 そして各々が独自のレイアウトを記憶する番号付きワークスペースを提供します。
+
+## インストール
+
+### Windows
+
+[Releases](https://github.com/YoungMins/ymux/releases) から
+`ymux_*_x64_en-US.msi` をダウンロードして実行してください。インストーラは
+WebView2 ブートストラッパを同梱し、インストール先を `PATH` に登録するので、
+どのターミナルからでも `ymux`、`ymon`、`ydir`、`ycode`、`ygit`、`y` が使えます。
+
+### macOS (Apple Silicon、macOS 11+)
+
+[Releases](https://github.com/YoungMins/ymux/releases) から
+`ymux_*_macos_aarch64.dmg` をダウンロードして開き、ymux を Applications へ
+ドラッグしてください。
+
+アプリは ad-hoc 署名のみで、**公証 (notarization) はされていません**。その
+ため初回起動時に Gatekeeper が「破損している」または「開発元を確認できない」
+として起動を拒否します。ダウンロード隔離属性を一度だけ解除してください:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ymux.app
+```
+
+macOS のインストーラには `PATH` 登録の仕組みがありません。同梱ツールを `PATH`
+に通すには `~/.zshrc` に次を追加してください:
+
+```sh
+export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
+```
 
 ## 機能
 
@@ -32,9 +63,13 @@ Tauri 2 (Rust) + WebView2 + xterm.js で構築されています。Windows 上�
 - **カレントディレクトリの継承**: ペインを分割すると、起動時のディレクトリではなく、
   親シェルが現在いるディレクトリで新しいペインが開きます。
   OSC 7 エスケープシーケンスによるリアルタイム追跡を使用しています。
-- **シェル自動検出**: システムから `cmd.exe`、Windows PowerShell、
-  PowerShell 7 (`pwsh`)、Git Bash、WSL ディストリビューションを検出し、
-  選択可能なプロファイルとして提示します。
+- **シェル自動検出**: Windows では `cmd.exe`、Windows PowerShell、
+  PowerShell 7 (`pwsh`)、Git Bash、WSL ディストリビューションを検出します。
+  macOS ではログインシェルに加え、見つかった zsh / bash / fish (Homebrew 版を
+  含む) を提示します。zsh と bash は自動生成されるシェル統合 shim 経由で起動
+  され、shim はユーザー自身の dotfile を先に読み込んでから OSC 7 フックを
+  追加します。そのため設定ファイルを一切触らずにリアルタイムの `cwd` 継承が
+  動作します。
 - **番号付きワークスペース**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` で最初の 9 つの
   ワークスペースを切り替えます。ツールバーの `+` ボタンで上限なくいつでも追加
   でき、ワークスペースタブにマウスを合わせると表示される `×` で削除できます
@@ -134,46 +169,67 @@ ymux ターミナルペイン内で実行する独立バイナリ。`y` ラン�
 ```sh
 pnpm install
 pnpm tauri dev          # 開発モードで実行
-pnpm tauri build        # Windows MSI インストーラを生成 (Windows 上で実行)
+pnpm tauri build        # Windows では MSI、macOS では .app + .dmg
 ```
 
-Windows 以外のホストでも Rust クレートは `cargo check` がクリーンに通るため、
-Linux/macOS でクロスプラットフォームのロジックを開発できますが、完全な
-`tauri build` とエンドツーエンドの PTY 検証は Windows 上で行う必要があります。
+`tauri build` は実行したホストに対応するインストーラを生成します。MSI バンドラ
+は Windows 専用、DMG バンドラは macOS 専用なので、各インストーラはそれぞれの
+プラットフォーム上でビルドする必要があります (リリースワークフローもそうして
+います)。
+
+Linux でも Rust クレートは `cargo check` がクリーンに通るため、プラットフォーム
+非依存のロジックはそこで開発できます。ただしデスクトップアプリ自体は Linux 向け
+には配布していません。
 
 ## 設定
 
-`%APPDATA%\ymux\config.toml` にワークスペース、レイアウト、キャッシュされた
-シェルプロファイルが保存されます。構造変更のたびに (デバウンスあり) および
-アプリ終了時に書き直されます。
+`config.toml` にワークスペース、レイアウト、キャッシュされたシェルプロファイル
+が保存されます。構造変更のたびに (デバウンスあり) およびアプリ終了時に書き直され
+ます。
 
-`%APPDATA%\ymux\theme.toml` にはすべての y* ツールが共有するカラーパレット
-が保存されます（yMux UI、yCode シンタックスハイライトなど）。**設定 →
-シンタックスカラー** のカラーピッカーで編集するか、**設定 → 設定ファイル
-→ 開く** でファイルを直接開けます。
+`theme.toml` にはすべての y* ツールが共有するカラーパレットが保存されます
+（yMux UI、yCode シンタックスハイライトなど）。**設定 → シンタックスカラー**
+のカラーピッカーで編集するか、**設定 → 設定ファイル → 開く** でファイルを直接
+開けます。
+
+どちらも ymux の設定ディレクトリに置かれます:
+
+| プラットフォーム | パス |
+|------------------|------|
+| Windows          | `%APPDATA%\ymux\` |
+| macOS            | `~/Library/Application Support/ymux/` |
+
+macOS では同じディレクトリに、自動生成されたシェル統合ファイル (`zsh-init/`、
+`bash-init.sh`) も置かれます。シェル検出のたびに書き直されるため、削除しても
+問題ありません。
 
 ## キーボードショートカット
 
-| ショートカット                   | アクション                            |
-|----------------------------------|---------------------------------------|
-| `Ctrl+Shift+H`                   | ペインを水平に分割                    |
-| `Ctrl+Shift+V`                   | ペインを垂直に分割                    |
-| `Ctrl+Shift+W`                   | フォーカス中のペインを閉じる          |
-| `Ctrl+Shift+Z`                   | フォーカス中のペインを拡大 / 戻す     |
-| `Ctrl+Shift+←/→`                 | 前 / 次のペインと位置を入れ替え       |
-| `Ctrl+Shift+R`                   | フォーカス中のペインの名前を変更      |
-| `Ctrl+Shift+P`                   | コマンドパレットを開く                |
-| `Ctrl+Alt+N`                     | アクティブWSのノートを切り替え        |
-| `Ctrl+V`                         | クリップボードテキストを貼り付け（画像 → 一時ファイルパス）|
-| `Ctrl+F`                         | ターミナルのスクロールバックを検索    |
-| `Ctrl+Tab`                       | 次のペインにフォーカス                |
-| `Ctrl+Shift+Tab`                 | 前のペインにフォーカス                |
-| `Ctrl+Alt+1` .. `Ctrl+Alt+9`     | ワークスペースを切り替え              |
-| ワークスペースボタンをダブルクリック | ワークスペース名を変更                |
-| ワークスペース行をドラッグ       | ワークスペースの並び替え              |
-| ターミナルで右クリック           | コンテキストメニュー — コピー/貼り付け、分割、y* ツール起動 |
-| URL 上で `Ctrl+クリック`         | リンクをデフォルトブラウザで開く      |
-| ツールバーの `⚙` ボタン          | 設定を開く（言語、ショートカット、シンタックスカラー、設定ファイル）|
+macOS では以下の `Ctrl` はすべて `Cmd` になります。そうすることで `Ctrl` が
+シェル本来の用途 (`Ctrl+C`、`Ctrl+D`、`Ctrl+R`) にそのまま残ります。例外は表に
+ある 2 つです。ペイン巡回は macOS が `Cmd+Tab` をアプリ切り替えに使うため
+`Ctrl+Tab` のままで、ワークスペース切り替えは `Alt` を外します。
+
+| ショートカット (Windows)       | macOS              | 動作                                |
+|--------------------------------|--------------------|-------------------------------------|
+| `Ctrl+Shift+H`                 | `Cmd+Shift+H`      | ペインを水平分割                    |
+| `Ctrl+Shift+V`                 | `Cmd+Shift+V`      | ペインを垂直分割                    |
+| `Ctrl+Shift+W`                 | `Cmd+Shift+W`      | フォーカス中のペインを閉じる        |
+| `Ctrl+Shift+Z`                 | `Cmd+Shift+Z`      | フォーカス中のペインをズーム / 解除 |
+| `Ctrl+Shift+←/→`               | `Cmd+Shift+←/→`    | 前 / 次のペインと入れ替え           |
+| `Ctrl+Shift+R`                 | `Cmd+Shift+R`      | フォーカス中のペインの名前を変更    |
+| `Ctrl+Shift+P`                 | `Cmd+Shift+P`      | コマンドパレットを開く              |
+| `Ctrl+Alt+N`                   | `Cmd+Opt+N`        | 現在のワークスペースのノートを切替  |
+| `Ctrl+V`                       | `Cmd+V`            | クリップボードのテキストを貼り付け (画像 → 一時ファイルのパス) |
+| `Ctrl+F`                       | `Cmd+F`            | ターミナルのスクロールバックを検索  |
+| `Ctrl+Tab`                     | `Ctrl+Tab`         | 次のペインにフォーカス              |
+| `Ctrl+Shift+Tab`               | `Ctrl+Shift+Tab`   | 前のペインにフォーカス              |
+| `Ctrl+Alt+1` .. `Ctrl+Alt+9`   | `Cmd+1` .. `Cmd+9` | ワークスペース切り替え              |
+| URL 上で `Ctrl+クリック`       | `Cmd+クリック`     | 既定のブラウザでリンクを開く        |
+| ワークスペースボタンをダブルクリック | —            | ワークスペース名を変更              |
+| ワークスペース行をドラッグ       | —                  | ワークスペースの並び替え            |
+| ターミナル上で右クリック         | —                  | コンテキストメニュー — コピー/貼り付け、分割、y* ツール起動 |
+| ツールバーの `⚙` ボタン        | —                  | 設定を開く (言語、ショートカット、シンタックスカラー、設定ファイル) |
 
 > **ヒント:** ツールバー右上の `⚙` ボタンを押すと WinUI 3 スタイルの設定
 > モーダルが開きます。左サイドバーから表示言語の変更、yCode のシンタックス
@@ -182,6 +238,6 @@ Linux/macOS でクロスプラットフォームのロジックを開発でき�
 
 ## ステータス
 
-活発に開発中 — すべてのタグで Linux テスト + Windows MSI ビルドの CI
+活発に開発中 — すべてのタグで Linux テスト + Windows MSI + macOS DMG ビルドの CI
 パイプラインを通し、定期的にリリースしています。変更履歴は
 [Releases](https://github.com/YoungMins/ymux/releases) を参照してください。

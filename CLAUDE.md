@@ -8,6 +8,7 @@ ymux/
 ├── src-tauri/              # Main Tauri app (ymux)
 │   ├── Cargo.toml          # ymux package (desktop feature gate)
 │   ├── tauri.conf.json     # Tauri config (version, bundle, CSP)
+│   ├── tauri.macos.conf.json # macOS overlay (dmg/app targets, min OS)
 │   ├── capabilities/       # Tauri 2 permission config
 │   ├── wix/                # WiX fragments (PATH registration)
 │   ├── icons/              # App icons (.ico, .png)
@@ -24,6 +25,7 @@ ymux/
 │       └── ipc_server.rs   # IPC server (desktop)
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
+│   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction
 │   ├── style.css           # All CSS
 │   ├── types.ts            # TypeScript mirror of Rust models
 │   ├── i18n/i18n.ts        # 13-language translations
@@ -56,7 +58,7 @@ ymux/
 ```sh
 pnpm install                 # Install frontend deps
 pnpm tauri dev               # Run in dev mode (hot reload)
-pnpm tauri build             # Build MSI installer (Windows only)
+pnpm tauri build             # MSI on Windows, .app + .dmg on macOS
 cargo test --workspace       # ⚠ Don't use on Linux — pulls GTK
 cargo test -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher
 cargo test --no-default-features --lib -p ymux
@@ -167,6 +169,48 @@ Also note: `src-tauri/icons/icon.ico` must stay **multi-resolution with 32×32 f
 gives the window a 256×256 icon. Regenerate with `pnpm tauri icon src-tauri/icons/icon.png -o <tmp>`
 and copy the resulting `icon.ico`.
 
+### 10. Platform support: Windows + macOS (arm64)
+
+Two shipping platforms, one codebase. What differs, and where:
+
+| Concern | Windows | macOS |
+|---------|---------|-------|
+| Bundle | MSI (WiX, vendored template) | `.app` + `.dmg`, arm64 only |
+| Bundle config | `tauri.conf.json` | `+ tauri.macos.conf.json` (auto-merged by Tauri) |
+| Icon | `icons/icon.ico` | `icons/icon.icns` |
+| Shells | cmd / PowerShell / pwsh / Git Bash / WSL | `$SHELL` + zsh / bash / fish |
+| OSC 7 hook | PROMPT / `--rcfile` | zsh `ZDOTDIR` shim, bash `--rcfile` |
+| CLI on PATH | MSI writes the install dir into PATH | documented `~/.zshrc` export |
+| Signing | none needed | ad-hoc (`APPLE_SIGNING_IDENTITY: '-'`), not notarized |
+
+**The zsh shim is the subtle part.** zsh gives an external launcher exactly one
+injection point — `ZDOTDIR` — and it swaps out *all four* startup files at once.
+So `shell/detect.rs` generates `<config>/ymux/zsh-init/{.zshenv,.zprofile,.zshrc,.zlogin}`,
+each of which re-sources the user's real counterpart before handing control
+back. Break that and users silently lose their aliases and `PATH`. It is
+covered by `pty::session::tests::macos_shell_integration_reports_live_cwd`,
+which spawns a real PTY and asserts a live cwd comes back — run it on macOS,
+because Linux CI cannot compile it.
+
+**Keyboard.** All shortcuts are written in the canonical `Ctrl+…` form and
+translated at runtime by `src/platform.ts`. Never compare `ev.ctrlKey`
+directly in new shortcut code — use `hasMod(ev)`, or macOS users lose
+`Ctrl+C`/`Ctrl+F` to the app instead of the shell. Two bindings deliberately
+stay on Ctrl (`Ctrl+Tab`, `Ctrl+Shift+Tab`) because macOS reserves `Cmd+Tab`.
+
+**Verifying the Windows path from macOS.** `cargo check` does not link, so the
+Windows-only `#[cfg(windows)]` code can still be compile-checked locally:
+
+```sh
+rustup target add x86_64-pc-windows-msvc
+cargo check --target x86_64-pc-windows-msvc --no-default-features --lib -p ymux
+```
+
+**Sidecar triples.** `scripts/build-tools.mjs` stages the sidecars under a
+target-triple suffix. If you pass `--target` to `tauri build`, set
+`YMUX_TARGET_TRIPLE` to the same value or the bundler fails with a confusing
+"sidecar not found".
+
 ## TDD / Testing
 
 ### Quick run
@@ -177,17 +221,21 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (124 total)
+### Test count (Rust 188 + frontend 63)
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 47 | Config model + TOML round-trip, PTY, OSC 7, shell detect, updater, sysmonitor |
+| ymux_lib | 68 | Config model + TOML round-trip, PTY, OSC 7, shell detect, macOS shell integration, updater, sysmonitor |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
 | yipc | 10 | Protocol serialization, server/client, multi-client, broken pipe |
 | ymon | 11 | App state, tab cycling, scroll, memory values, process sort |
-| ydir | 14 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog |
-| ycode | 37 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
+| ydir | 19 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog |
+| ycode | 69 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
 | ylauncher | 4 | Tool discovery, PATH scanning |
+| _frontend_ | 63 | vitest: layout tree, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
+
+`ygit` has no tests yet. Counts drift — re-derive with
+`cargo test -p <crate>` rather than trusting this table.
 
 ### TDD workflow for new features
 
@@ -227,8 +275,9 @@ git push origin v0.8.4
 
 CI automatically:
 1. Runs tests on Linux (fast fail)
-2. Builds MSI on Windows (with sidecar tools)
-3. Creates Draft release with auto-generated notes
-4. Attach MSI artifact
+2. Builds the MSI on Windows (with sidecar tools) **and creates the release** —
+   it goes first precisely so exactly one job ever creates it
+3. Builds the arm64 `.dmg` on macOS and uploads it onto that release
+4. Rewrites the release body with install info + auto-generated notes
 
 Then: GitHub → Releases → Edit draft → Publish.

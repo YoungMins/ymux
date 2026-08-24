@@ -164,6 +164,7 @@ mod tests {
                 args: vec![],
                 icon: None,
                 color: None,
+                env: Vec::new(),
             });
         });
         assert!(store.flush_if_dirty().expect("flush"));

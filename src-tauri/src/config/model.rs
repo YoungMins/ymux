@@ -22,7 +22,11 @@ use uuid::Uuid;
 ///   5 — Shell detector now enumerates Visual Studio Developer Shells
 ///       (vswhere) and filters Docker Desktop WSL distros. Cached profiles
 ///       from v4 are stale; clearing forces a fresh detect.
-pub const CONFIG_VERSION: u32 = 5;
+///   6 — macOS support. `ShellProfile` gained `env` (serde-default, so v5
+///       configs still load), and the unix detector now spawns zsh/bash with
+///       shell-integration args that emit OSC 7. A v5 cache holds the old
+///       argument-free unix profiles, so clearing forces a re-detect.
+pub const CONFIG_VERSION: u32 = 6;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
@@ -472,6 +476,14 @@ pub struct ShellProfile {
     pub icon: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    /// Environment variables injected into every PTY spawned from this
+    /// profile, applied *before* the pane's own `PaneSpec::env` so a pane can
+    /// still override them. This is how the macOS zsh profile points
+    /// `ZDOTDIR` at ymux's shell-integration shim (see `shell::detect`) — the
+    /// only portable way to get an OSC 7 hook into an interactive zsh without
+    /// editing the user's own dotfiles.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 #[cfg(test)]
@@ -610,6 +622,7 @@ mod tests {
             args: vec!["-NoLogo".into()],
             icon: Some("pwsh".into()),
             color: None,
+            env: Vec::new(),
         });
         let serialized = toml::to_string(&cfg).expect("serialize");
         let parsed: Config = toml::from_str(&serialized).expect("deserialize");
@@ -701,6 +714,7 @@ mod tests {
                 args: vec!["-NoLogo".into()],
                 icon: None,
                 color: None,
+                env: Vec::new(),
             }],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
@@ -799,6 +813,7 @@ mod tests {
                 args: vec!["-old".into()],
                 icon: None,
                 color: None,
+                env: Vec::new(),
             }],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
@@ -821,6 +836,7 @@ mod tests {
             args: vec![],
             icon: None,
             color: None,
+            env: Vec::new(),
         });
         cfg.migrate();
         assert_eq!(cfg.shells.len(), 1);
@@ -931,6 +947,7 @@ shell = "PowerShell 7"
                 args: vec![],
                 icon: None,
                 color: None,
+                env: Vec::new(),
             }],
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
@@ -949,6 +966,7 @@ shell = "PowerShell 7"
                     args: vec![],
                     icon: None,
                     color: None,
+                    env: Vec::new(),
                 },
                 ShellProfile {
                     name: "new-b".into(),
@@ -956,6 +974,7 @@ shell = "PowerShell 7"
                     args: vec![],
                     icon: None,
                     color: None,
+                    env: Vec::new(),
                 },
             ],
             workspaces: vec![Workspace::empty(1, "main")],

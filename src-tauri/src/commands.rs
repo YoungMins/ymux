@@ -206,8 +206,11 @@ pub fn open_url(url: String) -> YmuxResult<()> {
     }
     #[cfg(not(windows))]
     {
-        // Development hosts (Linux/macOS).
-        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        // macOS (`open`) and Linux (`xdg-open`) — `opener` picks the right
+        // launcher per platform. It is already a dependency for the Settings
+        // "open config file" action, so this costs nothing extra and avoids
+        // hardcoding `xdg-open`, which does not exist on macOS.
+        opener::open_browser(&url).map_err(|e| YmuxError::Other(format!("open_url: {e}")))?;
     }
     Ok(())
 }

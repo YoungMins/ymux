@@ -77,6 +77,12 @@ impl PtySession {
         if let Some(cwd) = &spec.cwd {
             cmd.cwd(cwd);
         }
+        // Shell-profile env first (e.g. the macOS zsh profile's ZDOTDIR shim),
+        // then the pane's own env, so a pane can deliberately override
+        // anything the profile set.
+        for (k, v) in &profile.env {
+            cmd.env(k, v);
+        }
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
@@ -207,6 +213,7 @@ mod tests {
             args: vec![],
             icon: None,
             color: None,
+            env: Vec::new(),
         };
         if !std::path::Path::new(&profile.executable).exists() {
             eprintln!("skipping: /bin/sh not present");
@@ -248,5 +255,84 @@ mod tests {
             text.contains("ymux-test-marker"),
             "expected marker in output, got: {text:?}"
         );
+    }
+
+    /// End-to-end check that the macOS shell integration actually reports a
+    /// live cwd: spawn a *detected* profile (so the zsh ZDOTDIR shim / bash
+    /// `--rcfile` really is in play), `cd` somewhere, and assert the OSC 7
+    /// reader wrote the new directory into the shared cwd map.
+    ///
+    /// This is what makes "split inherits the parent's current directory"
+    /// work, and it silently degrades to the startup dir if the shim breaks —
+    /// exactly the kind of regression a unit test on `detect_shells()` alone
+    /// would not catch.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_shell_integration_reports_live_cwd() {
+        // `/tmp` is a symlink to `/private/tmp` on macOS and shells report
+        // `$PWD` with the symlink intact, so canonicalize both sides rather
+        // than assuming either form.
+        let target = std::fs::canonicalize("/tmp").expect("canonicalize /tmp");
+        let same = |cwd: &str| {
+            std::fs::canonicalize(cwd)
+                .map(|p| p == target)
+                .unwrap_or(false)
+        };
+
+        for profile in crate::shell::detect_shells() {
+            // Only profiles that carry a shell integration can report a cwd.
+            // `sh` / `dash` / `ksh` deliberately get none (no portable hook
+            // point), so there is nothing to assert for them.
+            let integrated = profile.env.iter().any(|(k, _)| k == "ZDOTDIR")
+                || profile.args.iter().any(|a| a == "--rcfile")
+                || profile.executable.ends_with("/fish");
+            if !integrated {
+                continue;
+            }
+            let spec = PaneSpec::new_default();
+            let (tx, rx) = mpsc::channel();
+            let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+            let session = PtySession::spawn(
+                &spec,
+                &profile,
+                PtySize {
+                    rows: 24,
+                    cols: 80,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+                tx,
+                Arc::clone(&cwds),
+                &[],
+            )
+            .expect("spawn");
+
+            // The trailing `echo` forces one more prompt — and therefore one
+            // more precmd/PROMPT_COMMAND run — after the `cd`.
+            session
+                .write(b"cd /tmp\necho ymux-cwd-probe\n")
+                .expect("write");
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut got = None;
+            while std::time::Instant::now() < deadline {
+                // Drain events so the reader thread keeps making progress.
+                let _ = rx.recv_timeout(std::time::Duration::from_millis(200));
+                if let Some(cwd) = cwds.lock().get(&spec.id).cloned() {
+                    if same(&cwd) {
+                        got = Some(cwd);
+                        break;
+                    }
+                }
+            }
+            let _ = session.write(b"exit\n");
+
+            assert!(
+                got.is_some(),
+                "{} did not report /tmp via OSC 7 (last seen: {:?})",
+                profile.name,
+                cwds.lock().get(&spec.id).cloned()
+            );
+        }
     }
 }

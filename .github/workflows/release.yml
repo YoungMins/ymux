@@ -1,15 +1,21 @@
 name: release
 
-# Build the Windows installer and publish it to GitHub Releases.
+# Build the installers and publish them to GitHub Releases.
 #
 # Triggers:
 #   - Pushing a tag matching `v*` (e.g. `v0.1.0`) — the normal release path.
 #   - Manual `workflow_dispatch` from the Actions UI for ad-hoc test builds.
 #
-# The actual build runs on `windows-latest` because the Tauri runtime, ConPTY,
-# WebView2 bootstrapper, and NSIS bundler are all Windows-only. The pure-logic
-# Rust crate (ymux_lib) is also unit-tested on a Linux runner first so a
-# broken commit fails fast before the slow Windows build starts.
+# Job order is deliberate:
+#   test-linux    fast pure-logic gate, fails a bad commit before any slow
+#                 platform build spins up.
+#   build-windows builds the MSI *and* creates the GitHub release. Running it
+#                 first means exactly one job ever creates the release, which
+#                 avoids the duplicate-release race two parallel tauri-action
+#                 jobs would hit.
+#   build-macos   builds the arm64 .app/.dmg and uploads it onto the release
+#                 build-windows already created.
+#   finalize      rewrites the release body once both artifacts are in place.
 
 on:
   push:
@@ -93,6 +99,9 @@ jobs:
     name: Build (windows, tauri)
     needs: test-linux
     runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      draft: ${{ steps.meta.outputs.draft }}
     steps:
       - uses: actions/checkout@v4
 
@@ -142,9 +151,119 @@ jobs:
           # Minimal placeholder — the `Rewrite release body…` step below
           # replaces this with install info + GitHub's auto-generated
           # notes (PRs & commits since the previous tag).
-          releaseBody: 'ymux ${{ steps.meta.outputs.tag }} — Windows build. Release notes are being generated…'
+          releaseBody: 'ymux ${{ steps.meta.outputs.tag }} — build in progress. Release notes are being generated…'
           releaseDraft: ${{ steps.meta.outputs.draft == 'true' }}
           prerelease: false
+
+  build-macos:
+    name: Build (macOS arm64, tauri)
+    # Sequential after build-windows on purpose: that job is the one that
+    # creates the GitHub release, and this job uploads onto it. Running both
+    # in parallel would race two tauri-action jobs to create the same release.
+    needs: build-windows
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The macOS-only tests are the ones that matter here: they spawn a real
+      # PTY through the detected zsh/bash profiles and assert the OSC 7 shell
+      # integration reports a live cwd. The Linux gate cannot compile, let
+      # alone run, those.
+      - name: cargo test (ymux lib, macOS)
+        run: cargo test --no-default-features --lib -p ymux
+
+      - name: Build .app + .dmg
+        uses: tauri-apps/tauri-action@v0
+        id: tauri
+        env:
+          # Keeps `scripts/build-tools.mjs` (which stages the sidecar binaries
+          # under a triple-suffixed name) in lockstep with the `--target` below.
+          YMUX_TARGET_TRIPLE: aarch64-apple-darwin
+          # Ad-hoc signature ("-") by default: arm64 macOS refuses to launch a
+          # wholly unsigned binary, and ad-hoc is enough for that. It does NOT
+          # satisfy Gatekeeper for a downloaded file — see the release notes
+          # for the quarantine workaround.
+          #
+          # Drop a Developer ID cert into these secrets and this same step
+          # switches to real signing plus notarization with no edits:
+          # tauri-action imports APPLE_CERTIFICATE into a temp keychain, and
+          # Tauri notarizes when the APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+          # trio is present.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # No tagName/releaseId: this step only builds. Uploading is done
+          # below so the artifact can be renamed to carry its architecture.
+          args: --target aarch64-apple-darwin
+
+      # Tauri names the DMG `ymux_<version>_aarch64.dmg`, which is already
+      # unambiguous, but the release also carries an `x64` MSI — spelling the
+      # platform out keeps the two obvious side by side on the release page.
+      - name: Upload DMG to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+          REPO: ${{ github.repository }}
+          ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: |
+          set -euo pipefail
+          # Take the path from tauri-action rather than guessing it: this is a
+          # cargo workspace, so the bundle lands under the *root* `target/`,
+          # not `src-tauri/target/`.
+          # `|| true` so a miss falls through to the explicit error below
+          # instead of `set -e` killing the step with no explanation.
+          DMG=$(printf '%s' "$ARTIFACTS" | node -e '
+            const j = JSON.parse(require("fs").readFileSync(0, "utf8") || "[]");
+            const dmg = j.find((p) => p.endsWith(".dmg"));
+            process.stdout.write(dmg || "");
+          ' || true)
+          if [ -z "$DMG" ] || [ ! -f "$DMG" ]; then
+            echo "no .dmg produced by the bundler (artifacts: $ARTIFACTS)" >&2
+            exit 1
+          fi
+          VERSION=$(node -p "require('./package.json').version")
+          DEST="ymux_${VERSION}_macos_aarch64.dmg"
+          cp "$DMG" "$DEST"
+          gh release upload "$TAG" "$DEST" --repo "$REPO" --clobber
+
+  finalize:
+    name: Finalize release notes
+    # Runs once both installers are attached. `always()` plus an explicit
+    # success check on the Windows job means a macOS failure still leaves a
+    # properly described Windows release rather than the placeholder text.
+    needs: [build-windows, build-macos]
+    if: always() && needs.build-windows.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       # Replace the placeholder body with install instructions plus the
       # GitHub "Generate release notes" output (groups merged PRs and
@@ -153,11 +272,11 @@ jobs:
       # to just the install section so the release is never left with
       # the placeholder text.
       - name: Rewrite release body with auto-generated notes
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.meta.outputs.tag }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
           REPO: ${{ github.repository }}
+          MAC_RESULT: ${{ needs.build-macos.result }}
         run: |
           set -euo pipefail
 
@@ -169,13 +288,31 @@ jobs:
             --jq .body 2>/dev/null || echo "")
 
           {
-            echo "ymux ${TAG} — Windows build."
+            echo "ymux ${TAG}"
             echo ""
             echo "## Install"
+            echo ""
+            echo "### Windows"
             echo ""
             echo "Download \`ymux_*_x64_en-US.msi\` below and run it."
             echo "The installer bundles a WebView2 bootstrapper, so Windows 10"
             echo "machines without the runtime will install it on first launch."
+            if [ "$MAC_RESULT" = "success" ]; then
+              echo ""
+              echo "### macOS (Apple Silicon)"
+              echo ""
+              echo "Download \`ymux_*_macos_aarch64.dmg\` below, open it, and drag"
+              echo "ymux to Applications."
+              echo ""
+              echo "The app is **not notarized**, so Gatekeeper will refuse to open it"
+              echo "on first launch. Clear the download quarantine flag once:"
+              echo ""
+              echo '```sh'
+              echo "xattr -dr com.apple.quarantine /Applications/ymux.app"
+              echo '```'
+              echo ""
+              echo "Requires macOS 11 or newer on an Apple Silicon Mac."
+            fi
             if [ -n "$AUTO" ]; then
               echo ""
               echo "$AUTO"
