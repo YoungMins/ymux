@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.1-7fdbca?style=flat-square" alt="version 0.9.1" />
+  <img src="https://img.shields.io/badge/version-0.9.2-7fdbca?style=flat-square" alt="version 0.9.2" />
 </p>
 
 <p align="center">
@@ -48,8 +48,12 @@ pwsh / Git Bash / WSL, macOS: zsh / bash / fish), 그리고 각자 자신만의 
 xattr -dr com.apple.quarantine /Applications/ymux.app
 ```
 
-macOS 인스톨러에는 `PATH` 등록 단계가 없습니다. 동반 도구들을 `PATH` 에 올리려면
-`~/.zshrc` 에 다음을 추가하세요:
+ymux 안에서는 `ymon`, `ydir`, `ycode`, `ygit`, `y` 가 바로 동작합니다. macOS 는
+인스톨러가 `PATH` 를 등록할 방법이 없어서, 앱이 자기 디렉터리를 열리는 모든 페인의
+`PATH` 에 직접 넣어 줍니다.
+
+**다른** 터미널(Terminal.app, iTerm, 에디터 내장 셸 등)에서도 쓰시려면 그 디렉터리를
+`~/.zshrc` 에 직접 추가하세요:
 
 ```sh
 export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"

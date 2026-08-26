@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.1-7fdbca?style=flat-square" alt="version 0.9.1" />
+  <img src="https://img.shields.io/badge/version-0.9.2-7fdbca?style=flat-square" alt="version 0.9.2" />
 </p>
 
 <p align="center">
@@ -49,8 +49,12 @@ WebView2 ブートストラッパを同梱し、インストール先を `PATH` 
 xattr -dr com.apple.quarantine /Applications/ymux.app
 ```
 
-macOS のインストーラには `PATH` 登録の仕組みがありません。同梱ツールを `PATH`
-に通すには `~/.zshrc` に次を追加してください:
+ymux の中では `ymon`、`ydir`、`ycode`、`ygit`、`y` がそのまま使えます。macOS では
+インストーラが `PATH` を登録できないため、アプリが自分のディレクトリを、開くすべての
+ペインの `PATH` に自分で追加します。
+
+**他の**ターミナル (Terminal.app、iTerm、エディタ内蔵シェルなど) からも使うには、
+そのディレクトリを `~/.zshrc` に自分で追加してください:
 
 ```sh
 export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
