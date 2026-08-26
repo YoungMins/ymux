@@ -231,19 +231,23 @@ export class TerminalPane implements Pane {
         if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p")) return false;
         // Ctrl/Cmd+Shift+Left/Right → swap pane position (window level).
         if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
-      }
-      // Font zoom. Checked by `code` for the same layout-independence reason
-      // as the window-level handler, and outside the `!ev.shiftKey` guards
-      // above because `+` is Shift+Equal on most layouts.
-      if (
-        ev.code === "Equal" ||
-        ev.code === "Minus" ||
-        ev.code === "NumpadAdd" ||
-        ev.code === "NumpadSubtract" ||
-        ev.code === "Digit0" ||
-        ev.code === "Numpad0"
-      ) {
-        return false;
+        // Font zoom. Matched on `code` for the same layout-independence
+        // reason as the window-level handler, and deliberately not under a
+        // `!ev.shiftKey` guard because `+` *is* Shift+Equal on most layouts.
+        //
+        // It has to stay inside this modifier block: at the top level it
+        // swallowed a bare `-`, `=`, `0` and `+` in every pane, on every
+        // platform.
+        if (
+          ev.code === "Equal" ||
+          ev.code === "Minus" ||
+          ev.code === "NumpadAdd" ||
+          ev.code === "NumpadSubtract" ||
+          ev.code === "Digit0" ||
+          ev.code === "Numpad0"
+        ) {
+          return false;
+        }
       }
       // Pane cycling stays on Ctrl+Tab on every platform (Cmd+Tab belongs to
       // the macOS app switcher), so it is checked outside the block above.
