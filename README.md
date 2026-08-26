@@ -49,8 +49,12 @@ quarantine flag once:
 xattr -dr com.apple.quarantine /Applications/ymux.app
 ```
 
-macOS has no `PATH` registration step in the installer. To get the companion
-tools on your `PATH`, add this to your `~/.zshrc`:
+Inside ymux, `ymon`, `ydir`, `ycode`, `ygit` and `y` work straight away — the
+app puts its own directory on the `PATH` of every pane it opens, because macOS
+gives an installer no way to register one.
+
+To use them from **other** terminals (Terminal.app, iTerm, an editor's shell),
+add that directory to your `~/.zshrc` yourself:
 
 ```sh
 export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"

@@ -78,9 +78,17 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let ipc_addr = start_ipc_server(app.handle().clone());
-            // Inject YMUX_IPC into every PTY that will be spawned.
+            // Inject YMUX_IPC into every PTY that will be spawned, plus the
+            // app's own directory on PATH so the bundled y* tools resolve by
+            // name. On Windows the installer already put that directory on the
+            // system PATH; on macOS nothing can, so this is the only thing
+            // making `ydir` work from a pane.
             let state = app.state::<AppState>();
-            state.pty.set_extra_env(vec![("YMUX_IPC".into(), ipc_addr)]);
+            let mut pty_env = vec![("YMUX_IPC".to_string(), ipc_addr)];
+            if let Some(path) = ymux_lib::pty::sidecar_path_entry() {
+                pty_env.push(path);
+            }
+            state.pty.set_extra_env(pty_env);
             // Prune paste-image temp files left over from a previous
             // session — otherwise the last paste of a session would outlive
             // its retention window forever, since `save` only prunes on the

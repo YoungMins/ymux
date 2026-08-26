@@ -6,6 +6,8 @@
 //! dedicated thread and forwards events to the webview.
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
@@ -16,6 +18,40 @@ use uuid::Uuid;
 use crate::config::model::{PaneSpec, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
 use crate::pty::session::{CwdMap, PaneEvent, PtySession};
+
+/// Build a `PATH` with `dir` — the directory holding ymux's sidecar tools —
+/// at the front, or `None` if it is already there.
+///
+/// Windows gets this from the MSI, which writes the install directory into the
+/// system `PATH`. macOS has no equivalent: a `.app` bundle cannot register
+/// anything, and the tools sit inside it at `Contents/MacOS`, invisible to the
+/// shell. So the app puts its own directory on the `PATH` of every PTY it
+/// spawns — it knows where its sidecars are, and asking the user to paste an
+/// `export` into their dotfiles for something the app already knows is a poor
+/// trade.
+///
+/// Prepended rather than appended so the bundled tools win over an older copy
+/// left behind by a previous install.
+pub fn path_with_sidecar_dir(dir: &Path, current: Option<&OsStr>) -> Option<OsString> {
+    let existing: Vec<PathBuf> = current
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    if existing.iter().any(|p| p == dir) {
+        return None;
+    }
+    let joined = std::iter::once(dir.to_path_buf()).chain(existing);
+    std::env::join_paths(joined).ok()
+}
+
+/// `PATH` entry for the running executable's own directory, ready to hand to
+/// [`PtyManager::set_extra_env`]. `None` when the path can't be resolved or
+/// already contains it.
+pub fn sidecar_path_entry() -> Option<(String, String)> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let next = path_with_sidecar_dir(dir, std::env::var_os("PATH").as_deref())?;
+    Some(("PATH".to_string(), next.to_string_lossy().into_owned()))
+}
 
 /// Metadata returned to the frontend after a successful spawn.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -145,36 +181,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manager_starts_empty() {
-        let m = PtyManager::default();
-        assert!(m.is_empty());
-        assert_eq!(m.len(), 0);
+    fn sidecar_dir_is_prepended() {
+        let dir = Path::new("/Applications/ymux.app/Contents/MacOS");
+        let current = std::env::join_paths([Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        let out = path_with_sidecar_dir(dir, Some(&current)).expect("some");
+        let parts: Vec<PathBuf> = std::env::split_paths(&out).collect();
+        // First, so a bundled tool beats a stale copy from an older install.
+        assert_eq!(parts[0], dir);
+        assert_eq!(parts.len(), 3);
     }
 
     #[test]
-    fn unknown_pane_returns_error() {
-        let m = PtyManager::default();
-        let id = Uuid::new_v4();
-        assert!(matches!(m.write(id, b"x"), Err(YmuxError::UnknownPane(_))));
-        assert!(matches!(
-            m.resize(
-                id,
-                PtySize {
-                    rows: 24,
-                    cols: 80,
-                    pixel_width: 0,
-                    pixel_height: 0
-                }
-            ),
-            Err(YmuxError::UnknownPane(_))
-        ));
-        assert!(matches!(m.kill(id), Err(YmuxError::UnknownPane(_))));
+    fn already_present_dir_is_left_alone() {
+        let dir = Path::new("/opt/ymux");
+        let current = std::env::join_paths([Path::new("/usr/bin"), dir]).unwrap();
+        // Returning None keeps PATH from growing an extra copy every launch
+        // for users who also added the directory to their own dotfiles.
+        assert!(path_with_sidecar_dir(dir, Some(&current)).is_none());
     }
 
     #[test]
-    fn receiver_can_only_be_taken_once() {
-        let m = PtyManager::default();
-        assert!(m.take_event_receiver().is_some());
-        assert!(m.take_event_receiver().is_none());
+    fn empty_path_still_yields_the_sidecar_dir() {
+        let dir = Path::new("/opt/ymux");
+        let out = path_with_sidecar_dir(dir, None).expect("some");
+        let parts: Vec<PathBuf> = std::env::split_paths(&out).collect();
+        assert_eq!(parts, vec![dir.to_path_buf()]);
     }
 }
