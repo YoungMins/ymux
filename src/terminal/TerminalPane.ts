@@ -21,6 +21,7 @@ import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
+import { ImeBridge, isCompositionKey } from "./ime";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
@@ -100,6 +101,10 @@ export class TerminalPane implements Pane {
   private isFocused = false;
   private statusTimer: number | undefined;
   private scrollbackSaveTimer: number | undefined;
+  /// Owns IME input instead of xterm, which drops the in-place syllable
+  /// revisions a Hangul IME is built out of. Created in `open()`, once the
+  /// helper textarea exists. See `ime.ts`.
+  private ime: ImeBridge | undefined;
   private flushScrollbackOnUnload = (): void => {
     if (
       shouldSaveScrollback({
@@ -214,6 +219,12 @@ export class TerminalPane implements Pane {
     // tells xterm to skip its own handling; the DOM event still bubbles up.
     this.term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown") return true;
+      // Keystrokes the IME owns are handled entirely by `ImeBridge`, off the
+      // helper textarea. Returning `false` here keeps xterm's own
+      // `CompositionHelper.keydown` out of it; the same call also tells the
+      // bridge when a non-IME key ends a run, so it stops diffing against a
+      // buffer the shell has moved on from. See `ime.ts`.
+      if (this.ime?.handleKeyDown(ev) ?? isCompositionKey(ev)) return false;
       // Everything ymux claims hangs off the primary modifier — Cmd on
       // macOS, Ctrl elsewhere. Keying off `hasMod` rather than `ev.ctrlKey`
       // is what leaves Ctrl+F / Ctrl+V free to reach the shell on macOS,
@@ -270,6 +281,30 @@ export class TerminalPane implements Pane {
       }),
     );
     this.term.open(this.termHost);
+    // IME input is ours now — see `ime.ts` for why xterm cannot keep a Hangul
+    // syllable intact on macOS. Installed here because the helper textarea and
+    // the `.composition-view` div only exist after `open()`, and rooted at
+    // `this.term.element` because it is their common ancestor, which is what
+    // lets a capture-phase listener run ahead of xterm's own.
+    const xtermRoot = this.term.element;
+    const helperTextarea = this.term.textarea;
+    if (xtermRoot && helperTextarea) {
+      this.ime = new ImeBridge({
+        root: xtermRoot,
+        textarea: helperTextarea,
+        view: xtermRoot.querySelector<HTMLElement>(".composition-view"),
+        font: () => ({
+          family: this.term.options.fontFamily ?? "monospace",
+          size: this.term.options.fontSize ?? DEFAULT_FONT_SIZE,
+        }),
+        // Route through xterm rather than straight to `api.writePane`, so IME
+        // text takes the exact same path as a typed character: `onData` marks
+        // user activity, feeds the status machine and writes the PTY. `true`
+        // marks it as user input.
+        send: (data) => this.term.input(data, true),
+      });
+      this.ime.install();
+    }
     // Serialize addon: snapshots the buffer (text + escape sequences) so it
     // can be replayed on next mount when scrollback persistence is enabled.
     this.term.loadAddon(this.serializeAddon);
@@ -771,6 +806,7 @@ export class TerminalPane implements Pane {
     window.removeEventListener("beforeunload", this.flushScrollbackOnUnload);
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
+    this.ime?.dispose();
     if (this.spawned) {
       void api.killPane(this.id).catch(() => {});
     }

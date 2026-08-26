@@ -192,6 +192,18 @@ body,
   width: 100%;
 }
 
+/* IME pre-commit preview. Driven by `ImeBridge` (src/terminal/ime.ts), not by
+   xterm's own composition helper — but it reuses xterm's `.composition-view`
+   element, so it also inherits xterm.css's hard-coded black-on-white, which
+   looks nothing like the terminal underneath it. Repaint it in ymux's colours
+   and underline it, the near-universal "not committed yet" affordance. */
+.pane .xterm .composition-view {
+  background: var(--bg-alt);
+  color: var(--fg);
+  border-bottom: 2px solid var(--fg-muted);
+  padding: 0;
+}
+
 .pane--missing {
   color: var(--fg-muted);
   font-size: 12px;
