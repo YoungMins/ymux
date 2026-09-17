@@ -1,0 +1,13 @@
+{
+  "jobId": "d8a8cd3b-c7df-4051-a274-d1863a1e751d",
+  "action": "reply-cleanup",
+  "attempt": 1,
+  "runnerNonce": "47c11f00-e84a-41f9-b4dc-a24f39005510",
+  "ownerNonce": "2d2b054a-7fac-4aaa-aa69-50379a281101",
+  "runner": {
+    "pid": 3705,
+    "processStartIdentity": "1788217958000"
+  },
+  "deadlineAt": "2026-08-31T23:12:47.782Z",
+  "idempotencyKey": "0b3a8b47c28b26d56aca004d4f572b96c118f16819c0d35162418816f9a5420a"
+}

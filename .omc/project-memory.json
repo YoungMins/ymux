@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1783936274790,
-  "projectRoot": "D:\\Git\\ymux",
+  "lastScanned": 1789649761757,
+  "projectRoot": "/Users/nanyoungmin/Documents/GitHub/ymux",
   "techStack": {
     "languages": [
       {
@@ -34,6 +34,11 @@
         "name": "vite",
         "version": "5.4.0",
         "category": "build"
+      },
+      {
+        "name": "vitest",
+        "version": "3.2.7",
+        "category": "testing"
       }
     ],
     "packageManager": "pnpm",
@@ -50,6 +55,7 @@
       "preview": "vite preview",
       "typecheck": "tsc --noEmit",
       "test": "bash scripts/test.sh",
+      "test:ts": "vitest run",
       "tauri": "tauri"
     }
   },
@@ -78,14 +84,14 @@
       "path": "crates",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1783936274748,
+      "lastAccessed": 1789649761740,
       "keyFiles": []
     },
     "dist": {
       "path": "dist",
       "purpose": "Distribution/build output",
       "fileCount": 1,
-      "lastAccessed": 1783936274749,
+      "lastAccessed": 1789649761742,
       "keyFiles": [
         "index.html"
       ]
@@ -94,14 +100,14 @@
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 0,
-      "lastAccessed": 1783936274766,
+      "lastAccessed": 1789649761742,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 2,
-      "lastAccessed": 1783936274767,
+      "lastAccessed": 1789649761742,
       "keyFiles": [
         "build-tools.mjs",
         "test.sh"
@@ -110,10 +116,12 @@
     "src": {
       "path": "src",
       "purpose": "Source code",
-      "fileCount": 3,
-      "lastAccessed": 1783936274767,
+      "fileCount": 5,
+      "lastAccessed": 1789649761743,
       "keyFiles": [
         "main.ts",
+        "platform.test.ts",
+        "platform.ts",
         "style.css",
         "types.ts"
       ]
@@ -121,19 +129,20 @@
     "src-tauri": {
       "path": "src-tauri",
       "purpose": null,
-      "fileCount": 3,
-      "lastAccessed": 1783936274768,
+      "fileCount": 4,
+      "lastAccessed": 1789649761743,
       "keyFiles": [
-        "build.rs",
         "Cargo.toml",
-        "tauri.conf.json"
+        "build.rs",
+        "tauri.conf.json",
+        "tauri.macos.conf.json"
       ]
     },
     "target": {
       "path": "target",
       "purpose": null,
-      "fileCount": 2,
-      "lastAccessed": 1783936274768,
+      "fileCount": 3,
+      "lastAccessed": 1789649761743,
       "keyFiles": [
         "CACHEDIR.TAG"
       ]
@@ -142,24 +151,24 @@
       "path": "tools",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1783936274769,
+      "lastAccessed": 1789649761743,
       "keyFiles": []
     },
-    "dist\\assets": {
-      "path": "dist\\assets",
+    "dist/assets": {
+      "path": "dist/assets",
       "purpose": "Static assets",
       "fileCount": 2,
-      "lastAccessed": 1783936274770,
+      "lastAccessed": 1789649761744,
       "keyFiles": [
-        "index-BpaTL_zY.css",
-        "index-CsNc1BqC.js"
+        "index-CcYFCfsP.js",
+        "index-DFHMvckv.css"
       ]
     },
-    "src-tauri\\src": {
-      "path": "src-tauri\\src",
+    "src-tauri/src": {
+      "path": "src-tauri/src",
       "purpose": "Source code",
-      "fileCount": 10,
-      "lastAccessed": 1783936274772,
+      "fileCount": 12,
+      "lastAccessed": 1789649761745,
       "keyFiles": [
         "commands.rs",
         "embedded_browser.rs",

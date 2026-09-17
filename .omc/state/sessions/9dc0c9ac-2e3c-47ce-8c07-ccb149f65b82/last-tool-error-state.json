@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"head -3 .git/config 2>&1; echo \\\"--- refs ---\\\"; cat .git/refs/heads/main 2>&1 | cut -c1-8; echo \\\"--- 마지막 커밋 메시지 ---\\\"; git --no-pager log -1 --format=%s 2>&1\",\"description\":\"Test direct ...",
+  "error": "Exit code 128\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n--- refs ---\n1800ddcc\n--- 마지막 커밋 메시지 ---\nfatal: unable to access '.git/config': Operation not permitted",
+  "timestamp": "2026-08-26T00:40:41.546Z",
+  "retry_count": 3
+}

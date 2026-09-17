@@ -1,0 +1,8 @@
+{
+  "runner": {
+    "pid": 8200,
+    "processStartIdentity": "watchdog-parent"
+  },
+  "stoppedAt": "2026-08-26T00:31:37.415Z",
+  "state": "terminal"
+}

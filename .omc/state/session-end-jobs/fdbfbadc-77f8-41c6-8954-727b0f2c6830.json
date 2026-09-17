@@ -1,0 +1,320 @@
+{
+  "version": 1,
+  "jobId": "50ae875f-723c-4fd9-bf79-b67255ffbb5c",
+  "sessionId": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+  "scopeKey": "df029e0caf768c268b43eefd8a2f045ffd3846eccf7fcf2513930e107d9265c9",
+  "revision": 8,
+  "createdAt": "2026-08-30T23:01:42.340Z",
+  "updatedAt": "2026-08-31T23:12:38.356Z",
+  "producerGraceExpiresAt": "2026-08-30T23:02:12.341Z",
+  "bestEffortDeadlineAt": "2026-08-30T23:03:03.341Z",
+  "producers": {
+    "core": {
+      "state": "no-op",
+      "intentKey": "0367dfee717c3df70157cbced6807b846686ed1f18910abd3e523c5dd0f19cee",
+      "payloadDigest": "0367dfee717c3df70157cbced6807b846686ed1f18910abd3e523c5dd0f19cee",
+      "sealedAt": "2026-08-31T23:12:38.356Z",
+      "sealedBy": "recovery"
+    },
+    "wiki": {
+      "state": "no-op",
+      "sealedAt": "2026-08-30T23:01:42.364Z",
+      "sealedBy": "wiki-producer"
+    }
+  },
+  "actions": {
+    "foreground-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "4ce8ae5f56583ace92550a05ec28a15bcf30aeb8b6f91c35c2b16888751fa42c",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "lastOutcomeCode": "required-deadline-expired"
+    },
+    "wiki-capture": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 0,
+      "idempotencyKey": "622918f460686cfd797c16008e2101e448cb2a242b02d4c376d12c6dc0527331",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "completedAt": "2026-08-30T23:01:42.364Z"
+    },
+    "team-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "f3574395e3d5d6849e1a708a133219b2d0a2db66440f1c385099baacc1e37e8c",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "terminalization": {
+          "reason": "foreground-cleanup-exhausted",
+          "attempts": 0,
+          "outcomeCode": "required-deadline-expired"
+        }
+      },
+      "budgetMs": 9000,
+      "lastOutcomeCode": "required-core-producer-unavailable"
+    },
+    "python-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "a10ec70d84cbbe9b270df1138c2790e35983bf40d8695d393e98813d74bc7ee1",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "terminalization": {
+          "reason": "foreground-cleanup-exhausted",
+          "attempts": 0,
+          "outcomeCode": "required-deadline-expired"
+        }
+      },
+      "budgetMs": 9000,
+      "lastOutcomeCode": "required-core-producer-unavailable"
+    },
+    "reply-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "7f24ba2daf60d90ef000b54149908ea8d063e68f29277d320a01e5fc6560509b",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "terminalization": {
+          "reason": "foreground-cleanup-exhausted",
+          "attempts": 0,
+          "outcomeCode": "required-deadline-expired"
+        }
+      },
+      "budgetMs": 9000,
+      "lastOutcomeCode": "required-core-producer-unavailable"
+    },
+    "callback": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "75a63f07c44ea6b5796befc58da9e8e21e340744d6a10e062b8428558b0b31dd",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "terminalization": {
+          "reason": "foreground-cleanup-exhausted",
+          "attempts": 0,
+          "outcomeCode": "required-deadline-expired"
+        }
+      },
+      "budgetMs": 2000,
+      "lastOutcomeCode": "best-effort-core-producer-unavailable"
+    },
+    "notification": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "481eaa66b7279ec092bf189f869219c95c27bddc7b21fcb24f21dcf2b4d15383",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "terminalization": {
+          "reason": "foreground-cleanup-exhausted",
+          "attempts": 0,
+          "outcomeCode": "required-deadline-expired"
+        }
+      },
+      "budgetMs": 2000,
+      "lastOutcomeCode": "best-effort-core-producer-unavailable"
+    },
+    "openclaw": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "expired",
+      "attempts": 0,
+      "idempotencyKey": "d3fb980e8e0f97419a16cad4686c8ccdee5fb3be4efeace01480793d2c4c0e5e",
+      "payload": {
+        "transcriptPath": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+        "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+        "reason": "other",
+        "input": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "transcript_path": "/Users/nanyoungmin/.claude/projects/-Users-nanyoungmin-Documents-GitHub-ymux/fdbfbadc-77f8-41c6-8954-727b0f2c6830.jsonl",
+          "cwd": "/Users/nanyoungmin/Documents/GitHub/ymux",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "fdbfbadc-77f8-41c6-8954-727b0f2c6830",
+          "ended_at": "2026-08-30T23:01:42.334Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "terminalization": {
+          "reason": "foreground-cleanup-exhausted",
+          "attempts": 0,
+          "outcomeCode": "required-deadline-expired"
+        }
+      },
+      "budgetMs": 2000,
+      "lastOutcomeCode": "best-effort-core-producer-unavailable"
+    }
+  },
+  "owner": null,
+  "phase": "complete",
+  "completion": {
+    "completedAt": "2026-08-31T23:12:38.356Z",
+    "terminalDigest": "b4c4c98a7cef8db14edf76494dff37f57703f940e8a75e579bc7e7c9a00917d7",
+    "terminalRevision": 8
+  }
+}
