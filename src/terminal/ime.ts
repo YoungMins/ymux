@@ -184,10 +184,20 @@ export class ImeBridge {
       this.reset();
       if (data) this.host.send(data);
     });
-    // Every `input` on the helper textarea is IME, dictation or dropped text:
-    // xterm cancels ordinary keydowns before the character can ever reach the
-    // textarea, and handles paste on its own `paste` listener. So there is no
-    // plain-typing path here to double up with.
+    // A keystroke whose keydown xterm did not cancel — one the IME claimed
+    // (keyCode 229), or A–Z, which xterm defers to keypress on purpose — goes
+    // on to fire `keypress` and then `input` for the same character. xterm
+    // sends it from `_keyPress` and relied on its own `_inputEvent` to skip
+    // the echo; with `input` now ours, both would reach the PTY. On Windows
+    // that doubled every Space that commits a Hangul syllable. So the `input`
+    // mirror is the only path, and xterm's keypress never runs.
+    this.on("keypress", (ev) => {
+      ev.stopImmediatePropagation();
+    });
+    // Every other `input` on the helper textarea is IME, dictation or dropped
+    // text: xterm cancels the keydowns it sends itself, so their characters
+    // never reach the textarea, and paste goes through its own `paste`
+    // listener.
     this.on("input", (ev) => {
       ev.stopImmediatePropagation();
       // While a real composition is open its own `compositionend` delivers the
