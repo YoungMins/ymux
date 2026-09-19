@@ -155,7 +155,7 @@ impl Config {
         // Plain user settings: the frontend owns these outright — it received
         // them at bootstrap and is the only thing that edits them — so they
         // have to be copied back or every save silently reverts the user's
-        // choice to whatever was on disk at launch. `shells` below is the one
+        // choice to whatever was on disk at launch. `shells` below is an
         // exception, being a backend-owned detection cache.
         self.notify_on_bell = incoming.notify_on_bell;
         self.persist_scrollback = incoming.persist_scrollback;
@@ -163,7 +163,12 @@ impl Config {
         self.worktree_base_dir = incoming.worktree_base_dir;
         self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
-        self.agent_tracking = incoming.agent_tracking;
+        // `agent_tracking` is deliberately NOT copied, the other exception to
+        // the rule above: it is backend-owned. `set_agent_tracking` flips it
+        // in the same step that installs/removes the Claude Code hooks, so it
+        // must mirror what is actually in settings.json. Copying a (possibly
+        // stale) frontend snapshot here would let an unrelated layout save
+        // turn tracking off while the hooks stay installed.
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
         }
@@ -714,7 +719,6 @@ mod tests {
             worktree_base_dir: "D:\\wt".into(),
             font_size: 18,
             default_shell: "pwsh".into(),
-            agent_tracking: true,
             ..Config::default()
         };
         backend.merge_layouts_from(frontend_save);
@@ -724,7 +728,31 @@ mod tests {
         assert_eq!(backend.worktree_base_dir, "D:\\wt");
         assert_eq!(backend.font_size, 18);
         assert_eq!(backend.default_shell, "pwsh");
+    }
+
+    /// `agent_tracking` is backend-owned: `set_agent_tracking` flips it
+    /// alongside installing/removing the hooks. A layout save carrying a
+    /// stale frontend copy must not override it, or tracking silently turns
+    /// off while the hooks stay installed (and vice versa).
+    #[test]
+    fn merge_layouts_does_not_carry_agent_tracking() {
+        let mut backend = Config {
+            agent_tracking: true,
+            ..Config::default()
+        };
+        let stale_save = Config {
+            agent_tracking: false,
+            ..Config::default()
+        };
+        backend.merge_layouts_from(stale_save);
         assert!(backend.agent_tracking);
+
+        let mut backend_off = Config::default();
+        backend_off.merge_layouts_from(Config {
+            agent_tracking: true,
+            ..Config::default()
+        });
+        assert!(!backend_off.agent_tracking);
     }
 
     /// A config written before `font_size` existed must load with the default
