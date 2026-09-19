@@ -1190,6 +1190,14 @@ body,
   margin-top: -2px;
 }
 
+.settings-row__hint--error {
+  color: var(--status-critical);
+}
+
+.settings-row__hint--error:empty {
+  display: none;
+}
+
 .settings-color-picker {
   width: 32px;
   height: 26px;

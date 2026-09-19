@@ -6,7 +6,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 
 import { t, getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n/i18n";
-import { api } from "../ipc/bridge";
+import { api, describeError } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 import type { YTheme, SettingsSection } from "./types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
@@ -303,6 +303,41 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     const scrollbackSpacer = document.createElement("div");
     scrollbackRow.appendChild(scrollbackSpacer);
     host.appendChild(scrollbackRow);
+
+    // Agent tracking: installs / removes ymux's Claude Code hooks. That
+    // writes another tool's settings file, so the checkbox only settles once
+    // the write succeeded; a failure (e.g. unparseable settings.json)
+    // reverts it and says why.
+    const agentRow = document.createElement("div");
+    agentRow.className = "settings-row";
+    const agentLabel = document.createElement("div");
+    agentLabel.className = "settings-row__label";
+    agentLabel.textContent = t("settings.general.agentTracking");
+    agentRow.appendChild(agentLabel);
+    const agentToggle = document.createElement("input");
+    agentToggle.type = "checkbox";
+    agentToggle.checked = manager.agentTracking;
+    const agentError = document.createElement("div");
+    agentError.className = "settings-row__hint settings-row__hint--error";
+    agentToggle.addEventListener("change", () => {
+      const want = agentToggle.checked;
+      agentToggle.disabled = true;
+      agentError.textContent = "";
+      manager
+        .setAgentTracking(want)
+        .catch((e) => {
+          agentToggle.checked = !want;
+          agentError.textContent = `${t("settings.general.agentTrackingFailed")} ${describeError(e)}`;
+        })
+        .finally(() => {
+          agentToggle.disabled = false;
+        });
+    });
+    agentRow.appendChild(agentToggle);
+    const agentSpacer = document.createElement("div");
+    agentRow.appendChild(agentSpacer);
+    agentRow.appendChild(agentError);
+    host.appendChild(agentRow);
 
     const aboutH = document.createElement("h4");
     aboutH.textContent = t("settings.general.about");
