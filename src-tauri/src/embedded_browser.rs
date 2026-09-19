@@ -105,6 +105,8 @@ fn eb_label(id: &str) -> String {
 // was a sync command, WebView2 needed the main thread to deliver the IPC
 // response, but run_on_main_thread was already holding it — causing the
 // webview to never initialize (gray screen).
+// Each argument is a field of the frontend `invoke` payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_embedded_browser(
     app: AppHandle,

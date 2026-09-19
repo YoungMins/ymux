@@ -20,6 +20,8 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, Webv
 // IPC response, but build() was already holding it — causing the
 // "createWebview replied OK" message to never appear and blocking all
 // subsequent innerPosition() / resize polls.
+// Each argument is a field of the frontend `invoke` payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_webview(
     app: AppHandle,
