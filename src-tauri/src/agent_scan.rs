@@ -164,14 +164,12 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 };
                 let live: HashSet<Uuid> = shells.keys().copied().collect();
                 let agents = app.state::<SharedAgents>();
-                let snapshot = {
-                    let mut reg = agents.0.lock();
-                    if !reg.apply_scan(&live, &found) {
-                        continue;
-                    }
-                    reg.snapshot()
-                };
-                emit_agents_changed(&app, &snapshot);
+                let mut reg = agents.0.lock();
+                if reg.apply_scan(&live, &found) {
+                    // Under the lock, so this can't race a hook-driven emit
+                    // out of order (see `commands::apply_agent_hook`).
+                    emit_agents_changed(&app, &reg.snapshot());
+                }
             }
         })
         .expect("spawn agent scan thread");

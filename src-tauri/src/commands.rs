@@ -188,6 +188,8 @@ pub fn get_pane_cwd(state: State<'_, AppState>, id: Uuid) -> Option<String> {
 /// Tauri event carrying the full agent snapshot after every registry change.
 pub const AGENTS_CHANGED_EVENT: &str = "agents:changed";
 
+/// Callers hold the [`SharedAgents`] lock across this call so snapshots reach
+/// the frontend in the order they were taken.
 pub fn emit_agents_changed(app: &AppHandle, snapshot: &AgentSnapshot) {
     if let Err(e) = app.emit(AGENTS_CHANGED_EVENT, snapshot) {
         tracing::warn!(error = %e, "emit agents:changed failed");
@@ -205,14 +207,15 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
         return;
     }
     let agents = app.state::<SharedAgents>();
-    let snapshot = {
-        let mut reg = agents.0.lock();
-        if !reg.apply_hook(&ev) {
-            return;
-        }
-        reg.snapshot()
-    };
-    emit_agents_changed(app, &snapshot);
+    let mut reg = agents.0.lock();
+    if reg.apply_hook(&ev) {
+        // Emit while still holding the lock: the hook listener and the scan
+        // thread both write the registry, and emitting after release let a
+        // newer snapshot overtake an older one, leaving the UI stale. Safe —
+        // nothing in Rust listens for this event, so emit never re-enters
+        // the registry, and it only queues the JS dispatch (non-blocking).
+        emit_agents_changed(app, &reg.snapshot());
+    }
 }
 
 /// Current agent snapshot, for the frontend's initial render.
