@@ -5,8 +5,10 @@
 
 use std::io::Write;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager, State};
 use yipc::{IpcMessage, IpcServer, MessageHandler, AGENT_HOOK_KIND};
+
+use crate::error::{YmuxError, YmuxResult};
 
 /// Tauri event name emitted for every incoming IPC message.
 const IPC_EVENT: &str = "ymux://ipc-message";
@@ -19,6 +21,11 @@ struct IpcEventPayload {
     message: serde_json::Value,
 }
 
+/// The running IPC server, kept in Tauri state so commands can push
+/// host → tool messages. It is `'static` because `start_ipc_server` leaks
+/// the server for the life of the process.
+pub struct IpcServerState(pub &'static IpcServer);
+
 /// Start the IPC server on a background thread. Returns the address string
 /// that should be injected as the `YMUX_IPC` environment variable into every
 /// spawned PTY.
@@ -27,6 +34,9 @@ struct IpcEventPayload {
 /// (which happens when the `AppHandle` — and thus the managed state — is
 /// dropped on app exit).
 pub fn start_ipc_server(app: AppHandle) -> String {
+    // The handler closure takes `app` by move, so keep a handle for
+    // registering the server in managed state afterwards.
+    let state_handle = app.clone();
     let handler: MessageHandler = Box::new(move |msg: IpcMessage, writer: &mut dyn Write| {
         match &msg {
             // Agent-tree hook relayed by `y agent-hook`: into the registry,
@@ -55,8 +65,21 @@ pub fn start_ipc_server(app: AppHandle) -> String {
 
     // Leak the server into a Box so it lives for the duration of the process.
     // The Drop impl will clean up when the process exits.
-    Box::leak(Box::new(server));
+    let server: &'static IpcServer = Box::leak(Box::new(server));
+    state_handle.manage(IpcServerState(server));
 
     tracing::info!(address = %address, "IPC server started");
     address
+}
+
+/// Point the file dock's yDir at `path`. It is delivered over yipc to every
+/// client registered as `ydir`, and only a yDir started with `--dock`
+/// registers. Reaching nobody is not an error, because the dock may not
+/// have been opened yet.
+#[tauri::command]
+pub fn filedock_change_dir(ipc: State<'_, IpcServerState>, path: String) -> YmuxResult<()> {
+    ipc.0
+        .send_to("ydir", &IpcMessage::ChangeDir { path })
+        .map(|_| ())
+        .map_err(|e| YmuxError::Other(format!("filedock_change_dir: {e}")))
 }
