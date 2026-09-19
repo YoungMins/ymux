@@ -31,13 +31,14 @@ const AGENT_EXES: &[&str] = &[
 /// Script hosts whose argv identifies the agent package.
 const SCRIPT_HOSTS: &[&str] = &["node", "bun"];
 
-/// argv markers inside a script host, checked after `\` → `/` normalisation so
-/// Windows `node_modules\@openai\codex` matches. `claude-code` also covers
-/// `@anthropic-ai/claude-code`.
+/// Package directories that identify an agent when a script host's *script*
+/// lives inside them. Matched as whole path segments (leading and trailing
+/// `/`) after `\` → `/` normalisation, so Windows `node_modules\@openai\codex\…`
+/// matches but `claude-code-proxy\…` or `@openai/codex-tools/…` don't.
 const SCRIPT_MARKERS: &[(&str, &str)] = &[
-    ("claude-code", "claude"),
-    ("@openai/codex", "codex"),
-    ("@google/gemini-cli", "gemini"),
+    ("/@anthropic-ai/claude-code/", "claude"),
+    ("/@openai/codex/", "codex"),
+    ("/@google/gemini-cli/", "gemini"),
 ];
 
 /// Which agent, if any, a process is.
@@ -49,10 +50,14 @@ pub fn match_agent(exe_stem: &str, argv: &[String]) -> Option<&'static str> {
     if !SCRIPT_HOSTS.contains(&stem.as_str()) {
         return None;
     }
-    let joined = argv.join(" ").replace('\\', "/").to_ascii_lowercase();
+    // Only the script argument counts: the first non-flag arg after the host
+    // itself. Later args are the script's own input and may mention an agent
+    // path without being one.
+    let script = argv.iter().skip(1).find(|a| !a.starts_with('-'))?;
+    let script = format!("/{}", script.replace('\\', "/").to_ascii_lowercase());
     SCRIPT_MARKERS
         .iter()
-        .find(|(marker, _)| joined.contains(marker))
+        .find(|(marker, _)| script.contains(marker))
         .map(|(_, kind)| *kind)
 }
 
@@ -240,6 +245,45 @@ mod tests {
             match_agent("python", &argv(&["python", "@openai/codex"])),
             None
         );
+    }
+
+    #[test]
+    fn matcher_accepts_real_npm_global_install_paths() {
+        let win = argv(&[
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\Users\x\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js",
+            "--resume",
+        ]);
+        assert_eq!(match_agent("node", &win), Some("claude"));
+        let unix = argv(&[
+            "node",
+            "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+        ]);
+        assert_eq!(match_agent("node", &unix), Some("claude"));
+        // Host flags before the script are skipped.
+        let flagged = argv(&[
+            "node",
+            "--max-old-space-size=4096",
+            "/home/x/.npm-global/lib/node_modules/@openai/codex/bin/codex.js",
+        ]);
+        assert_eq!(match_agent("node", &flagged), Some("codex"));
+    }
+
+    #[test]
+    fn matcher_ignores_lookalike_scripts_and_non_script_args() {
+        // A project that merely has `claude-code` in its name.
+        let proxy = argv(&["node", r"D:\Git\claude-code-proxy\server.js"]);
+        assert_eq!(match_agent("node", &proxy), None);
+        // The package path only counts as the script, not as a later arg.
+        let later = argv(&[
+            "node",
+            "server.js",
+            "/n/node_modules/@anthropic-ai/claude-code/cli.js",
+        ]);
+        assert_eq!(match_agent("node", &later), None);
+        // A package-name prefix is not the package.
+        let prefix = argv(&["node", "/n/node_modules/@openai/codex-tools/x.js"]);
+        assert_eq!(match_agent("node", &prefix), None);
     }
 
     #[test]
