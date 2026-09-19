@@ -1060,6 +1060,32 @@ const strings: Translations = {
     ru: "Открыть окно заметок", tr: "Notlar iletişim kutusunu aç", de: "Notizen-Dialog öffnen", vi: "Mở hộp thoại ghi chú",
   },
 
+  // ── File dock ──────────────────────────────────────────────────
+  "filedock.toggle": {
+    en: "Toggle file dock (yDir)", ko: "파일 도크 토글 (yDir)", ja: "ファイルドックの切り替え (yDir)",
+    zh: "切换文件停靠栏 (yDir)", hi: "फ़ाइल डॉक टॉगल करें (yDir)", es: "Alternar panel de archivos (yDir)",
+    fr: "Basculer le dock de fichiers (yDir)", ar: "تبديل لوحة الملفات (yDir)", pt: "Alternar painel de arquivos (yDir)",
+    ru: "Переключить панель файлов (yDir)", tr: "Dosya panelini aç/kapat (yDir)", de: "Dateileiste umschalten (yDir)", vi: "Bật/tắt thanh tệp (yDir)",
+  },
+  "filedock.exited": {
+    en: "yDir has exited.", ko: "yDir가 종료되었습니다.", ja: "yDir が終了しました。",
+    zh: "yDir 已退出。", hi: "yDir बंद हो गया है।", es: "yDir se ha cerrado.",
+    fr: "yDir s'est arrêté.", ar: "تم إغلاق yDir.", pt: "O yDir foi encerrado.",
+    ru: "yDir завершил работу.", tr: "yDir kapandı.", de: "yDir wurde beendet.", vi: "yDir đã thoát.",
+  },
+  "filedock.failed": {
+    en: "yDir could not be started.", ko: "yDir를 시작할 수 없습니다.", ja: "yDir を起動できませんでした。",
+    zh: "无法启动 yDir。", hi: "yDir शुरू नहीं हो सका।", es: "No se pudo iniciar yDir.",
+    fr: "Impossible de démarrer yDir.", ar: "تعذّر تشغيل yDir.", pt: "Não foi possível iniciar o yDir.",
+    ru: "Не удалось запустить yDir.", tr: "yDir başlatılamadı.", de: "yDir konnte nicht gestartet werden.", vi: "Không thể khởi động yDir.",
+  },
+  "filedock.restart": {
+    en: "Restart", ko: "다시 시작", ja: "再起動",
+    zh: "重新启动", hi: "पुनः आरंभ करें", es: "Reiniciar",
+    fr: "Redémarrer", ar: "إعادة التشغيل", pt: "Reiniciar",
+    ru: "Перезапустить", tr: "Yeniden başlat", de: "Neu starten", vi: "Khởi động lại",
+  },
+
   // ── Worktree ───────────────────────────────────────────────────
   "worktree.command": {
     en: "Open pane in new git worktree", ko: "새 git worktree에서 pane 열기", ja: "新しい git worktree でペインを開く",

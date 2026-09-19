@@ -18,6 +18,7 @@ import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
+import { mountFileDock } from "./filedock/FileDock";
 
 async function main(): Promise<void> {
   initLang();
@@ -42,19 +43,26 @@ async function main(): Promise<void> {
   app.appendChild(panelEl);
   app.appendChild(appMain);
 
+  // Row under the top bar: the workspace area plus the right-side file dock.
+  const body = document.createElement("div");
+  body.className = "app-body";
+  appMain.appendChild(body);
+
   const host = document.createElement("div");
   host.className = "workspace-host";
-  appMain.appendChild(host);
+  body.appendChild(host);
 
   const manager = new WorkspaceManager(host, bootstrap.config, bootstrap.shells);
   mountWorkspaceBar(appMain, manager, bootstrap.shells);
-  // The bar was appended after the host; move it to the top of the column.
+  // The bar was appended after the body row; move it to the top of the
+  // column. (`host` is no longer a child of appMain, so anchor on `body`.)
   const bar = appMain.querySelector(".workspace-bar");
-  if (bar) appMain.insertBefore(bar, host);
+  if (bar) appMain.insertBefore(bar, body);
 
   mountWorkspacePanel(panelEl, manager);
 
   await manager.start();
+  mountFileDock(body, manager);
   // Agent tree: subscribe first, then seed, so no change slips between.
   void onAgentsChanged((s) => manager.applyAgents(s))
     .catch((e) => console.warn("agents:changed listen failed:", e))

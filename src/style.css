@@ -1725,3 +1725,78 @@ body,
   border-color: var(--accent);
   color: var(--bg);
 }
+
+/* File dock (yDir) ---------------------------------------------------- */
+.app-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+}
+
+.file-dock {
+  display: none;
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 200px;
+  max-width: 50%;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+}
+
+.file-dock--open {
+  display: flex;
+}
+
+.file-dock__resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  transition: background-color 120ms ease;
+}
+
+.file-dock__resizer:hover,
+.file-dock__resizer:active {
+  background: var(--accent);
+}
+
+.file-dock__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The dock runs one fixed tool: no title to rename, no HotKey bar. */
+.file-dock .pane-title,
+.file-dock .hotkey-bar {
+  display: none;
+}
+
+.file-dock__message {
+  margin: auto;
+  padding: 16px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.file-dock__restart {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-dock__restart:hover {
+  border-color: var(--accent);
+}
