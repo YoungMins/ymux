@@ -39,6 +39,7 @@ import { askConfirm } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
+import { pickActivePaneId } from "./activePane";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -92,6 +93,10 @@ export class WorkspaceManager {
   /// Tree listeners (the workspace panel), fired when agents change or any
   /// layout/pane metadata changes. A set so other views can subscribe too.
   private treeListeners = new Set<() => void>();
+  /// Notified when the pane the user works in may have changed: focus moved
+  /// to another pane, or a workspace switch. No payload; read
+  /// `activePaneId()`. The file dock subscribes.
+  private activePaneListeners = new Set<() => void>();
 
   constructor(
     private host: HTMLElement,
@@ -131,6 +136,7 @@ export class WorkspaceManager {
       );
       el?.classList.add("pane--focused");
     }
+    this.notifyActivePaneChange();
   }
 
   get allShells(): ShellProfile[] {
@@ -303,6 +309,9 @@ export class WorkspaceManager {
     const cache = this.paneCaches.get(id)!;
     for (const pane of cache.values()) pane.scheduleFit();
 
+    // A workspace switch changes the active pane even when the focused id
+    // (still pointing into the old workspace) does not.
+    this.notifyActivePaneChange();
     void api.setActiveWorkspace(id).catch(() => {});
     if (created) this.onWorkspacesChangeCb?.();
     this.persistDebounced();
@@ -1088,6 +1097,34 @@ export class WorkspaceManager {
     const cache = this.paneCaches.get(this.activeId);
     if (!cache) return;
     for (const pane of cache.values()) pane.scheduleFit();
+  }
+
+  /// Subscribe to active-pane changes. Returns the unsubscribe function.
+  onActivePaneChange(cb: () => void): () => void {
+    this.activePaneListeners.add(cb);
+    return () => {
+      this.activePaneListeners.delete(cb);
+    };
+  }
+
+  private notifyActivePaneChange(): void {
+    for (const cb of this.activePaneListeners) cb();
+  }
+
+  /// See `pickActivePaneId`.
+  activePaneId(): Uuid | null {
+    return pickActivePaneId(
+      panes(this.active.root).map((p) => p.id),
+      this._focusedPaneId,
+    );
+  }
+
+  /// Give keyboard focus back to `activePaneId()`. Used when the file dock
+  /// closes while it held focus. The pane is always in the active
+  /// workspace, so `focusPane` never switches workspaces here.
+  focusActivePane(): void {
+    const id = this.activePaneId();
+    if (id) void this.focusPane(id);
   }
 
   /// Type `text` into whichever terminal pane sits under the given viewport
