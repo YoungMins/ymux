@@ -147,9 +147,11 @@ impl AgentRegistry {
             }
             "UserPromptSubmit" => {
                 set_lead(st, &ev.agent, AgentStatus::Working, None);
-                st.agents
-                    .subagents
-                    .retain(|s| s.status != AgentStatus::Done);
+                // A new turn: every subagent of the previous one is gone.
+                // Clear them all, not just the Done ones — an Esc interrupt
+                // fires no Stop / SubagentStop, so interrupted subagents
+                // would otherwise sit at "working" forever.
+                st.agents.subagents.clear();
             }
             "PreToolUse" | "PostToolUse" => match sub_id {
                 Some(id) => upsert_subagent(st, id, ev.agent_type.as_deref(), AgentStatus::Working),
@@ -272,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn user_prompt_submit_sets_working_and_drops_finished_subagents() {
+    fn user_prompt_submit_sets_working_and_drops_all_subagents() {
         let p = Uuid::new_v4();
         let mut reg = AgentRegistry::default();
         reg.apply_hook(&sub_ev(p, "SubagentStart", "a1", "Explore"));
@@ -281,8 +283,24 @@ mod tests {
         reg.apply_hook(&ev(p, "UserPromptSubmit"));
         let snap = reg.snapshot();
         assert_eq!(snap[&p].lead.as_ref().unwrap().status, AgentStatus::Working);
-        let ids: Vec<&str> = snap[&p].subagents.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, vec!["a2"]);
+        assert!(snap[&p].subagents.is_empty());
+    }
+
+    #[test]
+    fn prompt_after_an_interrupt_clears_subagents_left_working() {
+        // Esc fires neither Stop nor SubagentStop, so an interrupted turn
+        // leaves its subagents "working". A new prompt starts a new turn:
+        // none of the previous turn's subagents can still be running.
+        let p = Uuid::new_v4();
+        let mut reg = AgentRegistry::default();
+        reg.apply_hook(&ev(p, "UserPromptSubmit"));
+        reg.apply_hook(&sub_ev(p, "SubagentStart", "a1", "Explore"));
+        reg.apply_hook(&sub_ev(p, "PreToolUse", "a1", "Explore"));
+        // <Esc> — no hook at all.
+        reg.apply_hook(&ev(p, "UserPromptSubmit"));
+        let snap = reg.snapshot();
+        assert!(snap[&p].subagents.is_empty());
+        assert_eq!(snap[&p].lead.as_ref().unwrap().status, AgentStatus::Working);
     }
 
     #[test]
