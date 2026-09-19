@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{Manager, RunEvent};
+use ymux_lib::agent_scan::start_agent_scan;
 use ymux_lib::commands::{start_pty_event_pump, AppState};
 use ymux_lib::config::ConfigStore;
 use ymux_lib::ipc_server::start_ipc_server;
@@ -113,6 +114,7 @@ fn main() {
             start_pty_event_pump(app.handle().clone());
             start_update_checker(app.handle().clone());
             start_sysmonitor(app.handle().clone());
+            start_agent_scan(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

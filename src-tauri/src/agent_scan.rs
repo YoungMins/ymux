@@ -116,6 +116,67 @@ pub fn scan_panes(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<U
         .collect()
 }
 
+/// How often the process tree is re-scanned.
+#[cfg(feature = "desktop")]
+const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Background thread: every [`SCAN_INTERVAL`], walk each pane's shell
+/// descendants for agent CLIs, feed the registry, and emit `agents:changed`
+/// when the snapshot moved. Only exe + argv are refreshed, each once per
+/// process, so steady-state cost is one process-list enumeration.
+#[cfg(feature = "desktop")]
+pub fn start_agent_scan(app: tauri::AppHandle) {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    use tauri::Manager;
+
+    use crate::agents::SharedAgents;
+    use crate::commands::{emit_agents_changed, AppState};
+
+    std::thread::Builder::new()
+        .name("ymux-agent-scan".into())
+        .spawn(move || {
+            let mut sys = System::new();
+            let refresh = ProcessRefreshKind::nothing()
+                .with_exe(UpdateKind::OnlyIfNotSet)
+                .with_cmd(UpdateKind::OnlyIfNotSet);
+            loop {
+                std::thread::sleep(SCAN_INTERVAL);
+                let shells = app.state::<AppState>().pty.pids_snapshot();
+                let found = if shells.is_empty() {
+                    HashMap::new()
+                } else {
+                    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
+                    let procs: Vec<ProcEntry> = sys
+                        .processes()
+                        .values()
+                        .map(|p| ProcEntry {
+                            pid: p.pid().as_u32(),
+                            parent: p.parent().map(|pp| pp.as_u32()),
+                            exe_stem: exe_stem(p.exe(), &p.name().to_string_lossy()),
+                            argv: p
+                                .cmd()
+                                .iter()
+                                .map(|a| a.to_string_lossy().into_owned())
+                                .collect(),
+                        })
+                        .collect();
+                    scan_panes(&shells, &procs)
+                };
+                let live: HashSet<Uuid> = shells.keys().copied().collect();
+                let agents = app.state::<SharedAgents>();
+                let snapshot = {
+                    let mut reg = agents.0.lock();
+                    if !reg.apply_scan(&live, &found) {
+                        continue;
+                    }
+                    reg.snapshot()
+                };
+                emit_agents_changed(&app, &snapshot);
+            }
+        })
+        .expect("spawn agent scan thread");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
