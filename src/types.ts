@@ -83,6 +83,32 @@ export interface SpawnedPane {
   shell: string;
 }
 
+/// Agent-tree snapshot — mirror of `src-tauri/src/agents.rs` (serde
+/// lowercase enums, snake_case fields).
+export type AgentStatus = "working" | "waiting" | "done" | "idle";
+export type AgentSource = "hook" | "process";
+
+export interface Agent {
+  kind: string;
+  status: AgentStatus;
+  source: AgentSource;
+  tool: string | null;
+}
+
+export interface Subagent {
+  id: string;
+  agent_type: string;
+  status: AgentStatus;
+}
+
+export interface PaneAgents {
+  lead: Agent | null;
+  subagents: Subagent[];
+}
+
+/// Pane id → agents. Panes with no agents are absent.
+export type AgentSnapshot = Record<Uuid, PaneAgents>;
+
 /// UUID v4 generator that doesn't need a `crypto` subtle fallback polyfill.
 export function uuidv4(): Uuid {
   // Prefer `crypto.randomUUID` — available in WebView2 and all modern browsers.
