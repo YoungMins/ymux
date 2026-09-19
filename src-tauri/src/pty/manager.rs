@@ -132,6 +132,16 @@ impl PtyManager {
         self.cwds.lock().clone()
     }
 
+    /// Snapshot of `pane id → shell PID` for every live session whose PID is
+    /// known. Read by the agent scan every 2 s.
+    pub fn pids_snapshot(&self) -> HashMap<Uuid, u32> {
+        self.sessions
+            .lock()
+            .iter()
+            .filter_map(|(id, s)| s.pid().map(|p| (*id, p)))
+            .collect()
+    }
+
     pub fn write(&self, id: Uuid, data: &[u8]) -> YmuxResult<()> {
         let sessions = self.sessions.lock();
         let session = sessions.get(&id).ok_or(YmuxError::UnknownPane(id))?;
@@ -206,5 +216,40 @@ mod tests {
         let out = path_with_sidecar_dir(dir, None).expect("some");
         let parts: Vec<PathBuf> = std::env::split_paths(&out).collect();
         assert_eq!(parts, vec![dir.to_path_buf()]);
+    }
+
+    #[test]
+    fn pids_snapshot_tracks_live_sessions() {
+        let profile = if cfg!(windows) {
+            ShellProfile {
+                name: "cmd".into(),
+                executable: "cmd.exe".into(),
+                args: vec![],
+                icon: None,
+                color: None,
+                env: Vec::new(),
+            }
+        } else {
+            ShellProfile {
+                name: "sh".into(),
+                executable: "/bin/sh".into(),
+                args: vec![],
+                icon: None,
+                color: None,
+                env: Vec::new(),
+            }
+        };
+        let mgr = PtyManager::default();
+        let spec = PaneSpec::new_default();
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        mgr.spawn(&spec, &profile, size).expect("spawn");
+        assert!(mgr.pids_snapshot().get(&spec.id).is_some_and(|p| *p > 0));
+        mgr.kill(spec.id).expect("kill");
+        assert!(!mgr.pids_snapshot().contains_key(&spec.id));
     }
 }

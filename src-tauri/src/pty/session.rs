@@ -41,6 +41,9 @@ pub struct PtySession {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn IoWrite + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
+    /// Child (shell) PID, captured once at spawn so the 2 s agent scan never
+    /// has to take the `child` lock that `kill`/`Drop` contend on.
+    pid: Option<u32>,
 }
 
 /// Event emitted from the reader thread back to the app layer.
@@ -114,11 +117,17 @@ impl PtySession {
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
+        // Per-pane identity for tools running inside the pane: the Claude
+        // Code hook (`y agent-hook claude`) reports it back over yipc so the
+        // agent tree knows which pane an event belongs to. Set last so
+        // neither the profile nor the pane env can clobber it.
+        cmd.env("YMUX_PANE_ID", spec.id.to_string());
 
         let child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| YmuxError::Pty(format!("spawn: {e}")))?;
+        let pid = child.process_id();
 
         let writer = pair
             .master
@@ -179,6 +188,7 @@ impl PtySession {
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             child: Mutex::new(child),
+            pid,
         })
     }
 
@@ -203,6 +213,11 @@ impl PtySession {
         let mut c = self.child.lock();
         c.kill().map_err(|e| YmuxError::Pty(format!("kill: {e}")))?;
         Ok(())
+    }
+
+    /// Shell PID, if the platform reported one at spawn.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 }
 
@@ -494,5 +509,81 @@ mod tests {
                 cwds.lock().get(&spec.id).cloned()
             );
         }
+    }
+
+    /// A profile that runs one command and exits, on either platform.
+    fn one_shot_profile(unix_script: &str, windows_cmd: &str) -> ShellProfile {
+        let (executable, args) = if cfg!(windows) {
+            ("cmd.exe", vec!["/C".to_string(), windows_cmd.to_string()])
+        } else {
+            ("/bin/sh", vec!["-c".to_string(), unix_script.to_string()])
+        };
+        ShellProfile {
+            name: "one-shot".into(),
+            executable: executable.into(),
+            args,
+            icon: None,
+            color: None,
+            env: Vec::new(),
+        }
+    }
+
+    fn size_24x80() -> PtySize {
+        PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+
+    /// Drain pane output until `marker` shows up, the child exits, or 10 s pass.
+    fn capture_until(rx: &mpsc::Receiver<PaneEvent>, marker: &str) -> String {
+        let mut captured = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(PaneEvent::Data(_, b)) => {
+                    captured.extend_from_slice(&b);
+                    if String::from_utf8_lossy(&captured).contains(marker) {
+                        break;
+                    }
+                }
+                Ok(PaneEvent::Exit(_, _)) => break,
+                Err(_) => continue,
+            }
+        }
+        String::from_utf8_lossy(&captured).into_owned()
+    }
+
+    /// `y agent-hook` runs inside Claude Code inside the pane and reports which
+    /// pane it is in via `YMUX_PANE_ID` — so every child must see its own id.
+    #[test]
+    fn pty_child_sees_its_own_pane_id() {
+        let profile = one_shot_profile(
+            "printf 'ymux-pane=[%s]\\n' \"$YMUX_PANE_ID\"",
+            "echo ymux-pane=[%YMUX_PANE_ID%]",
+        );
+        let spec = PaneSpec::new_default();
+        let (tx, rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+        let expected = format!("ymux-pane=[{}]", spec.id);
+        let text = capture_until(&rx, &expected);
+        assert!(text.contains(&expected), "expected {expected}, got: {text:?}");
+        drop(session);
+    }
+
+    /// The agent scan walks the process tree from the shell's PID.
+    #[test]
+    fn pty_session_records_child_pid() {
+        let profile = one_shot_profile("sleep 1", "ping -n 2 127.0.0.1 >NUL");
+        let spec = PaneSpec::new_default();
+        let (tx, _rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+        assert!(session.pid().is_some_and(|p| p > 0), "pid: {:?}", session.pid());
     }
 }
