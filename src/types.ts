@@ -67,6 +67,9 @@ export interface Config {
   /// `ShellProfile.name` used for new panes and workspaces. Empty (or a name
   /// that no longer exists) means "the first detected shell".
   default_shell: string;
+  /// Claude Code hooks installed in ~/.claude/settings.json (agent tree).
+  /// Optional: absent in configs written before the setting existed.
+  agent_tracking?: boolean;
 }
 
 export interface BootstrapPayload {

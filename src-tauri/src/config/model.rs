@@ -66,6 +66,12 @@ pub struct Config {
     /// the rest of this model follows.
     #[serde(default)]
     pub default_shell: String,
+    /// Install ymux's Claude Code hooks into `~/.claude/settings.json` so the
+    /// agent tree gets precise per-agent status and subagents. Off by default:
+    /// writing another tool's settings file must be opt-in. Additive with a
+    /// serde default, so no `CONFIG_VERSION` bump.
+    #[serde(default)]
+    pub agent_tracking: bool,
 }
 
 fn default_version() -> u32 {
@@ -106,6 +112,7 @@ impl Default for Config {
             worktree_base_dir: String::new(),
             font_size: default_font_size(),
             default_shell: String::new(),
+            agent_tracking: false,
         }
     }
 }
@@ -156,6 +163,7 @@ impl Config {
         self.worktree_base_dir = incoming.worktree_base_dir;
         self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
+        self.agent_tracking = incoming.agent_tracking;
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
         }
@@ -706,6 +714,7 @@ mod tests {
             worktree_base_dir: "D:\\wt".into(),
             font_size: 18,
             default_shell: "pwsh".into(),
+            agent_tracking: true,
             ..Config::default()
         };
         backend.merge_layouts_from(frontend_save);
@@ -715,6 +724,7 @@ mod tests {
         assert_eq!(backend.worktree_base_dir, "D:\\wt");
         assert_eq!(backend.font_size, 18);
         assert_eq!(backend.default_shell, "pwsh");
+        assert!(backend.agent_tracking);
     }
 
     /// A config written before `font_size` existed must load with the default
@@ -734,6 +744,25 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
         assert_eq!(loaded.font_size, 20);
+    }
+
+    /// Hooks are written into another tool's settings file, so the setting
+    /// must be opt-in: a config written before it existed loads as off.
+    #[test]
+    fn agent_tracking_defaults_off_when_absent() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert!(!parsed.agent_tracking);
+    }
+
+    #[test]
+    fn agent_tracking_roundtrips() {
+        let config = Config {
+            agent_tracking: true,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert!(loaded.agent_tracking);
     }
 
     #[test]
@@ -764,6 +793,7 @@ mod tests {
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -776,6 +806,7 @@ mod tests {
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -834,6 +865,7 @@ mod tests {
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -866,6 +898,7 @@ mod tests {
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -1001,6 +1034,7 @@ shell = "PowerShell 7"
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1030,6 +1064,7 @@ shell = "PowerShell 7"
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -1092,6 +1127,7 @@ shell = "PowerShell 7"
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1225,6 +1261,7 @@ shell = "PowerShell 7"
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
