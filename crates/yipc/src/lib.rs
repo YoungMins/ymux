@@ -22,7 +22,7 @@ mod protocol;
 mod server;
 
 pub use client::IpcClient;
-pub use protocol::{CommandDef, IpcMessage};
+pub use protocol::{CommandDef, IpcMessage, AGENT_HOOK_KIND};
 pub use server::{IpcServer, MessageHandler};
 
 /// Errors produced by the IPC layer.

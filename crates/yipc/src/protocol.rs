@@ -9,6 +9,10 @@ pub struct CommandDef {
     pub label: String,
 }
 
+/// `IpcMessage::Event::kind` used by `y agent-hook` to relay a coding-agent
+/// hook to the ymux host (agent tree).
+pub const AGENT_HOOK_KIND: &str = "agent-hook";
+
 /// Messages exchanged between tools (clients) and the ymux host (server).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]

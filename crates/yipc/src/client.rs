@@ -61,6 +61,13 @@ impl IpcClient {
         Ok(msg)
     }
 
+    /// Bound how long [`recv`](Self::recv) blocks (`None` = forever, the
+    /// default). A timed-out `recv` returns [`IpcError::Io`].
+    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> IpcResult<()> {
+        self.reader.get_ref().set_read_timeout(timeout)?;
+        Ok(())
+    }
+
     // ─── Unix implementation ─────────────────────────────────────────────
 
     #[cfg(unix)]
@@ -214,5 +221,24 @@ mod tests {
             matches!(err, IpcError::EnvNotSet),
             "expected EnvNotSet, got: {err}"
         );
+    }
+
+    /// `y agent-hook` waits for the host's Ack but must never hang Claude
+    /// Code when the host doesn't answer.
+    #[test]
+    fn recv_honours_the_read_timeout() {
+        let handler: MessageHandler = Box::new(|_msg, _writer| {}); // never replies
+        let server = IpcServer::start(handler).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut client = IpcClient::connect(server.address()).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        client.send(&IpcMessage::Ack).unwrap();
+        let started = std::time::Instant::now();
+        assert!(client.recv().is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        drop(client);
+        server.shutdown();
     }
 }
