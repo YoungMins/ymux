@@ -1,0 +1,250 @@
+//! Process-tree scan that finds coding-agent CLIs running under each pane's
+//! shell. The matcher and tree walk are pure (tested on Linux); only the
+//! sysinfo refresh + emit loop is desktop-gated.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::Path;
+
+use uuid::Uuid;
+
+/// One process, reduced to what the matcher needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcEntry {
+    pub pid: u32,
+    pub parent: Option<u32>,
+    /// Executable file stem: `claude` for `/usr/local/bin/claude` or `claude.exe`.
+    pub exe_stem: String,
+    pub argv: Vec<String>,
+}
+
+/// Executables that are an agent by name.
+const AGENT_EXES: &[&str] = &[
+    "claude",
+    "codex",
+    "gemini",
+    "opencode",
+    "aider",
+    "cursor-agent",
+    "amp",
+];
+
+/// Script hosts whose argv identifies the agent package.
+const SCRIPT_HOSTS: &[&str] = &["node", "bun"];
+
+/// argv markers inside a script host, checked after `\` → `/` normalisation so
+/// Windows `node_modules\@openai\codex` matches. `claude-code` also covers
+/// `@anthropic-ai/claude-code`.
+const SCRIPT_MARKERS: &[(&str, &str)] = &[
+    ("claude-code", "claude"),
+    ("@openai/codex", "codex"),
+    ("@google/gemini-cli", "gemini"),
+];
+
+/// Which agent, if any, a process is.
+pub fn match_agent(exe_stem: &str, argv: &[String]) -> Option<&'static str> {
+    let stem = exe_stem.to_ascii_lowercase();
+    if let Some(name) = AGENT_EXES.iter().copied().find(|n| *n == stem) {
+        return Some(name);
+    }
+    if !SCRIPT_HOSTS.contains(&stem.as_str()) {
+        return None;
+    }
+    let joined = argv.join(" ").replace('\\', "/").to_ascii_lowercase();
+    SCRIPT_MARKERS
+        .iter()
+        .find(|(marker, _)| joined.contains(marker))
+        .map(|(_, kind)| *kind)
+}
+
+/// File stem of `exe`, or `name` minus a trailing `.exe` when the path is
+/// unreadable (e.g. another user's process on Windows).
+pub fn exe_stem(exe: Option<&Path>, name: &str) -> String {
+    if let Some(stem) = exe.and_then(Path::file_stem) {
+        return stem.to_string_lossy().into_owned();
+    }
+    name.strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".EXE"))
+        .unwrap_or(name)
+        .to_string()
+}
+
+/// Parent → children index over one process snapshot.
+pub struct ProcTree<'a> {
+    children: HashMap<u32, Vec<&'a ProcEntry>>,
+}
+
+impl<'a> ProcTree<'a> {
+    pub fn new(procs: &'a [ProcEntry]) -> Self {
+        let mut children: HashMap<u32, Vec<&'a ProcEntry>> = HashMap::new();
+        for p in procs {
+            if let Some(parent) = p.parent.filter(|pp| *pp != p.pid) {
+                children.entry(parent).or_default().push(p);
+            }
+        }
+        for list in children.values_mut() {
+            list.sort_by_key(|p| p.pid);
+        }
+        Self { children }
+    }
+
+    /// Breadth-first from `root_pid` (exclusive): the agent closest to the
+    /// shell wins. Cycle-safe against PID reuse.
+    pub fn agent_under(&self, root_pid: u32) -> Option<&'static str> {
+        let mut seen: HashSet<u32> = HashSet::from([root_pid]);
+        let mut queue: VecDeque<u32> = VecDeque::from([root_pid]);
+        while let Some(pid) = queue.pop_front() {
+            for child in self.children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
+                if !seen.insert(child.pid) {
+                    continue;
+                }
+                if let Some(kind) = match_agent(&child.exe_stem, &child.argv) {
+                    return Some(kind);
+                }
+                queue.push_back(child.pid);
+            }
+        }
+        None
+    }
+}
+
+/// `pane id → agent kind` for every pane whose shell has an agent descendant.
+pub fn scan_panes(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<Uuid, String> {
+    let tree = ProcTree::new(procs);
+    shells
+        .iter()
+        .filter_map(|(id, pid)| tree.agent_under(*pid).map(|k| (*id, k.to_string())))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn proc(pid: u32, parent: Option<u32>, stem: &str, args: &[&str]) -> ProcEntry {
+        ProcEntry {
+            pid,
+            parent,
+            exe_stem: stem.into(),
+            argv: argv(args),
+        }
+    }
+
+    #[test]
+    fn matcher_accepts_known_agent_executables() {
+        for (stem, kind) in [
+            ("claude", "claude"),
+            ("Claude", "claude"),
+            ("codex", "codex"),
+            ("gemini", "gemini"),
+            ("opencode", "opencode"),
+            ("aider", "aider"),
+            ("cursor-agent", "cursor-agent"),
+            ("amp", "amp"),
+        ] {
+            assert_eq!(match_agent(stem, &[]), Some(kind), "{stem}");
+        }
+    }
+
+    #[test]
+    fn matcher_recognises_script_hosted_agents() {
+        let win = argv(&[
+            "node",
+            "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
+        ]);
+        assert_eq!(match_agent("node", &win), Some("claude"));
+        assert_eq!(
+            match_agent(
+                "bun",
+                &argv(&["bun", "/x/node_modules/@openai/codex/bin/codex.js"])
+            ),
+            Some("codex")
+        );
+        let gemini_win = argv(&[
+            "node",
+            "C:\\npm\\node_modules\\@google\\gemini-cli\\dist\\index.js",
+        ]);
+        assert_eq!(match_agent("node", &gemini_win), Some("gemini"));
+    }
+
+    #[test]
+    fn matcher_rejects_everything_else() {
+        assert_eq!(match_agent("pwsh", &[]), None);
+        assert_eq!(match_agent("bash", &argv(&["bash", "claude"])), None);
+        assert_eq!(match_agent("claudette", &[]), None);
+        assert_eq!(match_agent("node", &argv(&["node", "server.js"])), None);
+        // Package markers only count inside a script host.
+        assert_eq!(
+            match_agent("python", &argv(&["python", "@openai/codex"])),
+            None
+        );
+    }
+
+    #[test]
+    fn exe_stem_prefers_the_path_and_falls_back_to_the_name() {
+        assert_eq!(
+            exe_stem(Some(Path::new("/usr/local/bin/node")), "ignored"),
+            "node"
+        );
+        assert_eq!(exe_stem(None, "claude.exe"), "claude");
+        assert_eq!(exe_stem(None, "codex"), "codex");
+    }
+
+    #[test]
+    fn walk_finds_a_nested_agent_under_the_shell() {
+        // shell(10) → cmd(11) → node claude-code(12)
+        let procs = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(11, Some(10), "cmd", &[]),
+            proc(
+                12,
+                Some(11),
+                "node",
+                &["node", "/n/@anthropic-ai/claude-code/cli.js"],
+            ),
+        ];
+        assert_eq!(ProcTree::new(&procs).agent_under(10), Some("claude"));
+    }
+
+    #[test]
+    fn walk_ignores_the_root_and_processes_outside_the_subtree() {
+        let procs = vec![
+            proc(10, Some(1), "claude", &[]), // the "shell" itself
+            proc(20, Some(1), "codex", &[]),  // sibling, not a descendant
+        ];
+        assert_eq!(ProcTree::new(&procs).agent_under(10), None);
+    }
+
+    #[test]
+    fn walk_prefers_the_agent_closest_to_the_shell() {
+        let procs = vec![
+            proc(10, Some(1), "zsh", &[]),
+            proc(30, Some(10), "claude", &[]),
+            proc(31, Some(30), "codex", &[]),
+        ];
+        assert_eq!(ProcTree::new(&procs).agent_under(10), Some("claude"));
+    }
+
+    #[test]
+    fn walk_survives_parent_cycles_from_pid_reuse() {
+        let procs = vec![proc(10, Some(11), "sh", &[]), proc(11, Some(10), "sh", &[])];
+        assert_eq!(ProcTree::new(&procs).agent_under(10), None);
+    }
+
+    #[test]
+    fn scan_panes_maps_each_pane_to_its_agent() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let procs = vec![
+            proc(10, Some(1), "bash", &[]),
+            proc(11, Some(10), "gemini", &[]),
+            proc(20, Some(1), "bash", &[]),
+        ];
+        let shells: HashMap<Uuid, u32> = [(a, 10), (b, 20)].into_iter().collect();
+        let found = scan_panes(&shells, &procs);
+        assert_eq!(found.get(&a).map(String::as_str), Some("gemini"));
+        assert!(!found.contains_key(&b));
+    }
+}
