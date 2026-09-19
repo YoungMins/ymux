@@ -373,6 +373,12 @@ pub fn start_pty_event_pump(app: AppHandle) {
                             tracing::warn!(error = %e, "emit pty exit failed");
                         }
                     }
+                    crate::pty::session::PaneEvent::Cwd(id, cwd) => {
+                        let channel = format!("pty:cwd:{id}");
+                        if let Err(e) = app_for_thread.emit(&channel, cwd) {
+                            tracing::warn!(error = %e, "emit pty cwd failed");
+                        }
+                    }
                 }
             }
         })

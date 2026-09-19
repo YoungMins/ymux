@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::config::model::{PaneSpec, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
-use crate::pty::osc7::Osc7Parser;
+use crate::pty::osc7::{CwdChange, Osc7Parser};
 
 /// Shared map of pane id → latest known current working directory. Populated
 /// by per-session reader threads as they parse OSC 7 sequences out of the
@@ -53,6 +53,9 @@ pub enum PaneEvent {
     Data(Uuid, Vec<u8>),
     /// Child has exited with the given status code (0 if unknown).
     Exit(Uuid, u32),
+    /// The shell reported a working directory different from its previous
+    /// one (OSC 7). Forwarded to the frontend as `pty:cwd:{id}`.
+    Cwd(Uuid, String),
 }
 
 impl PtySession {
@@ -149,6 +152,7 @@ impl PtySession {
             .spawn(move || {
                 let mut buf = [0u8; 8192];
                 let mut osc7 = Osc7Parser::new();
+                let mut cwd_change = CwdChange::default();
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => break, // EOF
@@ -159,7 +163,10 @@ impl PtySession {
                             // wins — that's the "current" cwd as far as the
                             // shell is concerned.
                             for cwd in osc7.feed(chunk) {
-                                cwds_for_reader.lock().insert(id, cwd);
+                                cwds_for_reader.lock().insert(id, cwd.clone());
+                                if cwd_change.is_new(&cwd) {
+                                    let _ = tx.send(PaneEvent::Cwd(id, cwd));
+                                }
                             }
                             if tx.send(PaneEvent::Data(id, chunk.to_vec())).is_err() {
                                 break;
@@ -284,6 +291,7 @@ mod tests {
         loop {
             match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                Ok(PaneEvent::Cwd(..)) => {}
                 Ok(PaneEvent::Exit(_, _)) => break,
                 Err(_) if std::time::Instant::now() > deadline => break,
                 Err(_) => continue,
@@ -349,6 +357,7 @@ mod tests {
         loop {
             match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                Ok(PaneEvent::Cwd(..)) => {}
                 Ok(PaneEvent::Exit(_, _)) => break,
                 Err(_) if std::time::Instant::now() > deadline => break,
                 Err(_) => continue,
@@ -412,6 +421,7 @@ mod tests {
             loop {
                 match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                     Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                    Ok(PaneEvent::Cwd(..)) => {}
                     Ok(PaneEvent::Exit(_, _)) => break,
                     Err(_) if std::time::Instant::now() > deadline => break,
                     Err(_) => continue,
@@ -549,6 +559,7 @@ mod tests {
                         break;
                     }
                 }
+                Ok(PaneEvent::Cwd(..)) => {}
                 Ok(PaneEvent::Exit(_, _)) => break,
                 Err(_) => continue,
             }
