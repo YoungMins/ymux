@@ -28,6 +28,9 @@ pub enum IpcMessage {
         kind: String,
         payload: serde_json::Value,
     },
+    /// Host → tool: navigate to `path`. Sent by ymux to the dock's yDir when
+    /// the active pane's working directory changes.
+    ChangeDir { path: String },
     /// Acknowledgement from the server.
     Ack,
 }
@@ -99,6 +102,17 @@ mod tests {
             payload: serde_json::json!({"path": "/tmp/foo.txt"}),
         };
         let line = msg.to_line().unwrap();
+        let decoded = IpcMessage::from_line(&line).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn roundtrip_change_dir() {
+        let msg = IpcMessage::ChangeDir {
+            path: r"C:\Users\me\src".into(),
+        };
+        let line = msg.to_line().unwrap();
+        assert!(line.contains(r#""type":"ChangeDir""#), "got {line}");
         let decoded = IpcMessage::from_line(&line).unwrap();
         assert_eq!(msg, decoded);
     }
