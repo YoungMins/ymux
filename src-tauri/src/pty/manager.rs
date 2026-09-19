@@ -43,14 +43,45 @@ pub fn path_with_sidecar_dir(dir: &Path, current: Option<&OsStr>) -> Option<OsSt
     std::env::join_paths(joined).ok()
 }
 
+/// Directory holding the running ymux executable. The bundled sidecar tools
+/// (`ydir`, `ymon`, …) sit beside it.
+pub fn sidecar_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
 /// `PATH` entry for the running executable's own directory, ready to hand to
 /// [`PtyManager::set_extra_env`]. `None` when the path can't be resolved or
 /// already contains it.
 pub fn sidecar_path_entry() -> Option<(String, String)> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let next = path_with_sidecar_dir(dir, std::env::var_os("PATH").as_deref())?;
+    let dir = sidecar_dir()?;
+    let next = path_with_sidecar_dir(&dir, std::env::var_os("PATH").as_deref())?;
     Some(("PATH".to_string(), next.to_string_lossy().into_owned()))
+}
+
+/// A throwaway profile that runs `argv` directly under the PTY, with no shell
+/// in between. The file dock uses it for `ydir --dock <dir>`. `argv[0]`
+/// resolves to the bundled sidecar in `sidecar_dir` when one exists there;
+/// otherwise the bare name is left for the PTY's `PATH`. `None` for an
+/// empty `argv`.
+pub fn direct_profile(argv: &[String], sidecar_dir: Option<&Path>) -> Option<ShellProfile> {
+    let (program, args) = argv.split_first()?;
+    let bundled = sidecar_dir
+        .map(|d| d.join(format!("{program}{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|p| p.is_file());
+    let executable = bundled
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| program.clone());
+    Some(ShellProfile {
+        name: program.clone(),
+        executable,
+        args: args.to_vec(),
+        icon: None,
+        color: None,
+        env: Vec::new(),
+    })
 }
 
 /// Metadata returned to the frontend after a successful spawn.
@@ -251,5 +282,45 @@ mod tests {
         assert!(mgr.pids_snapshot().get(&spec.id).is_some_and(|p| *p > 0));
         mgr.kill(spec.id).expect("kill");
         assert!(!mgr.pids_snapshot().contains_key(&spec.id));
+    }
+
+    fn scratch_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("ymux-direct-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn direct_profile_needs_a_program() {
+        assert!(direct_profile(&[], None).is_none());
+    }
+
+    #[test]
+    fn direct_profile_prefers_the_bundled_sidecar() {
+        let dir = scratch_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(format!("ydir{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&exe, b"").unwrap();
+
+        let argv = vec![
+            "ydir".to_string(),
+            "--dock".to_string(),
+            "/work".to_string(),
+        ];
+        let p = direct_profile(&argv, Some(&dir)).expect("some");
+        assert_eq!(p.name, "ydir");
+        assert_eq!(p.executable, exe.display().to_string());
+        assert_eq!(p.args, vec!["--dock".to_string(), "/work".to_string()]);
+        assert!(p.env.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn direct_profile_falls_back_to_a_path_lookup() {
+        // No sidecar on disk (e.g. `tauri dev` before build-tools ran): leave
+        // the bare name for the PTY's PATH, which includes the sidecar dir.
+        let argv = vec!["ydir".to_string()];
+        let p = direct_profile(&argv, Some(&scratch_dir())).expect("some");
+        assert_eq!(p.executable, "ydir");
+        assert!(p.args.is_empty());
     }
 }

@@ -33,6 +33,12 @@ pub struct SpawnArgs {
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    /// Run this program directly instead of the `shell` profile. The file
+    /// dock uses it for `ydir --dock <dir>`, so that ydir's exit is the
+    /// pane's exit and no shell quoting is involved. Empty (the default)
+    /// spawns the shell as before.
+    #[serde(default)]
+    pub argv: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,11 +122,17 @@ pub fn save_config(state: State<'_, AppState>, config: Config) -> YmuxResult<()>
 
 #[tauri::command]
 pub fn spawn_pane(state: State<'_, AppState>, args: SpawnArgs) -> YmuxResult<SpawnedPane> {
-    let snapshot = state.config.snapshot();
-    let profile = snapshot
-        .shell(&args.shell)
-        .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
-        .clone();
+    let profile = match crate::pty::direct_profile(&args.argv, crate::pty::sidecar_dir().as_deref())
+    {
+        Some(direct) => direct,
+        None => {
+            let snapshot = state.config.snapshot();
+            snapshot
+                .shell(&args.shell)
+                .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
+                .clone()
+        }
+    };
 
     let spec = crate::config::model::PaneSpec {
         id: args.id,
