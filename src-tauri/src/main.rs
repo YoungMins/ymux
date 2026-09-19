@@ -106,9 +106,21 @@ fn main() {
             // While agent tracking is on, re-run the hook install on every
             // launch: a reinstall to another directory would otherwise leave
             // Claude Code calling a stale `y` path.
+            // Debug builds skip it (unless opted in) so `tauri dev` doesn't
+            // repoint the real hooks at `target/debug/y.exe`.
             if state.config.snapshot().agent_tracking {
-                if let Err(e) = ymux_lib::agent_hooks::set_enabled(true) {
-                    tracing::warn!(error = %e, "failed to refresh Claude Code hooks at startup");
+                use ymux_lib::agent_hooks::{startup_refresh_allowed, DEV_HOOKS_ENV};
+                let opt_in = std::env::var(DEV_HOOKS_ENV).ok();
+                if startup_refresh_allowed(cfg!(debug_assertions), opt_in.as_deref()) {
+                    if let Err(e) = ymux_lib::agent_hooks::set_enabled(true) {
+                        tracing::warn!(error = %e, "failed to refresh Claude Code hooks at startup");
+                    }
+                } else {
+                    tracing::info!(
+                        "debug build: skipping Claude Code hook refresh so the installed \
+                         hooks keep pointing at the release `y`; set {DEV_HOOKS_ENV}=1 to \
+                         refresh them to this build"
+                    );
                 }
             }
             start_pty_event_pump(app.handle().clone());

@@ -257,6 +257,17 @@ pub fn uninstall_at(path: &Path) -> YmuxResult<()> {
     Ok(())
 }
 
+/// Env var that opts a debug build into the startup hook refresh.
+pub const DEV_HOOKS_ENV: &str = "YMUX_DEV_AGENT_HOOKS";
+
+/// Should startup re-install the hooks? Always in release builds. In debug
+/// builds (`tauri dev`) the sidecar is `target/debug/y.exe`, so refreshing
+/// would repoint the user's real `~/.claude/settings.json` at a dev build —
+/// only when `YMUX_DEV_AGENT_HOOKS=1` (`env_value`) asks for it.
+pub fn startup_refresh_allowed(debug_build: bool, env_value: Option<&str>) -> bool {
+    !debug_build || env_value == Some("1")
+}
+
 /// Apply the `agent_tracking` setting to `~/.claude/settings.json`.
 pub fn set_enabled(enabled: bool) -> YmuxResult<()> {
     let path = claude_settings_path()
@@ -537,6 +548,16 @@ mod tests {
             .file_type()
             .is_symlink());
         assert_eq!(ours_in(&read(&real), "Stop"), vec![cmd()]);
+    }
+
+    #[test]
+    fn startup_refresh_runs_in_release_and_only_opt_in_in_debug() {
+        assert!(startup_refresh_allowed(false, None));
+        assert!(startup_refresh_allowed(false, Some("0")));
+        assert!(!startup_refresh_allowed(true, None));
+        assert!(!startup_refresh_allowed(true, Some("0")));
+        assert!(!startup_refresh_allowed(true, Some("")));
+        assert!(startup_refresh_allowed(true, Some("1")));
     }
 
     #[test]
