@@ -6,9 +6,12 @@
 //! merge functions are pure over `serde_json::Value`, which needs the
 //! `preserve_order` feature so the user's key order survives the rewrite.
 
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
+
+use crate::error::{YmuxError, YmuxResult};
 
 /// Ownership marker carried by every hook command ymux installs.
 pub const MARKER: &str = "--ymux-agent-hook";
@@ -136,6 +139,102 @@ pub fn uninstall_hooks(settings: &mut Value) -> bool {
         root.retain(|k, _| k != "hooks");
     }
     changed
+}
+
+/// `~/.claude/settings.json`, Claude Code's user-level settings.
+pub fn claude_settings_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude").join("settings.json"))
+}
+
+/// The `y` sidecar next to the running ymux executable (MSI install dir,
+/// `.app/Contents/MacOS`, or `target/<profile>` under `tauri dev`).
+pub fn y_sidecar_path() -> YmuxResult<PathBuf> {
+    let exe = std::env::current_exe()?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| YmuxError::Other("ymux executable has no parent directory".into()))?;
+    let path = dir.join(if cfg!(windows) { "y.exe" } else { "y" });
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(YmuxError::Other(format!(
+            "y sidecar not found at {}",
+            path.display()
+        )))
+    }
+}
+
+/// `settings.json` → `settings.json.<suffix>`.
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".");
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+/// `Ok(None)` when the file doesn't exist; an empty file reads as `{}`.
+fn read_settings(path: &Path) -> YmuxResult<Option<Value>> {
+    match fs::read_to_string(path) {
+        Ok(text) if text.trim().is_empty() => Ok(Some(Value::Object(Map::new()))),
+        Ok(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| YmuxError::Config(format!("{} is not valid JSON: {e}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Atomic write (temp file + rename). Before the first write ever, the
+/// original is copied to `settings.json.ymux-bak`.
+fn write_settings(path: &Path, value: &Value) -> YmuxResult<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let backup = sibling(path, "ymux-bak");
+    if path.exists() && !backup.exists() {
+        fs::copy(path, &backup)?;
+    }
+    let tmp = sibling(path, "ymux-tmp");
+    let mut text = serde_json::to_string_pretty(value)?;
+    text.push('\n');
+    fs::write(&tmp, text)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Install (or refresh) ymux's hooks in the settings file at `path`.
+pub fn install_at(path: &Path, command: &str) -> YmuxResult<()> {
+    let original = read_settings(path)?;
+    let mut next = original
+        .clone()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    install_hooks(&mut next, command).map_err(YmuxError::Config)?;
+    if original.as_ref() != Some(&next) {
+        write_settings(path, &next)?;
+    }
+    Ok(())
+}
+
+/// Remove ymux's hooks from the settings file at `path`. A missing file is fine.
+pub fn uninstall_at(path: &Path) -> YmuxResult<()> {
+    let Some(mut value) = read_settings(path)? else {
+        return Ok(());
+    };
+    if uninstall_hooks(&mut value) {
+        write_settings(path, &value)?;
+    }
+    Ok(())
+}
+
+/// Apply the `agent_tracking` setting to `~/.claude/settings.json`.
+pub fn set_enabled(enabled: bool) -> YmuxResult<()> {
+    let path = claude_settings_path()
+        .ok_or_else(|| YmuxError::Other("cannot resolve the home directory".into()))?;
+    if enabled {
+        install_at(&path, &hook_command(&y_sidecar_path()?))
+    } else {
+        uninstall_at(&path)
+    }
 }
 
 #[cfg(test)]
@@ -290,5 +389,78 @@ mod tests {
         assert!(install_hooks(&mut json!([]), &cmd()).is_err());
         assert!(install_hooks(&mut json!({ "hooks": 3 }), &cmd()).is_err());
         assert!(install_hooks(&mut json!({ "hooks": { "Stop": {} } }), &cmd()).is_err());
+    }
+
+    /// Fresh isolated dir per test (mirrors `scrollback::tests::tempdir`).
+    fn tempdir() -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "ymux-agent-hooks-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).expect("mkdir");
+        base
+    }
+
+    fn read(path: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read")).expect("json")
+    }
+
+    #[test]
+    fn install_at_creates_a_missing_file_with_only_hooks() {
+        let path = tempdir().join(".claude").join("settings.json");
+        install_at(&path, &cmd()).unwrap();
+        assert_eq!(keys(&read(&path)), vec!["hooks"]);
+        assert!(!sibling(&path, "ymux-bak").exists(), "nothing to back up");
+        assert!(
+            !sibling(&path, "ymux-tmp").exists(),
+            "temp file renamed away"
+        );
+    }
+
+    #[test]
+    fn first_write_backs_up_the_original_once() {
+        let path = tempdir().join("settings.json");
+        std::fs::write(&path, FOREIGN).unwrap();
+        install_at(&path, &cmd()).unwrap();
+        let bak = sibling(&path, "ymux-bak");
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), FOREIGN);
+        uninstall_at(&path).unwrap();
+        install_at(&path, &hook_command(Path::new("/new/y"))).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&bak).unwrap(),
+            FOREIGN,
+            "backup never overwritten"
+        );
+    }
+
+    #[test]
+    fn install_then_uninstall_round_trips_the_file_content() {
+        let path = tempdir().join("settings.json");
+        std::fs::write(&path, FOREIGN).unwrap();
+        install_at(&path, &cmd()).unwrap();
+        assert_eq!(ours_in(&read(&path), "Stop"), vec![cmd()]);
+        uninstall_at(&path).unwrap();
+        assert_eq!(
+            serde_json::to_string(&read(&path)).unwrap(),
+            serde_json::to_string(&foreign()).unwrap()
+        );
+    }
+
+    #[test]
+    fn unparseable_settings_are_left_untouched() {
+        let path = tempdir().join("settings.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(install_at(&path, &cmd()).is_err());
+        assert!(uninstall_at(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+        assert!(!sibling(&path, "ymux-bak").exists());
+    }
+
+    #[test]
+    fn uninstall_of_a_missing_file_is_a_noop() {
+        let path = tempdir().join("settings.json");
+        uninstall_at(&path).unwrap();
+        assert!(!path.exists());
     }
 }
