@@ -60,6 +60,9 @@ export interface TerminalPaneOptions {
   /// from WorkspaceManager's toggle rather than snapshotted at pane-creation
   /// time, so flipping the setting takes effect immediately).
   persistScrollback?: () => boolean;
+  /// Run this program directly instead of the spec's shell. Its exit is the
+  /// pane's exit (`onExit`). The file dock uses it to host `ydir`.
+  argv?: string[];
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -487,6 +490,7 @@ export class TerminalPane implements Pane {
         cwd: this.spec.cwd ?? null,
         rows,
         cols,
+        argv: this.opts.argv,
       });
       this.spawned = true;
 

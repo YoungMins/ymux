@@ -21,6 +21,9 @@ export interface SpawnArgs {
   cwd?: string | null;
   rows: number;
   cols: number;
+  /// Run this program directly instead of `shell` (see `SpawnArgs.argv` in
+  /// commands.rs). Used by the file dock for `ydir --dock <dir>`.
+  argv?: string[];
 }
 
 export interface ResizeArgs {
@@ -238,6 +241,10 @@ export const api = {
   gitWorktreeList: (cwd: string): Promise<WorktreeEntry[]> =>
     call("git_worktree_list", { cwd }),
 
+  /// Point the file dock's yDir at `path`. A no-op when it isn't running.
+  fileDockChangeDir: (path: string): Promise<void> =>
+    call("filedock_change_dir", { path }),
+
   /// Current agent-tree snapshot (pane id → agents).
   getAgents: (): Promise<AgentSnapshot> => call("get_agents"),
 
@@ -263,6 +270,15 @@ export function onPaneExit(
   handler: (code: number) => void,
 ): Promise<UnlistenFn> {
   return safeListen<number>(`pty:exit:${id}`, handler);
+}
+
+/// Subscribe to a pane's working-directory changes. The backend emits these
+/// only when the OSC 7 cwd actually changes.
+export function onPaneCwd(
+  id: Uuid,
+  handler: (cwd: string) => void,
+): Promise<UnlistenFn> {
+  return safeListen<string>(`pty:cwd:${id}`, handler);
 }
 
 /// Subscribe to agent-tree snapshots pushed after every registry change.
