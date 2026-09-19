@@ -9,14 +9,20 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 
 mod app;
+mod dock;
 mod ui;
 
 use app::App;
 
 fn main() -> Result<()> {
-    let start_dir = std::env::args()
-        .nth(1)
-        .map(std::path::PathBuf::from)
+    let args = dock::parse_args(std::env::args().skip(1));
+    let follow = dock::follow_host(
+        args.dock,
+        std::env::var("YMUX_IPC").ok(),
+        std::env::var("YMUX_PANE_ID").unwrap_or_default(),
+    );
+    let start_dir = args
+        .dir
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
 
     let mut stdout = io::stdout();
@@ -25,7 +31,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(&mut terminal, start_dir);
+    let result = run(&mut terminal, start_dir, follow.as_ref());
 
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
@@ -37,10 +43,19 @@ fn main() -> Result<()> {
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     start_dir: std::path::PathBuf,
+    follow: Option<&std::sync::mpsc::Receiver<std::path::PathBuf>>,
 ) -> Result<()> {
     let mut app = App::new(start_dir)?;
 
     loop {
+        // Dock mode: apply directory changes pushed by ymux. `event::poll`
+        // below wakes at least every 100 ms, which bounds the latency.
+        if let Some(rx) = follow {
+            while let Ok(dir) = rx.try_recv() {
+                app.change_dir(&dir);
+            }
+        }
+
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {

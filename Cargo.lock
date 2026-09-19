@@ -6376,6 +6376,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "tempfile",
+ "yipc",
  "ytheme",
  "yversion",
 ]
