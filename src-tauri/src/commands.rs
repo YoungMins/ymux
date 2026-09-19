@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use std::path::Path;
 
+use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
 use crate::git;
@@ -182,6 +183,53 @@ pub fn set_active_workspace(state: State<'_, AppState>, id: u32) -> YmuxResult<(
 #[tauri::command]
 pub fn get_pane_cwd(state: State<'_, AppState>, id: Uuid) -> Option<String> {
     state.pty.cwd_for(id)
+}
+
+/// Tauri event carrying the full agent snapshot after every registry change.
+pub const AGENTS_CHANGED_EVENT: &str = "agents:changed";
+
+pub fn emit_agents_changed(app: &AppHandle, snapshot: &AgentSnapshot) {
+    if let Err(e) = app.emit(AGENTS_CHANGED_EVENT, snapshot) {
+        tracing::warn!(error = %e, "emit agents:changed failed");
+    }
+}
+
+/// Route one `agent-hook` IPC payload (from `y agent-hook`) into the agent
+/// registry. Payloads for panes this ymux doesn't own — malformed id, or a
+/// pane that has since closed — are dropped.
+pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
+    let Some(ev) = HookEvent::from_payload(payload) else {
+        return;
+    };
+    if !app.state::<AppState>().pty.has(ev.pane_id) {
+        return;
+    }
+    let agents = app.state::<SharedAgents>();
+    let snapshot = {
+        let mut reg = agents.0.lock();
+        if !reg.apply_hook(&ev) {
+            return;
+        }
+        reg.snapshot()
+    };
+    emit_agents_changed(app, &snapshot);
+}
+
+/// Current agent snapshot, for the frontend's initial render.
+#[tauri::command]
+pub fn get_agents(agents: State<'_, SharedAgents>) -> AgentSnapshot {
+    agents.0.lock().snapshot()
+}
+
+/// Install (`true`) or remove (`false`) ymux's Claude Code hooks, then persist
+/// the setting. The file is written first: if that fails (e.g. unparseable
+/// settings.json) the error reaches the UI and the setting is not flipped.
+#[tauri::command]
+pub fn set_agent_tracking(state: State<'_, AppState>, enabled: bool) -> YmuxResult<()> {
+    crate::agent_hooks::set_enabled(enabled)?;
+    state.config.update(|c| c.agent_tracking = enabled);
+    state.config.flush()?;
+    Ok(())
 }
 
 /// Open a URL in the system default browser. Only `http://` and `https://`

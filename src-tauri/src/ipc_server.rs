@@ -6,7 +6,7 @@
 use std::io::Write;
 
 use tauri::{AppHandle, Emitter};
-use yipc::{IpcMessage, IpcServer, MessageHandler};
+use yipc::{IpcMessage, IpcServer, MessageHandler, AGENT_HOOK_KIND};
 
 /// Tauri event name emitted for every incoming IPC message.
 const IPC_EVENT: &str = "ymux://ipc-message";
@@ -28,10 +28,19 @@ struct IpcEventPayload {
 /// dropped on app exit).
 pub fn start_ipc_server(app: AppHandle) -> String {
     let handler: MessageHandler = Box::new(move |msg: IpcMessage, writer: &mut dyn Write| {
-        // Serialize the message to a JSON Value for the event payload.
-        if let Ok(value) = serde_json::to_value(&msg) {
-            let payload = IpcEventPayload { message: value };
-            let _ = app.emit(IPC_EVENT, &payload);
+        match &msg {
+            // Agent-tree hook relayed by `y agent-hook`: into the registry,
+            // not onto the generic frontend channel.
+            IpcMessage::Event { kind, payload } if kind == AGENT_HOOK_KIND => {
+                crate::commands::apply_agent_hook(&app, payload);
+            }
+            _ => {
+                // Serialize the message to a JSON Value for the event payload.
+                if let Ok(value) = serde_json::to_value(&msg) {
+                    let payload = IpcEventPayload { message: value };
+                    let _ = app.emit(IPC_EVENT, &payload);
+                }
+            }
         }
 
         // Always acknowledge.

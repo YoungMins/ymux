@@ -38,6 +38,7 @@ fn main() {
     tauri::Builder::default()
         .manage(state)
         .manage(eb_registry)
+        .manage(ymux_lib::agents::SharedAgents::default())
         .invoke_handler(tauri::generate_handler![
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
@@ -74,6 +75,8 @@ fn main() {
             ymux_lib::settings::load_syntax_theme,
             ymux_lib::settings::save_syntax_theme,
             ymux_lib::settings::open_config_path,
+            ymux_lib::commands::get_agents,
+            ymux_lib::commands::set_agent_tracking,
         ])
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -98,6 +101,14 @@ fn main() {
             let retention = std::time::Duration::from_secs(u64::from(retention_hours) * 3600);
             if let Err(e) = ymux_lib::paste_images::prune(retention) {
                 tracing::warn!(error = %e, "failed to prune old paste images at startup");
+            }
+            // While agent tracking is on, re-run the hook install on every
+            // launch: a reinstall to another directory would otherwise leave
+            // Claude Code calling a stale `y` path.
+            if state.config.snapshot().agent_tracking {
+                if let Err(e) = ymux_lib::agent_hooks::set_enabled(true) {
+                    tracing::warn!(error = %e, "failed to refresh Claude Code hooks at startup");
+                }
             }
             start_pty_event_pump(app.handle().clone());
             start_update_checker(app.handle().clone());
