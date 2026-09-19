@@ -184,8 +184,41 @@ fn read_settings(path: &Path) -> YmuxResult<Option<Value>> {
     }
 }
 
-/// Atomic write (temp file + rename). Before the first write ever, the
-/// original is copied to `settings.json.ymux-bak`.
+/// The file a write to `path` should actually replace: `path` resolved
+/// through any symlinks when it exists, so a symlinked `settings.json` (e.g.
+/// managed by a dotfiles repo) stays a link and its target gets the new
+/// content. A missing file is written at `path` itself.
+fn write_target(path: &Path) -> YmuxResult<PathBuf> {
+    match fs::canonicalize(path) {
+        Ok(real) => Ok(real),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Atomically replace `target` with `text`: write a sibling temp file, flush
+/// it to disk, rename it over `target`. The temp file never outlives a
+/// failure.
+fn replace_file(target: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = sibling(target, "ymux-tmp");
+    let result = (|| {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        // Durable before the rename, or a crash could leave an empty file
+        // where the user's settings were.
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, target)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Atomic write (temp file + rename) through symlinks. Before the first write
+/// ever, the original is copied to `settings.json.ymux-bak`.
 fn write_settings(path: &Path, value: &Value) -> YmuxResult<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -194,11 +227,9 @@ fn write_settings(path: &Path, value: &Value) -> YmuxResult<()> {
     if path.exists() && !backup.exists() {
         fs::copy(path, &backup)?;
     }
-    let tmp = sibling(path, "ymux-tmp");
     let mut text = serde_json::to_string_pretty(value)?;
     text.push('\n');
-    fs::write(&tmp, text)?;
-    fs::rename(&tmp, path)?;
+    replace_file(&write_target(path)?, &text)?;
     Ok(())
 }
 
@@ -455,6 +486,57 @@ mod tests {
         assert!(uninstall_at(&path).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
         assert!(!sibling(&path, "ymux-bak").exists());
+    }
+
+    #[test]
+    fn write_target_is_the_path_itself_when_missing_and_canonical_otherwise() {
+        let dir = tempdir();
+        let missing = dir.join("settings.json");
+        assert_eq!(write_target(&missing).unwrap(), missing);
+        std::fs::write(&missing, "{}").unwrap();
+        assert_eq!(
+            write_target(&missing).unwrap(),
+            std::fs::canonicalize(&missing).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_failed_replace_removes_its_temp_file() {
+        // A directory can't be replaced by a file on any platform, so the
+        // rename fails after the temp file was written.
+        let target = tempdir().join("settings.json");
+        std::fs::create_dir_all(&target).unwrap();
+        assert!(replace_file(&target, "{}\n").is_err());
+        assert!(!sibling(&target, "ymux-tmp").exists(), "temp file left behind");
+        assert!(target.is_dir(), "target untouched");
+    }
+
+    #[test]
+    fn replace_file_writes_the_content() {
+        let target = tempdir().join("settings.json");
+        std::fs::write(&target, "old").unwrap();
+        replace_file(&target, "new\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new\n");
+        assert!(!sibling(&target, "ymux-tmp").exists());
+    }
+
+    /// A dotfiles-managed `settings.json` symlink must stay a symlink; the
+    /// file it points at is what gets rewritten. (Unix only: creating a
+    /// symlink on Windows needs Developer Mode or admin.)
+    #[cfg(unix)]
+    #[test]
+    fn install_through_a_symlink_rewrites_the_target_and_keeps_the_link() {
+        let dir = tempdir();
+        let real = dir.join("dotfiles-settings.json");
+        std::fs::write(&real, FOREIGN).unwrap();
+        let link = dir.join("settings.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        install_at(&link, &cmd()).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(ours_in(&read(&real), "Stop"), vec![cmd()]);
     }
 
     #[test]
