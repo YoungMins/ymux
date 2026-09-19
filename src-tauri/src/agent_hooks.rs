@@ -518,7 +518,10 @@ mod tests {
         let target = tempdir().join("settings.json");
         std::fs::create_dir_all(&target).unwrap();
         assert!(replace_file(&target, "{}\n").is_err());
-        assert!(!sibling(&target, "ymux-tmp").exists(), "temp file left behind");
+        assert!(
+            !sibling(&target, "ymux-tmp").exists(),
+            "temp file left behind"
+        );
         assert!(target.is_dir(), "target untouched");
     }
 
