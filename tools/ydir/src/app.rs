@@ -214,6 +214,28 @@ impl App {
         Ok(())
     }
 
+    /// Navigate the active panel to `path`, as if the user had entered it.
+    /// Used by dock mode when ymux reports a new cwd. A path that is not a
+    /// directory, or that cannot be listed, leaves the panel exactly as it
+    /// was and returns `false`. The host sends whatever the shell reported,
+    /// so it can be stale by the time it arrives.
+    pub fn change_dir(&mut self, path: &Path) -> bool {
+        if !path.is_dir() {
+            return false;
+        }
+        let show_hidden = self.show_hidden;
+        let panel = self.active_panel_mut();
+        let prev_cwd = std::mem::replace(&mut panel.cwd, path.to_path_buf());
+        let prev_selected = std::mem::replace(&mut panel.selected, 0);
+        if panel.reload(show_hidden).is_err() {
+            panel.cwd = prev_cwd;
+            panel.selected = prev_selected;
+            let _ = panel.reload(show_hidden);
+            return false;
+        }
+        true
+    }
+
     pub fn refresh(&mut self) -> Result<()> {
         self.left.reload(self.show_hidden)?;
         self.right.reload(self.show_hidden)?;
@@ -679,5 +701,32 @@ mod tests {
         app.enter_dir().unwrap();
         assert!(app.open_in_ycode.is_none());
         assert!(app.status_msg.as_ref().unwrap().contains("Binary file"));
+    }
+
+    #[test]
+    fn change_dir_navigates_the_active_panel() {
+        let (_tmp, path) = setup_temp_dir();
+        let sub = path.join("subdir");
+        fs::write(sub.join("inner.txt"), "x").unwrap();
+        let mut app = App::new(path.clone()).unwrap();
+        app.move_down();
+
+        assert!(app.change_dir(&sub));
+        assert_eq!(app.left.cwd, sub);
+        assert_eq!(app.left.selected, 0);
+        assert!(app.left.entries.iter().any(|e| e.name == "inner.txt"));
+        // Only the active panel follows, the same as pressing Enter on a dir.
+        assert_eq!(app.right.cwd, path);
+    }
+
+    #[test]
+    fn change_dir_ignores_missing_or_non_directory_paths() {
+        let (_tmp, path) = setup_temp_dir();
+        let mut app = App::new(path.clone()).unwrap();
+
+        assert!(!app.change_dir(&path.join("does-not-exist")));
+        assert!(!app.change_dir(&path.join("file_a.txt")));
+        assert_eq!(app.left.cwd, path);
+        assert!(!app.left.entries.is_empty());
     }
 }
