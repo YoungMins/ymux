@@ -23,7 +23,7 @@ mod server;
 
 pub use client::IpcClient;
 pub use protocol::{CommandDef, IpcMessage, AGENT_HOOK_KIND};
-pub use server::{IpcServer, MessageHandler};
+pub use server::{IpcServer, MessageHandler, WRITE_TIMEOUT};
 
 /// Errors produced by the IPC layer.
 #[derive(Debug, thiserror::Error)]

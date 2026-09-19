@@ -3,10 +3,11 @@
 //! On Unix: uses a Unix domain socket.
 //! On Windows (or as fallback): uses TCP on localhost.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use crate::protocol::IpcMessage;
 use crate::IpcResult;
@@ -21,11 +22,52 @@ pub type MessageHandler = Box<dyn Fn(IpcMessage, &mut dyn Write) + Send + Sync>;
 /// pushes host → tool messages.
 type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
+/// Shuts one client's socket down in both directions.
+type Closer = Arc<dyn Fn() + Send + Sync>;
+
+/// How long one socket write to a client may block. `send_to` runs on the
+/// host's command threads, so a client that stops reading must not be able
+/// to stall it for longer than this once its socket buffer is full.
+pub const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
+
 /// A client that has identified itself with `Hello`.
 struct ClientEntry {
     conn: u64,
     tool: String,
     writer: SharedWriter,
+    close: Closer,
+}
+
+/// The per-client socket operations the server needs, for both transports.
+trait ClientStream: Read + Write + Send + Sync + Sized + 'static {
+    fn try_clone(&self) -> io::Result<Self>;
+    fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()>;
+    fn shutdown_both(&self);
+}
+
+impl ClientStream for std::net::TcpStream {
+    fn try_clone(&self) -> io::Result<Self> {
+        std::net::TcpStream::try_clone(self)
+    }
+    fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
+        std::net::TcpStream::set_write_timeout(self, dur)
+    }
+    fn shutdown_both(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+#[cfg(unix)]
+impl ClientStream for std::os::unix::net::UnixStream {
+    fn try_clone(&self) -> io::Result<Self> {
+        std::os::unix::net::UnixStream::try_clone(self)
+    }
+    fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
+        std::os::unix::net::UnixStream::set_write_timeout(self, dur)
+    }
+    fn shutdown_both(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
 }
 
 type ClientRegistry = Arc<Mutex<Vec<ClientEntry>>>;
@@ -81,27 +123,32 @@ impl IpcServer {
     /// Send `msg` to every connected client that introduced itself with
     /// `Hello { tool, .. }` under this tool name, and return how many it
     /// reached. Zero is not an error, because the tool may simply not be
-    /// running. A client whose write fails is dropped from the registry.
-    /// Its reader thread notices the dead socket on its own.
+    /// running.
+    ///
+    /// A client whose write fails or times out (see [`WRITE_TIMEOUT`]) is
+    /// dropped from the registry and its socket shut down: a timed-out
+    /// write may have left half a line on the wire, so the stream cannot be
+    /// trusted again. Its reader thread then ends on its own.
     pub fn send_to(&self, tool: &str, msg: &IpcMessage) -> IpcResult<usize> {
         let line = msg.to_line()?;
         // Clone the writers out so no socket write happens under the
         // registry lock.
-        let targets: Vec<(u64, SharedWriter)> = self
+        let targets: Vec<(u64, SharedWriter, Closer)> = self
             .clients
             .lock()
             .unwrap()
             .iter()
             .filter(|c| c.tool == tool)
-            .map(|c| (c.conn, Arc::clone(&c.writer)))
+            .map(|c| (c.conn, Arc::clone(&c.writer), Arc::clone(&c.close)))
             .collect();
         let mut sent = 0;
         let mut dead = Vec::new();
-        for (conn, writer) in targets {
+        for (conn, writer, close) in targets {
             let mut w = writer.lock().unwrap();
             if w.write_all(line.as_bytes()).is_ok() && w.flush().is_ok() {
                 sent += 1;
             } else {
+                close();
                 dead.push(conn);
             }
         }
@@ -175,22 +222,7 @@ impl IpcServer {
                     }
                     match stream {
                         Ok(stream) => {
-                            let handler = Arc::clone(&handler);
-                            let stop3 = Arc::clone(&stop2);
-                            let clients = Arc::clone(&clients);
-                            thread::Builder::new()
-                                .name("ymux-ipc-client".into())
-                                .spawn(move || {
-                                    let Ok(writer) = stream.try_clone() else {
-                                        return;
-                                    };
-                                    // Box first: the unsizing coercion does
-                                    // not reach through `Mutex`.
-                                    let writer: Box<dyn Write + Send> = Box::new(writer);
-                                    let writer: SharedWriter = Arc::new(Mutex::new(writer));
-                                    Self::serve_client(stream, writer, &handler, &stop3, &clients);
-                                })
-                                .ok();
+                            Self::spawn_client(stream, &handler, &stop2, &clients);
                         }
                         Err(e) => {
                             if stop2.load(Ordering::SeqCst) {
@@ -232,22 +264,7 @@ impl IpcServer {
                     }
                     match stream {
                         Ok(stream) => {
-                            let handler = Arc::clone(&handler);
-                            let stop3 = Arc::clone(&stop2);
-                            let clients = Arc::clone(&clients);
-                            thread::Builder::new()
-                                .name("ymux-ipc-client".into())
-                                .spawn(move || {
-                                    let Ok(writer) = stream.try_clone() else {
-                                        return;
-                                    };
-                                    // Box first: the unsizing coercion does
-                                    // not reach through `Mutex`.
-                                    let writer: Box<dyn Write + Send> = Box::new(writer);
-                                    let writer: SharedWriter = Arc::new(Mutex::new(writer));
-                                    Self::serve_client(stream, writer, &handler, &stop3, &clients);
-                                })
-                                .ok();
+                            Self::spawn_client(stream, &handler, &stop2, &clients);
                         }
                         Err(e) => {
                             if stop2.load(Ordering::SeqCst) {
@@ -262,6 +279,36 @@ impl IpcServer {
         Ok((address, handle))
     }
 
+    /// Serve one accepted connection on its own thread. Writes to it, from
+    /// replies and from `send_to` alike, time out after [`WRITE_TIMEOUT`].
+    fn spawn_client<S: ClientStream>(
+        stream: S,
+        handler: &Arc<MessageHandler>,
+        stop: &Arc<AtomicBool>,
+        clients: &ClientRegistry,
+    ) {
+        let handler = Arc::clone(handler);
+        let stop = Arc::clone(stop);
+        let clients = Arc::clone(clients);
+        thread::Builder::new()
+            .name("ymux-ipc-client".into())
+            .spawn(move || {
+                let (Ok(writer), Ok(closer)) = (stream.try_clone(), stream.try_clone()) else {
+                    return;
+                };
+                if writer.set_write_timeout(Some(WRITE_TIMEOUT)).is_err() {
+                    return;
+                }
+                let close: Closer = Arc::new(move || closer.shutdown_both());
+                // Box first: the unsizing coercion does not reach through
+                // `Mutex`.
+                let writer: Box<dyn Write + Send> = Box::new(writer);
+                let writer: SharedWriter = Arc::new(Mutex::new(writer));
+                Self::serve_client(stream, writer, close, &handler, &stop, &clients);
+            })
+            .ok();
+    }
+
     /// Read one client's messages until it disconnects, handing each to
     /// `handler`. A `Hello` registers the client under its tool name so
     /// `send_to` can reach it. The registration is removed when the loop
@@ -269,6 +316,7 @@ impl IpcServer {
     fn serve_client<R: Read>(
         reader: R,
         writer: SharedWriter,
+        close: Closer,
         handler: &MessageHandler,
         stop: &AtomicBool,
         clients: &ClientRegistry,
@@ -299,6 +347,7 @@ impl IpcServer {
                     conn,
                     tool: tool.clone(),
                     writer: Arc::clone(&writer),
+                    close: Arc::clone(&close),
                 });
             }
             let mut w = writer.lock().unwrap();
@@ -394,6 +443,46 @@ mod tests {
         };
         assert_eq!(server.send_to("ydir", &msg).unwrap(), 1);
         assert_eq!(ydir.recv().unwrap(), msg);
+        server.shutdown();
+    }
+
+    /// ymux calls `send_to` from a Tauri command. A client that stops
+    /// reading (hung, or suspended in the debugger) must cost at most the
+    /// write timeout per call, and then be dropped, rather than wedging the
+    /// caller once the socket buffer fills.
+    #[test]
+    fn a_client_that_never_reads_cannot_block_send_to() {
+        let server = ack_server();
+        let mut c = IpcClient::connect(server.address()).unwrap();
+        c.send(&hello("ydir")).unwrap();
+        assert_eq!(c.recv().unwrap(), IpcMessage::Ack);
+
+        // 1 MiB per message: a handful fill any loopback socket buffer.
+        let msg = IpcMessage::ChangeDir {
+            path: "x".repeat(1 << 20),
+        };
+        let start = Instant::now();
+        let mut dropped = false;
+        for _ in 0..64 {
+            let t = Instant::now();
+            let sent = server.send_to("ydir", &msg).unwrap();
+            assert!(
+                t.elapsed() < Duration::from_secs(2),
+                "send_to blocked for {:?}",
+                t.elapsed()
+            );
+            if sent == 0 {
+                dropped = true;
+                break;
+            }
+        }
+        assert!(dropped, "a client that never reads was never dropped");
+        assert!(start.elapsed() < Duration::from_secs(10));
+        // Once dropped it stays dropped, at no cost.
+        let t = Instant::now();
+        assert_eq!(server.send_to("ydir", &msg).unwrap(), 0);
+        assert!(t.elapsed() < Duration::from_millis(100));
+        drop(c);
         server.shutdown();
     }
 

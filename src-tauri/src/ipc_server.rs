@@ -76,7 +76,11 @@ pub fn start_ipc_server(app: AppHandle) -> String {
 /// client registered as `ydir`, and only a yDir started with `--dock`
 /// registers. Reaching nobody is not an error, because the dock may not
 /// have been opened yet.
-#[tauri::command]
+///
+/// `async` so the socket write runs off the main thread: a sync command
+/// runs on it, and a yDir that stopped reading could otherwise freeze the
+/// window for up to `yipc::WRITE_TIMEOUT` per call.
+#[tauri::command(async)]
 pub fn filedock_change_dir(ipc: State<'_, IpcServerState>, path: String) -> YmuxResult<()> {
     ipc.0
         .send_to("ydir", &IpcMessage::ChangeDir { path })
