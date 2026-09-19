@@ -571,7 +571,10 @@ mod tests {
             PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
         let expected = format!("ymux-pane=[{}]", spec.id);
         let text = capture_until(&rx, &expected);
-        assert!(text.contains(&expected), "expected {expected}, got: {text:?}");
+        assert!(
+            text.contains(&expected),
+            "expected {expected}, got: {text:?}"
+        );
         drop(session);
     }
 
@@ -584,6 +587,10 @@ mod tests {
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
             PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
-        assert!(session.pid().is_some_and(|p| p > 0), "pid: {:?}", session.pid());
+        assert!(
+            session.pid().is_some_and(|p| p > 0),
+            "pid: {:?}",
+            session.pid()
+        );
     }
 }
