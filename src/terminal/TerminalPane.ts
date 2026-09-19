@@ -544,6 +544,11 @@ export class TerminalPane implements Pane {
     this.isFocused = false;
   }
 
+  /// The agent registry reports this pane's agent is waiting on the user.
+  markWaiting(): void {
+    this.statusMachine.onWaiting();
+  }
+
   get status(): PaneStatus {
     return this.statusMachine.status;
   }

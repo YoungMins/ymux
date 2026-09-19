@@ -6,6 +6,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  AgentSnapshot,
   BootstrapPayload,
   Config,
   ShellProfile,
@@ -236,6 +237,14 @@ export const api = {
   /// List all worktrees for the repo rooted at `cwd`.
   gitWorktreeList: (cwd: string): Promise<WorktreeEntry[]> =>
     call("git_worktree_list", { cwd }),
+
+  /// Current agent-tree snapshot (pane id → agents).
+  getAgents: (): Promise<AgentSnapshot> => call("get_agents"),
+
+  /// Install (true) or remove (false) ymux's Claude Code hooks in
+  /// ~/.claude/settings.json and persist the setting.
+  setAgentTracking: (enabled: boolean): Promise<void> =>
+    call("set_agent_tracking", { enabled }),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.
@@ -254,4 +263,11 @@ export function onPaneExit(
   handler: (code: number) => void,
 ): Promise<UnlistenFn> {
   return safeListen<number>(`pty:exit:${id}`, handler);
+}
+
+/// Subscribe to agent-tree snapshots pushed after every registry change.
+export function onAgentsChanged(
+  handler: (snapshot: AgentSnapshot) => void,
+): Promise<UnlistenFn> {
+  return safeListen<AgentSnapshot>("agents:changed", handler);
 }

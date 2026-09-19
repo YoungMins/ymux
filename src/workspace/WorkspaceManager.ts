@@ -4,6 +4,7 @@
 // explicitly asked for.
 
 import type {
+  AgentSnapshot,
   Config,
   HotKeyDef,
   LayoutNode,
@@ -37,6 +38,7 @@ import { promptWorktreeBranch } from "./WorktreeModal";
 import { askConfirm } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
+import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -85,6 +87,11 @@ export class WorkspaceManager {
   onDefaultShellChange?: (name: string) => void;
   /// Fired after `setFontSize` so an open Settings panel can follow along.
   onFontSizeChange?: (px: number) => void;
+  /// Latest agent-tree snapshot from the backend (pane id → agents).
+  private _agents: AgentSnapshot = {};
+  /// Tree listeners (the workspace panel), fired when agents change or any
+  /// layout/pane metadata changes. A set so other views can subscribe too.
+  private treeListeners = new Set<() => void>();
 
   constructor(
     private host: HTMLElement,
@@ -905,6 +912,56 @@ export class WorkspaceManager {
     return this.config.worktree_base_dir;
   }
 
+  get agents(): AgentSnapshot {
+    return this._agents;
+  }
+
+  /// Subscribe to tree-relevant changes. Returns an unsubscribe function.
+  onTreeChange(cb: () => void): () => void {
+    this.treeListeners.add(cb);
+    return () => {
+      this.treeListeners.delete(cb);
+    };
+  }
+
+  private notifyTree(): void {
+    for (const cb of this.treeListeners) cb();
+  }
+
+  /// Take a new backend snapshot. A lead that just started waiting on the
+  /// user raises its pane to `attention`, unless the user is already looking
+  /// at that exact pane (same bar as the bell notification).
+  applyAgents(next: AgentSnapshot): void {
+    for (const id of newlyWaitingPanes(this._agents, next)) {
+      if (this.isWatching(id)) continue;
+      const pane = this.findPaneById(id);
+      if (pane instanceof TerminalPane) pane.markWaiting();
+    }
+    this._agents = next;
+    this.notifyTree();
+  }
+
+  /// Switch to the workspace owning `paneId` (hydrating it if never visited)
+  /// and focus that pane. Used by the tree's pane and agent rows.
+  async focusPane(paneId: Uuid): Promise<void> {
+    const wsId = workspaceIdOfPane(this.config.workspaces, paneId);
+    if (wsId === null) return;
+    if (wsId !== this.activeId) await this.activate(wsId);
+    this.paneCaches.get(wsId)?.get(paneId)?.focus();
+  }
+
+  get agentTracking(): boolean {
+    return this.config.agent_tracking ?? false;
+  }
+
+  /// Install/remove the Claude Code hooks, then record the choice. Rejects
+  /// (setting unchanged) if the backend couldn't write settings.json.
+  async setAgentTracking(enabled: boolean): Promise<void> {
+    await api.setAgentTracking(enabled);
+    this.config.agent_tracking = enabled;
+    this.persistDebounced();
+  }
+
   /// Can the user see pane `paneId` right now — window focused and its
   /// workspace the visible one? This drives the *status* classification
   /// (`done` = you saw it finish, `attention` = you didn't) and how long a
@@ -1051,6 +1108,8 @@ export class WorkspaceManager {
   /// Save the current config to disk. Debounced by 500 ms so rapid changes
   /// collapse into a single write.
   private persistDebounced(): void {
+    // Every layout / pane-metadata mutation funnels through here — the tree follows it.
+    this.notifyTree();
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
     }
