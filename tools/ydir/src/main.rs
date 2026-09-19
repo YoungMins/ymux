@@ -1,4 +1,5 @@
 use std::io;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -46,20 +47,27 @@ fn run(
     follow: Option<&std::sync::mpsc::Receiver<std::path::PathBuf>>,
 ) -> Result<()> {
     let mut app = App::new(start_dir)?;
+    let mut pending = dock::PendingDir::default();
 
     loop {
-        // Dock mode: apply directory changes pushed by ymux. `event::poll`
+        // Dock mode: apply directory changes pushed by ymux, but only once
+        // the user has stopped typing (see `PendingDir`). `event::poll`
         // below wakes at least every 100 ms, which bounds the latency.
         if let Some(rx) = follow {
             while let Ok(dir) = rx.try_recv() {
+                pending.push(dir);
+            }
+            let input_pending = event::poll(Duration::ZERO)?;
+            if let Some(dir) = pending.take_ready(Instant::now(), input_pending) {
                 app.change_dir(&dir);
             }
         }
 
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
+        if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                pending.on_key(Instant::now());
                 if key.kind == KeyEventKind::Press {
                     // Run dialog takes priority
                     if app.run_dialog.is_some() {

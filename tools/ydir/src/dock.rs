@@ -6,8 +6,50 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
+use std::time::{Duration, Instant};
 
 use yipc::{IpcClient, IpcMessage};
+
+/// How long the keyboard must be idle before a pushed directory is applied.
+pub const QUIET: Duration = Duration::from_millis(300);
+
+/// A `ChangeDir` waiting for a safe moment to land.
+///
+/// Swapping the listing under a user who is mid-keystroke turns their next
+/// key into an action on a different file: `d` deletes without asking, and
+/// it would delete row 0 of the new folder. So a pushed directory waits
+/// until nothing is queued in the input and no key has arrived for
+/// [`QUIET`]. Only the latest one is kept, because the host only ever
+/// cares about where the active pane is now.
+#[derive(Debug, Default)]
+pub struct PendingDir {
+    dir: Option<PathBuf>,
+    last_key: Option<Instant>,
+}
+
+impl PendingDir {
+    pub fn push(&mut self, dir: PathBuf) {
+        self.dir = Some(dir);
+    }
+
+    pub fn on_key(&mut self, now: Instant) {
+        self.last_key = Some(now);
+    }
+
+    /// The directory to apply now, if it is safe to. `input_pending` is
+    /// whether an input event is already waiting to be read.
+    pub fn take_ready(&mut self, now: Instant, input_pending: bool) -> Option<PathBuf> {
+        if input_pending {
+            return None;
+        }
+        if let Some(last) = self.last_key {
+            if now.saturating_duration_since(last) < QUIET {
+                return None;
+            }
+        }
+        self.dir.take()
+    }
+}
 
 /// Command line: `ydir [--dock] [DIR]`.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -72,7 +114,6 @@ pub fn follow_host(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
     use yipc::{IpcMessage, IpcServer, MessageHandler};
 
     fn args(list: &[&str]) -> Args {
@@ -106,6 +147,59 @@ mod tests {
         assert!(follow_host(false, Some("tcp:127.0.0.1:1".into()), String::new()).is_none());
         assert!(follow_host(true, None, String::new()).is_none());
         assert!(follow_host(true, Some(String::new()), String::new()).is_none());
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn pending_dir_applies_when_the_user_is_idle() {
+        let t0 = Instant::now();
+        let mut p = PendingDir::default();
+        p.push(PathBuf::from("/a"));
+        // No key ever pressed, nothing queued: apply right away.
+        assert_eq!(p.take_ready(t0, false), Some(PathBuf::from("/a")));
+        assert_eq!(p.take_ready(t0, false), None);
+    }
+
+    #[test]
+    fn pending_dir_waits_for_a_quiet_period_after_a_key() {
+        let t0 = Instant::now();
+        let mut p = PendingDir::default();
+        p.on_key(t0);
+        p.push(PathBuf::from("/a"));
+        assert_eq!(p.take_ready(t0 + ms(100), false), None);
+        assert_eq!(p.take_ready(t0 + QUIET - ms(1), false), None);
+        // Another key restarts the quiet period.
+        p.on_key(t0 + ms(250));
+        assert_eq!(p.take_ready(t0 + QUIET, false), None);
+        assert_eq!(
+            p.take_ready(t0 + ms(250) + QUIET, false),
+            Some(PathBuf::from("/a"))
+        );
+    }
+
+    #[test]
+    fn pending_dir_keeps_only_the_latest_target() {
+        let t0 = Instant::now();
+        let mut p = PendingDir::default();
+        p.on_key(t0);
+        p.push(PathBuf::from("/a"));
+        p.push(PathBuf::from("/b"));
+        assert_eq!(p.take_ready(t0 + QUIET, false), Some(PathBuf::from("/b")));
+        assert_eq!(p.take_ready(t0 + QUIET * 2, false), None);
+    }
+
+    #[test]
+    fn pending_dir_never_jumps_ahead_of_queued_input() {
+        // A key already sitting in the input queue was typed against the
+        // listing on screen, so it has to be handled before the jump.
+        let t0 = Instant::now();
+        let mut p = PendingDir::default();
+        p.push(PathBuf::from("/a"));
+        assert_eq!(p.take_ready(t0, true), None);
+        assert_eq!(p.take_ready(t0, false), Some(PathBuf::from("/a")));
     }
 
     #[test]

@@ -219,9 +219,15 @@ impl App {
     /// directory, or that cannot be listed, leaves the panel exactly as it
     /// was and returns `false`. The host sends whatever the shell reported,
     /// so it can be stale by the time it arrives.
+    ///
+    /// Asking for the directory the panel already shows is a no-op that
+    /// keeps the cursor where the user left it.
     pub fn change_dir(&mut self, path: &Path) -> bool {
         if !path.is_dir() {
             return false;
+        }
+        if same_dir(&self.active_panel().cwd, path) {
+            return true;
         }
         let show_hidden = self.show_hidden;
         let panel = self.active_panel_mut();
@@ -335,6 +341,17 @@ pub fn is_binary_file(path: &std::path::Path) -> bool {
         Err(_) => return false,
     };
     buf[..n].contains(&0u8)
+}
+
+/// Whether `a` and `b` name the same directory. Shells report their cwd
+/// in their own spelling (drive-letter case, a trailing separator), so
+/// fall back to comparing the canonical forms.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (fs::canonicalize(a), fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if x == y
+        )
 }
 
 fn is_executable(name: &str) -> bool {
@@ -728,5 +745,23 @@ mod tests {
         assert!(!app.change_dir(&path.join("file_a.txt")));
         assert_eq!(app.left.cwd, path);
         assert!(!app.left.entries.is_empty());
+    }
+
+    /// The host re-sends the directory the panel is already in (a prompt
+    /// redraw, a pane switch back and forth). That must not move the
+    /// cursor: a `d` or `p` typed a moment later would otherwise act on
+    /// row 0 instead of the row the user picked.
+    #[test]
+    fn change_dir_to_the_current_dir_keeps_the_cursor() {
+        let (_tmp, path) = setup_temp_dir();
+        let mut app = App::new(path.clone()).unwrap();
+        app.move_down();
+        app.move_down();
+        let picked = app.left.selected;
+        assert!(picked > 0);
+
+        assert!(app.change_dir(&path));
+        assert_eq!(app.left.selected, picked);
+        assert_eq!(app.left.cwd, path);
     }
 }
