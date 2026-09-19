@@ -8,6 +8,17 @@ import {
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
 import { askText, askConfirm } from "../ui/Dialog";
+import type { Uuid } from "../types";
+import {
+  buildAgentTree,
+  isExpanded,
+  parseExpanded,
+  EXPANDED_KEY,
+  type AgentRow,
+  type ExpandedMap,
+  type PaneRow,
+  type TreeLabels,
+} from "./agentTree";
 
 const COLLAPSE_KEY = "ymux:workspace-panel:collapsed";
 
@@ -39,6 +50,31 @@ function writeCollapsed(collapsed: boolean): void {
   } catch {
     /* localStorage unavailable — collapse just won't persist */
   }
+}
+
+/// Per-workspace tree expansion, persisted under `ymux.workspaceTree.expanded`.
+function readExpanded(): ExpandedMap {
+  try {
+    return parseExpanded(localStorage.getItem(EXPANDED_KEY));
+  } catch {
+    return {};
+  }
+}
+
+function writeExpanded(map: ExpandedMap): void {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(map));
+  } catch {
+    /* localStorage unavailable — expansion just won't persist */
+  }
+}
+
+function treeLabels(): TreeLabels {
+  return {
+    terminal: t("terminal.defaultTitle"),
+    browser: t("tree.browser"),
+    subagent: t("tree.subagent"),
+  };
 }
 
 export function mountWorkspacePanel(
@@ -74,6 +110,13 @@ export function mountWorkspacePanel(
   /// Rows in render order, so a row's array index *is* its position in
   /// `manager.workspaces` — what `moveWorkspace` takes.
   const rows: HTMLElement[] = [];
+  /// Per-workspace container for pane + agent rows. A *sibling* after the
+  /// workspace row, never inside it: `rows` must stay workspace-rows-only
+  /// because its indices feed `moveWorkspace`, and a press inside a
+  /// `.workspace-panel__row` would start a workspace drag.
+  const childHosts = new Map<number, HTMLElement>();
+  const carets = new Map<number, HTMLButtonElement>();
+  let expanded: ExpandedMap = readExpanded();
 
   // ── Drag-to-reorder ────────────────────────────────────────────────
   // Pointer events, not the HTML5 drag-and-drop API: Tauri's native
@@ -155,7 +198,7 @@ export function mountWorkspacePanel(
       dragJustEnded = false; // a fresh press always re-arms clicking
       if (ev.button !== 0) return;
       // Never start a drag off the delete button — that click must stay exact.
-      if ((ev.target as HTMLElement | null)?.closest(".workspace-panel__del")) {
+      if ((ev.target as HTMLElement | null)?.closest(".workspace-panel__del, .workspace-panel__caret")) {
         return;
       }
       const fromIndex = rows.indexOf(row);
@@ -165,6 +208,19 @@ export function mountWorkspacePanel(
       window.addEventListener("pointerup", onDragEnd);
       window.addEventListener("pointercancel", onDragEnd);
     });
+
+    const caret = document.createElement("button");
+    caret.className = "workspace-panel__caret";
+    caret.type = "button";
+    caret.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (dragJustEnded) return;
+      expanded = { ...expanded, [String(id)]: !isExpanded(expanded, id) };
+      writeExpanded(expanded);
+      renderTree();
+    });
+    row.appendChild(caret);
+    carets.set(id, caret);
 
     const btn = document.createElement("button");
     btn.className = "workspace-panel__ws";
@@ -224,9 +280,82 @@ export function mountWorkspacePanel(
     return row;
   }
 
+  function statusTitle(label: string, key: string | null): string {
+    return key === null ? label : `${label} — ${t(key)}`;
+  }
+
+  function makePaneRow(pane: PaneRow): HTMLElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "workspace-panel__pane";
+    btn.dataset.status = pane.status;
+    btn.textContent = pane.label;
+    btn.title = statusTitle(pane.label, pane.status === "idle" ? null : `status.${pane.status}`);
+    btn.addEventListener("click", () => {
+      void manager.focusPane(pane.paneId).then(highlight);
+    });
+    return btn;
+  }
+
+  function makeAgentRow(paneId: Uuid, agent: AgentRow): HTMLElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `workspace-panel__agent workspace-panel__agent--depth${agent.depth}`;
+    btn.dataset.status = agent.status;
+    const dot = document.createElement("span");
+    dot.className = "workspace-panel__agent-dot";
+    dot.textContent = agent.status === "done" ? "✓" : "●";
+    const name = document.createElement("span");
+    name.className = "workspace-panel__agent-name";
+    name.textContent = agent.label;
+    const state = document.createElement("span");
+    state.className = "workspace-panel__agent-state";
+    state.textContent = t(`agent.status.${agent.status}`);
+    btn.append(dot, name, state);
+    const base = statusTitle(agent.label, `agent.status.${agent.status}`);
+    btn.title = agent.tool ? `${base} (${agent.tool})` : base;
+    btn.addEventListener("click", () => {
+      void manager.focusPane(paneId).then(highlight);
+    });
+    return btn;
+  }
+
+  /// Re-render only the pane/agent rows under each workspace. Workspace rows
+  /// are left alone, so an agent update mid-drag never detaches the row
+  /// being dragged.
+  function renderTree(): void {
+    const tree = buildAgentTree(
+      manager.workspaces,
+      manager.agents,
+      (id) => manager.paneStatus.get(id) ?? "idle",
+      treeLabels(),
+    );
+    for (const ws of tree) {
+      const host = childHosts.get(ws.wsId);
+      if (!host) continue;
+      const open = isExpanded(expanded, ws.wsId);
+      const caret = carets.get(ws.wsId);
+      if (caret) {
+        caret.textContent = open ? "▾" : "▸";
+        caret.title = t(open ? "tree.collapse" : "tree.expand");
+        caret.setAttribute("aria-label", caret.title);
+        caret.setAttribute("aria-expanded", String(open));
+      }
+      host.replaceChildren();
+      host.style.display = open ? "" : "none";
+      if (!open) continue;
+      for (const pane of ws.panes) {
+        host.appendChild(makePaneRow(pane));
+        for (const agent of pane.agents) host.appendChild(makeAgentRow(pane.paneId, agent));
+      }
+    }
+  }
+
   function rebuild(): void {
     buttons.clear();
     noteButtons.clear();
+    childHosts.clear();
+    carets.clear();
     rows.length = 0;
     while (list.firstChild) list.removeChild(list.firstChild);
     // Render in `config.workspaces` order — that array *is* the user's order,
@@ -235,8 +364,13 @@ export function mountWorkspacePanel(
       const row = makeRow(ws.id);
       rows.push(row);
       list.appendChild(row);
+      const children = document.createElement("div");
+      children.className = "workspace-panel__children";
+      childHosts.set(ws.id, children);
+      list.appendChild(children);
     }
     highlight();
+    renderTree();
   }
 
   function highlight(): void {
@@ -261,7 +395,11 @@ export function mountWorkspacePanel(
   }
 
   manager.onWorkspacesChange(rebuild);
-  manager.onPaneStatusChange = () => highlight();
+  manager.onPaneStatusChange = () => {
+    highlight();
+    renderTree();
+  };
+  const cleanupTree = manager.onTreeChange(renderTree);
   const cleanupNotesSub = onNotesChange(() => highlight());
   const cleanupLang = onLangChange(() => {
     header.textContent = t("workspace.panelTitle");
@@ -276,6 +414,7 @@ export function mountWorkspacePanel(
   (panel as unknown as { __ymuxHighlight: () => void }).__ymuxHighlight = highlight;
 
   return () => {
+    cleanupTree();
     cleanupLang();
     cleanupNotesSub();
     window.removeEventListener("pointermove", onDragMove);

@@ -734,6 +734,46 @@ const strings: Translations = {
     es: "Requiere atención", fr: "Attention requise", ar: "يتطلب انتباهاً", pt: "Requer atenção",
     ru: "Требует внимания", tr: "Dikkat gerekli", de: "Aufmerksamkeit nötig", vi: "Cần chú ý",
   },
+  "tree.expand": {
+    en: "Show panes", ko: "패널 펼치기", ja: "ペインを表示", zh: "展开窗格", hi: "पैन दिखाएँ",
+    es: "Mostrar paneles", fr: "Afficher les panneaux", ar: "إظهار اللوحات", pt: "Mostrar painéis",
+    ru: "Показать панели", tr: "Panelleri göster", de: "Bereiche anzeigen", vi: "Hiện các khung",
+  },
+  "tree.collapse": {
+    en: "Hide panes", ko: "패널 접기", ja: "ペインを隠す", zh: "折叠窗格", hi: "पैन छिपाएँ",
+    es: "Ocultar paneles", fr: "Masquer les panneaux", ar: "إخفاء اللوحات", pt: "Ocultar painéis",
+    ru: "Скрыть панели", tr: "Panelleri gizle", de: "Bereiche ausblenden", vi: "Ẩn các khung",
+  },
+  "tree.browser": {
+    en: "Browser", ko: "브라우저", ja: "ブラウザー", zh: "浏览器", hi: "ब्राउज़र",
+    es: "Navegador", fr: "Navigateur", ar: "المتصفح", pt: "Navegador",
+    ru: "Браузер", tr: "Tarayıcı", de: "Browser", vi: "Trình duyệt",
+  },
+  "tree.subagent": {
+    en: "subagent", ko: "하위 에이전트", ja: "サブエージェント", zh: "子代理", hi: "उप-एजेंट",
+    es: "subagente", fr: "sous-agent", ar: "وكيل فرعي", pt: "subagente",
+    ru: "субагент", tr: "alt ajan", de: "Subagent", vi: "tác tử con",
+  },
+  "agent.status.working": {
+    en: "working", ko: "작업 중", ja: "作業中", zh: "工作中", hi: "काम कर रहा है",
+    es: "trabajando", fr: "en cours", ar: "يعمل", pt: "trabalhando",
+    ru: "работает", tr: "çalışıyor", de: "arbeitet", vi: "đang làm",
+  },
+  "agent.status.waiting": {
+    en: "waiting", ko: "대기 중", ja: "待機中", zh: "等待中", hi: "प्रतीक्षा में",
+    es: "esperando", fr: "en attente", ar: "بانتظار", pt: "aguardando",
+    ru: "ждёт", tr: "bekliyor", de: "wartet", vi: "đang chờ",
+  },
+  "agent.status.done": {
+    en: "done", ko: "완료", ja: "完了", zh: "完成", hi: "पूर्ण",
+    es: "listo", fr: "terminé", ar: "تم", pt: "concluído",
+    ru: "готово", tr: "bitti", de: "fertig", vi: "xong",
+  },
+  "agent.status.idle": {
+    en: "idle", ko: "유휴", ja: "アイドル", zh: "空闲", hi: "निष्क्रिय",
+    es: "inactivo", fr: "inactif", ar: "خامل", pt: "ocioso",
+    ru: "простаивает", tr: "boşta", de: "untätig", vi: "rảnh",
+  },
   "shortcut.swapPane": {
     en: "Swap pane with previous / next",
     ko: "이전 / 다음 창과 자리 바꾸기",

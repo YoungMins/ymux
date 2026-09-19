@@ -1327,8 +1327,8 @@ body,
 }
 
 .workspace-panel {
-  flex: 0 0 160px;
-  width: 160px;
+  flex: 0 0 200px;
+  width: 200px;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -1520,6 +1520,115 @@ body,
 .workspace-panel__add:hover {
   background: var(--bg-hover);
   color: var(--accent);
+}
+
+/* ── Agent tree (Workspace › Pane › Agent) ────────────────────────────── */
+.workspace-panel__caret {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.workspace-panel__caret:hover {
+  color: var(--accent);
+}
+
+.workspace-panel__children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 2px;
+}
+
+.workspace-panel__pane,
+.workspace-panel__agent {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.workspace-panel__pane {
+  display: block;
+  padding: 0 6px 0 18px;
+  text-overflow: ellipsis;
+}
+
+.workspace-panel__pane:hover,
+.workspace-panel__agent:hover {
+  background: var(--bg-hover);
+}
+
+.workspace-panel__pane[data-status="running"] {
+  background: var(--status-running-bg);
+}
+
+.workspace-panel__pane[data-status="done"] {
+  background: var(--status-done-bg);
+}
+
+.workspace-panel__pane[data-status="attention"] {
+  background: var(--status-attention-bg);
+}
+
+.workspace-panel__agent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  color: var(--fg-muted);
+}
+
+.workspace-panel__agent--depth1 {
+  padding-left: 30px;
+}
+
+.workspace-panel__agent--depth2 {
+  padding-left: 42px;
+}
+
+.workspace-panel__agent-dot {
+  flex: 0 0 auto;
+  font-size: 9px;
+}
+
+.workspace-panel__agent-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+
+.workspace-panel__agent-state {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.workspace-panel__agent[data-status="working"] .workspace-panel__agent-dot {
+  color: var(--status-running);
+}
+
+.workspace-panel__agent[data-status="waiting"] .workspace-panel__agent-dot {
+  color: var(--status-attention);
+}
+
+.workspace-panel__agent[data-status="done"] .workspace-panel__agent-dot {
+  color: var(--status-done);
 }
 
 /* ── Dialogs ──────────────────────────────────────────────────────────────
