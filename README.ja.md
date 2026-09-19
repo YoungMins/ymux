@@ -224,6 +224,7 @@ macOS では以下の `Ctrl` はすべて `Cmd` になります。そうする�
 | `Ctrl+Shift+R`                 | `Cmd+Shift+R`      | フォーカス中のペインの名前を変更    |
 | `Ctrl+Shift+P`                 | `Cmd+Shift+P`      | コマンドパレットを開く              |
 | `Ctrl+Alt+N`                   | `Cmd+Opt+N`        | 現在のワークスペースのノートを切替  |
+| `Ctrl+Shift+E`                 | `Cmd+Shift+E`      | ファイルドック (yDir) を切替        |
 | `Ctrl+V`                       | `Cmd+V`            | クリップボードのテキストを貼り付け (画像 → 一時ファイルのパス) |
 | `Ctrl+F`                       | `Cmd+F`            | ターミナルのスクロールバックを検索  |
 | `Ctrl++` / `Ctrl+-`            | `Cmd++` / `Cmd+-`  | ターミナルの文字サイズを拡大 / 縮小 |

@@ -2,6 +2,7 @@ import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
 import { askText } from "../ui/Dialog";
+import { toggleFileDock } from "../filedock/FileDock";
 
 export interface CommandDef {
   id: string;
@@ -107,6 +108,12 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
         const wsId = manager.activeIdValue;
         toggleNotes(wsId, manager.getWorkspaceName(wsId));
       },
+    },
+    {
+      id: "filedock.toggle",
+      label: () => t("filedock.toggle"),
+      keybinding: "Ctrl+Shift+E",
+      action: () => toggleFileDock(),
     },
     {
       id: "workspace.rename",

@@ -219,6 +219,7 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |
 | `Ctrl+Alt+N`                | `Cmd+Opt+N`        | Toggle notes for active workspace    |
+| `Ctrl+Shift+E`              | `Cmd+Shift+E`      | Toggle file dock (yDir)              |
 | `Ctrl+V`                    | `Cmd+V`            | Paste clipboard text (image → temp-file path) |
 | `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback           |
 | `Ctrl++` / `Ctrl+-`         | `Cmd++` / `Cmd+-`  | Increase / decrease terminal font size |

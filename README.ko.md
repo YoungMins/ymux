@@ -215,6 +215,7 @@ macOS 에서는 아래의 모든 `Ctrl` 이 `Cmd` 로 바뀝니다. 그래야 `C
 | `Ctrl+Shift+R`                 | `Cmd+Shift+R`      | 포커스된 pane 이름 변경             |
 | `Ctrl+Shift+P`                 | `Cmd+Shift+P`      | 커맨드 팔레트 열기                  |
 | `Ctrl+Alt+N`                   | `Cmd+Opt+N`        | 현재 워크스페이스 노트 토글         |
+| `Ctrl+Shift+E`                 | `Cmd+Shift+E`      | 파일 도크(yDir) 토글                |
 | `Ctrl+V`                       | `Cmd+V`            | 클립보드 텍스트 붙여넣기 (이미지 → 임시 파일 경로) |
 | `Ctrl+F`                       | `Cmd+F`            | 터미널 스크롤백 검색                |
 | `Ctrl++` / `Ctrl+-`            | `Cmd++` / `Cmd+-`  | 터미널 글자 크기 확대 / 축소        |

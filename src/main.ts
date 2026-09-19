@@ -18,7 +18,7 @@ import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
-import { mountFileDock } from "./filedock/FileDock";
+import { mountFileDock, toggleFileDock } from "./filedock/FileDock";
 
 async function main(): Promise<void> {
   initLang();
@@ -226,6 +226,13 @@ async function main(): Promise<void> {
         manager.resetFontSize();
         return;
       }
+    }
+
+    // Ctrl+Shift+E toggle the yDir file dock.
+    if (mod && ev.shiftKey && !ev.altKey && (key === "E" || key === "e")) {
+      ev.preventDefault();
+      toggleFileDock();
+      return;
     }
 
     // Ctrl+Shift+P command palette.

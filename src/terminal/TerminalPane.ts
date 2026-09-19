@@ -242,7 +242,7 @@ export class TerminalPane implements Pane {
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
-        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p")) return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e")) return false;
         // Ctrl/Cmd+Shift+Left/Right → swap pane position (window level).
         if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
         // Font zoom. Matched on `code` for the same layout-independence
