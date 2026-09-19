@@ -6404,6 +6404,8 @@ dependencies = [
 name = "ylauncher"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "yipc",
  "ytheme",
 ]
 

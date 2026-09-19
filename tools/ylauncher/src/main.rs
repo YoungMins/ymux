@@ -1,3 +1,4 @@
+mod agent_hook;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -35,6 +36,13 @@ fn main() {
 
     if args[0] == "--version" || args[0] == "-V" {
         println!("y (ylauncher) {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
+    // Hook relay for the ymux agent tree. Must be matched before the
+    // `y<tool>` lookup below, which would otherwise look for `yagent-hook`.
+    if args[0] == "agent-hook" {
+        agent_hook::run(&args[1..]);
         return;
     }
 
