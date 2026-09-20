@@ -140,6 +140,19 @@ export class PaneGroup {
     }
   }
 
+  /// Re-draw the title and the strip from the callbacks, leaving the body
+  /// alone. The 2 s process scan changes labels often — every command that
+  /// starts or finishes — and a full `SplitContainer.render()` would detach
+  /// and re-attach every terminal that often, resetting scrollbars and
+  /// forcing refits on panes that never moved.
+  refreshLabels(): void {
+    if (!this.node) return;
+    const ids = tabIds(this.node);
+    const activeId = ids[this.node.active] ?? ids[0] ?? null;
+    this.titleEl.textContent = activeId ? this.cb.labelOf(activeId) : "";
+    this.renderStrip(this.node);
+  }
+
   dispose(): void {
     this.cleanupLang();
     this.hotkeyBar.dispose();

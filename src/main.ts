@@ -6,7 +6,7 @@ import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatDroppedPaths } from "./terminal/dropPaths";
-import { api, onAgentsChanged } from "./ipc/bridge";
+import { api, onAgentsChanged, onPaneLabels } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountWorkspacePanel, refreshWorkspacePanel } from "./workspace/WorkspacePanel";
@@ -69,6 +69,13 @@ async function main(): Promise<void> {
     .then(() => api.getAgents())
     .then((s) => manager.applyAgents(s))
     .catch((e) => console.warn("get_agents failed:", e));
+
+  // Tab labels: subscribe first, then seed, so no change slips between.
+  void onPaneLabels((labels) => manager.applyPaneLabels(labels))
+    .catch((e) => console.warn("panes:labels listen failed:", e))
+    .then(() => api.getPaneLabels())
+    .then((labels) => manager.applyPaneLabels(labels))
+    .catch((e) => console.warn("get_pane_labels failed:", e));
 
   // Listen for update-available events from the Rust poller. Non-fatal if the
   // listen fails (e.g. capability denied in some harness); app keeps running.
