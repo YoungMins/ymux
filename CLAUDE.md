@@ -16,13 +16,16 @@ ymux/
 │       ├── main.rs         # Entry point (desktop only)
 │       ├── lib.rs          # Library crate (all modules)
 │       ├── commands.rs     # Tauri IPC commands (desktop)
+│       ├── agents.rs       # Agent tree registry state machine (pure, not desktop-gated)
+│       ├── agent_scan.rs   # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
+│       ├── agent_hooks.rs  # Install/uninstall Claude Code hooks in ~/.claude/settings.json (merge fns pure; file IO desktop)
 │       ├── config/         # Config model + store
 │       ├── pty/            # PTY session management
 │       ├── shell/          # Shell detection (detect.rs)
 │       ├── sysmonitor.rs   # System monitor (desktop)
 │       ├── updater.rs      # Update checker (desktop)
 │       ├── webview.rs      # Native browser (desktop, experimental)
-│       └── ipc_server.rs   # IPC server (desktop)
+│       └── ipc_server.rs   # IPC server (desktop); routes agent-hook/open-file events, filedock_change_dir
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
 │   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction
@@ -30,10 +33,11 @@ ymux/
 │   ├── types.ts            # TypeScript mirror of Rust models
 │   ├── i18n/i18n.ts        # 13-language translations
 │   ├── ipc/bridge.ts       # Tauri IPC wrappers
-│   ├── workspace/          # WorkspaceManager + WorkspaceBar
-│   ├── terminal/           # TerminalPane + HotKeyBar
+│   ├── filedock/           # Right-side yDir file dock (FileDock, cwdFollow, dockModel)
+│   ├── workspace/          # WorkspaceManager + WorkspaceBar + agentTree (workspace panel tree)
+│   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt)
 │   ├── browser/            # BrowserPane (iframe) + NativeBrowserPane
-│   ├── layout/             # SplitContainer + LayoutTree
+│   ├── layout/             # SplitContainer + LayoutTree + PaneGroup/tabs (pane tab groups)
 │   ├── palette/            # Command Palette (Ctrl+Shift+P)
 │   ├── help/               # Help overlay (?)
 │   ├── hotkey/             # HotKeyManager modal (⚙)
@@ -211,6 +215,59 @@ target-triple suffix. If you pass `--target` to `tauri build`, set
 `YMUX_TARGET_TRIPLE` to the same value or the bundler fails with a confusing
 "sidecar not found".
 
+### 11. `agent_tracking` is backend-authoritative — don't add it to `merge_layouts_from`
+
+Every other `Config` setting added since rule 8's `CONFIG_VERSION` note must be
+copied in `Config::merge_layouts_from` (see the memory note: a setting missing
+there silently reverts to its default on every restart). `agent_tracking` is
+the deliberate exception: it is flipped only by `set_agent_tracking`, which
+also installs/uninstalls the Claude Code hooks as a side effect, so a stale
+frontend save overwriting it out-of-band would desync the config from the
+actual hook state on disk. If you add a new bool/enum setting, copy it in
+`merge_layouts_from` like the rest — only mirror this exception if the setting
+is similarly owned by a backend side effect, not just because it's convenient.
+
+### 12. The Claude Code hook settings merge is marker-based — never reorder or drop foreign hooks
+
+`agent_hooks::install_hooks` / `uninstall_hooks` rewrite the user's
+`~/.claude/settings.json` in place. Every hook ymux owns carries the
+`--ymux-agent-hook` marker in its command string; install only touches entries
+carrying it (refreshing the `y` path) or appends a new group, and uninstall
+only removes entries carrying it, via `retain`/`retain_mut` — never `remove`,
+which under `serde_json`'s `preserve_order` is a `swap_remove` and would
+reorder the user's own keys and hooks. Any hook or settings key without the
+marker must come back byte-for-byte. If you touch this file, run the
+`install_preserves_foreign_hooks_and_key_order` / `uninstall_restores_foreign_settings_exactly`
+tests before anything else — they exist specifically to catch an edit that
+silently reorders or eats someone else's hook.
+
+### 13. yipc `send_to` fans out to every client under a tool name
+
+`IpcServer::send_to(tool, msg)` delivers `msg` to *every* connected client that
+sent `Hello { tool, .. }` under that name — there is no per-connection
+addressing. The file dock's yDir therefore registers **two** separate
+connections under **two** different tool names: `"ydir"` (which the host's
+`ChangeDir` pushes target) and `"ydir-openfile"` (the outbound link that sends
+`open-file` events to the host). If the outbound link registered as `"ydir"`
+too, a `ChangeDir` push would land in a socket that link never reads, sit
+until the host's `WRITE_TIMEOUT` (200 ms) killed the connection, and quietly
+break cwd-following. Adding a new host↔tool channel on yipc means picking a
+tool name nothing else answers to, not reusing an existing one "because it's
+the same process."
+
+### 14. A tab shown after being hidden needs a refit *and* a viewport resync
+
+`PaneGroup` keeps every tab's `TerminalPane` mounted (`display: none` via
+`.pane--tab-hidden`) rather than destroying it, so switching tabs is instant
+and scrollback/PTY state survives. But re-parenting/un-hiding an element
+resets `.xterm-viewport`'s `scrollTop` to 0 behind xterm's back (see the
+memory note on this), and its box may have resized while hidden. `PaneGroup.update()`
+schedules `pane.scheduleFit()` on the next animation frame for exactly this
+reason — a plain `fit()` without the viewport resync leaves the next wheel
+notch jumping to the top of scrollback. Any new code path that shows a
+previously-hidden pane element (not just the tab strip) needs the same
+`scheduleFit()` call, not a raw `fit()`.
+
 ## TDD / Testing
 
 ### Quick run
@@ -221,21 +278,33 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 188 + frontend 63)
+### Test count (Rust 305, 8 failing on Windows + frontend 186)
+
+Measured 2026-09-20 on Windows with `cargo test --workspace --no-fail-fast` and
+`npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 68 | Config model + TOML round-trip, PTY, OSC 7, shell detect, macOS shell integration, updater, sysmonitor |
+| ymux_lib | 148 (8 fail on Windows) | Config model + TOML round-trip, PTY, OSC 7, shell detect, macOS shell integration, updater, sysmonitor, agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
-| yipc | 10 | Protocol serialization, server/client, multi-client, broken pipe |
+| yipc | 14 | Protocol serialization incl. `ChangeDir`/`open-file`, server/client, multi-client, `send_to` fan-out and timeout, broken pipe |
 | ymon | 11 | App state, tab cycling, scroll, memory values, process sort |
-| ydir | 19 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog |
+| ydir | 32 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog, dock mode (`--dock`, `PendingDir`, `follow_host`, `open_file_link`) |
 | ycode | 69 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
-| ylauncher | 4 | Tool discovery, PATH scanning |
-| _frontend_ | 63 | vitest: layout tree, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
+| ygit | 14 | Porcelain log/worktree parsing, worktree add/remove round-trip |
+| ylauncher (`y`) | 10 (7 unit + 3 integration) | Tool discovery, PATH scanning, `agent-hook` payload packing and the no-env no-op |
+| _frontend_ | 186 | vitest: layout tree, pane tabs (`tabs.test.ts`), agent tree model, file dock (`cwdFollow`, `dockModel`), bottom-anchored prompt (`bottomAnchor.test.ts`, incl. real-xterm-buffer cases), pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
 
-`ygit` has no tests yet. Counts drift — re-derive with
-`cargo test -p <crate>` rather than trusting this table.
+**The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
+`pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,
+but the tests assert Unix-style forward-slash paths (`"/tmp"`, `"/home/alice"`)
+while `Path`/`PathBuf` on Windows normalizes them to backslashes (`"\tmp"`).
+Not something introduced by this branch — run the same suite on Linux/macOS to
+get a clean pass, or fix the tests to compare with a platform-appropriate
+separator if you touch `osc7.rs`.
+
+Counts drift — re-derive with `cargo test -p <crate>` / `npx vitest run`
+rather than trusting this table.
 
 ### TDD workflow for new features
 

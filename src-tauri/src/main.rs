@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{Manager, RunEvent};
+use ymux_lib::agent_scan::start_agent_scan;
 use ymux_lib::commands::{start_pty_event_pump, AppState};
 use ymux_lib::config::ConfigStore;
 use ymux_lib::ipc_server::start_ipc_server;
@@ -38,6 +39,8 @@ fn main() {
     tauri::Builder::default()
         .manage(state)
         .manage(eb_registry)
+        .manage(ymux_lib::agents::SharedAgents::default())
+        .manage(ymux_lib::agent_scan::SharedLabels::default())
         .invoke_handler(tauri::generate_handler![
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
@@ -58,6 +61,7 @@ fn main() {
             ymux_lib::commands::git_worktree_add,
             ymux_lib::commands::git_worktree_remove,
             ymux_lib::commands::git_worktree_list,
+            ymux_lib::ipc_server::filedock_change_dir,
             ymux_lib::webview::create_webview,
             ymux_lib::webview::destroy_webview,
             ymux_lib::webview::navigate_webview,
@@ -74,6 +78,9 @@ fn main() {
             ymux_lib::settings::load_syntax_theme,
             ymux_lib::settings::save_syntax_theme,
             ymux_lib::settings::open_config_path,
+            ymux_lib::commands::get_agents,
+            ymux_lib::commands::get_pane_labels,
+            ymux_lib::commands::set_agent_tracking,
         ])
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -99,9 +106,30 @@ fn main() {
             if let Err(e) = ymux_lib::paste_images::prune(retention) {
                 tracing::warn!(error = %e, "failed to prune old paste images at startup");
             }
+            // While agent tracking is on, re-run the hook install on every
+            // launch: a reinstall to another directory would otherwise leave
+            // Claude Code calling a stale `y` path.
+            // Debug builds skip it (unless opted in) so `tauri dev` doesn't
+            // repoint the real hooks at `target/debug/y.exe`.
+            if state.config.snapshot().agent_tracking {
+                use ymux_lib::agent_hooks::{startup_refresh_allowed, DEV_HOOKS_ENV};
+                let opt_in = std::env::var(DEV_HOOKS_ENV).ok();
+                if startup_refresh_allowed(cfg!(debug_assertions), opt_in.as_deref()) {
+                    if let Err(e) = ymux_lib::agent_hooks::set_enabled(true) {
+                        tracing::warn!(error = %e, "failed to refresh Claude Code hooks at startup");
+                    }
+                } else {
+                    tracing::info!(
+                        "debug build: skipping Claude Code hook refresh so the installed \
+                         hooks keep pointing at the release `y`; set {DEV_HOOKS_ENV}=1 to \
+                         refresh them to this build"
+                    );
+                }
+            }
             start_pty_event_pump(app.handle().clone());
             start_update_checker(app.handle().clone());
             start_sysmonitor(app.handle().clone());
+            start_agent_scan(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

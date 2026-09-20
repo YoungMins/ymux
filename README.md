@@ -95,6 +95,12 @@ export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
   bell / OSC 9 completion signal, shown as a colored pane border plus a dot on
   the workspace tab. When a CLI finishes out of sight you also get an OS
   notification and a short beep (toggleable in Settings).
+- **Agent tree**: the workspace panel lists every pane (and tab) under its
+  workspace, with the coding agents running in it — Claude Code sessions and
+  their subagents (via hooks), plus Codex, Gemini, aider, and other CLIs (via
+  a lightweight process scan). Click any row to jump straight to that pane.
+  Claude Code hook tracking is off by default — enable it under
+  **Settings → General**.
 - **Per-pane settings (⚙)**: the `⚙` button on each terminal opens a settings
   panel where you can set a **custom background color** (via native color picker)
   and manage **HotKey buttons** (single-line or batch multi-line commands bound
@@ -108,11 +114,19 @@ export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
   > (e.g. github.com, google.com) will not load. It's designed for development
   > use — local dev servers, Storybook, internal dashboards, API docs,
   > localhost previews, etc. — not general web browsing.
+- **File dock**: `Ctrl+Shift+E` toggles a collapsible right-side panel running
+  `ydir`, which follows the active pane's working directory as you `cd`
+  around. Press Enter on a file there to open it in a reused viewer tab
+  instead of leaving the dock.
 - **Pane zoom**: `Ctrl+Shift+Z` hides every other pane so you can focus.
   Press again to restore the split.
 - **Scrollback search**: `Ctrl+F` opens a find bar on the focused terminal.
   Enter / Shift+Enter step through matches; Esc closes.
 - **Rename panes**: `Ctrl+Shift+R` gives the focused pane a custom title.
+- **Bottom-anchored prompt**: when a terminal's output is shorter than the
+  pane, the prompt is drawn against the bottom edge instead of sitting near
+  the top, so output grows upward. On by default; toggle under
+  **Settings → General**.
 - **Update notifications**: a background poller checks GitHub releases every
   6 hours and surfaces a dismissable banner when a newer version ships. No
   auto-install — you stay in control.
@@ -214,11 +228,14 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+H`              | `Cmd+Shift+H`      | Split pane horizontally              |
 | `Ctrl+Shift+V`              | `Cmd+Shift+V`      | Split pane vertically                |
 | `Ctrl+Shift+W`              | `Cmd+Shift+W`      | Close focused pane                   |
+| `Ctrl+Shift+T`              | `Cmd+Shift+T`      | New tab in focused pane              |
+| `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | Previous / next tab in pane         |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | Swap pane with previous / next       |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |
 | `Ctrl+Alt+N`                | `Cmd+Opt+N`        | Toggle notes for active workspace    |
+| `Ctrl+Shift+E`              | `Cmd+Shift+E`      | Toggle file dock (yDir)              |
 | `Ctrl+V`                    | `Cmd+V`            | Paste clipboard text (image → temp-file path) |
 | `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback           |
 | `Ctrl++` / `Ctrl+-`         | `Cmd++` / `Cmd+-`  | Increase / decrease terminal font size |

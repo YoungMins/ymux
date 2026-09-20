@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write as IoWrite;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -16,13 +18,69 @@ use uuid::Uuid;
 
 use crate::config::model::{PaneSpec, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
-use crate::pty::osc7::Osc7Parser;
+use crate::pty::osc7::{CwdChange, Osc7Parser};
 
 /// Shared map of pane id → latest known current working directory. Populated
 /// by per-session reader threads as they parse OSC 7 sequences out of the
 /// PTY output stream; read by `save_config` to patch the layout tree before
 /// persisting it.
 pub type CwdMap = Arc<Mutex<HashMap<Uuid, String>>>;
+
+type SharedChild = Arc<Mutex<Box<dyn Child + Send + Sync>>>;
+
+/// How often the exit watcher polls the child.
+const EXIT_POLL: Duration = Duration::from_millis(300);
+
+/// After the reader hits EOF, how long it waits for the child's exit code
+/// before reporting the exit with code 0.
+const EOF_EXIT_GRACE: Duration = Duration::from_secs(1);
+
+/// Delivers a session's `PaneEvent::Exit` at most once.
+///
+/// Two paths can see a child exit: the reader thread reaching EOF (Unix,
+/// where the slave closes with the child) and the exit watcher (the only
+/// one that fires on Windows, where ConPTY keeps the pipe open after the
+/// child is gone). Whichever gets there first reports it. Killing the
+/// session disarms it without reporting: the frontend asked for the kill
+/// and has already disposed the pane, and the file dock respawns under the
+/// same reserved id, where a late exit would be mistaken for the new
+/// session's.
+struct ExitOnce {
+    id: Uuid,
+    done: AtomicBool,
+    tx: Sender<PaneEvent>,
+}
+
+impl ExitOnce {
+    fn fire(&self, code: u32) {
+        if !self.done.swap(true, Ordering::SeqCst) {
+            // The receiver may already be gone if the app is shutting down.
+            let _ = self.tx.send(PaneEvent::Exit(self.id, code));
+        }
+    }
+
+    fn disarm(&self) {
+        self.done.store(true, Ordering::SeqCst);
+    }
+
+    fn is_done(&self) -> bool {
+        self.done.load(Ordering::SeqCst)
+    }
+}
+
+/// The child's exit code if it has exited. The lock is held only for a
+/// non-blocking `try_wait`, never across a wait, so `kill` is never stuck
+/// behind it. `Err` means there is nothing left to watch: the session was
+/// dropped, or the OS can no longer report on the child.
+fn poll_exit(child: &Weak<Mutex<Box<dyn Child + Send + Sync>>>) -> Result<Option<u32>, ()> {
+    let child = child.upgrade().ok_or(())?;
+    let status = child.lock().try_wait();
+    match status {
+        Ok(Some(status)) => Ok(Some(status.exit_code())),
+        Ok(None) => Ok(None),
+        Err(_) => Err(()),
+    }
+}
 
 /// Handle to a single running PTY. `stdout` bytes from the child are pushed
 /// into a caller-provided `mpsc::Sender` on a dedicated reader thread — the
@@ -40,7 +98,13 @@ pub struct PtySession {
     pub id: Uuid,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn IoWrite + Send>>,
-    child: Mutex<Box<dyn Child + Send + Sync>>,
+    /// Owned here. The reader and exit watcher only hold `Weak` references,
+    /// so dropping the session still releases the child's handle.
+    child: SharedChild,
+    exit: Arc<ExitOnce>,
+    /// Child (shell) PID, captured once at spawn so the 2 s agent scan never
+    /// has to take the `child` lock that `kill`/`Drop` contend on.
+    pid: Option<u32>,
 }
 
 /// Event emitted from the reader thread back to the app layer.
@@ -50,6 +114,9 @@ pub enum PaneEvent {
     Data(Uuid, Vec<u8>),
     /// Child has exited with the given status code (0 if unknown).
     Exit(Uuid, u32),
+    /// The shell reported a working directory different from its previous
+    /// one (OSC 7). Forwarded to the frontend as `pty:cwd:{id}`.
+    Cwd(Uuid, String),
 }
 
 impl PtySession {
@@ -114,11 +181,23 @@ impl PtySession {
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
+        // Per-pane identity for tools running inside the pane: the Claude
+        // Code hook (`y agent-hook claude`) reports it back over yipc so the
+        // agent tree knows which pane an event belongs to. Set last so
+        // neither the profile nor the pane env can clobber it.
+        cmd.env("YMUX_PANE_ID", spec.id.to_string());
 
         let child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| YmuxError::Pty(format!("spawn: {e}")))?;
+        let pid = child.process_id();
+        let child: SharedChild = Arc::new(Mutex::new(child));
+        let exit = Arc::new(ExitOnce {
+            id: spec.id,
+            done: AtomicBool::new(false),
+            tx: events.clone(),
+        });
 
         let writer = pair
             .master
@@ -133,6 +212,8 @@ impl PtySession {
         let id = spec.id;
         let tx = events.clone();
         let cwds_for_reader = Arc::clone(&cwds);
+        let exit_for_reader = Arc::clone(&exit);
+        let child_for_reader = Arc::downgrade(&child);
         // Detached reader thread — we never join it. See the doc comment on
         // `PtySession` for why joining causes UI hangs on Windows.
         std::thread::Builder::new()
@@ -140,6 +221,7 @@ impl PtySession {
             .spawn(move || {
                 let mut buf = [0u8; 8192];
                 let mut osc7 = Osc7Parser::new();
+                let mut cwd_change = CwdChange::default();
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => break, // EOF
@@ -150,7 +232,10 @@ impl PtySession {
                             // wins — that's the "current" cwd as far as the
                             // shell is concerned.
                             for cwd in osc7.feed(chunk) {
-                                cwds_for_reader.lock().insert(id, cwd);
+                                cwds_for_reader.lock().insert(id, cwd.clone());
+                                if cwd_change.is_new(&cwd) {
+                                    let _ = tx.send(PaneEvent::Cwd(id, cwd));
+                                }
                             }
                             if tx.send(PaneEvent::Data(id, chunk.to_vec())).is_err() {
                                 break;
@@ -162,12 +247,54 @@ impl PtySession {
                         }
                     }
                 }
-                // Signal exit once the reader drains. The receiver may have
-                // already gone away if the pane was disposed, in which case
-                // the send fails silently and that's fine.
-                let _ = tx.send(PaneEvent::Exit(id, 0));
+                // The output is drained, which on Unix means the child is
+                // gone. Report it with its real exit code if the OS has it
+                // within a moment, else 0. `ExitOnce` makes this a no-op if
+                // the watcher got there first or the session was killed.
+                let deadline = std::time::Instant::now() + EOF_EXIT_GRACE;
+                let mut code = 0;
+                while !exit_for_reader.is_done() {
+                    match poll_exit(&child_for_reader) {
+                        Ok(Some(c)) => {
+                            code = c;
+                            break;
+                        }
+                        Ok(None) if std::time::Instant::now() < deadline => {
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        _ => break,
+                    }
+                }
+                exit_for_reader.fire(code);
             })
             .map_err(|e| YmuxError::Pty(format!("spawn reader thread: {e}")))?;
+
+        // Exit watcher. On Windows the reader above never sees EOF when the
+        // child exits by itself (ConPTY keeps the pipe open until the
+        // pseudoconsole is closed), so without this a shell that exits, or
+        // a dock `ydir` the user quits, is never reported. Polls rather
+        // than blocking in `wait()`, which would hold the child lock and
+        // stall `kill`. Ends once the exit is reported, the session is
+        // killed, or the session is dropped.
+        let exit_for_watcher = Arc::clone(&exit);
+        let child_for_watcher = Arc::downgrade(&child);
+        std::thread::Builder::new()
+            .name(format!("ymux-pty-exit-{id}"))
+            .spawn(move || loop {
+                std::thread::sleep(EXIT_POLL);
+                if exit_for_watcher.is_done() {
+                    break;
+                }
+                match poll_exit(&child_for_watcher) {
+                    Ok(Some(code)) => {
+                        exit_for_watcher.fire(code);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(()) => break,
+                }
+            })
+            .map_err(|e| YmuxError::Pty(format!("spawn exit watcher: {e}")))?;
 
         // Drop the slave so the child inherits it and closing the master
         // actually reaches EOF. `portable-pty` drops it when `pair.slave` goes
@@ -178,7 +305,9 @@ impl PtySession {
             id,
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
-            child: Mutex::new(child),
+            child,
+            exit,
+            pid,
         })
     }
 
@@ -198,11 +327,18 @@ impl PtySession {
             .map_err(|e| YmuxError::Pty(format!("resize: {e}")))
     }
 
-    /// Attempt to terminate the child process. Best-effort.
+    /// Attempt to terminate the child process. Best-effort. A killed
+    /// session reports no exit (see [`ExitOnce`]).
     pub fn kill(&self) -> YmuxResult<()> {
+        self.exit.disarm();
         let mut c = self.child.lock();
         c.kill().map_err(|e| YmuxError::Pty(format!("kill: {e}")))?;
         Ok(())
+    }
+
+    /// Shell PID, if the platform reported one at spawn.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 }
 
@@ -215,6 +351,7 @@ impl Drop for PtySession {
         // joining would freeze the calling Tauri command worker thread,
         // hanging the whole IPC surface and causing "Not Responding" the
         // moment the user closes a pane.
+        self.exit.disarm();
         let _ = self.child.lock().kill();
     }
 }
@@ -269,6 +406,7 @@ mod tests {
         loop {
             match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                Ok(PaneEvent::Cwd(..)) => {}
                 Ok(PaneEvent::Exit(_, _)) => break,
                 Err(_) if std::time::Instant::now() > deadline => break,
                 Err(_) => continue,
@@ -334,6 +472,7 @@ mod tests {
         loop {
             match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                Ok(PaneEvent::Cwd(..)) => {}
                 Ok(PaneEvent::Exit(_, _)) => break,
                 Err(_) if std::time::Instant::now() > deadline => break,
                 Err(_) => continue,
@@ -397,6 +536,7 @@ mod tests {
             loop {
                 match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                     Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                    Ok(PaneEvent::Cwd(..)) => {}
                     Ok(PaneEvent::Exit(_, _)) => break,
                     Err(_) if std::time::Instant::now() > deadline => break,
                     Err(_) => continue,
@@ -494,5 +634,150 @@ mod tests {
                 cwds.lock().get(&spec.id).cloned()
             );
         }
+    }
+
+    /// A profile that runs one command and exits, on either platform.
+    fn one_shot_profile(unix_script: &str, windows_cmd: &str) -> ShellProfile {
+        let (executable, args) = if cfg!(windows) {
+            ("cmd.exe", vec!["/C".to_string(), windows_cmd.to_string()])
+        } else {
+            ("/bin/sh", vec!["-c".to_string(), unix_script.to_string()])
+        };
+        ShellProfile {
+            name: "one-shot".into(),
+            executable: executable.into(),
+            args,
+            icon: None,
+            color: None,
+            env: Vec::new(),
+        }
+    }
+
+    fn size_24x80() -> PtySize {
+        PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+
+    /// Drain pane output until `marker` shows up, the child exits, or 10 s pass.
+    fn capture_until(rx: &mpsc::Receiver<PaneEvent>, marker: &str) -> String {
+        let mut captured = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(PaneEvent::Data(_, b)) => {
+                    captured.extend_from_slice(&b);
+                    if String::from_utf8_lossy(&captured).contains(marker) {
+                        break;
+                    }
+                }
+                Ok(PaneEvent::Cwd(..)) => {}
+                Ok(PaneEvent::Exit(_, _)) => break,
+                Err(_) => continue,
+            }
+        }
+        String::from_utf8_lossy(&captured).into_owned()
+    }
+
+    /// `y agent-hook` runs inside Claude Code inside the pane and reports which
+    /// pane it is in via `YMUX_PANE_ID` — so every child must see its own id.
+    #[test]
+    fn pty_child_sees_its_own_pane_id() {
+        let profile = one_shot_profile(
+            "printf 'ymux-pane=[%s]\\n' \"$YMUX_PANE_ID\"",
+            "echo ymux-pane=[%YMUX_PANE_ID%]",
+        );
+        let spec = PaneSpec::new_default();
+        let (tx, rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+        let expected = format!("ymux-pane=[{}]", spec.id);
+        let text = capture_until(&rx, &expected);
+        assert!(
+            text.contains(&expected),
+            "expected {expected}, got: {text:?}"
+        );
+        drop(session);
+    }
+
+    /// Collect every `Exit` that arrives within `window`, draining the rest.
+    fn exits_within(rx: &mpsc::Receiver<PaneEvent>, window: std::time::Duration) -> Vec<u32> {
+        let deadline = std::time::Instant::now() + window;
+        let mut exits = Vec::new();
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            if let Ok(PaneEvent::Exit(_, code)) = rx.recv_timeout(left) {
+                exits.push(code);
+            }
+        }
+        exits
+    }
+
+    /// A child that exits on its own must be reported, with its real code,
+    /// exactly once. On Windows ConPTY keeps the output pipe open after the
+    /// child is gone, so the reader never sees EOF and only the exit watcher
+    /// can notice. This is what the file dock's "exited / Restart" state
+    /// hangs on.
+    #[test]
+    fn pty_reports_a_child_that_exits_on_its_own_exactly_once() {
+        let profile = one_shot_profile("exit 3", "exit 3");
+        let spec = PaneSpec::new_default();
+        let (tx, rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        // Held, not dropped: dropping the session kills the child, which is
+        // not what this test is about.
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+
+        let start = std::time::Instant::now();
+        let first = loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(PaneEvent::Exit(_, code)) => break Some(code),
+                _ if start.elapsed() > std::time::Duration::from_secs(5) => break None,
+                _ => {}
+            }
+        };
+        assert_eq!(first, Some(3), "no exit event within 5 s of `exit 3`");
+        let again = exits_within(&rx, std::time::Duration::from_millis(1500));
+        assert!(again.is_empty(), "exit reported again: {again:?}");
+        drop(session);
+    }
+
+    /// Killing a pane is the frontend's own doing and it has already torn
+    /// the pane down, so no exit is reported for it. That matters because
+    /// the file dock respawns under the same reserved pane id: a late exit
+    /// from the killed session would otherwise land on the new one.
+    #[test]
+    fn pty_kill_does_not_report_an_exit() {
+        let profile = one_shot_profile("sleep 30", "ping -n 30 127.0.0.1 >NUL");
+        let spec = PaneSpec::new_default();
+        let (tx, rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        session.kill().expect("kill");
+        let exits = exits_within(&rx, std::time::Duration::from_millis(1500));
+        assert!(exits.is_empty(), "kill reported an exit: {exits:?}");
+        drop(session);
+    }
+
+    /// The agent scan walks the process tree from the shell's PID.
+    #[test]
+    fn pty_session_records_child_pid() {
+        let profile = one_shot_profile("sleep 1", "ping -n 2 127.0.0.1 >NUL");
+        let spec = PaneSpec::new_default();
+        let (tx, _rx) = mpsc::channel();
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+        assert!(
+            session.pid().is_some_and(|p| p > 0),
+            "pid: {:?}",
+            session.pid()
+        );
     }
 }

@@ -85,6 +85,13 @@ export class PaneStatusMachine {
     }
   }
 
+  /// A coding agent in this pane is blocked on the user (Claude Code
+  /// PermissionRequest, via the agent registry). Same loud state as an unseen
+  /// bell: focus, or the Enter that answers the prompt, clears it.
+  onWaiting(): void {
+    this.set("attention");
+  }
+
   /// Called on a timer. Turns a quiet `running` into `done`, and lets an
   /// on-screen `done` fade back to `idle` once it has been up long enough to
   /// see — which is also how an unread `done` clears when the user finally

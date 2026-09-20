@@ -117,7 +117,7 @@ fn monitor_loop(app: AppHandle) {
         // Network: sum across all interfaces, compute delta per second.
         let mut total_rx: u64 = 0;
         let mut total_tx: u64 = 0;
-        for (_name, data) in networks.iter() {
+        for data in networks.values() {
             total_rx += data.received();
             total_tx += data.transmitted();
         }

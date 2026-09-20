@@ -48,6 +48,12 @@ pub struct Config {
     pub notify_on_bell: bool,
     #[serde(default = "default_persist_scrollback")]
     pub persist_scrollback: bool,
+    /// Draw a terminal whose content is shorter than its pane against the
+    /// pane's bottom edge, so the prompt sits on the last row. Presentation
+    /// only (the frontend's `bottomAnchor.ts`). Additive with a serde default,
+    /// so no `CONFIG_VERSION` bump.
+    #[serde(default = "default_bottom_anchor")]
+    pub bottom_anchor: bool,
     #[serde(default = "default_paste_image_retention_hours")]
     pub paste_image_retention_hours: u32,
     /// Base directory under which ymux creates git worktrees for panes opened
@@ -66,6 +72,12 @@ pub struct Config {
     /// the rest of this model follows.
     #[serde(default)]
     pub default_shell: String,
+    /// Install ymux's Claude Code hooks into `~/.claude/settings.json` so the
+    /// agent tree gets precise per-agent status and subagents. Off by default:
+    /// writing another tool's settings file must be opt-in. Additive with a
+    /// serde default, so no `CONFIG_VERSION` bump.
+    #[serde(default)]
+    pub agent_tracking: bool,
 }
 
 fn default_version() -> u32 {
@@ -78,6 +90,9 @@ fn default_notify_on_bell() -> bool {
     true
 }
 fn default_persist_scrollback() -> bool {
+    true
+}
+fn default_bottom_anchor() -> bool {
     true
 }
 fn default_paste_image_retention_hours() -> u32 {
@@ -102,10 +117,12 @@ impl Default for Config {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: default_font_size(),
             default_shell: String::new(),
+            agent_tracking: false,
         }
     }
 }
@@ -148,14 +165,21 @@ impl Config {
         // Plain user settings: the frontend owns these outright — it received
         // them at bootstrap and is the only thing that edits them — so they
         // have to be copied back or every save silently reverts the user's
-        // choice to whatever was on disk at launch. `shells` below is the one
+        // choice to whatever was on disk at launch. `shells` below is an
         // exception, being a backend-owned detection cache.
         self.notify_on_bell = incoming.notify_on_bell;
         self.persist_scrollback = incoming.persist_scrollback;
+        self.bottom_anchor = incoming.bottom_anchor;
         self.paste_image_retention_hours = incoming.paste_image_retention_hours;
         self.worktree_base_dir = incoming.worktree_base_dir;
         self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
+        // `agent_tracking` is deliberately NOT copied, the other exception to
+        // the rule above: it is backend-owned. `set_agent_tracking` flips it
+        // in the same step that installs/removes the Claude Code hooks, so it
+        // must mirror what is actually in settings.json. Copying a (possibly
+        // stale) frontend snapshot here would let an unrelated layout save
+        // turn tracking off while the hooks stay installed.
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
         }
@@ -249,9 +273,24 @@ pub enum LayoutNode {
         b: Box<LayoutNode>,
     },
     Tabs {
+        /// Stable identity for the tab group. Needed because the group is the
+        /// unit the UI addresses: the renderer caches one `PaneGroup` (and its
+        /// HotKeyBar) per id across layout rebuilds, and the file dock's
+        /// "one viewer tab per pane, reused" registry has to survive tabs
+        /// being opened and closed around it — which keying on a member pane
+        /// id cannot. Defaulted rather than optional, per the tagged-enum
+        /// TOML caveat (CLAUDE.md rule 3); a node written without one gets a
+        /// fresh id on load, which is harmless because the registry is
+        /// runtime-only.
+        #[serde(default = "default_tabs_id")]
+        id: Uuid,
         active: usize,
         children: Vec<LayoutNode>,
     },
+}
+
+fn default_tabs_id() -> Uuid {
+    Uuid::new_v4()
 }
 
 impl LayoutNode {
@@ -296,7 +335,9 @@ impl LayoutNode {
                     other => other,
                 },
             },
-            LayoutNode::Tabs { children, active } => {
+            LayoutNode::Tabs {
+                children, active, ..
+            } => {
                 let mut found = RemoveResult::NotFound;
                 let mut to_remove: Option<usize> = None;
                 for (idx, c) in children.iter_mut().enumerate() {
@@ -667,6 +708,23 @@ mod tests {
     }
 
     #[test]
+    fn bottom_anchor_defaults_true_when_absent() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert!(parsed.bottom_anchor);
+    }
+
+    #[test]
+    fn bottom_anchor_roundtrips_false() {
+        let config = Config {
+            bottom_anchor: false,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert!(!loaded.bottom_anchor);
+    }
+
+    #[test]
     fn paste_image_retention_hours_defaults_to_24_when_absent() {
         let toml_str = "version = 5\nactive_workspace = 1\n";
         let parsed: Config = toml::from_str(toml_str).expect("deserialize");
@@ -702,6 +760,7 @@ mod tests {
         let frontend_save = Config {
             notify_on_bell: false,
             persist_scrollback: false,
+            bottom_anchor: false,
             paste_image_retention_hours: 72,
             worktree_base_dir: "D:\\wt".into(),
             font_size: 18,
@@ -711,10 +770,36 @@ mod tests {
         backend.merge_layouts_from(frontend_save);
         assert!(!backend.notify_on_bell);
         assert!(!backend.persist_scrollback);
+        assert!(!backend.bottom_anchor);
         assert_eq!(backend.paste_image_retention_hours, 72);
         assert_eq!(backend.worktree_base_dir, "D:\\wt");
         assert_eq!(backend.font_size, 18);
         assert_eq!(backend.default_shell, "pwsh");
+    }
+
+    /// `agent_tracking` is backend-owned: `set_agent_tracking` flips it
+    /// alongside installing/removing the hooks. A layout save carrying a
+    /// stale frontend copy must not override it, or tracking silently turns
+    /// off while the hooks stay installed (and vice versa).
+    #[test]
+    fn merge_layouts_does_not_carry_agent_tracking() {
+        let mut backend = Config {
+            agent_tracking: true,
+            ..Config::default()
+        };
+        let stale_save = Config {
+            agent_tracking: false,
+            ..Config::default()
+        };
+        backend.merge_layouts_from(stale_save);
+        assert!(backend.agent_tracking);
+
+        let mut backend_off = Config::default();
+        backend_off.merge_layouts_from(Config {
+            agent_tracking: true,
+            ..Config::default()
+        });
+        assert!(!backend_off.agent_tracking);
     }
 
     /// A config written before `font_size` existed must load with the default
@@ -734,6 +819,25 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
         assert_eq!(loaded.font_size, 20);
+    }
+
+    /// Hooks are written into another tool's settings file, so the setting
+    /// must be opt-in: a config written before it existed loads as off.
+    #[test]
+    fn agent_tracking_defaults_off_when_absent() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert!(!parsed.agent_tracking);
+    }
+
+    #[test]
+    fn agent_tracking_roundtrips() {
+        let config = Config {
+            agent_tracking: true,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert!(loaded.agent_tracking);
     }
 
     #[test]
@@ -760,10 +864,12 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -772,10 +878,12 @@ mod tests {
             workspaces: vec![Workspace::empty(2, "two")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -830,10 +938,12 @@ mod tests {
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -862,10 +972,12 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -997,10 +1109,12 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1026,10 +1140,12 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -1088,10 +1204,12 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1221,10 +1339,12 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
             default_shell: String::new(),
+            agent_tracking: false,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1233,5 +1353,127 @@ shell = "PowerShell 7"
         let pb = panes.iter().find(|p| p.id == b).unwrap();
         assert_eq!(pa.bg_color, "#ff0000");
         assert_eq!(pb.bg_color, "");
+    }
+
+    fn tab_pane(title: &str) -> LayoutNode {
+        let mut p = PaneSpec::new_default();
+        p.title = Some(title.to_string());
+        p.shell = "pwsh".into();
+        p.cwd = Some("C:/work".into());
+        LayoutNode::Pane(p)
+    }
+
+    #[test]
+    fn tabs_node_roundtrips_through_toml() {
+        let mut cfg = Config::default();
+        let group = Uuid::new_v4();
+        cfg.workspace_mut(1).root = LayoutNode::Tabs {
+            id: group,
+            active: 1,
+            children: vec![tab_pane("first"), tab_pane("second"), tab_pane("third")],
+        };
+        let text = toml::to_string_pretty(&cfg).expect("serialize");
+        let back: Config = toml::from_str(&text).expect("deserialize");
+        match &back.workspaces[0].root {
+            LayoutNode::Tabs {
+                id,
+                active,
+                children,
+            } => {
+                assert_eq!(*id, group, "the group id survives a round trip");
+                assert_eq!(*active, 1, "the active index survives a round trip");
+                assert_eq!(children.len(), 3);
+                let titles: Vec<&str> = children
+                    .iter()
+                    .map(|c| match c {
+                        LayoutNode::Pane(p) => p.title.as_deref().unwrap_or(""),
+                        _ => panic!("child is not a pane"),
+                    })
+                    .collect();
+                assert_eq!(titles, vec!["first", "second", "third"]);
+            }
+            other => panic!("expected a tabs node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tabs_node_roundtrips_nested_in_a_split() {
+        let mut cfg = Config::default();
+        cfg.workspace_mut(1).root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 0,
+                children: vec![tab_pane("t1"), tab_pane("t2")],
+            }),
+            b: Box::new(tab_pane("plain")),
+        };
+        let text = toml::to_string_pretty(&cfg).expect("serialize");
+        let back: Config = toml::from_str(&text).expect("deserialize");
+        assert_eq!(back.workspaces[0].panes().len(), 3, "every tab is a pane");
+    }
+
+    #[test]
+    fn a_tabs_node_written_without_an_id_gets_one() {
+        // Old hand-written configs (and anything produced before the field
+        // existed) must still load; the fresh id is fine because the only
+        // consumer, the viewer-tab registry, is runtime-only.
+        let text = r#"
+version = 7
+active_workspace = 1
+
+[[workspaces]]
+id = 1
+name = "main"
+
+[workspaces.root]
+kind = "tabs"
+active = 0
+
+[[workspaces.root.children]]
+kind = "pane"
+id = "11111111-1111-4111-8111-111111111111"
+shell = "pwsh"
+
+[[workspaces.root.children]]
+kind = "pane"
+id = "22222222-2222-4222-8222-222222222222"
+shell = "cmd"
+"#;
+        let cfg: Config = toml::from_str(text).expect("deserialize");
+        match &cfg.workspaces[0].root {
+            LayoutNode::Tabs { id, children, .. } => {
+                assert!(!id.is_nil(), "a missing id is filled in, not left nil");
+                assert_eq!(children.len(), 2);
+            }
+            other => panic!("expected a tabs node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn removing_a_tab_keeps_the_others() {
+        let mut node = LayoutNode::Tabs {
+            id: Uuid::new_v4(),
+            active: 2,
+            children: vec![tab_pane("a"), tab_pane("b"), tab_pane("c")],
+        };
+        let victim = match &node {
+            LayoutNode::Tabs { children, .. } => match &children[0] {
+                LayoutNode::Pane(p) => p.id,
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+        assert_eq!(node.remove_pane(victim), RemoveResult::Removed);
+        match &node {
+            LayoutNode::Tabs {
+                active, children, ..
+            } => {
+                assert_eq!(children.len(), 2);
+                assert!(*active < children.len(), "active stays in range");
+            }
+            other => panic!("expected a tabs node, got {other:?}"),
+        }
     }
 }

@@ -6,6 +6,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  AgentSnapshot,
   BootstrapPayload,
   Config,
   ShellProfile,
@@ -20,6 +21,9 @@ export interface SpawnArgs {
   cwd?: string | null;
   rows: number;
   cols: number;
+  /// Run this program directly instead of `shell` (see `SpawnArgs.argv` in
+  /// commands.rs). Used by the file dock for `ydir --dock <dir>`.
+  argv?: string[];
 }
 
 export interface ResizeArgs {
@@ -236,6 +240,21 @@ export const api = {
   /// List all worktrees for the repo rooted at `cwd`.
   gitWorktreeList: (cwd: string): Promise<WorktreeEntry[]> =>
     call("git_worktree_list", { cwd }),
+
+  /// Point the file dock's yDir at `path`. A no-op when it isn't running.
+  fileDockChangeDir: (path: string): Promise<void> =>
+    call("filedock_change_dir", { path }),
+
+  /// Current agent-tree snapshot (pane id → agents).
+  getAgents: (): Promise<AgentSnapshot> => call("get_agents"),
+
+  /// Current tab labels (pane id → the deepest process running under it).
+  getPaneLabels: (): Promise<Record<Uuid, string>> => call("get_pane_labels"),
+
+  /// Install (true) or remove (false) ymux's Claude Code hooks in
+  /// ~/.claude/settings.json and persist the setting.
+  setAgentTracking: (enabled: boolean): Promise<void> =>
+    call("set_agent_tracking", { enabled }),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.
@@ -254,4 +273,32 @@ export function onPaneExit(
   handler: (code: number) => void,
 ): Promise<UnlistenFn> {
   return safeListen<number>(`pty:exit:${id}`, handler);
+}
+
+/// Subscribe to a pane's working-directory changes. The backend emits these
+/// only when the OSC 7 cwd actually changes.
+export function onPaneCwd(
+  id: Uuid,
+  handler: (cwd: string) => void,
+): Promise<UnlistenFn> {
+  return safeListen<string>(`pty:cwd:${id}`, handler);
+}
+
+/// Subscribe to agent-tree snapshots pushed after every registry change.
+export function onAgentsChanged(
+  handler: (snapshot: AgentSnapshot) => void,
+): Promise<UnlistenFn> {
+  return safeListen<AgentSnapshot>("agents:changed", handler);
+}
+
+/// Subscribe to "open this file" requests from the file dock's yDir.
+export function onOpenFile(handler: (path: string) => void): Promise<UnlistenFn> {
+  return safeListen<string>("ymux:open-file", handler);
+}
+
+/// Subscribe to tab-label snapshots pushed by the 2 s process scan.
+export function onPaneLabels(
+  handler: (labels: Record<Uuid, string>) => void,
+): Promise<UnlistenFn> {
+  return safeListen<Record<Uuid, string>>("panes:labels", handler);
 }

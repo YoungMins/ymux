@@ -2,6 +2,7 @@ import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
 import { askText } from "../ui/Dialog";
+import { toggleFileDock } from "../filedock/FileDock";
 
 export interface CommandDef {
   id: string;
@@ -34,6 +35,40 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       label: () => t("shortcut.close"),
       keybinding: "Ctrl+Shift+W",
       action: () => void manager.closeFocused(),
+    },
+    {
+      id: "pane.newTab",
+      label: () => t("shortcut.newTab"),
+      keybinding: "Ctrl+Shift+T",
+      action: () => void manager.newTabInFocused(),
+    },
+    {
+      id: "pane.prevTab",
+      label: () => t("shortcut.prevTab"),
+      keybinding: "Ctrl+Shift+[",
+      action: () => manager.stepTabInFocused(-1),
+    },
+    {
+      id: "pane.nextTab",
+      label: () => t("shortcut.nextTab"),
+      keybinding: "Ctrl+Shift+]",
+      action: () => manager.stepTabInFocused(1),
+    },
+    {
+      id: "tab.rename",
+      label: () => t("tab.rename"),
+      action: async () => {
+        const id = manager.activePaneId();
+        if (id) await manager.promptRenameTab(id);
+      },
+    },
+    {
+      id: "tab.closeOthers",
+      label: () => t("tab.closeOthers"),
+      action: async () => {
+        const id = manager.activePaneId();
+        if (id) await manager.closeOtherTabs(id);
+      },
     },
     {
       id: "pane.zoom",
@@ -107,6 +142,12 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
         const wsId = manager.activeIdValue;
         toggleNotes(wsId, manager.getWorkspaceName(wsId));
       },
+    },
+    {
+      id: "filedock.toggle",
+      label: () => t("filedock.toggle"),
+      keybinding: "Ctrl+Shift+E",
+      action: () => toggleFileDock(),
     },
     {
       id: "workspace.rename",

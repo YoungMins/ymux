@@ -4,6 +4,9 @@
 //! `cargo clippy` work even on hosts where the full Tauri runtime toolchain
 //! (WebView2, bundler, etc.) is not available.
 
+pub mod agent_hooks;
+pub mod agent_scan;
+pub mod agents;
 pub mod config;
 pub mod error;
 pub mod git;

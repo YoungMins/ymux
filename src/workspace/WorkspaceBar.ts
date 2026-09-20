@@ -4,8 +4,10 @@ import { api } from "../ipc/bridge";
 import { mountSettings } from "../settings/SettingsOverlay";
 import { toggleWorkspacePanel } from "./WorkspacePanel";
 import { t, onLangChange } from "../i18n/i18n";
+import { toggleFileDock } from "../filedock/FileDock";
 
 const panelToggleSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>`;
+const fileDockSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`;
 
 export function mountWorkspaceBar(
   host: HTMLElement,
@@ -60,6 +62,16 @@ export function mountWorkspaceBar(
   });
   bar.appendChild(browserBtn);
 
+  // File dock toggle: the mirror image of the workspace-panel toggle.
+  const dockBtn = document.createElement("button");
+  dockBtn.className = "workspace-bar__icon-btn";
+  dockBtn.type = "button";
+  dockBtn.innerHTML = fileDockSvg;
+  dockBtn.title = t("filedock.toggle");
+  dockBtn.setAttribute("aria-label", t("filedock.toggle"));
+  dockBtn.addEventListener("click", () => toggleFileDock());
+  bar.appendChild(dockBtn);
+
   const kofiBtn = document.createElement("button");
   kofiBtn.className = "workspace-bar__icon-btn";
   kofiBtn.type = "button";
@@ -95,6 +107,8 @@ export function mountWorkspaceBar(
     browserBtn.textContent = t("workspace.addBrowser");
     browserBtn.title = t("workspace.addBrowserTitle");
     kofiBtn.title = t("workspace.supportTitle");
+    dockBtn.title = t("filedock.toggle");
+    dockBtn.setAttribute("aria-label", t("filedock.toggle"));
   });
 
   return () => {

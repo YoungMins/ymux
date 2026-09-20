@@ -134,4 +134,23 @@ describe("PaneStatusMachine", () => {
     m.onOutput(1000); // trailing spinner/prompt repaint
     expect(m.status).toBe("done");
   });
+
+  it("waiting raises attention even from done, and submit clears it", () => {
+    const m = new PaneStatusMachine(() => {});
+    m.onSubmit(0);
+    m.onAttention(true, 0); // done
+    m.onWaiting();
+    expect(m.status).toBe("attention");
+    m.onSubmit(1); // user answered the permission prompt
+    expect(m.status).toBe("running");
+  });
+
+  it("waiting attention survives ticks until focus", () => {
+    const m = new PaneStatusMachine(() => {}, 10, 10);
+    m.onWaiting();
+    m.tick(1_000, true);
+    expect(m.status).toBe("attention");
+    m.onFocus();
+    expect(m.status).toBe("idle");
+  });
 });

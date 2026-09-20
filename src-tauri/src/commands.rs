@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use std::path::Path;
 
+use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
 use crate::git;
@@ -32,6 +33,12 @@ pub struct SpawnArgs {
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    /// Run this program directly instead of the `shell` profile. The file
+    /// dock uses it for `ydir --dock <dir>`, so that ydir's exit is the
+    /// pane's exit and no shell quoting is involved. Empty (the default)
+    /// spawns the shell as before.
+    #[serde(default)]
+    pub argv: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,11 +122,17 @@ pub fn save_config(state: State<'_, AppState>, config: Config) -> YmuxResult<()>
 
 #[tauri::command]
 pub fn spawn_pane(state: State<'_, AppState>, args: SpawnArgs) -> YmuxResult<SpawnedPane> {
-    let snapshot = state.config.snapshot();
-    let profile = snapshot
-        .shell(&args.shell)
-        .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
-        .clone();
+    let profile = match crate::pty::direct_profile(&args.argv, crate::pty::sidecar_dir().as_deref())
+    {
+        Some(direct) => direct,
+        None => {
+            let snapshot = state.config.snapshot();
+            snapshot
+                .shell(&args.shell)
+                .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
+                .clone()
+        }
+    };
 
     let spec = crate::config::model::PaneSpec {
         id: args.id,
@@ -182,6 +195,73 @@ pub fn set_active_workspace(state: State<'_, AppState>, id: u32) -> YmuxResult<(
 #[tauri::command]
 pub fn get_pane_cwd(state: State<'_, AppState>, id: Uuid) -> Option<String> {
     state.pty.cwd_for(id)
+}
+
+/// Tauri event carrying the full agent snapshot after every registry change.
+pub const AGENTS_CHANGED_EVENT: &str = "agents:changed";
+
+/// Callers hold the [`SharedAgents`] lock across this call so snapshots reach
+/// the frontend in the order they were taken.
+pub fn emit_agents_changed(app: &AppHandle, snapshot: &AgentSnapshot) {
+    if let Err(e) = app.emit(AGENTS_CHANGED_EVENT, snapshot) {
+        tracing::warn!(error = %e, "emit agents:changed failed");
+    }
+}
+
+/// Route one `agent-hook` IPC payload (from `y agent-hook`) into the agent
+/// registry. Payloads for panes this ymux doesn't own — malformed id, or a
+/// pane that has since closed — are dropped.
+pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
+    let Some(ev) = HookEvent::from_payload(payload) else {
+        return;
+    };
+    if !app.state::<AppState>().pty.has(ev.pane_id) {
+        return;
+    }
+    let agents = app.state::<SharedAgents>();
+    let mut reg = agents.0.lock();
+    if reg.apply_hook(&ev) {
+        // Emit while still holding the lock: the hook listener and the scan
+        // thread both write the registry, and emitting after release let a
+        // newer snapshot overtake an older one, leaving the UI stale. Safe —
+        // nothing in Rust listens for this event, so emit never re-enters
+        // the registry, and it only queues the JS dispatch (non-blocking).
+        emit_agents_changed(app, &reg.snapshot());
+    }
+}
+
+/// Current agent snapshot, for the frontend's initial render.
+#[tauri::command]
+pub fn get_agents(agents: State<'_, SharedAgents>) -> AgentSnapshot {
+    agents.0.lock().snapshot()
+}
+
+/// Tauri event carrying `pane id -> running-program label` (tab labels).
+const PANE_LABELS_EVENT: &str = "panes:labels";
+
+pub fn emit_pane_labels(app: &AppHandle, labels: &std::collections::HashMap<Uuid, String>) {
+    if let Err(e) = app.emit(PANE_LABELS_EVENT, labels) {
+        tracing::warn!(error = %e, "emit panes:labels failed");
+    }
+}
+
+/// Latest tab labels, for a frontend that has just mounted.
+#[tauri::command]
+pub fn get_pane_labels(
+    labels: State<'_, crate::agent_scan::SharedLabels>,
+) -> std::collections::HashMap<Uuid, String> {
+    labels.0.lock().clone()
+}
+
+/// Install (`true`) or remove (`false`) ymux's Claude Code hooks, then persist
+/// the setting. The file is written first: if that fails (e.g. unparseable
+/// settings.json) the error reaches the UI and the setting is not flipped.
+#[tauri::command]
+pub fn set_agent_tracking(state: State<'_, AppState>, enabled: bool) -> YmuxResult<()> {
+    crate::agent_hooks::set_enabled(enabled)?;
+    state.config.update(|c| c.agent_tracking = enabled);
+    state.config.flush()?;
+    Ok(())
 }
 
 /// Open a URL in the system default browser. Only `http://` and `https://`
@@ -320,6 +400,12 @@ pub fn start_pty_event_pump(app: AppHandle) {
                         let channel = format!("pty:exit:{id}");
                         if let Err(e) = app_for_thread.emit(&channel, code) {
                             tracing::warn!(error = %e, "emit pty exit failed");
+                        }
+                    }
+                    crate::pty::session::PaneEvent::Cwd(id, cwd) => {
+                        let channel = format!("pty:cwd:{id}");
+                        if let Err(e) = app_for_thread.emit(&channel, cwd) {
+                            tracing::warn!(error = %e, "emit pty cwd failed");
                         }
                     }
                 }

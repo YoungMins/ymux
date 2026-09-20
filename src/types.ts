@@ -45,7 +45,10 @@ export type SplitDir = "horizontal" | "vertical";
 export type LayoutNode =
   | ({ kind: "pane" } & PaneSpec)
   | { kind: "split"; direction: SplitDir; ratio: number; a: LayoutNode; b: LayoutNode }
-  | { kind: "tabs"; active: number; children: LayoutNode[] };
+  /// `id` mirrors `LayoutNode::Tabs.id` in src-tauri/src/config/model.rs: the
+  /// stable handle the renderer caches a `PaneGroup` under and the file dock
+  /// registers its viewer tab against.
+  | { kind: "tabs"; id: Uuid; active: number; children: LayoutNode[] };
 
 export interface Workspace {
   id: number;
@@ -60,6 +63,9 @@ export interface Config {
   workspaces: Workspace[];
   notify_on_bell: boolean;
   persist_scrollback: boolean;
+  /// Draw short terminal content against the pane's bottom edge (the prompt
+  /// sits on the last row). See `src/terminal/bottomAnchor.ts`.
+  bottom_anchor: boolean;
   paste_image_retention_hours: number;
   worktree_base_dir: string;
   /// Terminal font size in CSS pixels, shared by every pane.
@@ -67,6 +73,9 @@ export interface Config {
   /// `ShellProfile.name` used for new panes and workspaces. Empty (or a name
   /// that no longer exists) means "the first detected shell".
   default_shell: string;
+  /// Claude Code hooks installed in ~/.claude/settings.json (agent tree).
+  /// Optional: absent in configs written before the setting existed.
+  agent_tracking?: boolean;
 }
 
 export interface BootstrapPayload {
@@ -79,6 +88,32 @@ export interface SpawnedPane {
   id: Uuid;
   shell: string;
 }
+
+/// Agent-tree snapshot — mirror of `src-tauri/src/agents.rs` (serde
+/// lowercase enums, snake_case fields).
+export type AgentStatus = "working" | "waiting" | "done" | "idle";
+export type AgentSource = "hook" | "process";
+
+export interface Agent {
+  kind: string;
+  status: AgentStatus;
+  source: AgentSource;
+  tool: string | null;
+}
+
+export interface Subagent {
+  id: string;
+  agent_type: string;
+  status: AgentStatus;
+}
+
+export interface PaneAgents {
+  lead: Agent | null;
+  subagents: Subagent[];
+}
+
+/// Pane id → agents. Panes with no agents are absent.
+export type AgentSnapshot = Record<Uuid, PaneAgents>;
 
 /// UUID v4 generator that doesn't need a `crypto` subtle fallback polyfill.
 export function uuidv4(): Uuid {

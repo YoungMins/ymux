@@ -190,6 +190,11 @@ body,
   flex: 1 1 auto;
   height: 100%;
   width: 100%;
+  /* The bottom-anchored prompt translates `.xterm-screen` down (see
+     src/terminal/bottomAnchor.ts), so its blank lower rows overflow this box.
+     `clip`, not `hidden`: a hidden box is still a scroll container that a
+     focus() or scrollIntoView could scroll. A clip box never scrolls. */
+  overflow: clip;
 }
 
 /* IME pre-commit preview. Driven by `ImeBridge` (src/terminal/ime.ts), not by
@@ -244,6 +249,111 @@ body,
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* ── Tabbed pane (PaneGroup) ──────────────────────────────────────────────── */
+
+.pane-group {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px;
+  background: #0b0f14;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The group is the visual pane, so it carries the focus ring its children
+   used to. `:focus-within` works here because the ring is on an ancestor of
+   xterm's helper textarea. */
+.pane-group:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.pane-group__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* A tab has no chrome and no ring of its own — the group draws both. */
+.pane--tab {
+  padding: 0;
+}
+
+.pane--tab:focus-within,
+.pane--tab.pane--focused {
+  box-shadow: none;
+}
+
+/* Non-active tabs stay mounted (PTY running, xterm alive) but out of view. */
+.pane--tab-hidden {
+  display: none !important;
+}
+
+.pane-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 0 2px 4px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pane-tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pane-tabs__tab:hover {
+  border-color: var(--accent);
+}
+
+.pane-tabs__tab--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.pane-tabs__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-tabs__close {
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+
+.pane-tabs__close:hover {
+  opacity: 1;
+}
+
+.pane-tabs__add {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pane-tabs__add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* ── Help "?" button in the workspace bar ─────────────────────────────────── */
@@ -788,11 +898,16 @@ body,
 /* ── Pane zoom overlay ────────────────────────────────────────────────────── */
 
 .workspace--zoomed > .split,
-.workspace--zoomed > .tabs {
+.workspace--zoomed > .tabs,
+/* The zoomed element is re-parented to be a direct child of the container,
+   so a zoomed tab group would otherwise match this rule and hide itself —
+   `!important` beats anything `.pane-group--zoomed` could set. */
+.workspace--zoomed > .pane-group:not(.pane-group--zoomed) {
   display: none !important;
 }
 
-.pane--zoomed {
+.pane--zoomed,
+.pane-group--zoomed {
   position: absolute !important;
   inset: 0;
   z-index: 50;
@@ -1190,6 +1305,14 @@ body,
   margin-top: -2px;
 }
 
+.settings-row__hint--error {
+  color: var(--status-critical);
+}
+
+.settings-row__hint--error:empty {
+  display: none;
+}
+
 .settings-color-picker {
   width: 32px;
   height: 26px;
@@ -1327,8 +1450,8 @@ body,
 }
 
 .workspace-panel {
-  flex: 0 0 160px;
-  width: 160px;
+  flex: 0 0 200px;
+  width: 200px;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -1522,6 +1645,141 @@ body,
   color: var(--accent);
 }
 
+/* ── Agent tree (Workspace › Pane › Agent) ────────────────────────────── */
+.workspace-panel__caret {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.workspace-panel__caret:hover {
+  color: var(--accent);
+}
+
+.workspace-panel__children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 2px;
+}
+
+.workspace-panel__pane,
+.workspace-panel__tab,
+.workspace-panel__agent {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.workspace-panel__pane {
+  display: block;
+  padding: 0 6px 0 18px;
+  text-overflow: ellipsis;
+}
+
+.workspace-panel__pane:hover,
+.workspace-panel__tab:hover,
+.workspace-panel__agent:hover {
+  background: var(--bg-hover);
+}
+
+/* One level deeper than a pane row: Workspace > Pane > Tab > Agent. */
+.workspace-panel__tab {
+  display: block;
+  padding: 0 6px 0 28px;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+}
+
+.workspace-panel__tab--active {
+  color: var(--fg);
+}
+
+.workspace-panel__tab[data-status="running"] {
+  background: var(--status-running-bg);
+}
+
+.workspace-panel__tab[data-status="done"] {
+  background: var(--status-done-bg);
+}
+
+.workspace-panel__tab[data-status="attention"] {
+  background: var(--status-attention-bg);
+}
+
+.workspace-panel__pane[data-status="running"] {
+  background: var(--status-running-bg);
+}
+
+.workspace-panel__pane[data-status="done"] {
+  background: var(--status-done-bg);
+}
+
+.workspace-panel__pane[data-status="attention"] {
+  background: var(--status-attention-bg);
+}
+
+.workspace-panel__agent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  color: var(--fg-muted);
+}
+
+.workspace-panel__agent--depth1 {
+  padding-left: 30px;
+}
+
+.workspace-panel__agent--depth2 {
+  padding-left: 42px;
+}
+
+.workspace-panel__agent-dot {
+  flex: 0 0 auto;
+  font-size: 9px;
+}
+
+.workspace-panel__agent-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+
+.workspace-panel__agent-state {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.workspace-panel__agent[data-status="working"] .workspace-panel__agent-dot {
+  color: var(--status-running);
+}
+
+.workspace-panel__agent[data-status="waiting"] .workspace-panel__agent-dot {
+  color: var(--status-attention);
+}
+
+.workspace-panel__agent[data-status="done"] .workspace-panel__agent-dot {
+  color: var(--status-done);
+}
+
 /* ── Dialogs ──────────────────────────────────────────────────────────────
    Replacements for window.prompt / window.confirm, which WKWebView refuses
    to show (wry implements no WKUIDelegate dialog methods). Sits above the
@@ -1607,4 +1865,79 @@ body,
   background: var(--accent);
   border-color: var(--accent);
   color: var(--bg);
+}
+
+/* File dock (yDir) ---------------------------------------------------- */
+.app-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+}
+
+.file-dock {
+  display: none;
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 200px;
+  max-width: 50%;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+}
+
+.file-dock--open {
+  display: flex;
+}
+
+.file-dock__resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  transition: background-color 120ms ease;
+}
+
+.file-dock__resizer:hover,
+.file-dock__resizer:active {
+  background: var(--accent);
+}
+
+.file-dock__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The dock runs one fixed tool: no title to rename, no HotKey bar. */
+.file-dock .pane-title,
+.file-dock .hotkey-bar {
+  display: none;
+}
+
+.file-dock__message {
+  margin: auto;
+  padding: 16px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.file-dock__restart {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-dock__restart:hover {
+  border-color: var(--accent);
 }

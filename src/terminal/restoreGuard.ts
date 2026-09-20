@@ -30,3 +30,23 @@ export function restoreScrollGuard(rows: number): string {
 export function restoreRevealLines(rows: number): number {
   return Math.max(0, rows - 2);
 }
+
+/// Must the reveal wait for a real layout box?
+///
+/// A tab can be spawned while it is hidden (`Ctrl+Shift+T` from another tab,
+/// or the file dock's viewer tab), and a `display: none` pane has no box for
+/// `FitAddon` to measure — it computes NaN dimensions and returns without
+/// resizing, leaving xterm at its 80×24 default. A reveal worked out there
+/// scrolls by 22 lines whatever size the pane really is, so the restored
+/// history lands at the wrong offset once the tab is shown and re-fitted.
+///
+/// So when a restore happened into an unmeasurable pane, the amount is
+/// recomputed and applied at the first fit that has a box to measure
+/// (`TerminalPane.scheduleFit`). A visible pane keeps the original path:
+/// reveal from the real row count as soon as the shell paints.
+export function shouldDeferRestoreReveal(
+  restored: boolean,
+  measurable: boolean,
+): boolean {
+  return restored && !measurable;
+}

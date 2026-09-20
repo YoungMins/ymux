@@ -10,3 +10,5 @@ path = "src/main.rs"
 
 [dependencies]
 ytheme = { path = "../../crates/ytheme" }
+yipc = { path = "../../crates/yipc" }
+serde_json = "1"

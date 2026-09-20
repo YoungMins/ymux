@@ -63,7 +63,8 @@ fn child_init_script(id: &str) -> String {
   function isYmuxShortcut(e) {{
     if (e.ctrlKey && e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) return true;
     if (e.ctrlKey && e.altKey && !e.shiftKey && e.code === 'KeyN') return true;
-    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[HVWZPR]$/.test(e.code)) return true;
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[HVWZPRET]$/.test(e.code)) return true;
+    if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return true;
     if (e.ctrlKey && e.code === 'Tab') return true;
     return false;
   }}
@@ -105,6 +106,8 @@ fn eb_label(id: &str) -> String {
 // was a sync command, WebView2 needed the main thread to deliver the IPC
 // response, but run_on_main_thread was already holding it — causing the
 // webview to never initialize (gray screen).
+// Each argument is a field of the frontend `invoke` payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_embedded_browser(
     app: AppHandle,

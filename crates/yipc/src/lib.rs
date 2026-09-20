@@ -22,8 +22,10 @@ mod protocol;
 mod server;
 
 pub use client::IpcClient;
-pub use protocol::{CommandDef, IpcMessage};
-pub use server::{IpcServer, MessageHandler};
+pub use protocol::{
+    open_file_event, open_file_path, CommandDef, IpcMessage, AGENT_HOOK_KIND, OPEN_FILE_KIND,
+};
+pub use server::{IpcServer, MessageHandler, WRITE_TIMEOUT};
 
 /// Errors produced by the IPC layer.
 #[derive(Debug, thiserror::Error)]

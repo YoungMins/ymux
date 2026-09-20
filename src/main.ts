@@ -6,7 +6,7 @@ import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatDroppedPaths } from "./terminal/dropPaths";
-import { api } from "./ipc/bridge";
+import { api, onAgentsChanged, onPaneLabels } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountWorkspacePanel, refreshWorkspacePanel } from "./workspace/WorkspacePanel";
@@ -18,6 +18,7 @@ import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
+import { mountFileDock, toggleFileDock } from "./filedock/FileDock";
 
 async function main(): Promise<void> {
   initLang();
@@ -42,19 +43,39 @@ async function main(): Promise<void> {
   app.appendChild(panelEl);
   app.appendChild(appMain);
 
+  // Row under the top bar: the workspace area plus the right-side file dock.
+  const body = document.createElement("div");
+  body.className = "app-body";
+  appMain.appendChild(body);
+
   const host = document.createElement("div");
   host.className = "workspace-host";
-  appMain.appendChild(host);
+  body.appendChild(host);
 
   const manager = new WorkspaceManager(host, bootstrap.config, bootstrap.shells);
   mountWorkspaceBar(appMain, manager, bootstrap.shells);
-  // The bar was appended after the host; move it to the top of the column.
+  // The bar was appended after the body row; move it to the top of the
+  // column. (`host` is no longer a child of appMain, so anchor on `body`.)
   const bar = appMain.querySelector(".workspace-bar");
-  if (bar) appMain.insertBefore(bar, host);
+  if (bar) appMain.insertBefore(bar, body);
 
   mountWorkspacePanel(panelEl, manager);
 
   await manager.start();
+  mountFileDock(body, manager);
+  // Agent tree: subscribe first, then seed, so no change slips between.
+  void onAgentsChanged((s) => manager.applyAgents(s))
+    .catch((e) => console.warn("agents:changed listen failed:", e))
+    .then(() => api.getAgents())
+    .then((s) => manager.applyAgents(s))
+    .catch((e) => console.warn("get_agents failed:", e));
+
+  // Tab labels: subscribe first, then seed, so no change slips between.
+  void onPaneLabels((labels) => manager.applyPaneLabels(labels))
+    .catch((e) => console.warn("panes:labels listen failed:", e))
+    .then(() => api.getPaneLabels())
+    .then((labels) => manager.applyPaneLabels(labels))
+    .catch((e) => console.warn("get_pane_labels failed:", e));
 
   // Listen for update-available events from the Rust poller. Non-fatal if the
   // listen fails (e.g. capability denied in some harness); app keeps running.
@@ -151,6 +172,27 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl+Shift+T new tab in the focused pane.
+    if (mod && ev.shiftKey && (key === "T" || key === "t")) {
+      ev.preventDefault();
+      void manager.newTabInFocused();
+      return;
+    }
+
+    // Ctrl+Shift+[ / Ctrl+Shift+] previous / next tab. Matched on `ev.code`
+    // for the same layout-independence reason as the digit and font
+    // bindings: the character Shift+bracket produces varies by keyboard.
+    if (mod && ev.shiftKey && !ev.altKey && ev.code === "BracketLeft") {
+      ev.preventDefault();
+      manager.stepTabInFocused(-1);
+      return;
+    }
+    if (mod && ev.shiftKey && !ev.altKey && ev.code === "BracketRight") {
+      ev.preventDefault();
+      manager.stepTabInFocused(1);
+      return;
+    }
+
     // Ctrl+Tab cycle. Deliberately Ctrl on macOS too: Cmd+Tab is the OS
     // application switcher and never reaches the webview.
     if (ev.ctrlKey && !ev.shiftKey && key === "Tab") {
@@ -212,6 +254,13 @@ async function main(): Promise<void> {
         manager.resetFontSize();
         return;
       }
+    }
+
+    // Ctrl+Shift+E toggle the yDir file dock.
+    if (mod && ev.shiftKey && !ev.altKey && (key === "E" || key === "e")) {
+      ev.preventDefault();
+      toggleFileDock();
+      return;
     }
 
     // Ctrl+Shift+P command palette.

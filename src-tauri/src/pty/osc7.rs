@@ -124,6 +124,25 @@ impl Osc7Parser {
     }
 }
 
+/// Remembers the last cwd a pane reported, so the reader forwards only real
+/// changes. Shells re-emit OSC 7 on every prompt, and without this the file
+/// dock would re-navigate on every Enter.
+#[derive(Debug, Default)]
+pub struct CwdChange {
+    last: Option<String>,
+}
+
+impl CwdChange {
+    /// `true` when `cwd` differs from the previous report. Records it.
+    pub fn is_new(&mut self, cwd: &str) -> bool {
+        if self.last.as_deref() == Some(cwd) {
+            return false;
+        }
+        self.last = Some(cwd.to_string());
+        true
+    }
+}
+
 /// Decode an OSC 7 payload into a platform-native path. The payload is
 /// expected to be `file://<host>/<url-encoded-path>`. Any non-file URI or
 /// decode failure returns `None`.
@@ -290,5 +309,16 @@ mod tests {
         let _ = p.feed(&input);
         let out = p.feed(b"\x1b]7;file://h/ok\x07");
         assert_eq!(out, vec!["/ok".to_string()]);
+    }
+
+    #[test]
+    fn cwd_change_reports_only_real_changes() {
+        // Shells re-emit OSC 7 on every prompt, so the same dir must not
+        // count as a change, while going back to an earlier dir must.
+        let mut c = CwdChange::default();
+        assert!(c.is_new("/a"));
+        assert!(!c.is_new("/a"));
+        assert!(c.is_new("/b"));
+        assert!(c.is_new("/a"));
     }
 }

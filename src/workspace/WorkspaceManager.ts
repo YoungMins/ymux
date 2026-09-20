@@ -4,6 +4,7 @@
 // explicitly asked for.
 
 import type {
+  AgentSnapshot,
   Config,
   HotKeyDef,
   LayoutNode,
@@ -23,6 +24,7 @@ import type { Pane } from "../layout/Pane";
 import {
   findPane,
   newPane,
+  paneNode,
   panes,
   removePane,
   setRatioByPath,
@@ -30,13 +32,33 @@ import {
   swapPanes,
   worktreePaths,
 } from "../layout/LayoutTree";
+import { uuidv4 } from "../types";
+import { PaneGroup } from "../layout/PaneGroup";
+import { tabLabel } from "../terminal/tabLabel";
+import {
+  activateTabFor,
+  addTab,
+  findGroup,
+  groupOfPane,
+  isVisibleTab,
+  paneGroups,
+  stepTab,
+  swappablePanes,
+  tabIds,
+  visiblePanes,
+  wrapInTabs,
+} from "../layout/tabs";
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
 import { promptWorktreeBranch } from "./WorktreeModal";
-import { askConfirm } from "../ui/Dialog";
+import { askConfirm, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
+import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
+import { pickActivePaneId } from "./activePane";
+import { viewerTabAction } from "./viewerTab";
+import { zoomAction } from "./zoom";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -55,6 +77,23 @@ export class WorkspaceManager {
   private config: Config;
   private shells: ShellProfile[];
   private paneCaches = new Map<number, Map<Uuid, Pane>>();
+  /// Tab-group chrome per workspace, keyed by `LayoutNode::Tabs.id`. Mirrors
+  /// `paneCaches`: `SplitContainer.render()` rebuilds the DOM on every layout
+  /// mutation, and a `PaneGroup` owns a HotKeyBar with a language
+  /// subscription, so it must survive those rebuilds.
+  private groupCaches = new Map<number, Map<Uuid, PaneGroup>>();
+  /// Group id → the pane id of its viewer tab, the one the file dock's
+  /// `open-file` reuses (spec §4). Runtime-only and deliberately not
+  /// persisted: after a restart that tab reloads as an ordinary `ycode` tab
+  /// and the next dock Enter registers a new one.
+  private viewerTabs = new Map<Uuid, Uuid>();
+  /// Workspace id → the pane zoomed in it (`Ctrl+Shift+Z`); absent when that
+  /// workspace is not zoomed. Zoom is CSS plus one re-parenting, both of
+  /// which `renderWorkspace` throws away, so it is re-applied after every
+  /// render from this — see `applyZoom` and `./zoom.ts`.
+  private zoomedPanes = new Map<number, Uuid>();
+  /// Latest `panes:labels` snapshot (pane id → deepest running program).
+  private _paneLabels: Record<Uuid, string> = {};
   private workspaceContainers = new Map<number, HTMLElement>();
   private activeId: number;
   // Backing field — DO NOT read/write directly. Go through the
@@ -85,6 +124,15 @@ export class WorkspaceManager {
   onDefaultShellChange?: (name: string) => void;
   /// Fired after `setFontSize` so an open Settings panel can follow along.
   onFontSizeChange?: (px: number) => void;
+  /// Latest agent-tree snapshot from the backend (pane id → agents).
+  private _agents: AgentSnapshot = {};
+  /// Tree listeners (the workspace panel), fired when agents change or any
+  /// layout/pane metadata changes. A set so other views can subscribe too.
+  private treeListeners = new Set<() => void>();
+  /// Notified when the pane the user works in may have changed: focus moved
+  /// to another pane, or a workspace switch. No payload; read
+  /// `activePaneId()`. The file dock subscribes.
+  private activePaneListeners = new Set<() => void>();
 
   constructor(
     private host: HTMLElement,
@@ -124,6 +172,7 @@ export class WorkspaceManager {
       );
       el?.classList.add("pane--focused");
     }
+    this.notifyActivePaneChange();
   }
 
   get allShells(): ShellProfile[] {
@@ -296,6 +345,9 @@ export class WorkspaceManager {
     const cache = this.paneCaches.get(id)!;
     for (const pane of cache.values()) pane.scheduleFit();
 
+    // A workspace switch changes the active pane even when the focused id
+    // (still pointing into the old workspace) does not.
+    this.notifyActivePaneChange();
     void api.setActiveWorkspace(id).catch(() => {});
     if (created) this.onWorkspacesChangeCb?.();
     this.persistDebounced();
@@ -360,6 +412,8 @@ export class WorkspaceManager {
       for (const paneId of cache.keys()) this.paneStatus.delete(paneId);
     }
     this.paneCaches.delete(id);
+    for (const group of this.groupCaches.get(id)?.values() ?? []) group.dispose();
+    this.groupCaches.delete(id);
     this.workspaceContainers.get(id)?.remove();
     this.workspaceContainers.delete(id);
     this.hydrated.delete(id);
@@ -401,16 +455,19 @@ export class WorkspaceManager {
         console.error(`spawn failed`, e);
       }
     }
-    if (!this.focusedPaneId && cache.size > 0) {
-      const first = cache.values().next().value as Pane | undefined;
-      first?.focus();
+    if (!this.focusedPaneId) {
+      const first = visiblePanes(ws.root)[0];
+      if (first) cache.get(first.id)?.focus();
     }
   }
 
   /// Build either a terminal or browser pane based on `spec.pane_kind`. All
   /// focus / hotkey / url change callbacks are wired so the manager can react
   /// to state changes without needing to know the pane subclass.
-  private createPane(spec: PaneSpec): Pane {
+  /// `argv` runs a program directly instead of the spec's shell — the viewer
+  /// tab uses it for `ycode <path>`, the same mechanism the file dock uses
+  /// for `ydir`.
+  private createPane(spec: PaneSpec, argv?: string[]): Pane {
     if (spec.pane_kind === "browser") {
       return new BrowserPane({
         spec,
@@ -445,6 +502,8 @@ export class WorkspaceManager {
     const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
     return new TerminalPane({
       spec: finalSpec,
+      argv,
+      ownChrome: groupOfPane(this.active.root, spec.id) === null,
       fontSize: this.fontSize,
       onFocus: () => {
         this.focusedPaneId = spec.id;
@@ -453,6 +512,7 @@ export class WorkspaceManager {
       isVisible: () => this.isPaneVisible(spec.id),
       onContextMenu: (ev) => this.showPaneContextMenu(spec.id, ev),
       persistScrollback: () => this.persistScrollback,
+      bottomAnchor: () => this.bottomAnchor,
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
         this.applyPaneStatusClass(spec.id, status);
@@ -508,8 +568,57 @@ export class WorkspaceManager {
   private renderWorkspace(ws: Workspace): void {
     const container = this.workspaceContainers.get(ws.id)!;
     const cache = this.paneCaches.get(ws.id)!;
+    this.pruneGroups(ws);
+    // A pane that has just been wrapped in a group must give up its own title
+    // row and hotkey bar (the group draws one shared set); a pane whose group
+    // has just unwrapped must get them back. Idempotent, so running it on
+    // every render is both correct and cheap.
+    for (const [paneId, pane] of cache) {
+      const grouped = groupOfPane(ws.root, paneId) !== null;
+      // A group that has just unwrapped left its last hidden tab carrying
+      // `.pane--tab-hidden` (`display: none`), and the `PaneGroup` that would
+      // have cleared it is already disposed — so the surviving pane would
+      // render invisible. Only a group's `update()` ever sets the class, so
+      // clearing it for every ungrouped pane is safe and idempotent.
+      if (!grouped) pane.element.classList.remove("pane--tab-hidden");
+      if (pane instanceof TerminalPane) {
+        pane.setOwnChrome(!grouped);
+      }
+    }
     const ctx: RenderContext = {
       paneCache: cache,
+      groupCache: this.groupsFor(ws.id),
+      makeGroup: (groupId) =>
+        new PaneGroup(groupId, {
+          labelOf: (paneId) => this.tabLabelFor(paneId),
+          onSelectTab: (paneId) => this.selectTab(paneId),
+          onNewTab: () => void this.newTabInGroup(groupId),
+          onCloseTab: (paneId) => void this.closePane(paneId),
+          onCloseOthers: (paneId) => void this.closeOtherTabs(paneId),
+          onRenameTab: (paneId) => void this.promptRenameTab(paneId),
+          onHotKeysChange: (paneId, hotkeys) => {
+            this.updatePaneSpec(paneId, (p) => {
+              p.hotkeys = hotkeys;
+            });
+            // The config tree alone is not enough: the pane keeps its own
+            // `PaneSpec` copy and rebuilds its bar from it when the group
+            // unwraps, so it would come back with the pre-grouping list.
+            // Same write-both dance as `onBgColorChange` below.
+            const pane = this.findPaneById(paneId);
+            if (pane instanceof TerminalPane) pane.setHotKeys(hotkeys);
+          },
+          onBgColorChange: (paneId, color) => {
+            this.updatePaneSpec(paneId, (p) => {
+              p.bg_color = color ?? "";
+            });
+            const pane = this.findPaneById(paneId);
+            if (pane instanceof TerminalPane) pane.setBgColor(color);
+          },
+          onHotKeySubmit: (paneId) => {
+            const pane = this.findPaneById(paneId);
+            if (pane instanceof TerminalPane) pane.noteSubmit();
+          },
+        }),
       onRatioCommitted: (path, ratio) => {
         const wsObj = this.config.workspaces.find((w) => w.id === ws.id);
         if (!wsObj) return;
@@ -518,6 +627,59 @@ export class WorkspaceManager {
       },
     };
     render(ws.root, container, ctx);
+    // `render` rebuilt the container's children, undoing the re-parenting
+    // that zoom depends on while `workspace--zoomed` is still set — which
+    // left the whole workspace hidden until the user unzoomed. Re-decide.
+    this.applyZoom(ws, container);
+  }
+
+  /// Re-apply (or drop) this workspace's zoom after a render. The decision is
+  /// the pure `zoomAction`; everything below is the DOM half of it.
+  private applyZoom(ws: Workspace, container: HTMLElement): void {
+    const zoomedId = this.zoomedPanes.get(ws.id) ?? null;
+    const cache = this.paneCaches.get(ws.id);
+    const exists =
+      zoomedId !== null &&
+      cache?.get(zoomedId) !== undefined &&
+      findPane(ws.root, zoomedId) !== null;
+    const groupId = zoomedId ? (groupOfPane(ws.root, zoomedId)?.id ?? null) : null;
+    const action = zoomAction(zoomedId, exists, groupId);
+    if (action.kind === "none") return;
+    if (action.kind === "clear") {
+      this.zoomedPanes.delete(ws.id);
+      container.classList.remove("workspace--zoomed");
+      return;
+    }
+    this.zoomElementFor(ws, container, action.paneId, action.groupId);
+  }
+
+  /// Put `paneId` (or the group holding it) on screen as the zoom overlay:
+  /// mark the container, clear any stale zoom classes, re-parent the element
+  /// directly under the container so the overlay covers the whole area, and
+  /// re-fit whichever terminal is actually visible — re-parenting resets
+  /// `.xterm-viewport`'s scrollTop behind xterm's back.
+  private zoomElementFor(
+    ws: Workspace,
+    container: HTMLElement,
+    paneId: Uuid,
+    groupId: Uuid | null,
+  ): void {
+    const cache = this.paneCaches.get(ws.id);
+    const pane = cache?.get(paneId);
+    if (!cache || !pane) return;
+    const groups = this.groupsFor(ws.id);
+    const group = groupId ? groups.get(groupId) : undefined;
+    for (const p of cache.values()) p.element.classList.remove("pane--zoomed");
+    for (const g of groups.values()) g.element.classList.remove("pane-group--zoomed");
+    container.classList.add("workspace--zoomed");
+    const zoomEl = group?.element ?? pane.element;
+    zoomEl.classList.add(group ? "pane-group--zoomed" : "pane--zoomed");
+    if (zoomEl.parentElement !== container) container.appendChild(zoomEl);
+    // For a group the visible terminal is its active tab, which need not be
+    // the pane the zoom was started from (the user can switch tabs zoomed).
+    const node = groupId ? findGroup(ws.root, groupId) : null;
+    const visibleId = node ? (tabIds(node)[node.active] ?? paneId) : paneId;
+    cache.get(visibleId)?.scheduleFit();
   }
 
   /// Resolve a shell name against the detected list. Falls back to the first
@@ -599,6 +761,215 @@ export class WorkspaceManager {
       console.error("split spawn failed", e);
     }
     this.persistDebounced();
+  }
+
+  /// Open a tab next to the focused pane, wrapping it in a group first if it
+  /// has none (`Ctrl+Shift+T`, the palette).
+  async newTabInFocused(): Promise<void> {
+    const ws = this.active;
+    const sourceId = this.focusedPaneId ?? visiblePanes(ws.root)[0]?.id;
+    if (!sourceId) return;
+    await this.addTabFrom(ws, sourceId);
+  }
+
+  /// The strip's `+`: always adds to *that* group, whatever holds focus (the
+  /// button is not inside any `.pane`, so clicking it moves no focus).
+  private async newTabInGroup(groupId: Uuid): Promise<void> {
+    const ws = this.active;
+    const group = findGroup(ws.root, groupId);
+    if (!group) return;
+    const ids = tabIds(group);
+    const sourceId = ids[group.active] ?? ids[0];
+    if (!sourceId) return;
+    await this.addTabFrom(ws, sourceId);
+  }
+
+  /// Spec §4: a new tab runs "the same shell/cwd as the active tab". The live
+  /// OSC 7 cwd is preferred over the stale spec one, exactly as `splitFocused`
+  /// does. Hotkeys and background colour are copied too: the group shows one
+  /// bar, and copying the list is what makes it *look* shared across tabs
+  /// without inventing group-level state.
+  private async addTabFrom(ws: Workspace, sourceId: Uuid): Promise<void> {
+    const source = findPane(ws.root, sourceId);
+    // Browser panes have no shell to duplicate and no strip — tabs are a
+    // terminal feature (spec §4), so this is a no-op there.
+    if (!source || (source.pane_kind ?? "terminal") !== "terminal") return;
+    let group = groupOfPane(ws.root, sourceId);
+    if (!group) {
+      ws.root = wrapInTabs(ws.root, sourceId, uuidv4());
+      group = groupOfPane(ws.root, sourceId);
+      if (!group) return;
+    }
+    const liveCwd = await api.getPaneCwd(sourceId).catch(() => null);
+    const spec = newPane(this.resolveShell(source.shell), liveCwd ?? source.cwd ?? null);
+    spec.hotkeys = (source.hotkeys ?? []).map((h) => ({ ...h }));
+    spec.bg_color = source.bg_color ?? "";
+    ws.root = addTab(ws.root, group.id, spec);
+    const cache = this.paneCaches.get(ws.id)!;
+    const pane = this.createPane(spec);
+    cache.set(spec.id, pane);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("new tab spawn failed", e);
+    }
+    this.persistDebounced();
+  }
+
+  /// Show a tab and focus it. The strip, the workspace tree and the prev/next
+  /// shortcuts all land here.
+  selectTab(paneId: Uuid): void {
+    const ws = this.active;
+    const next = activateTabFor(ws.root, paneId);
+    if (next !== ws.root) {
+      ws.root = next;
+      this.renderWorkspace(ws);
+      this.persistDebounced();
+    }
+    this.paneCaches.get(ws.id)?.get(paneId)?.focus();
+  }
+
+  /// `Ctrl+Shift+[` / `Ctrl+Shift+]`. A no-op when the focused pane has no
+  /// tabs, which is what makes the shortcuts harmless in a plain pane.
+  stepTabInFocused(delta: 1 | -1): void {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? visiblePanes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const group = groupOfPane(ws.root, focusId);
+    if (!group) return;
+    const nextId = tabIds(group)[stepTab(group, delta)];
+    if (nextId && nextId !== focusId) this.selectTab(nextId);
+  }
+
+  /// Tab context menu → "Close other tabs". Sequential because each close can
+  /// raise a worktree-removal prompt.
+  async closeOtherTabs(paneId: Uuid): Promise<void> {
+    const group = groupOfPane(this.active.root, paneId);
+    if (!group) return;
+    for (const id of tabIds(group).filter((x) => x !== paneId)) {
+      await this.closePane(id);
+    }
+    this.selectTab(paneId);
+  }
+
+  /// Double-click on a tab, or its context menu → "Rename tab". Writes the
+  /// title into that tab's own `PaneSpec`; there is no group-level title, so
+  /// there is no second place for it to drift out of sync.
+  async promptRenameTab(paneId: Uuid): Promise<void> {
+    const current = this.getPaneSpec(paneId)?.title ?? "";
+    const next = await askText(t("tab.rename"), current);
+    if (next === null) return;
+    const trimmed = next.trim();
+    const title = trimmed.length > 0 ? trimmed : null;
+    this.updatePaneSpec(paneId, (p) => {
+      p.title = title;
+    });
+    const pane = this.findPaneById(paneId);
+    (pane as { setTitle?: (t: string | null) => void } | undefined)?.setTitle?.(title);
+    this.refreshTabChrome();
+  }
+
+  /// The file dock's yDir pressed Enter on a file. It goes into the viewer
+  /// tab of the pane the dock follows — `activePaneId()`, which is the pane
+  /// that was active before the dock took focus, because the dock's own pane
+  /// lives outside every layout tree and so never becomes the active one.
+  /// One viewer tab per pane: the second Enter kills and respawns
+  /// `ycode <path>` in the same tab rather than opening another (spec §4).
+  async openFileInViewerTab(path: string): Promise<void> {
+    if (!path) return;
+    const ws = this.active;
+    const targetId = this.activePaneId();
+    if (!targetId) return;
+    let group = groupOfPane(ws.root, targetId);
+    if (!group) {
+      ws.root = wrapInTabs(ws.root, targetId, uuidv4());
+      group = groupOfPane(ws.root, targetId);
+      if (!group) return;
+    }
+    const action = viewerTabAction(this.viewerTabs.get(group.id), tabIds(group));
+    if (action.kind === "reuse") {
+      await this.respawnViewer(ws, action.paneId, path);
+      return;
+    }
+    const spec = newPane(this.resolveShell(this.shells[0]?.name ?? ""), null);
+    ws.root = addTab(ws.root, group.id, spec);
+    this.viewerTabs.set(group.id, spec.id);
+    const cache = this.paneCaches.get(ws.id)!;
+    const pane = this.createPane(spec, ["ycode", path]);
+    cache.set(spec.id, pane);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("viewer tab spawn failed", e);
+    }
+    this.persistDebounced();
+  }
+
+  /// Replace the file shown by an existing viewer tab. The pane id is kept,
+  /// so the tab stays where it is in the strip and nothing else in the layout
+  /// moves; only the PTY behind it is swapped.
+  private async respawnViewer(ws: Workspace, paneId: Uuid, path: string): Promise<void> {
+    const spec = findPane(ws.root, paneId);
+    if (!spec) return;
+    const cache = this.paneCaches.get(ws.id)!;
+    // Not permanent: this tab is not being closed, only re-pointed. The
+    // saved scrollback is dropped explicitly below instead, *after* the kill,
+    // so nothing can race the delete.
+    cache.get(paneId)?.dispose(false);
+    cache.delete(paneId);
+    // `dispose` fires `killPane` without awaiting and Tauri commands run on a
+    // worker pool, so serialize it — otherwise a late kill can land on the
+    // pane we are about to spawn under the same id. Same hazard the file
+    // dock's own restart path handles this way.
+    await api.killPane(paneId).catch(() => {});
+    // The pane id is reused, so `spawn()`'s `loadScrollback` would replay the
+    // *previous* file's ycode screen above the new one. Awaited for the same
+    // reason the kill above is: Tauri commands run on a worker pool, and a
+    // fire-and-forget delete could land after the new pane's load.
+    await api.deleteScrollback(paneId).catch(() => {});
+    const pane = this.createPane(spec, ["ycode", path]);
+    cache.set(paneId, pane);
+    ws.root = activateTabFor(ws.root, paneId);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("viewer tab respawn failed", e);
+    }
+  }
+
+  /// The label a tab shows: the user's title, else the running program from
+  /// the process scan, else the shell name (`src/terminal/tabLabel.ts`).
+  tabLabelFor(paneId: Uuid): string {
+    const spec = this.getPaneSpec(paneId);
+    return tabLabel({
+      title: spec?.title ?? null,
+      shell: spec?.shell ?? "",
+      process: this._paneLabels[paneId] ?? null,
+      fallback: t("terminal.defaultTitle"),
+    });
+  }
+
+  get paneLabels(): Record<Uuid, string> {
+    return this._paneLabels;
+  }
+
+  /// A new `panes:labels` snapshot. Only the strips and the tree are
+  /// repainted — never a full layout render, which would detach every
+  /// terminal every couple of seconds.
+  applyPaneLabels(next: Record<Uuid, string>): void {
+    this._paneLabels = next;
+    this.refreshTabChrome();
+    this.notifyTree();
+  }
+
+  private refreshTabChrome(): void {
+    for (const group of this.groupsFor(this.activeId).values()) group.refreshLabels();
   }
 
   /// Split the focused pane into a fresh git worktree rooted shell. Prompts
@@ -696,13 +1067,24 @@ export class WorkspaceManager {
   }
 
   /// Close the currently focused pane.
+  /// Close the currently focused pane — or, when it is a tab, that tab.
   async closeFocused(): Promise<void> {
-    const ws = this.active;
     if (!this.focusedPaneId) return;
-    const id = this.focusedPaneId;
-    // Capture before the tree is mutated below — once the pane is removed
-    // from the layout, its spec (and worktree_path) is gone.
+    await this.closePane(this.focusedPaneId);
+  }
+
+  /// Close one pane. `removePane` unwraps a group down to a plain pane and
+  /// drops the group entirely when its last tab goes, so `Ctrl+Shift+W` keeps
+  /// exactly today's meaning: close the active tab, and on the last one close
+  /// the pane (spec §4). There is deliberately no tab-specific branch here.
+  private async closePane(id: Uuid): Promise<void> {
+    const ws = this.active;
+    // Captured before the tree is mutated: once the pane is gone so is its
+    // spec, and once the group may have unwrapped there is no other way to
+    // know which tab should take focus.
     const wtPath = findPane(ws.root, id)?.worktree_path ?? "";
+    const group = groupOfPane(ws.root, id);
+    const siblings = group ? tabIds(group).filter((x) => x !== id) : [];
     const newRoot = removePane(ws.root, id);
     const cache = this.paneCaches.get(ws.id)!;
     const pane = cache.get(id);
@@ -717,18 +1099,7 @@ export class WorkspaceManager {
       // always something to look at.
       const defaultShell = this.resolveShell(this.shells[0]?.name ?? "");
       const spec = newPane(defaultShell);
-      ws.root = {
-        kind: "pane",
-        id: spec.id,
-        title: null,
-        shell: defaultShell,
-        cwd: null,
-        startup_cmd: null,
-        env: [],
-        pane_kind: "terminal",
-        url: null,
-        hotkeys: [],
-      };
+      ws.root = paneNode(spec);
       const replacement = this.createPane(spec);
       cache.set(spec.id, replacement);
       this.renderWorkspace(ws);
@@ -736,14 +1107,15 @@ export class WorkspaceManager {
       replacement.focus();
     } else {
       ws.root = newRoot;
-      this.renderWorkspace(ws);
-      // Move focus to the first remaining pane in tree (depth-first) order
-      // so the new focus is predictable from the user's point of view, not
-      // dependent on Map insertion order.
       this.focusedPaneId = null;
-      const remaining = panes(ws.root);
-      const next = remaining[0] ? cache.get(remaining[0].id) : undefined;
-      next?.focus();
+      // Stay inside the group when one of its tabs was closed; otherwise fall
+      // back to the first pane on screen, in depth-first order, so the new
+      // focus is predictable rather than Map-insertion dependent.
+      const nextId =
+        siblings.find((s) => findPane(ws.root, s)) ?? visiblePanes(ws.root)[0]?.id;
+      if (nextId) ws.root = activateTabFor(ws.root, nextId);
+      this.renderWorkspace(ws);
+      if (nextId) cache.get(nextId)?.focus();
     }
     this.persistDebounced();
 
@@ -793,24 +1165,27 @@ export class WorkspaceManager {
     const pane = cache?.get(id);
     if (!pane) return;
 
-    const alreadyZoomed = container.classList.contains("workspace--zoomed");
-    if (alreadyZoomed) {
+    if (this.zoomedPanes.has(ws.id)) {
+      // Unzoom: forget the state *before* rendering, so the re-apply pass at
+      // the end of `renderWorkspace` sees "nothing zoomed" and leaves the
+      // rebuilt layout alone.
+      this.zoomedPanes.delete(ws.id);
       container.classList.remove("workspace--zoomed");
-      pane.element.classList.remove("pane--zoomed");
+      for (const p of cache!.values()) p.element.classList.remove("pane--zoomed");
+      for (const g of this.groupsFor(ws.id).values()) {
+        g.element.classList.remove("pane-group--zoomed");
+      }
       this.renderWorkspace(ws);
       pane.focus();
       pane.scheduleFit();
       return;
     }
-    // Ensure the pane element is directly inside the workspace container so
-    // the absolute-positioned overlay covers the whole area, and clear any
-    // previous zoom styling from a stale toggle.
-    for (const p of cache!.values()) p.element.classList.remove("pane--zoomed");
-    container.classList.add("workspace--zoomed");
-    pane.element.classList.add("pane--zoomed");
-    if (pane.element.parentElement !== container) {
-      container.appendChild(pane.element);
-    }
+    // Zoom the group, not the tab: a tab is built with `ownChrome: false`, so
+    // zooming its element alone would show a terminal with no title row and
+    // no hotkey bar. Which element that is gets re-decided on every render,
+    // because the pane can gain or lose tabs while zoomed.
+    this.zoomedPanes.set(ws.id, id);
+    this.zoomElementFor(ws, container, id, groupOfPane(ws.root, id)?.id ?? null);
     pane.focus();
     pane.scheduleFit();
   }
@@ -836,6 +1211,8 @@ export class WorkspaceManager {
     (pane as { setTitle?: (t: string | null) => void } | undefined)?.setTitle?.(
       trimmed.length > 0 ? trimmed : null,
     );
+    // A tab's own `titleEl` is null — the group draws the shared title row.
+    this.refreshTabChrome();
   }
 
   getWorkspaceName(wsId: number): string | null {
@@ -866,7 +1243,10 @@ export class WorkspaceManager {
   /// terminal scrollback survives and focus stays on the same pane.
   swapFocused(delta: 1 | -1): void {
     const ws = this.active;
-    const list = panes(ws.root);
+    // Only ungrouped panes swap slots: trading a tab for a pane in another
+    // split would silently move a terminal out of the chrome it shares and
+    // pull an unrelated one in.
+    const list = swappablePanes(ws.root);
     if (list.length < 2) return;
     const focusId = this.focusedPaneId ?? list[0].id;
     const idx = list.findIndex((p) => p.id === focusId);
@@ -900,9 +1280,85 @@ export class WorkspaceManager {
     return this.config.persist_scrollback;
   }
 
+  /// Enable/disable the bottom-anchored prompt and persist the choice. Applies
+  /// to every live terminal in every workspace at once, for the same reason
+  /// `setFontSize` does: hidden workspaces keep their panes alive.
+  setBottomAnchor(enabled: boolean): void {
+    this.config.bottom_anchor = enabled;
+    for (const cache of this.paneCaches.values()) {
+      for (const pane of cache.values()) {
+        if (pane instanceof TerminalPane) pane.refreshBottomAnchor();
+      }
+    }
+    this.persistDebounced();
+  }
+
+  get bottomAnchor(): boolean {
+    return this.config.bottom_anchor;
+  }
+
   /// Directory new worktrees are created under (see `openWorktreePane`).
   get worktreeBaseDir(): string {
     return this.config.worktree_base_dir;
+  }
+
+  get agents(): AgentSnapshot {
+    return this._agents;
+  }
+
+  /// Subscribe to tree-relevant changes. Returns an unsubscribe function.
+  onTreeChange(cb: () => void): () => void {
+    this.treeListeners.add(cb);
+    return () => {
+      this.treeListeners.delete(cb);
+    };
+  }
+
+  private notifyTree(): void {
+    for (const cb of this.treeListeners) cb();
+  }
+
+  /// Take a new backend snapshot. A lead that just started waiting on the
+  /// user raises its pane to `attention`, unless the user is already looking
+  /// at that exact pane (same bar as the bell notification).
+  applyAgents(next: AgentSnapshot): void {
+    for (const id of newlyWaitingPanes(this._agents, next)) {
+      if (this.isWatching(id)) continue;
+      const pane = this.findPaneById(id);
+      if (pane instanceof TerminalPane) pane.markWaiting();
+    }
+    this._agents = next;
+    this.notifyTree();
+  }
+
+  /// Switch to the workspace owning `paneId` (hydrating it if never visited)
+  /// and focus that pane. Used by the tree's pane and agent rows.
+  async focusPane(paneId: Uuid): Promise<void> {
+    const wsId = workspaceIdOfPane(this.config.workspaces, paneId);
+    if (wsId === null) return;
+    if (wsId !== this.activeId) await this.activate(wsId);
+    // The target may be a hidden tab (a tree row, the viewer tab): show it
+    // first, or `focus()` would land on something the user cannot see.
+    const ws = this.active;
+    const next = activateTabFor(ws.root, paneId);
+    if (next !== ws.root) {
+      ws.root = next;
+      this.renderWorkspace(ws);
+      this.persistDebounced();
+    }
+    this.paneCaches.get(wsId)?.get(paneId)?.focus();
+  }
+
+  get agentTracking(): boolean {
+    return this.config.agent_tracking ?? false;
+  }
+
+  /// Install/remove the Claude Code hooks, then record the choice. Rejects
+  /// (setting unchanged) if the backend couldn't write settings.json.
+  async setAgentTracking(enabled: boolean): Promise<void> {
+    await api.setAgentTracking(enabled);
+    this.config.agent_tracking = enabled;
+    this.persistDebounced();
   }
 
   /// Can the user see pane `paneId` right now — window focused and its
@@ -918,7 +1374,11 @@ export class WorkspaceManager {
   /// to get classified as `done`.
   private isPaneVisible(paneId: Uuid): boolean {
     if (!this.windowFocused) return false;
-    return this.workspaceOfPane(paneId) === this.activeId;
+    if (this.workspaceOfPane(paneId) !== this.activeId) return false;
+    // A hidden tab is not on screen. Without this an agent finishing in a
+    // background tab would be scored "the user saw it finish" (`done`)
+    // instead of raising `attention`.
+    return isVisibleTab(this.active.root, paneId);
   }
 
   /// Stricter: is the user looking at *this exact pane*? Gates the OS
@@ -945,6 +1405,32 @@ export class WorkspaceManager {
       if (pane) return pane;
     }
     return undefined;
+  }
+
+  private groupsFor(wsId: number): Map<Uuid, PaneGroup> {
+    let map = this.groupCaches.get(wsId);
+    if (!map) {
+      map = new Map();
+      this.groupCaches.set(wsId, map);
+    }
+    return map;
+  }
+
+  /// Drop the chrome of groups that have left the tree — unwrapped by a close,
+  /// or removed with their workspace — disposing the HotKeyBar each one owns
+  /// and forgetting its viewer tab.
+  private pruneGroups(ws: Workspace): void {
+    const groups = this.groupsFor(ws.id);
+    const live = new Set<Uuid>();
+    for (const entry of paneGroups(ws.root)) {
+      if (entry.groupId) live.add(entry.groupId);
+    }
+    for (const [id, group] of groups) {
+      if (live.has(id)) continue;
+      group.dispose();
+      groups.delete(id);
+      this.viewerTabs.delete(id);
+    }
   }
 
   /// Repaint pane `id`'s status border + tooltip. Called whenever a
@@ -1012,9 +1498,11 @@ export class WorkspaceManager {
   }
 
   /// Move focus to the next pane in depth-first order.
+  /// Move focus to the next pane in depth-first order. Skips hidden tabs:
+  /// `Ctrl+Tab` cycles panes, `Ctrl+Shift+[`/`]` cycles tabs.
   cycleFocus(delta: 1 | -1): void {
     const ws = this.active;
-    const list = panes(ws.root);
+    const list = visiblePanes(ws.root);
     if (list.length === 0) return;
     const idx = Math.max(
       0,
@@ -1031,6 +1519,36 @@ export class WorkspaceManager {
     const cache = this.paneCaches.get(this.activeId);
     if (!cache) return;
     for (const pane of cache.values()) pane.scheduleFit();
+  }
+
+  /// Subscribe to active-pane changes. Returns the unsubscribe function.
+  onActivePaneChange(cb: () => void): () => void {
+    this.activePaneListeners.add(cb);
+    return () => {
+      this.activePaneListeners.delete(cb);
+    };
+  }
+
+  private notifyActivePaneChange(): void {
+    for (const cb of this.activePaneListeners) cb();
+  }
+
+  /// See `pickActivePaneId`. Hidden tabs are not where the user works, so the
+  /// list is `visiblePanes`, not `panes` — otherwise the file dock would
+  /// follow the cwd of a terminal nobody can see.
+  activePaneId(): Uuid | null {
+    return pickActivePaneId(
+      visiblePanes(this.active.root).map((p) => p.id),
+      this._focusedPaneId,
+    );
+  }
+
+  /// Give keyboard focus back to `activePaneId()`. Used when the file dock
+  /// closes while it held focus. The pane is always in the active
+  /// workspace, so `focusPane` never switches workspaces here.
+  focusActivePane(): void {
+    const id = this.activePaneId();
+    if (id) void this.focusPane(id);
   }
 
   /// Type `text` into whichever terminal pane sits under the given viewport
@@ -1051,6 +1569,8 @@ export class WorkspaceManager {
   /// Save the current config to disk. Debounced by 500 ms so rapid changes
   /// collapse into a single write.
   private persistDebounced(): void {
+    // Every layout / pane-metadata mutation funnels through here — the tree follows it.
+    this.notifyTree();
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
     }

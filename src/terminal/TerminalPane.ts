@@ -17,8 +17,13 @@ import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
-import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
+import {
+  restoreScrollGuard,
+  restoreRevealLines,
+  shouldDeferRestoreReveal,
+} from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
+import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
@@ -60,6 +65,18 @@ export interface TerminalPaneOptions {
   /// from WorkspaceManager's toggle rather than snapshotted at pane-creation
   /// time, so flipping the setting takes effect immediately).
   persistScrollback?: () => boolean;
+  /// Whether the bottom-anchored prompt is enabled (read live, like
+  /// `persistScrollback`). Absent means off, so a standalone pane renders
+  /// exactly like plain xterm.
+  bottomAnchor?: () => boolean;
+  /// Run this program directly instead of the spec's shell. Its exit is the
+  /// pane's exit (`onExit`). The file dock uses it to host `ydir`.
+  argv?: string[];
+  /// Render this pane without its own title row and hotkey bar. Tabs use it:
+  /// a `PaneGroup` draws one shared title + hotkey bar above the strip and
+  /// binds them to the active tab (spec §4). Absent or `true` leaves every
+  /// standalone pane exactly as it is today.
+  ownChrome?: boolean;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -72,8 +89,8 @@ export class TerminalPane implements Pane {
   readonly id: Uuid;
   readonly element: HTMLElement;
   private termHost: HTMLElement;
-  private hotkeyBar: HotKeyBar;
-  private titleEl: HTMLElement;
+  private hotkeyBar: HotKeyBar | null = null;
+  private titleEl: HTMLElement | null = null;
   private term: Terminal;
   private fit: FitAddon;
   private search: SearchAddon;
@@ -89,9 +106,26 @@ export class TerminalPane implements Pane {
   /// created it. Cached because `resyncViewportScroll` runs per animation
   /// frame while a gutter is being dragged.
   private viewportEl: HTMLElement | null = null;
+  /// xterm's `.xterm-screen`, the element the bottom anchor translates.
+  /// Resolved once after `term.open()`. It holds the canvases, the helper
+  /// textarea / IME preview and the decoration layer, but not the
+  /// `.xterm-viewport` scroll element, which must stay put so the scrollbar
+  /// and wheel keep working. See `bottomAnchor.ts`.
+  private screenEl: HTMLElement | null = null;
+  /// rAF coalescing the non-render triggers of `applyBottomAnchor`.
+  private pendingAnchorRaf = 0;
+  /// Last `transform` written to `screenEl`, so an unchanged offset costs no
+  /// style write on every rendered frame.
+  private appliedAnchor = "";
   /// Lines to scroll up once the shell has painted its first output, to bring
   /// restored scrollback back into view. 0 = nothing to reveal.
   private pendingRestoreReveal = 0;
+  /// Set when a restore landed in a pane with no layout box (a tab spawned
+  /// while hidden): the reveal amount depends on the row count, which is
+  /// still xterm's 80×24 default at that point, so it is recomputed and
+  /// applied at the first fit that can measure the pane. See
+  /// `shouldDeferRestoreReveal`.
+  private restoreRevealDeferred = false;
   /// Whether the user has typed in this pane during this app run. Gates
   /// scrollback persistence so an idle, restored-but-untouched pane never
   /// re-saves and can't compound its own history across restarts.
@@ -141,37 +175,18 @@ export class TerminalPane implements Pane {
       this.opts.onContextMenu?.(ev);
     });
 
-    // Title label shown above the hotkey bar. Falls back to the shell name
-    // when no user title has been set (via `Ctrl+Shift+R`).
-    this.titleEl = document.createElement("div");
-    this.titleEl.className = "pane-title";
-    this.titleEl.textContent = opts.spec.title || opts.spec.shell || t("terminal.defaultTitle");
-    this.element.appendChild(this.titleEl);
-
-    // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
-    // visible ⚙ button so the user can discover the feature.
-    this.hotkeyBar = new HotKeyBar({
-      paneId: this.id,
-      initial: opts.spec.hotkeys ?? [],
-      initialBgColor: opts.spec.bg_color ?? null,
-      onSubmit: () => this.statusMachine.onSubmit(Date.now()),
-      onChange: (next) => {
-        this.spec = { ...this.spec, hotkeys: next };
-        this.opts.onHotKeysChange?.(next);
-      },
-      onBgColorChange: (color) => {
-        this.setBgColor(color);
-        this.opts.onBgColorChange?.(color);
-      },
-    });
-    this.element.appendChild(this.hotkeyBar.element);
-
     // xterm mounts into a child element (not `this.element` directly) so the
     // HotKeyBar sibling doesn't get clobbered when xterm rearranges its
     // internal DOM subtree.
     this.termHost = document.createElement("div");
     this.termHost.className = "pane__term";
     this.element.appendChild(this.termHost);
+
+    if (opts.ownChrome === false) {
+      this.element.classList.add("pane--tab");
+    } else {
+      this.buildChrome();
+    }
 
     const bgColor = opts.spec.bg_color || "#0b0f14";
     this.term = new Terminal({
@@ -239,7 +254,10 @@ export class TerminalPane implements Pane {
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
-        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p")) return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t")) return false;
+        // Ctrl/Cmd+Shift+[ / ] → previous / next tab, handled at window level.
+        // On `code`, because Shift+bracket is layout-dependent.
+        if (ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight")) return false;
         // Ctrl/Cmd+Shift+Left/Right → swap pane position (window level).
         if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
         // Font zoom. Matched on `code` for the same layout-independence
@@ -308,6 +326,17 @@ export class TerminalPane implements Pane {
     // Serialize addon: snapshots the buffer (text + escape sequences) so it
     // can be replayed on next mount when scrollback persistence is enabled.
     this.term.loadAddon(this.serializeAddon);
+
+    // Bottom-anchored prompt. `onRender` fires from inside xterm's own render
+    // frame, so applying there lands in the same paint as the new content.
+    // Deferring it would show one frame of fresh output below the clip edge.
+    // The other triggers share one rAF.
+    this.screenEl =
+      this.term.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+    this.term.onRender(() => this.applyBottomAnchor());
+    this.term.onResize(() => this.scheduleBottomAnchor());
+    this.term.onScroll(() => this.scheduleBottomAnchor());
+    this.term.buffer.onBufferChange(() => this.scheduleBottomAnchor());
 
     // Flush the current buffer to disk on app shutdown (normal window
     // close), *without* deleting it — that's what makes restore-on-mount
@@ -385,7 +414,7 @@ export class TerminalPane implements Pane {
   }
 
   private updateLang(): void {
-    if (!this.spec.title && !this.spec.shell) {
+    if (this.titleEl && !this.spec.title && !this.spec.shell) {
       this.titleEl.textContent = t("terminal.defaultTitle");
     }
     if (this.searchInput) {
@@ -443,8 +472,14 @@ export class TerminalPane implements Pane {
           // The guard keeps the history safe but parks it above the viewport,
           // so the pane opens showing only a bare prompt — indistinguishable
           // from "nothing was restored". Reveal it by scrolling up once the
-          // shell has painted (see the data listener below).
-          this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
+          // shell has painted (see the data listener below) — or, for a tab
+          // spawned while hidden, at the first fit that can measure the pane,
+          // since `this.term.rows` is still the 80×24 default here.
+          if (shouldDeferRestoreReveal(true, this.measurable())) {
+            this.restoreRevealDeferred = true;
+          } else {
+            this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
+          }
         }
       } catch {
         // No prior scrollback (or load failed) — start clean.
@@ -465,12 +500,7 @@ export class TerminalPane implements Pane {
       // scheduled here happens strictly after the shell's opening burst (with
       // its `\x1b[2J` clear) has been applied — scrolling any earlier would be
       // undone by that clear.
-      this.term.write(bytes, () => {
-        if (this.pendingRestoreReveal > 0) {
-          this.term.scrollLines(-this.pendingRestoreReveal);
-          this.pendingRestoreReveal = 0;
-        }
-      });
+      this.term.write(bytes, () => this.revealRestored());
       this.statusMachine.onOutput(Date.now());
       this.scheduleScrollbackSave();
     });
@@ -487,6 +517,7 @@ export class TerminalPane implements Pane {
         cwd: this.spec.cwd ?? null,
         rows,
         cols,
+        argv: this.opts.argv,
       });
       this.spawned = true;
 
@@ -542,6 +573,19 @@ export class TerminalPane implements Pane {
   /// calls this explicitly from its focused-pane tracking.
   blur(): void {
     this.isFocused = false;
+  }
+
+  /// The agent registry reports this pane's agent is waiting on the user.
+  markWaiting(): void {
+    this.statusMachine.onWaiting();
+  }
+
+  /// A command was submitted to this pane by something that bypasses xterm's
+  /// `onData` — the group's shared HotKey bar, which writes straight to
+  /// `writePane`. Without it the pane would sit at `idle` while the command
+  /// runs, the same gap `startup_cmd` and the per-pane bar already close.
+  noteSubmit(): void {
+    this.statusMachine.onSubmit(Date.now());
   }
 
   get status(): PaneStatus {
@@ -678,9 +722,75 @@ export class TerminalPane implements Pane {
     this.element.style.background = bg;
   }
 
+  /// Write a hotkey list edited elsewhere back into this pane. The shared
+  /// `HotKeyBar` of a `PaneGroup` edits the active tab's list, and the tab's
+  /// own `PaneSpec` copy has to follow — `buildChrome()` seeds its bar from
+  /// `this.spec` when the group unwraps and the pane gets its chrome back,
+  /// so without this the pane came back with its pre-grouping hotkeys.
+  /// Mirrors `setBgColor`. The `?.` is the grouped case: a tab has no bar of
+  /// its own, which is exactly when this is called.
+  setHotKeys(hotkeys: HotKeyDef[]): void {
+    this.spec = { ...this.spec, hotkeys };
+    this.hotkeyBar?.bind(this.id, hotkeys, this.spec.bg_color || null);
+  }
+
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
-    this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
+    if (this.titleEl) {
+      this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
+    }
+  }
+
+  /// Build this pane's own title row and hotkey bar, in front of the terminal
+  /// host. Split out of the constructor because a pane can gain and lose its
+  /// chrome at runtime — see `setOwnChrome`.
+  private buildChrome(): void {
+    // Title label shown above the hotkey bar. Falls back to the shell name
+    // when no user title has been set (via `Ctrl+Shift+R`).
+    this.titleEl = document.createElement("div");
+    this.titleEl.className = "pane-title";
+    this.titleEl.textContent =
+      this.spec.title || this.spec.shell || t("terminal.defaultTitle");
+    this.element.insertBefore(this.titleEl, this.termHost);
+
+    // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
+    // visible ⚙ button so the user can discover the feature.
+    this.hotkeyBar = new HotKeyBar({
+      paneId: this.id,
+      initial: this.spec.hotkeys ?? [],
+      initialBgColor: this.spec.bg_color ?? null,
+      onSubmit: () => this.statusMachine.onSubmit(Date.now()),
+      onChange: (next) => {
+        this.spec = { ...this.spec, hotkeys: next };
+        this.opts.onHotKeysChange?.(next);
+      },
+      onBgColorChange: (color) => {
+        this.setBgColor(color);
+        this.opts.onBgColorChange?.(color);
+      },
+    });
+    this.element.insertBefore(this.hotkeyBar.element, this.termHost);
+  }
+
+  /// Add or drop this pane's own title row and hotkey bar. A pane loses them
+  /// when it is wrapped in a tab group (the `PaneGroup` draws one shared set
+  /// for every tab) and gets them back when that group unwraps to a plain
+  /// pane — and the PTY survives both, so this has to be a live toggle rather
+  /// than a constructor-only option. Idempotent; `WorkspaceManager` calls it
+  /// for every pane on every render.
+  setOwnChrome(enabled: boolean): void {
+    if (enabled === (this.titleEl !== null)) return;
+    if (enabled) {
+      this.element.classList.remove("pane--tab");
+      this.buildChrome();
+      return;
+    }
+    this.element.classList.add("pane--tab");
+    this.titleEl?.remove();
+    this.titleEl = null;
+    this.hotkeyBar?.dispose();
+    this.hotkeyBar?.element.remove();
+    this.hotkeyBar = null;
   }
 
   /// Write literal text into the PTY as if the user had typed it — no
@@ -703,10 +813,39 @@ export class TerminalPane implements Pane {
         // visible again or was re-parented by a layout rebuild — both of
         // which reset the DOM scrollbar behind xterm's back.
         this.resyncViewportScroll();
+        this.settleDeferredRestore();
       } catch {
         // fit throws when the element has zero size; ignore.
       }
     });
+  }
+
+  /// Does this pane have a layout box right now? A hidden tab
+  /// (`.pane--tab-hidden`, `display: none`) has none, so `FitAddon` cannot
+  /// measure it and xterm stays at its 80×24 default.
+  private measurable(): boolean {
+    return this.termHost.clientHeight > 0 && this.termHost.clientWidth > 0;
+  }
+
+  /// Scroll restored scrollback back into view, once. Called from the PTY
+  /// data callback (so it lands after the shell's opening `\x1b[2J`) and from
+  /// `settleDeferredRestore`.
+  private revealRestored(): void {
+    if (this.pendingRestoreReveal <= 0) return;
+    this.term.scrollLines(-this.pendingRestoreReveal);
+    this.pendingRestoreReveal = 0;
+  }
+
+  /// A restore that had to wait for a real layout box: the pane has just been
+  /// fitted, so the row count is finally the one the user sees. Compute the
+  /// reveal from it and apply it now — the shell's startup burst is long
+  /// past by the time a hidden tab is shown, so waiting for more PTY data
+  /// would leave the history parked out of sight indefinitely.
+  private settleDeferredRestore(): void {
+    if (!this.restoreRevealDeferred || !this.measurable()) return;
+    this.restoreRevealDeferred = false;
+    this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
+    this.revealRestored();
   }
 
   /// Put xterm's DOM scrollbar back in step with the buffer after a layout
@@ -723,6 +862,40 @@ export class TerminalPane implements Pane {
       this.viewportEl?.scrollTop ?? null,
     );
     for (const step of steps) this.term.scrollLines(step);
+  }
+
+  /// Recompute and apply the bottom anchor now. The owner calls this when the
+  /// setting flips; turning it off clears the transform.
+  refreshBottomAnchor(): void {
+    this.applyBottomAnchor();
+  }
+
+  private scheduleBottomAnchor(): void {
+    if (this.pendingAnchorRaf) return;
+    this.pendingAnchorRaf = requestAnimationFrame(() => {
+      this.pendingAnchorRaf = 0;
+      this.applyBottomAnchor();
+    });
+  }
+
+  /// Translate `.xterm-screen` down so short content sits on the pane's last
+  /// row. Purely visual: pointer mapping follows because xterm measures
+  /// `screenElement.getBoundingClientRect()`, which includes the transform.
+  private applyBottomAnchor(): void {
+    if (this.pendingAnchorRaf) {
+      cancelAnimationFrame(this.pendingAnchorRaf);
+      this.pendingAnchorRaf = 0;
+    }
+    const screen = this.screenEl;
+    if (!screen) return;
+    const rows = this.term.rows;
+    const offset = this.opts.bottomAnchor?.()
+      ? bufferAnchorOffset(this.term.buffer.active, rows)
+      : 0;
+    const transform = anchorTransform(offset, parseFloat(screen.style.height), rows);
+    if (transform === this.appliedAnchor) return;
+    this.appliedAnchor = transform;
+    screen.style.transform = transform;
   }
 
   private async pasteClipboard(): Promise<void> {
@@ -799,11 +972,13 @@ export class TerminalPane implements Pane {
   ///    caller is added without reading this comment.
   dispose(permanent = false): void {
     this.cleanupLang();
+    this.hotkeyBar?.dispose();
     if (this.statusTimer !== undefined) window.clearInterval(this.statusTimer);
     if (this.scrollbackSaveTimer !== undefined) {
       window.clearTimeout(this.scrollbackSaveTimer);
     }
     window.removeEventListener("beforeunload", this.flushScrollbackOnUnload);
+    if (this.pendingAnchorRaf) cancelAnimationFrame(this.pendingAnchorRaf);
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     this.ime?.dispose();
