@@ -899,7 +899,10 @@ body,
 
 .workspace--zoomed > .split,
 .workspace--zoomed > .tabs,
-.workspace--zoomed > .pane-group {
+/* The zoomed element is re-parented to be a direct child of the container,
+   so a zoomed tab group would otherwise match this rule and hide itself —
+   `!important` beats anything `.pane-group--zoomed` could set. */
+.workspace--zoomed > .pane-group:not(.pane-group--zoomed) {
   display: none !important;
 }
 

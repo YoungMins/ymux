@@ -58,6 +58,7 @@ import { moveItem } from "./reorder";
 import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
 import { pickActivePaneId } from "./activePane";
 import { viewerTabAction } from "./viewerTab";
+import { zoomAction } from "./zoom";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -86,6 +87,11 @@ export class WorkspaceManager {
   /// persisted: after a restart that tab reloads as an ordinary `ycode` tab
   /// and the next dock Enter registers a new one.
   private viewerTabs = new Map<Uuid, Uuid>();
+  /// Workspace id → the pane zoomed in it (`Ctrl+Shift+Z`); absent when that
+  /// workspace is not zoomed. Zoom is CSS plus one re-parenting, both of
+  /// which `renderWorkspace` throws away, so it is re-applied after every
+  /// render from this — see `applyZoom` and `./zoom.ts`.
+  private zoomedPanes = new Map<number, Uuid>();
   /// Latest `panes:labels` snapshot (pane id → deepest running program).
   private _paneLabels: Record<Uuid, string> = {};
   private workspaceContainers = new Map<number, HTMLElement>();
@@ -615,6 +621,59 @@ export class WorkspaceManager {
       },
     };
     render(ws.root, container, ctx);
+    // `render` rebuilt the container's children, undoing the re-parenting
+    // that zoom depends on while `workspace--zoomed` is still set — which
+    // left the whole workspace hidden until the user unzoomed. Re-decide.
+    this.applyZoom(ws, container);
+  }
+
+  /// Re-apply (or drop) this workspace's zoom after a render. The decision is
+  /// the pure `zoomAction`; everything below is the DOM half of it.
+  private applyZoom(ws: Workspace, container: HTMLElement): void {
+    const zoomedId = this.zoomedPanes.get(ws.id) ?? null;
+    const cache = this.paneCaches.get(ws.id);
+    const exists =
+      zoomedId !== null &&
+      cache?.get(zoomedId) !== undefined &&
+      findPane(ws.root, zoomedId) !== null;
+    const groupId = zoomedId ? (groupOfPane(ws.root, zoomedId)?.id ?? null) : null;
+    const action = zoomAction(zoomedId, exists, groupId);
+    if (action.kind === "none") return;
+    if (action.kind === "clear") {
+      this.zoomedPanes.delete(ws.id);
+      container.classList.remove("workspace--zoomed");
+      return;
+    }
+    this.zoomElementFor(ws, container, action.paneId, action.groupId);
+  }
+
+  /// Put `paneId` (or the group holding it) on screen as the zoom overlay:
+  /// mark the container, clear any stale zoom classes, re-parent the element
+  /// directly under the container so the overlay covers the whole area, and
+  /// re-fit whichever terminal is actually visible — re-parenting resets
+  /// `.xterm-viewport`'s scrollTop behind xterm's back.
+  private zoomElementFor(
+    ws: Workspace,
+    container: HTMLElement,
+    paneId: Uuid,
+    groupId: Uuid | null,
+  ): void {
+    const cache = this.paneCaches.get(ws.id);
+    const pane = cache?.get(paneId);
+    if (!cache || !pane) return;
+    const groups = this.groupsFor(ws.id);
+    const group = groupId ? groups.get(groupId) : undefined;
+    for (const p of cache.values()) p.element.classList.remove("pane--zoomed");
+    for (const g of groups.values()) g.element.classList.remove("pane-group--zoomed");
+    container.classList.add("workspace--zoomed");
+    const zoomEl = group?.element ?? pane.element;
+    zoomEl.classList.add(group ? "pane-group--zoomed" : "pane--zoomed");
+    if (zoomEl.parentElement !== container) container.appendChild(zoomEl);
+    // For a group the visible terminal is its active tab, which need not be
+    // the pane the zoom was started from (the user can switch tabs zoomed).
+    const node = groupId ? findGroup(ws.root, groupId) : null;
+    const visibleId = node ? (tabIds(node)[node.active] ?? paneId) : paneId;
+    cache.get(visibleId)?.scheduleFit();
   }
 
   /// Resolve a shell name against the detected list. Falls back to the first
@@ -1094,35 +1153,27 @@ export class WorkspaceManager {
     const pane = cache?.get(id);
     if (!pane) return;
 
-    // Zoom the group, not the tab: a tab is built with `ownChrome: false`, so
-    // zooming its element alone would show a terminal with no title row and
-    // no hotkey bar.
-    const groupId = groupOfPane(ws.root, id)?.id ?? null;
-    const group = groupId ? this.groupsFor(ws.id).get(groupId) : undefined;
-    const zoomEl = group?.element ?? pane.element;
-    const zoomClass = group ? "pane-group--zoomed" : "pane--zoomed";
-
-    const alreadyZoomed = container.classList.contains("workspace--zoomed");
-    if (alreadyZoomed) {
+    if (this.zoomedPanes.has(ws.id)) {
+      // Unzoom: forget the state *before* rendering, so the re-apply pass at
+      // the end of `renderWorkspace` sees "nothing zoomed" and leaves the
+      // rebuilt layout alone.
+      this.zoomedPanes.delete(ws.id);
       container.classList.remove("workspace--zoomed");
-      zoomEl.classList.remove(zoomClass);
+      for (const p of cache!.values()) p.element.classList.remove("pane--zoomed");
+      for (const g of this.groupsFor(ws.id).values()) {
+        g.element.classList.remove("pane-group--zoomed");
+      }
       this.renderWorkspace(ws);
       pane.focus();
       pane.scheduleFit();
       return;
     }
-    // Ensure the zoomed element is directly inside the workspace container so
-    // the absolute-positioned overlay covers the whole area, and clear any
-    // previous zoom styling from a stale toggle.
-    for (const p of cache!.values()) p.element.classList.remove("pane--zoomed");
-    for (const g of this.groupsFor(ws.id).values()) {
-      g.element.classList.remove("pane-group--zoomed");
-    }
-    container.classList.add("workspace--zoomed");
-    zoomEl.classList.add(zoomClass);
-    if (zoomEl.parentElement !== container) {
-      container.appendChild(zoomEl);
-    }
+    // Zoom the group, not the tab: a tab is built with `ownChrome: false`, so
+    // zooming its element alone would show a terminal with no title row and
+    // no hotkey bar. Which element that is gets re-decided on every render,
+    // because the pane can gain or lose tabs while zoomed.
+    this.zoomedPanes.set(ws.id, id);
+    this.zoomElementFor(ws, container, id, groupOfPane(ws.root, id)?.id ?? null);
     pane.focus();
     pane.scheduleFit();
   }
