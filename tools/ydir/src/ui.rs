@@ -1,5 +1,6 @@
 use ratatui::prelude::*;
 use ratatui::widgets::*;
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, Panel, PanelSide, RunDialog};
 
@@ -31,12 +32,7 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
     };
 
     let cwd_display = panel.cwd.display().to_string();
-    let max_title = (area.width as usize).saturating_sub(4);
-    let title_text = if cwd_display.len() > max_title {
-        format!(" ...{} ", &cwd_display[cwd_display.len() - max_title + 3..])
-    } else {
-        format!(" {} ", cwd_display)
-    };
+    let title_text = panel_title(&cwd_display, (area.width as usize).saturating_sub(4));
 
     let block = Block::default()
         .title(title_text)
@@ -203,32 +199,88 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// Pad or truncate `s` to exactly `width` characters.
-fn pad(width: usize, s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() >= width {
-        chars[..width].iter().collect()
-    } else {
-        let mut out: String = chars.into_iter().collect();
-        for _ in 0..width - out.chars().count() {
-            out.push(' ');
-        }
-        out
-    }
+/// Display width of `s` in terminal cells.
+///
+/// Every helper below counts cells, not `char`s and not bytes. A Hangul
+/// syllable is one `char` but occupies two cells, so a char-counted column
+/// is twice as wide as its header and every column to its right shifts —
+/// which is what a Korean directory listing looked like before.
+pub fn width_of(s: &str) -> usize {
+    s.chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum()
 }
 
-/// Truncate with ~ if too long.
-fn trunc(s: &str, max: usize) -> String {
+/// The longest prefix of `s` that fits in `max` cells. Never splits a
+/// character, and never leaves half of a double-width one behind.
+pub fn clip(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut w = 0usize;
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if w + cw > max {
+            break;
+        }
+        out.push(c);
+        w += cw;
+    }
+    out
+}
+
+/// The longest *suffix* of `s` that fits in `max` cells.
+fn clip_tail(s: &str, max: usize) -> String {
+    let mut take = 0usize;
+    let mut w = 0usize;
+    for c in s.chars().rev() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if w + cw > max {
+            break;
+        }
+        take += 1;
+        w += cw;
+    }
+    let skip = s.chars().count() - take;
+    s.chars().skip(skip).collect()
+}
+
+/// Pad or clip `s` to exactly `width` cells.
+pub fn pad(width: usize, s: &str) -> String {
+    let mut out = clip(s, width);
+    for _ in 0..width - width_of(&out) {
+        out.push(' ');
+    }
+    out
+}
+
+/// Clip to `max` cells, marking a cut with `~`.
+pub fn trunc(s: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
     }
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else {
-        let truncated: String = chars[..max.saturating_sub(1)].iter().collect();
-        format!("{}~", truncated)
+    if width_of(s) <= max {
+        return s.to_string();
     }
+    format!("{}~", clip(s, max - 1))
+}
+
+/// A panel's title bar: the cwd, keeping the tail when it does not fit.
+///
+/// `max` is the budget for the text itself; the returned string adds the
+/// two padding spaces the border draws around it.
+///
+/// This used to slice the `String` by byte offset, which panics outright on
+/// any non-ASCII path — exactly the narrow-dock, Hangul-path case.
+pub fn panel_title(cwd: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    if width_of(cwd) <= max {
+        return format!(" {} ", cwd);
+    }
+    if max <= 3 {
+        return format!(" {} ", ".".repeat(max));
+    }
+    format!(" ...{} ", clip_tail(cwd, max - 3))
 }
 
 fn draw_run_dialog(frame: &mut Frame, dlg: &RunDialog) {
@@ -328,4 +380,68 @@ fn draw_run_dialog(frame: &mut Frame, dlg: &RunDialog) {
     let cursor_x = inner.x + 2 + dlg.args_input.chars().count() as u16;
     let cursor_y = inner.y + 3;
     frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two cells each.
+    const HANGUL: &str = "문서";
+
+    #[test]
+    fn width_counts_cells_not_chars() {
+        assert_eq!(width_of("abc"), 3);
+        assert_eq!(width_of(HANGUL), 4);
+        assert_eq!(width_of("a문b"), 4);
+    }
+
+    #[test]
+    fn clip_never_splits_a_wide_character() {
+        // 3 cells cannot hold one and a half syllables: it holds one.
+        assert_eq!(clip(HANGUL, 3), "문");
+        assert_eq!(clip(HANGUL, 4), "문서");
+        assert_eq!(clip(HANGUL, 1), "");
+        assert_eq!(clip("abcd", 2), "ab");
+    }
+
+    #[test]
+    fn pad_fills_to_exactly_the_cell_width() {
+        assert_eq!(width_of(&pad(10, HANGUL)), 10);
+        assert_eq!(pad(6, HANGUL), "문서  ");
+        // An odd budget leaves one trailing space rather than half a glyph.
+        assert_eq!(pad(5, HANGUL), "문서 ");
+        assert_eq!(width_of(&pad(3, "abcdef")), 3);
+    }
+
+    #[test]
+    fn trunc_marks_the_cut_and_stays_within_budget() {
+        assert_eq!(trunc("abcdef", 4), "abc~");
+        assert_eq!(trunc("abc", 4), "abc");
+        assert_eq!(trunc(HANGUL, 4), HANGUL);
+        let cut = trunc("문서파일", 5);
+        assert_eq!(cut, "문서~");
+        assert!(width_of(&cut) <= 5);
+        assert_eq!(trunc("anything", 0), "");
+    }
+
+    /// Byte-slicing this used to panic; it is the dock's normal case.
+    #[test]
+    fn panel_title_tail_truncates_a_hangul_path_without_panicking() {
+        let cwd = r"D:\Git\ymux\프로젝트\문서";
+        for max in 0..=40usize {
+            let title = panel_title(cwd, max);
+            assert!(
+                width_of(&title) <= max + 2,
+                "max {max} produced {title:?}, too wide"
+            );
+        }
+        assert_eq!(panel_title(cwd, 10), r" ...트\문서 ");
+    }
+
+    #[test]
+    fn panel_title_keeps_a_path_that_fits() {
+        assert_eq!(panel_title("/work", 20), " /work ");
+        assert_eq!(panel_title("/work", 5), " /work ");
+    }
 }
