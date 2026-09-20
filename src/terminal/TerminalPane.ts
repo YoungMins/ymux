@@ -19,6 +19,7 @@ import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
+import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
@@ -60,6 +61,10 @@ export interface TerminalPaneOptions {
   /// from WorkspaceManager's toggle rather than snapshotted at pane-creation
   /// time, so flipping the setting takes effect immediately).
   persistScrollback?: () => boolean;
+  /// Whether the bottom-anchored prompt is enabled (read live, like
+  /// `persistScrollback`). Absent means off, so a standalone pane renders
+  /// exactly like plain xterm.
+  bottomAnchor?: () => boolean;
   /// Run this program directly instead of the spec's shell. Its exit is the
   /// pane's exit (`onExit`). The file dock uses it to host `ydir`.
   argv?: string[];
@@ -92,6 +97,17 @@ export class TerminalPane implements Pane {
   /// created it. Cached because `resyncViewportScroll` runs per animation
   /// frame while a gutter is being dragged.
   private viewportEl: HTMLElement | null = null;
+  /// xterm's `.xterm-screen`, the element the bottom anchor translates.
+  /// Resolved once after `term.open()`. It holds the canvases, the helper
+  /// textarea / IME preview and the decoration layer, but not the
+  /// `.xterm-viewport` scroll element, which must stay put so the scrollbar
+  /// and wheel keep working. See `bottomAnchor.ts`.
+  private screenEl: HTMLElement | null = null;
+  /// rAF coalescing the non-render triggers of `applyBottomAnchor`.
+  private pendingAnchorRaf = 0;
+  /// Last `transform` written to `screenEl`, so an unchanged offset costs no
+  /// style write on every rendered frame.
+  private appliedAnchor = "";
   /// Lines to scroll up once the shell has painted its first output, to bring
   /// restored scrollback back into view. 0 = nothing to reveal.
   private pendingRestoreReveal = 0;
@@ -311,6 +327,17 @@ export class TerminalPane implements Pane {
     // Serialize addon: snapshots the buffer (text + escape sequences) so it
     // can be replayed on next mount when scrollback persistence is enabled.
     this.term.loadAddon(this.serializeAddon);
+
+    // Bottom-anchored prompt. `onRender` fires from inside xterm's own render
+    // frame, so applying there lands in the same paint as the new content.
+    // Deferring it would show one frame of fresh output below the clip edge.
+    // The other triggers share one rAF.
+    this.screenEl =
+      this.term.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+    this.term.onRender(() => this.applyBottomAnchor());
+    this.term.onResize(() => this.scheduleBottomAnchor());
+    this.term.onScroll(() => this.scheduleBottomAnchor());
+    this.term.buffer.onBufferChange(() => this.scheduleBottomAnchor());
 
     // Flush the current buffer to disk on app shutdown (normal window
     // close), *without* deleting it — that's what makes restore-on-mount
@@ -734,6 +761,40 @@ export class TerminalPane implements Pane {
     for (const step of steps) this.term.scrollLines(step);
   }
 
+  /// Recompute and apply the bottom anchor now. The owner calls this when the
+  /// setting flips; turning it off clears the transform.
+  refreshBottomAnchor(): void {
+    this.applyBottomAnchor();
+  }
+
+  private scheduleBottomAnchor(): void {
+    if (this.pendingAnchorRaf) return;
+    this.pendingAnchorRaf = requestAnimationFrame(() => {
+      this.pendingAnchorRaf = 0;
+      this.applyBottomAnchor();
+    });
+  }
+
+  /// Translate `.xterm-screen` down so short content sits on the pane's last
+  /// row. Purely visual: pointer mapping follows because xterm measures
+  /// `screenElement.getBoundingClientRect()`, which includes the transform.
+  private applyBottomAnchor(): void {
+    if (this.pendingAnchorRaf) {
+      cancelAnimationFrame(this.pendingAnchorRaf);
+      this.pendingAnchorRaf = 0;
+    }
+    const screen = this.screenEl;
+    if (!screen) return;
+    const rows = this.term.rows;
+    const offset = this.opts.bottomAnchor?.()
+      ? bufferAnchorOffset(this.term.buffer.active, rows)
+      : 0;
+    const transform = anchorTransform(offset, parseFloat(screen.style.height), rows);
+    if (transform === this.appliedAnchor) return;
+    this.appliedAnchor = transform;
+    screen.style.transform = transform;
+  }
+
   private async pasteClipboard(): Promise<void> {
     // Image first: if the clipboard holds a PNG, save it to a temp file and
     // paste the file's path (so an in-pane CLI can read the image).
@@ -813,6 +874,7 @@ export class TerminalPane implements Pane {
       window.clearTimeout(this.scrollbackSaveTimer);
     }
     window.removeEventListener("beforeunload", this.flushScrollbackOnUnload);
+    if (this.pendingAnchorRaf) cancelAnimationFrame(this.pendingAnchorRaf);
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     this.ime?.dispose();

@@ -190,6 +190,11 @@ body,
   flex: 1 1 auto;
   height: 100%;
   width: 100%;
+  /* The bottom-anchored prompt translates `.xterm-screen` down (see
+     src/terminal/bottomAnchor.ts), so its blank lower rows overflow this box.
+     `clip`, not `hidden`: a hidden box is still a scroll container that a
+     focus() or scrollIntoView could scroll. A clip box never scrolls. */
+  overflow: clip;
 }
 
 /* IME pre-commit preview. Driven by `ImeBridge` (src/terminal/ime.ts), not by
