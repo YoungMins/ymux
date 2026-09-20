@@ -339,6 +339,23 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     agentRow.appendChild(agentError);
     host.appendChild(agentRow);
 
+    const anchorRow = document.createElement("div");
+    anchorRow.className = "settings-row";
+    const anchorLabel = document.createElement("div");
+    anchorLabel.className = "settings-row__label";
+    anchorLabel.textContent = t("settings.general.bottomAnchor");
+    anchorRow.appendChild(anchorLabel);
+    const anchorToggle = document.createElement("input");
+    anchorToggle.type = "checkbox";
+    anchorToggle.checked = manager.bottomAnchor;
+    anchorToggle.addEventListener("change", () => {
+      manager.setBottomAnchor(anchorToggle.checked);
+    });
+    anchorRow.appendChild(anchorToggle);
+    const anchorSpacer = document.createElement("div");
+    anchorRow.appendChild(anchorSpacer);
+    host.appendChild(anchorRow);
+
     const aboutH = document.createElement("h4");
     aboutH.textContent = t("settings.general.about");
     host.appendChild(aboutH);

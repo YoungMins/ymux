@@ -469,6 +469,7 @@ export class WorkspaceManager {
       isVisible: () => this.isPaneVisible(spec.id),
       onContextMenu: (ev) => this.showPaneContextMenu(spec.id, ev),
       persistScrollback: () => this.persistScrollback,
+      bottomAnchor: () => this.bottomAnchor,
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
         this.applyPaneStatusClass(spec.id, status);
@@ -914,6 +915,23 @@ export class WorkspaceManager {
 
   get persistScrollback(): boolean {
     return this.config.persist_scrollback;
+  }
+
+  /// Enable/disable the bottom-anchored prompt and persist the choice. Applies
+  /// to every live terminal in every workspace at once, for the same reason
+  /// `setFontSize` does: hidden workspaces keep their panes alive.
+  setBottomAnchor(enabled: boolean): void {
+    this.config.bottom_anchor = enabled;
+    for (const cache of this.paneCaches.values()) {
+      for (const pane of cache.values()) {
+        if (pane instanceof TerminalPane) pane.refreshBottomAnchor();
+      }
+    }
+    this.persistDebounced();
+  }
+
+  get bottomAnchor(): boolean {
+    return this.config.bottom_anchor;
   }
 
   /// Directory new worktrees are created under (see `openWorktreePane`).

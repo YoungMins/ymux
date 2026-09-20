@@ -79,6 +79,12 @@ const strings: Translations = {
     fr: "Conserver l'historique du terminal", ar: "الاحتفاظ بمخزّن التمرير للطرفية", pt: "Manter o histórico do terminal",
     ru: "Сохранять историю терминала", tr: "Terminal kaydırma geçmişini koru", de: "Terminal-Scrollback beibehalten", vi: "Giữ lịch sử cuộn terminal",
   },
+  "settings.general.bottomAnchor": {
+    en: "Keep the prompt at the bottom of the pane", ko: "프롬프트를 패널 아래쪽에 고정", ja: "プロンプトをペインの下端に固定",
+    zh: "将提示符固定在窗格底部", hi: "प्रॉम्प्ट को पेन के नीचे रखें", es: "Mantener el prompt en la parte inferior del panel",
+    fr: "Garder l'invite en bas du volet", ar: "إبقاء موجّه الأوامر أسفل اللوحة", pt: "Manter o prompt na parte inferior do painel",
+    ru: "Держать приглашение внизу панели", tr: "İstemi bölmenin altında tut", de: "Eingabeaufforderung am unteren Rand halten", vi: "Giữ dấu nhắc ở cuối khung",
+  },
   "settings.general.agentTracking": {
     en: "Track Claude Code agents (adds hooks to ~/.claude/settings.json)",
     ko: "Claude Code 에이전트 추적 (~/.claude/settings.json에 훅 추가)",
