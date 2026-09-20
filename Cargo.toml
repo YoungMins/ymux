@@ -4,6 +4,7 @@ members = [
     "crates/ytheme",
     "crates/yipc",
     "crates/yversion",
+    "crates/ypath",
     "tools/ymon",
     "tools/ydir",
     "tools/ycode",
