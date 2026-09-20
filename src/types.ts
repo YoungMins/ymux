@@ -45,7 +45,10 @@ export type SplitDir = "horizontal" | "vertical";
 export type LayoutNode =
   | ({ kind: "pane" } & PaneSpec)
   | { kind: "split"; direction: SplitDir; ratio: number; a: LayoutNode; b: LayoutNode }
-  | { kind: "tabs"; active: number; children: LayoutNode[] };
+  /// `id` mirrors `LayoutNode::Tabs.id` in src-tauri/src/config/model.rs: the
+  /// stable handle the renderer caches a `PaneGroup` under and the file dock
+  /// registers its viewer tab against.
+  | { kind: "tabs"; id: Uuid; active: number; children: LayoutNode[] };
 
 export interface Workspace {
   id: number;
