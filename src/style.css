@@ -1645,6 +1645,63 @@ body,
   color: var(--accent);
 }
 
+/* ── "Agent tracking is off" hint ──────────────────────────────────────
+   One quiet panel-wide row, pinned under the (scrolling) list, carrying the
+   switch that turns tracking on. It deliberately shares nothing with the
+   workspace / pane / tab / agent row rules: those are a single nowrap 20px
+   line each, which would clip this sentence to invisibility, and the row
+   must not read as one more thing in the tree. */
+.workspace-panel__hint {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.workspace-panel__hint-text {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.workspace-panel__hint-action {
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace-panel__hint-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.workspace-panel__hint-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.workspace-panel__hint-error {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--status-critical);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.workspace-panel__hint-error:empty {
+  display: none;
+}
+
 /* ── Agent tree (Workspace › Pane › Agent) ────────────────────────────── */
 .workspace-panel__caret {
   flex: 0 0 auto;
