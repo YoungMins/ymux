@@ -15,8 +15,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[0]);
 
-    draw_panel(frame, &app.left, panels[0], app.active == PanelSide::Left);
-    draw_panel(frame, &app.right, panels[1], app.active == PanelSide::Right);
+    draw_panel(
+        frame,
+        &app.left,
+        panels[0],
+        app.active == PanelSide::Left,
+        Columns::legacy,
+    );
+    draw_panel(
+        frame,
+        &app.right,
+        panels[1],
+        app.active == PanelSide::Right,
+        Columns::legacy,
+    );
     draw_footer(frame, app, chunks[1]);
 
     if let Some(ref dlg) = app.run_dialog {
@@ -24,7 +36,80 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 }
 
-fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
+/// Width of the `[D] ` / `    ` prefix every name carries.
+const PREFIX_W: usize = 4;
+const SIZE_W: usize = 10;
+const DATE_W: usize = 16;
+/// A name column shorter than this tells two files apart about as well as
+/// no name column at all, so the column to its right is dropped instead.
+const MIN_NAME_W: usize = 8;
+
+/// The cell width of each column of a listing. A `size`/`date` of 0 means
+/// that column is dropped entirely — no header, no separator space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Columns {
+    /// Includes [`PREFIX_W`].
+    pub name: usize,
+    pub size: usize,
+    pub date: usize,
+}
+
+impl Columns {
+    /// The two-panel layout: Size and Modified are always drawn and Name
+    /// takes what is left. Kept exactly as it was, so a yDir opened in a
+    /// pane renders as it always has.
+    pub fn legacy(width: usize) -> Self {
+        Self {
+            name: width.saturating_sub(SIZE_W + DATE_W + 2),
+            size: SIZE_W,
+            date: DATE_W,
+        }
+    }
+
+    /// Dock mode: drop the rightmost column that would squeeze the name
+    /// below [`MIN_NAME_W`]. In a ~250 px dock the fixed layout left four
+    /// cells for the name, which is the whole complaint.
+    pub fn adaptive(width: usize) -> Self {
+        if width >= PREFIX_W + MIN_NAME_W + 1 + SIZE_W + 1 + DATE_W {
+            Self::legacy(width)
+        } else if width >= PREFIX_W + MIN_NAME_W + 1 + SIZE_W {
+            Self {
+                name: width - SIZE_W - 1,
+                size: SIZE_W,
+                date: 0,
+            }
+        } else {
+            Self {
+                name: width,
+                size: 0,
+                date: 0,
+            }
+        }
+    }
+}
+
+/// One listing line: the name column, then whichever of Size/Modified
+/// survived the width.
+fn columns_line(cols: &Columns, name: &str, size: &str, date: &str) -> String {
+    let mut out = pad(cols.name, &trunc(name, cols.name));
+    if cols.size > 0 {
+        out.push(' ');
+        out.push_str(&pad(cols.size, size));
+    }
+    if cols.date > 0 {
+        out.push(' ');
+        out.push_str(&pad(cols.date, date));
+    }
+    out
+}
+
+fn draw_panel(
+    frame: &mut Frame,
+    panel: &Panel,
+    area: Rect,
+    active: bool,
+    columns: fn(usize) -> Columns,
+) {
     let border_style = if active {
         Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))
     } else {
@@ -54,10 +139,7 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
         return;
     }
 
-    let w = inner.width as usize;
-    let size_w = 10;
-    let date_w = 16;
-    let name_w = w.saturating_sub(size_w + date_w + 2); // 2 for spacing
+    let cols = columns(inner.width as usize);
 
     // Header
     if inner.height >= 2 {
@@ -67,23 +149,9 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
             width: inner.width,
             height: 1,
         };
-        let hdr = Line::from(vec![
-            Span::styled(
-                pad(name_w, "Name"),
-                Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)),
-            ),
-            Span::styled(" ", Style::default()),
-            Span::styled(
-                pad(size_w, "Size"),
-                Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)),
-            ),
-            Span::styled(" ", Style::default()),
-            Span::styled(
-                pad(date_w, "Modified"),
-                Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(hdr), header_area);
+        let hdr = Paragraph::new(columns_line(&cols, "Name", "Size", "Modified"))
+            .style(Style::default().fg(Color::Rgb(0x6a, 0x7a, 0x8a)));
+        frame.render_widget(hdr, header_area);
     }
 
     let list_y = inner.y + 1;
@@ -113,15 +181,11 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
 
             // Fixed-width ASCII prefix for dirs
             let prefix = if entry.is_dir { "[D] " } else { "    " };
-            let prefix_w = 4;
-            let avail_name = name_w.saturating_sub(prefix_w);
-            let name_str = trunc(&entry.name, avail_name);
-            let name_col = format!("{}{}", prefix, pad(avail_name, &name_str));
-            let size_col = pad(size_w, &entry.size_display());
+            let name_col = format!("{}{}", prefix, entry.name);
             let date_col = entry
                 .modified
                 .map(|d| d.format("%y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| " ".repeat(date_w));
+                .unwrap_or_default();
 
             let style = if is_selected && active {
                 Style::default()
@@ -138,7 +202,12 @@ fn draw_panel(frame: &mut Frame, panel: &Panel, area: Rect, active: bool) {
                 Style::default().fg(Color::Rgb(0xd6, 0xde, 0xeb))
             };
 
-            let line = Line::from(format!("{} {} {}", name_col, size_col, date_col));
+            let line = Line::from(columns_line(
+                &cols,
+                &name_col,
+                &entry.size_display(),
+                &date_col,
+            ));
             ListItem::new(line).style(style)
         })
         .collect();
@@ -443,5 +512,98 @@ mod tests {
     fn panel_title_keeps_a_path_that_fits() {
         assert_eq!(panel_title("/work", 20), " /work ");
         assert_eq!(panel_title("/work", 5), " /work ");
+    }
+
+    /// Name width the user actually reads, i.e. minus the `[D] ` prefix.
+    fn usable_name(width: usize) -> usize {
+        Columns::adaptive(width).name - PREFIX_W
+    }
+
+    #[test]
+    fn legacy_columns_are_unchanged() {
+        // The old inline arithmetic: width - (10 + 16 + 2).
+        assert_eq!(
+            Columns::legacy(60),
+            Columns {
+                name: 32,
+                size: 10,
+                date: 16
+            }
+        );
+        assert_eq!(Columns::legacy(10).name, 0);
+    }
+
+    /// The two widths the ymux-side defaults are picked to produce: the
+    /// dock's minimum (~260 px ≈ 34 cols, 32 inner) and its default
+    /// (~440 px ≈ 58 cols, 56 inner).
+    #[test]
+    fn adaptive_columns_buy_the_name_column_back() {
+        // 56 cells: everything fits, with a name you can read.
+        assert_eq!(
+            Columns::adaptive(56),
+            Columns {
+                name: 28,
+                size: 10,
+                date: 16
+            }
+        );
+        assert_eq!(usable_name(56), 24);
+
+        // 32 cells: Modified goes, Size stays.
+        assert_eq!(
+            Columns::adaptive(32),
+            Columns {
+                name: 21,
+                size: 10,
+                date: 0
+            }
+        );
+        assert_eq!(usable_name(32), 17);
+
+        // What the fixed layout gave at that width: four cells.
+        assert_eq!(Columns::legacy(32).name - PREFIX_W, 0);
+    }
+
+    #[test]
+    fn adaptive_columns_drop_size_last_and_never_starve_the_name() {
+        assert_eq!(
+            Columns::adaptive(22),
+            Columns {
+                name: 22,
+                size: 0,
+                date: 0
+            }
+        );
+        for width in 1..80usize {
+            let c = Columns::adaptive(width);
+            assert!(c.name >= MIN_NAME_W + PREFIX_W || c.size == 0 && c.date == 0);
+            let spacers = usize::from(c.size > 0) + usize::from(c.date > 0);
+            assert_eq!(
+                c.name + c.size + c.date + spacers,
+                width,
+                "width {width} does not add up"
+            );
+        }
+    }
+
+    #[test]
+    fn columns_line_fills_exactly_the_panel_width() {
+        for width in [22usize, 32, 56] {
+            let cols = Columns::adaptive(width);
+            let line = columns_line(&cols, "    보고서_최종_v2.txt", "1.2 KB", "26-09-21 10:00");
+            assert_eq!(width_of(&line), width, "width {width} produced {line:?}");
+        }
+    }
+
+    /// A dropped column takes its separator space with it, so nothing is
+    /// left dangling at the right edge.
+    #[test]
+    fn columns_line_omits_dropped_columns_entirely() {
+        let cols = Columns {
+            name: 10,
+            size: 0,
+            date: 0,
+        };
+        assert_eq!(columns_line(&cols, "a.txt", "1 B", "x"), "a.txt     ");
     }
 }
