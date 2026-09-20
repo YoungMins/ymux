@@ -57,6 +57,7 @@ import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
 import { pickActivePaneId } from "./activePane";
+import { viewerTabAction } from "./viewerTab";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -803,6 +804,72 @@ export class WorkspaceManager {
     const pane = this.findPaneById(paneId);
     (pane as { setTitle?: (t: string | null) => void } | undefined)?.setTitle?.(title);
     this.refreshTabChrome();
+  }
+
+  /// The file dock's yDir pressed Enter on a file. It goes into the viewer
+  /// tab of the pane the dock follows — `activePaneId()`, which is the pane
+  /// that was active before the dock took focus, because the dock's own pane
+  /// lives outside every layout tree and so never becomes the active one.
+  /// One viewer tab per pane: the second Enter kills and respawns
+  /// `ycode <path>` in the same tab rather than opening another (spec §4).
+  async openFileInViewerTab(path: string): Promise<void> {
+    if (!path) return;
+    const ws = this.active;
+    const targetId = this.activePaneId();
+    if (!targetId) return;
+    let group = groupOfPane(ws.root, targetId);
+    if (!group) {
+      ws.root = wrapInTabs(ws.root, targetId, uuidv4());
+      group = groupOfPane(ws.root, targetId);
+      if (!group) return;
+    }
+    const action = viewerTabAction(this.viewerTabs.get(group.id), tabIds(group));
+    if (action.kind === "reuse") {
+      await this.respawnViewer(ws, action.paneId, path);
+      return;
+    }
+    const spec = newPane(this.resolveShell(this.shells[0]?.name ?? ""), null);
+    ws.root = addTab(ws.root, group.id, spec);
+    this.viewerTabs.set(group.id, spec.id);
+    const cache = this.paneCaches.get(ws.id)!;
+    const pane = this.createPane(spec, ["ycode", path]);
+    cache.set(spec.id, pane);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("viewer tab spawn failed", e);
+    }
+    this.persistDebounced();
+  }
+
+  /// Replace the file shown by an existing viewer tab. The pane id is kept,
+  /// so the tab stays where it is in the strip and nothing else in the layout
+  /// moves; only the PTY behind it is swapped.
+  private async respawnViewer(ws: Workspace, paneId: Uuid, path: string): Promise<void> {
+    const spec = findPane(ws.root, paneId);
+    if (!spec) return;
+    const cache = this.paneCaches.get(ws.id)!;
+    // Not permanent: this tab is not being closed, only re-pointed, so its
+    // saved scrollback must not be deleted out from under a later restore.
+    cache.get(paneId)?.dispose(false);
+    cache.delete(paneId);
+    // `dispose` fires `killPane` without awaiting and Tauri commands run on a
+    // worker pool, so serialize it — otherwise a late kill can land on the
+    // pane we are about to spawn under the same id. Same hazard the file
+    // dock's own restart path handles this way.
+    await api.killPane(paneId).catch(() => {});
+    const pane = this.createPane(spec, ["ycode", path]);
+    cache.set(paneId, pane);
+    ws.root = activateTabFor(ws.root, paneId);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error("viewer tab respawn failed", e);
+    }
   }
 
   /// The label a tab shows: the user's title, else the running program from

@@ -8,7 +8,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { Uuid } from "../types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { TerminalPane } from "../terminal/TerminalPane";
-import { api, onPaneCwd } from "../ipc/bridge";
+import { api, onOpenFile, onPaneCwd } from "../ipc/bridge";
 import { t, onLangChange } from "../i18n/i18n";
 import { CwdFollow } from "./cwdFollow";
 import {
@@ -76,6 +76,11 @@ class FileDock {
     this.element.appendChild(this.body);
 
     manager.onActivePaneChange(() => void this.followActivePane());
+    // yDir pressed Enter on a file. The listener lives here because this dock
+    // owns the yDir that sends it; the manager decides which tab it lands in.
+    void onOpenFile((path) => {
+      void this.manager.openFileInViewerTab(path);
+    }).catch((e) => console.warn("open-file listen failed:", e));
     window.addEventListener("resize", () => {
       if (this.state.open) this.pane?.scheduleFit();
     });
