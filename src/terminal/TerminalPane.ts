@@ -7,6 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -228,6 +229,13 @@ export class TerminalPane implements Pane {
     // ratatui paragraph redraws). We pick Canvas over WebGL because
     // WebGL caused a cell-positioning regression in v0.8.14.
     this.term.loadAddon(new CanvasAddon());
+    // Unicode 11 widths. xterm ships a Unicode 6 table by default, which
+    // predates emoji: it calls them one cell wide, the font draws two, and the
+    // overhang smears into the neighbouring cell and survives the redraw. The
+    // provider has to be registered before it can be selected, and the version
+    // is a string, not a number.
+    this.term.loadAddon(new Unicode11Addon());
+    this.term.unicode.activeVersion = "11";
 
     // Block xterm.js from consuming ymux-level hotkeys. Without this, Ctrl+F
     // etc. get translated into control bytes (Ctrl+F → 0x06) and written to
