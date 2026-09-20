@@ -48,6 +48,12 @@ pub struct Config {
     pub notify_on_bell: bool,
     #[serde(default = "default_persist_scrollback")]
     pub persist_scrollback: bool,
+    /// Draw a terminal whose content is shorter than its pane against the
+    /// pane's bottom edge, so the prompt sits on the last row. Presentation
+    /// only (the frontend's `bottomAnchor.ts`). Additive with a serde default,
+    /// so no `CONFIG_VERSION` bump.
+    #[serde(default = "default_bottom_anchor")]
+    pub bottom_anchor: bool,
     #[serde(default = "default_paste_image_retention_hours")]
     pub paste_image_retention_hours: u32,
     /// Base directory under which ymux creates git worktrees for panes opened
@@ -86,6 +92,9 @@ fn default_notify_on_bell() -> bool {
 fn default_persist_scrollback() -> bool {
     true
 }
+fn default_bottom_anchor() -> bool {
+    true
+}
 fn default_paste_image_retention_hours() -> u32 {
     24
 }
@@ -108,6 +117,7 @@ impl Default for Config {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: default_font_size(),
@@ -159,6 +169,7 @@ impl Config {
         // exception, being a backend-owned detection cache.
         self.notify_on_bell = incoming.notify_on_bell;
         self.persist_scrollback = incoming.persist_scrollback;
+        self.bottom_anchor = incoming.bottom_anchor;
         self.paste_image_retention_hours = incoming.paste_image_retention_hours;
         self.worktree_base_dir = incoming.worktree_base_dir;
         self.font_size = incoming.font_size;
@@ -680,6 +691,23 @@ mod tests {
     }
 
     #[test]
+    fn bottom_anchor_defaults_true_when_absent() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert!(parsed.bottom_anchor);
+    }
+
+    #[test]
+    fn bottom_anchor_roundtrips_false() {
+        let config = Config {
+            bottom_anchor: false,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert!(!loaded.bottom_anchor);
+    }
+
+    #[test]
     fn paste_image_retention_hours_defaults_to_24_when_absent() {
         let toml_str = "version = 5\nactive_workspace = 1\n";
         let parsed: Config = toml::from_str(toml_str).expect("deserialize");
@@ -715,6 +743,7 @@ mod tests {
         let frontend_save = Config {
             notify_on_bell: false,
             persist_scrollback: false,
+            bottom_anchor: false,
             paste_image_retention_hours: 72,
             worktree_base_dir: "D:\\wt".into(),
             font_size: 18,
@@ -724,6 +753,7 @@ mod tests {
         backend.merge_layouts_from(frontend_save);
         assert!(!backend.notify_on_bell);
         assert!(!backend.persist_scrollback);
+        assert!(!backend.bottom_anchor);
         assert_eq!(backend.paste_image_retention_hours, 72);
         assert_eq!(backend.worktree_base_dir, "D:\\wt");
         assert_eq!(backend.font_size, 18);
@@ -817,6 +847,7 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -830,6 +861,7 @@ mod tests {
             workspaces: vec![Workspace::empty(2, "two")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -889,6 +921,7 @@ mod tests {
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -922,6 +955,7 @@ mod tests {
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -1058,6 +1092,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -1088,6 +1123,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace::empty(1, "main")],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -1151,6 +1187,7 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,
@@ -1285,6 +1322,7 @@ shell = "PowerShell 7"
             }],
             notify_on_bell: true,
             persist_scrollback: true,
+            bottom_anchor: true,
             paste_image_retention_hours: 24,
             worktree_base_dir: String::new(),
             font_size: 13,

@@ -60,6 +60,9 @@ export interface Config {
   workspaces: Workspace[];
   notify_on_bell: boolean;
   persist_scrollback: boolean;
+  /// Draw short terminal content against the pane's bottom edge (the prompt
+  /// sits on the last row). See `src/terminal/bottomAnchor.ts`.
+  bottom_anchor: boolean;
   paste_image_retention_hours: number;
   worktree_base_dir: string;
   /// Terminal font size in CSS pixels, shared by every pane.
