@@ -15,6 +15,12 @@ pub mod pty;
 pub mod scrollback;
 pub mod shell;
 
+// Reading an image off the OS clipboard. Desktop-only because `arboard` pulls
+// X11/Wayland system deps on Linux; the PNG encoding it needs is in the
+// unconditional `paste_images` module so it stays testable there.
+#[cfg(feature = "desktop")]
+pub mod clipboard_image;
+
 // `commands` exists only when the desktop feature is enabled, because it
 // references the Tauri runtime types (`State`, `AppHandle`, `Emitter`, ...).
 // Living inside the lib crate (rather than as a sibling module of `main.rs`)

@@ -3,6 +3,7 @@ use ratatui::widgets::*;
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, Panel, PanelSide, RunDialog};
+use crate::preview::{split_dock, Preview};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -10,30 +11,137 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(frame.area());
 
-    let panels = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[0]);
+    if app.dock {
+        draw_dock(frame, app, chunks[0]);
+    } else {
+        let panels = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[0]);
 
-    draw_panel(
-        frame,
-        &app.left,
-        panels[0],
-        app.active == PanelSide::Left,
-        Columns::legacy,
-    );
-    draw_panel(
-        frame,
-        &app.right,
-        panels[1],
-        app.active == PanelSide::Right,
-        Columns::legacy,
-    );
+        draw_panel(
+            frame,
+            &app.left,
+            panels[0],
+            app.active == PanelSide::Left,
+            Columns::legacy,
+        );
+        draw_panel(
+            frame,
+            &app.right,
+            panels[1],
+            app.active == PanelSide::Right,
+            Columns::legacy,
+        );
+    }
     draw_footer(frame, app, chunks[1]);
 
     if let Some(ref dlg) = app.run_dialog {
         draw_run_dialog(frame, dlg);
     }
+}
+
+const ACCENT: Color = Color::Rgb(0x7f, 0xdb, 0xca);
+const MUTED: Color = Color::Rgb(0x6a, 0x7a, 0x8a);
+const FG: Color = Color::Rgb(0xd6, 0xde, 0xeb);
+const IDLE_BORDER: Color = Color::Rgb(0x1e, 0x2a, 0x38);
+
+/// The dock: one listing filling the top, the selected entry's head below
+/// it. The two-panel layout is 250 px of unreadable columns in a dock this
+/// narrow, which is what this replaces (spec §2).
+fn draw_dock(frame: &mut Frame, app: &App, area: Rect) {
+    let (list_h, preview_h) = if app.show_preview {
+        split_dock(area.height)
+    } else {
+        (area.height, 0)
+    };
+
+    draw_panel(
+        frame,
+        &app.left,
+        Rect {
+            height: list_h,
+            ..area
+        },
+        true,
+        Columns::adaptive,
+    );
+
+    if preview_h > 0 {
+        draw_preview(
+            frame,
+            app,
+            Rect {
+                y: area.y + list_h,
+                height: preview_h,
+                ..area
+            },
+        );
+    }
+}
+
+fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
+    let title = app.preview_title().unwrap_or_else(|| "Preview".to_string());
+    let block = Block::default()
+        .title(panel_title(&title, (area.width as usize).saturating_sub(4)))
+        .title_style(Style::default().fg(MUTED))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(IDLE_BORDER));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let rows = inner.height as usize;
+    let width = inner.width as usize;
+    let note = |s: &str| vec![Line::from(s.to_string()).style(Style::default().fg(MUTED))];
+    let body: Vec<Line> = match &app.preview {
+        Preview::Empty => note("(nothing selected)"),
+        Preview::Binary => note("(binary file)"),
+        Preview::Error(e) => note(&format!("({})", clip(e, width.saturating_sub(2)))),
+        Preview::Text(lines) if lines.is_empty() => note("(empty file)"),
+        Preview::Text(lines) => lines
+            .iter()
+            .take(rows)
+            .map(|l| Line::from(clip(l, width)).style(Style::default().fg(FG)))
+            .collect(),
+        Preview::Dir { names, .. } if names.is_empty() => note("(empty directory)"),
+        Preview::Dir { names, more } => {
+            // The tail line costs a row, so reserve it before filling.
+            let needs_tail = *more || names.len() > rows;
+            let shown = if needs_tail {
+                rows.saturating_sub(1)
+            } else {
+                rows
+            };
+            let mut out: Vec<Line> = names
+                .iter()
+                .take(shown)
+                .map(|n| {
+                    let style = if n.ends_with('/') {
+                        Style::default().fg(ACCENT)
+                    } else {
+                        Style::default().fg(FG)
+                    };
+                    Line::from(clip(n, width)).style(style)
+                })
+                .collect();
+            if needs_tail {
+                let hidden = names.len().saturating_sub(out.len());
+                // `more` means the walk stopped at its cap, so the count is
+                // a floor, not a total.
+                let label = match (*more, hidden) {
+                    (true, 0) => "… more".to_string(),
+                    (true, n) => format!("… {n}+ more"),
+                    (false, n) => format!("… {n} more"),
+                };
+                out.push(Line::from(label).style(Style::default().fg(MUTED)));
+            }
+            out
+        }
+    };
+    frame.render_widget(Paragraph::new(body), inner);
 }
 
 /// Width of the `[D] ` / `    ` prefix every name carries.
@@ -234,23 +342,37 @@ fn draw_panel(
     }
 }
 
+/// `(key, label)` pairs for the footer. The dock's list is short on
+/// purpose: it renders into roughly 30 cells, and the full one is 70.
+/// Tab appears in both, but in the dock it toggles the preview — the
+/// footer is the only place that is discoverable.
+fn footer_keys(dock: bool) -> &'static [(&'static str, &'static str)] {
+    if dock {
+        &[("Enter", " Open  "), ("BS", " Up  "), ("Tab", " Preview  ")]
+    } else {
+        &[
+            ("q", " Quit  "),
+            ("Enter", " Open  "),
+            ("BS", " Parent  "),
+            (".", " Hidden  "),
+            ("c/m/p/d", " Copy/Move/Paste/Del  "),
+            ("Tab", " Switch  "),
+        ]
+    }
+}
+
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let status = app.status_msg.as_deref().unwrap_or("");
-    let text = Line::from(vec![
-        Span::styled("q", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
-        Span::raw(" Quit  "),
-        Span::styled("Enter", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
-        Span::raw(" Open  "),
-        Span::styled("BS", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
-        Span::raw(" Parent  "),
-        Span::styled(".", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
-        Span::raw(" Hidden  "),
-        Span::styled("c/m/p/d", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
-        Span::raw(" Copy/Move/Paste/Del  "),
-        Span::styled("Tab", Style::default().fg(Color::Rgb(0x7f, 0xdb, 0xca))),
-        Span::raw(" Switch  "),
-        Span::styled(status, Style::default().fg(Color::Rgb(0xe5, 0xc0, 0x7b))),
-    ]);
+    let mut spans: Vec<Span> = Vec::new();
+    for (key, label) in footer_keys(app.dock) {
+        spans.push(Span::styled(*key, Style::default().fg(ACCENT)));
+        spans.push(Span::raw(*label));
+    }
+    spans.push(Span::styled(
+        status,
+        Style::default().fg(Color::Rgb(0xe5, 0xc0, 0x7b)),
+    ));
+    let text = Line::from(spans);
     // Right-aligned ymux release version. See ymon::draw_footer for the
     // same split pattern across the y* tool family.
     let version = format!(" v{} ", yversion::VERSION);

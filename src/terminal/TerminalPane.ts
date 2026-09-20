@@ -28,7 +28,7 @@ import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
-import { preparePaste } from "./paste";
+import { decideImagePaste, preparePaste } from "./paste";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
@@ -908,29 +908,36 @@ export class TerminalPane implements Pane {
   }
 
   private async pasteClipboard(): Promise<void> {
-    // Image first: if the clipboard holds a PNG, save it to a temp file and
-    // paste the file's path (so an in-pane CLI can read the image).
+    // Image first: if the clipboard holds an image, it is now a PNG on disk
+    // and what gets typed is that file's path, so an in-pane CLI can read it.
+    //
+    // The clipboard read happens in Rust (`paste_clipboard_image`), not via
+    // `navigator.clipboard.read()`. WebView2's async clipboard image read
+    // returned blobs whose `arrayBuffer()` was empty, which the backend
+    // faithfully wrote to disk as 0-byte PNGs whose paths were then typed into
+    // the shell. The webview branch is gone rather than kept as a fallback:
+    // the failure was silent and produced a plausible-looking path, so falling
+    // back to it would just reinstate the bug in the cases that matter.
+    //
+    // Image *before* text is deliberate and unchanged: a clipboard carrying
+    // both (copying a cell range out of Excel, say) pastes the image path.
     try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        if (item.types.includes("image/png")) {
-          const blob = await item.getType("image/png");
-          const bytes = new Uint8Array(await blob.arrayBuffer());
-          const path = await api.savePasteImage(Array.from(bytes));
-          if (path && this.spawned) {
-            // Always quote: the path can contain spaces (e.g. a profile
-            // directory like "C:\Users\John Smith\..."), which the
-            // receiving shell/CLI would otherwise split into two
-            // arguments. Path only — no trailing newline; the user
-            // presses Enter.
-            void api.writePane(this.id, ENCODER.encode(`"${path}"`));
-          }
-          return;
+      const decision = decideImagePaste(await api.pasteClipboardImage());
+      if (decision.kind === "image") {
+        if (this.spawned) {
+          void api.writePane(this.id, ENCODER.encode(decision.write));
         }
+        return;
       }
-    } catch {
-      // clipboard.read() unsupported/denied, or save failed — fall through to
-      // the text path below.
+    } catch (e) {
+      // An image *was* on the clipboard but could not be saved. Say so where
+      // the user is looking, and stop: silently pasting the clipboard's text
+      // instead would be worse than nothing, and typing a path to a file that
+      // isn't there is the bug this replaced.
+      this.term.writeln(
+        `\x1b[31mcould not paste the clipboard image: ${describeError(e)}\x1b[0m`,
+      );
+      return;
     }
     // Text. Framed and sanitized by `preparePaste` — bracketed when the
     // foreground app asked for it (xterm tracks DECSET 2004 for us in
