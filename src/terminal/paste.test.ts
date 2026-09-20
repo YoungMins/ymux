@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CHUNK_SIZE,
   DIRECT_LIMIT,
+  decideImagePaste,
   preparePaste,
   sanitizePaste,
 } from "./paste";
@@ -148,5 +149,33 @@ describe("preparePaste", () => {
     const text = "y".repeat(DIRECT_LIMIT + 10);
     const chunks = preparePaste(text, { bracketed: true });
     expect(joined(chunks)).toBe(`${START}${text}${END}`);
+  });
+});
+
+describe("decideImagePaste", () => {
+  it("falls through to text when the backend reports no image", () => {
+    expect(decideImagePaste(null)).toEqual({ kind: "text" });
+    expect(decideImagePaste(undefined)).toEqual({ kind: "text" });
+  });
+
+  it("falls through to text for a blank path instead of writing quotes", () => {
+    // The 0-byte-PNG bug typed `""` into the shell. A nothing-shaped answer
+    // must never become a write, whatever shape the nothing arrives in.
+    expect(decideImagePaste("")).toEqual({ kind: "text" });
+    expect(decideImagePaste("   ")).toEqual({ kind: "text" });
+  });
+
+  it("quotes the saved image's path", () => {
+    expect(decideImagePaste("C:\Users\John Smith\clip-1.png")).toEqual({
+      kind: "image",
+      write: '"C:\Users\John Smith\clip-1.png"',
+    });
+  });
+
+  it("types the path with no trailing newline — the user presses Enter", () => {
+    const decision = decideImagePaste("/tmp/clip-1.png");
+    expect(decision.kind).toBe("image");
+    expect(decision.kind === "image" && decision.write).toBe('"/tmp/clip-1.png"');
+    expect(decision.kind === "image" && decision.write.endsWith("\n")).toBe(false);
   });
 });

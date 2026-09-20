@@ -221,9 +221,15 @@ export const api = {
   deleteScrollback: (id: Uuid): Promise<void> =>
     call("delete_scrollback", { paneId: id }),
 
-  /// Save a pasted clipboard image (PNG bytes) to a temp file; returns its path.
-  savePasteImage: (bytes: number[]): Promise<string> =>
-    call("save_paste_image", { bytes }),
+  /// If the OS clipboard holds an image, save it as a PNG and return that
+  /// file's path; `null` means there is no image and the caller should paste
+  /// text instead. Rejects when an image was found but could not be saved.
+  ///
+  /// Reading the clipboard in Rust rather than with `navigator.clipboard.read()`
+  /// is the fix for pasted screenshots landing on disk as 0-byte PNGs: the
+  /// webview's async image read handed us empty buffers.
+  pasteClipboardImage: (): Promise<string | null> =>
+    call("paste_clipboard_image"),
 
   /// Check whether `cwd` is inside a git repository.
   gitIsRepo: (cwd: string): Promise<boolean> => call("git_is_repo", { cwd }),
