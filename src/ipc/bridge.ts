@@ -291,6 +291,11 @@ export function onAgentsChanged(
   return safeListen<AgentSnapshot>("agents:changed", handler);
 }
 
+/// Subscribe to "open this file" requests from the file dock's yDir.
+export function onOpenFile(handler: (path: string) => void): Promise<UnlistenFn> {
+  return safeListen<string>("ymux:open-file", handler);
+}
+
 /// Subscribe to tab-label snapshots pushed by the 2 s process scan.
 export function onPaneLabels(
   handler: (labels: Record<Uuid, string>) => void,

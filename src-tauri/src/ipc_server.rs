@@ -13,6 +13,9 @@ use crate::error::{YmuxError, YmuxResult};
 /// Tauri event name emitted for every incoming IPC message.
 const IPC_EVENT: &str = "ymux://ipc-message";
 
+/// Tauri event carrying the path the dock's yDir asked ymux to open.
+const OPEN_FILE_EVENT: &str = "ymux:open-file";
+
 /// Serializable payload forwarded to the frontend via a Tauri event.
 #[derive(Debug, Clone, serde::Serialize)]
 struct IpcEventPayload {
@@ -43,6 +46,15 @@ pub fn start_ipc_server(app: AppHandle) -> String {
             // not onto the generic frontend channel.
             IpcMessage::Event { kind, payload } if kind == AGENT_HOOK_KIND => {
                 crate::commands::apply_agent_hook(&app, payload);
+            }
+            // The dock's yDir pressed Enter on a file: hand the path to the
+            // frontend, which puts it in the viewer tab of the pane the dock
+            // follows (spec §4). Not the generic channel, so no other
+            // listener has to filter it out.
+            IpcMessage::Event { kind, .. } if kind == yipc::OPEN_FILE_KIND => {
+                if let Some(path) = yipc::open_file_path(&msg) {
+                    let _ = app.emit(OPEN_FILE_EVENT, path);
+                }
             }
             _ => {
                 // Serialize the message to a JSON Value for the event payload.
