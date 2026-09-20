@@ -273,9 +273,24 @@ pub enum LayoutNode {
         b: Box<LayoutNode>,
     },
     Tabs {
+        /// Stable identity for the tab group. Needed because the group is the
+        /// unit the UI addresses: the renderer caches one `PaneGroup` (and its
+        /// HotKeyBar) per id across layout rebuilds, and the file dock's
+        /// "one viewer tab per pane, reused" registry has to survive tabs
+        /// being opened and closed around it — which keying on a member pane
+        /// id cannot. Defaulted rather than optional, per the tagged-enum
+        /// TOML caveat (CLAUDE.md rule 3); a node written without one gets a
+        /// fresh id on load, which is harmless because the registry is
+        /// runtime-only.
+        #[serde(default = "default_tabs_id")]
+        id: Uuid,
         active: usize,
         children: Vec<LayoutNode>,
     },
+}
+
+fn default_tabs_id() -> Uuid {
+    Uuid::new_v4()
 }
 
 impl LayoutNode {
@@ -320,7 +335,9 @@ impl LayoutNode {
                     other => other,
                 },
             },
-            LayoutNode::Tabs { children, active } => {
+            LayoutNode::Tabs {
+                children, active, ..
+            } => {
                 let mut found = RemoveResult::NotFound;
                 let mut to_remove: Option<usize> = None;
                 for (idx, c) in children.iter_mut().enumerate() {
@@ -1336,5 +1353,127 @@ shell = "PowerShell 7"
         let pb = panes.iter().find(|p| p.id == b).unwrap();
         assert_eq!(pa.bg_color, "#ff0000");
         assert_eq!(pb.bg_color, "");
+    }
+
+    fn tab_pane(title: &str) -> LayoutNode {
+        let mut p = PaneSpec::new_default();
+        p.title = Some(title.to_string());
+        p.shell = "pwsh".into();
+        p.cwd = Some("C:/work".into());
+        LayoutNode::Pane(p)
+    }
+
+    #[test]
+    fn tabs_node_roundtrips_through_toml() {
+        let mut cfg = Config::default();
+        let group = Uuid::new_v4();
+        cfg.workspace_mut(1).root = LayoutNode::Tabs {
+            id: group,
+            active: 1,
+            children: vec![tab_pane("first"), tab_pane("second"), tab_pane("third")],
+        };
+        let text = toml::to_string_pretty(&cfg).expect("serialize");
+        let back: Config = toml::from_str(&text).expect("deserialize");
+        match &back.workspaces[0].root {
+            LayoutNode::Tabs {
+                id,
+                active,
+                children,
+            } => {
+                assert_eq!(*id, group, "the group id survives a round trip");
+                assert_eq!(*active, 1, "the active index survives a round trip");
+                assert_eq!(children.len(), 3);
+                let titles: Vec<&str> = children
+                    .iter()
+                    .map(|c| match c {
+                        LayoutNode::Pane(p) => p.title.as_deref().unwrap_or(""),
+                        _ => panic!("child is not a pane"),
+                    })
+                    .collect();
+                assert_eq!(titles, vec!["first", "second", "third"]);
+            }
+            other => panic!("expected a tabs node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tabs_node_roundtrips_nested_in_a_split() {
+        let mut cfg = Config::default();
+        cfg.workspace_mut(1).root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 0,
+                children: vec![tab_pane("t1"), tab_pane("t2")],
+            }),
+            b: Box::new(tab_pane("plain")),
+        };
+        let text = toml::to_string_pretty(&cfg).expect("serialize");
+        let back: Config = toml::from_str(&text).expect("deserialize");
+        assert_eq!(back.workspaces[0].panes().len(), 3, "every tab is a pane");
+    }
+
+    #[test]
+    fn a_tabs_node_written_without_an_id_gets_one() {
+        // Old hand-written configs (and anything produced before the field
+        // existed) must still load; the fresh id is fine because the only
+        // consumer, the viewer-tab registry, is runtime-only.
+        let text = r#"
+version = 7
+active_workspace = 1
+
+[[workspaces]]
+id = 1
+name = "main"
+
+[workspaces.root]
+kind = "tabs"
+active = 0
+
+[[workspaces.root.children]]
+kind = "pane"
+id = "11111111-1111-4111-8111-111111111111"
+shell = "pwsh"
+
+[[workspaces.root.children]]
+kind = "pane"
+id = "22222222-2222-4222-8222-222222222222"
+shell = "cmd"
+"#;
+        let cfg: Config = toml::from_str(text).expect("deserialize");
+        match &cfg.workspaces[0].root {
+            LayoutNode::Tabs { id, children, .. } => {
+                assert!(!id.is_nil(), "a missing id is filled in, not left nil");
+                assert_eq!(children.len(), 2);
+            }
+            other => panic!("expected a tabs node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn removing_a_tab_keeps_the_others() {
+        let mut node = LayoutNode::Tabs {
+            id: Uuid::new_v4(),
+            active: 2,
+            children: vec![tab_pane("a"), tab_pane("b"), tab_pane("c")],
+        };
+        let victim = match &node {
+            LayoutNode::Tabs { children, .. } => match &children[0] {
+                LayoutNode::Pane(p) => p.id,
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+        assert_eq!(node.remove_pane(victim), RemoveResult::Removed);
+        match &node {
+            LayoutNode::Tabs {
+                active, children, ..
+            } => {
+                assert_eq!(children.len(), 2);
+                assert!(*active < children.len(), "active stays in range");
+            }
+            other => panic!("expected a tabs node, got {other:?}"),
+        }
     }
 }
