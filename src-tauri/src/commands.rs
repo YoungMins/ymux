@@ -236,6 +236,23 @@ pub fn get_agents(agents: State<'_, SharedAgents>) -> AgentSnapshot {
     agents.0.lock().snapshot()
 }
 
+/// Tauri event carrying `pane id -> running-program label` (tab labels).
+const PANE_LABELS_EVENT: &str = "panes:labels";
+
+pub fn emit_pane_labels(app: &AppHandle, labels: &std::collections::HashMap<Uuid, String>) {
+    if let Err(e) = app.emit(PANE_LABELS_EVENT, labels) {
+        tracing::warn!(error = %e, "emit panes:labels failed");
+    }
+}
+
+/// Latest tab labels, for a frontend that has just mounted.
+#[tauri::command]
+pub fn get_pane_labels(
+    labels: State<'_, crate::agent_scan::SharedLabels>,
+) -> std::collections::HashMap<Uuid, String> {
+    labels.0.lock().clone()
+}
+
 /// Install (`true`) or remove (`false`) ymux's Claude Code hooks, then persist
 /// the setting. The file is written first: if that fails (e.g. unparseable
 /// settings.json) the error reaches the UI and the setting is not flipped.

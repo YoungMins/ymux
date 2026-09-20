@@ -248,6 +248,9 @@ export const api = {
   /// Current agent-tree snapshot (pane id → agents).
   getAgents: (): Promise<AgentSnapshot> => call("get_agents"),
 
+  /// Current tab labels (pane id → the deepest process running under it).
+  getPaneLabels: (): Promise<Record<Uuid, string>> => call("get_pane_labels"),
+
   /// Install (true) or remove (false) ymux's Claude Code hooks in
   /// ~/.claude/settings.json and persist the setting.
   setAgentTracking: (enabled: boolean): Promise<void> =>
@@ -286,4 +289,11 @@ export function onAgentsChanged(
   handler: (snapshot: AgentSnapshot) => void,
 ): Promise<UnlistenFn> {
   return safeListen<AgentSnapshot>("agents:changed", handler);
+}
+
+/// Subscribe to tab-label snapshots pushed by the 2 s process scan.
+export function onPaneLabels(
+  handler: (labels: Record<Uuid, string>) => void,
+): Promise<UnlistenFn> {
+  return safeListen<Record<Uuid, string>>("panes:labels", handler);
 }

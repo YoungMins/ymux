@@ -110,7 +110,75 @@ impl<'a> ProcTree<'a> {
         }
         None
     }
+
+    /// The deepest descendant of `root_pid` (exclusive): a shell that reached
+    /// `ycode` through a wrapper reports `ycode`, not the wrapper. Breadth
+    /// first, so a tie at the same depth resolves to the lowest pid (children
+    /// are pid-sorted in `new`). Cycle-safe against PID reuse, like
+    /// `agent_under`.
+    pub fn deepest_under(&self, root_pid: u32) -> Option<&'a ProcEntry> {
+        let mut seen: HashSet<u32> = HashSet::from([root_pid]);
+        let mut queue: VecDeque<(u32, u32)> = VecDeque::from([(root_pid, 0u32)]);
+        let mut best: Option<(u32, &'a ProcEntry)> = None;
+        while let Some((pid, depth)) = queue.pop_front() {
+            for child in self.children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
+                if !seen.insert(child.pid) {
+                    continue;
+                }
+                // `Option::is_none_or` would read better but is stable only
+                // since 1.82; this crate's clippy MSRV is 1.77.
+                if best.map_or(true, |(d, _)| depth + 1 > d) {
+                    best = Some((depth + 1, child));
+                }
+                queue.push_back((child.pid, depth + 1));
+            }
+        }
+        best.map(|(_, p)| p)
+    }
 }
+
+/// Executables whose first path-like argument belongs in the label, because
+/// the file *is* what the pane is showing.
+const FILE_ARG_EXES: &[&str] = &["ycode"];
+
+/// How a running process is labelled on a tab: its executable stem, plus the
+/// file it opened for the editors in [`FILE_ARG_EXES`] (`ycode: main.rs`).
+pub fn proc_label(entry: &ProcEntry) -> String {
+    let stem = entry.exe_stem.to_ascii_lowercase();
+    if !FILE_ARG_EXES.contains(&stem.as_str()) {
+        return stem;
+    }
+    // First non-flag argument after the program itself, reduced to its file
+    // name so a long absolute path can't blow up the strip.
+    let file = entry
+        .argv
+        .iter()
+        .skip(1)
+        .find(|a| !a.starts_with('-'))
+        .and_then(|a| a.replace('\\', "/").rsplit('/').next().map(str::to_string))
+        .filter(|f| !f.is_empty());
+    match file {
+        Some(f) => format!("{stem}: {f}"),
+        None => stem,
+    }
+}
+
+/// `pane id -> label` for every pane whose shell has at least one descendant.
+/// Panes running a bare shell are absent, and the frontend falls back to the
+/// shell name for those (see `src/terminal/tabLabel.ts`).
+pub fn scan_labels(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<Uuid, String> {
+    let tree = ProcTree::new(procs);
+    shells
+        .iter()
+        .filter_map(|(id, pid)| tree.deepest_under(*pid).map(|p| (*id, proc_label(p))))
+        .collect()
+}
+
+/// Tauri-managed handle holding the latest label snapshot, so `get_pane_labels`
+/// can seed a freshly mounted frontend between scans. Not desktop-gated: it is
+/// a plain map behind a mutex (CLAUDE.md rule 1).
+#[derive(Default)]
+pub struct SharedLabels(pub parking_lot::Mutex<HashMap<Uuid, String>>);
 
 /// `pane id → agent kind` for every pane whose shell has an agent descendant.
 pub fn scan_panes(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<Uuid, String> {
@@ -147,8 +215,8 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
             loop {
                 std::thread::sleep(SCAN_INTERVAL);
                 let shells = app.state::<AppState>().pty.pids_snapshot();
-                let found = if shells.is_empty() {
-                    HashMap::new()
+                let (found, labels) = if shells.is_empty() {
+                    (HashMap::new(), HashMap::new())
                 } else {
                     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
                     let procs: Vec<ProcEntry> = sys
@@ -165,8 +233,18 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                                 .collect(),
                         })
                         .collect();
-                    scan_panes(&shells, &procs)
+                    (scan_panes(&shells, &procs), scan_labels(&shells, &procs))
                 };
+                {
+                    // Tab labels are separate state from the agent registry and
+                    // are emitted only on a change, so an idle app is silent.
+                    let shared = app.state::<SharedLabels>();
+                    let mut current = shared.0.lock();
+                    if *current != labels {
+                        *current = labels;
+                        crate::commands::emit_pane_labels(&app, &current);
+                    }
+                }
                 let live: HashSet<Uuid> = shells.keys().copied().collect();
                 let agents = app.state::<SharedAgents>();
                 let mut reg = agents.0.lock();
@@ -349,5 +427,92 @@ mod tests {
         let found = scan_panes(&shells, &procs);
         assert_eq!(found.get(&a).map(String::as_str), Some("gemini"));
         assert!(!found.contains_key(&b));
+    }
+
+    #[test]
+    fn proc_label_is_the_executable_stem() {
+        assert_eq!(proc_label(&proc(1, None, "claude", &["claude"])), "claude");
+        assert_eq!(
+            proc_label(&proc(1, None, "pwsh", &["pwsh", "-NoLogo"])),
+            "pwsh"
+        );
+    }
+
+    #[test]
+    fn proc_label_reports_ycodes_file_argument() {
+        assert_eq!(
+            proc_label(&proc(1, None, "ycode", &["ycode", "/home/x/src/main.rs"])),
+            "ycode: main.rs"
+        );
+        assert_eq!(
+            proc_label(&proc(
+                1,
+                None,
+                "ycode",
+                &["ycode", r"D:\Git\ymux\src\app.ts"]
+            )),
+            "ycode: app.ts"
+        );
+        // Flags before the path are skipped; a bare `ycode` stays bare.
+        assert_eq!(
+            proc_label(&proc(
+                1,
+                None,
+                "ycode",
+                &["ycode", "--readonly", "notes.md"]
+            )),
+            "ycode: notes.md"
+        );
+        assert_eq!(proc_label(&proc(1, None, "ycode", &["ycode"])), "ycode");
+    }
+
+    #[test]
+    fn deepest_under_walks_past_wrappers_to_the_leaf() {
+        // shell(10) -> cmd(11) -> node(12): the innermost process is the one
+        // the user is looking at, so that is what the tab is called.
+        let procs = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(11, Some(10), "cmd", &[]),
+            proc(12, Some(11), "node", &["node", "server.js"]),
+        ];
+        assert_eq!(
+            ProcTree::new(&procs).deepest_under(10).map(|p| p.pid),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn deepest_under_is_none_for_a_bare_shell_and_ignores_siblings() {
+        let procs = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(20, Some(1), "claude", &[]),
+        ];
+        assert_eq!(ProcTree::new(&procs).deepest_under(10), None);
+    }
+
+    #[test]
+    fn deepest_under_survives_parent_cycles_from_pid_reuse() {
+        let procs = vec![proc(10, Some(11), "sh", &[]), proc(11, Some(10), "sh", &[])];
+        assert_eq!(
+            ProcTree::new(&procs).deepest_under(10).map(|p| p.pid),
+            Some(11)
+        );
+    }
+
+    #[test]
+    fn scan_labels_covers_every_pane_with_a_child_process() {
+        let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let procs = vec![
+            proc(10, Some(1), "bash", &[]),
+            proc(11, Some(10), "ycode", &["ycode", "/w/README.md"]),
+            proc(20, Some(1), "pwsh", &[]),
+            proc(30, Some(1), "zsh", &[]),
+            proc(31, Some(30), "claude", &["claude"]),
+        ];
+        let shells: HashMap<Uuid, u32> = [(a, 10), (b, 20), (c, 30)].into_iter().collect();
+        let found = scan_labels(&shells, &procs);
+        assert_eq!(found.get(&a).map(String::as_str), Some("ycode: README.md"));
+        assert!(!found.contains_key(&b), "a bare shell reports no label");
+        assert_eq!(found.get(&c).map(String::as_str), Some("claude"));
     }
 }

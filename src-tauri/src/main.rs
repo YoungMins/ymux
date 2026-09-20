@@ -40,6 +40,7 @@ fn main() {
         .manage(state)
         .manage(eb_registry)
         .manage(ymux_lib::agents::SharedAgents::default())
+        .manage(ymux_lib::agent_scan::SharedLabels::default())
         .invoke_handler(tauri::generate_handler![
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
@@ -78,6 +79,7 @@ fn main() {
             ymux_lib::settings::save_syntax_theme,
             ymux_lib::settings::open_config_path,
             ymux_lib::commands::get_agents,
+            ymux_lib::commands::get_pane_labels,
             ymux_lib::commands::set_agent_tracking,
         ])
         .plugin(tauri_plugin_notification::init())
