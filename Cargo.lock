@@ -6386,6 +6386,7 @@ dependencies = [
  "ratatui",
  "tempfile",
  "yipc",
+ "ypath",
  "ytheme",
  "yversion",
 ]
