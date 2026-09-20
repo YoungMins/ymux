@@ -76,9 +76,18 @@ impl App {
         let Some(raw) = self.branches.get(self.branch_idx) else {
             return;
         };
-        let branch = raw.trim().trim_start_matches("* ").to_string();
+        let Some(branch) = branch_name(raw) else {
+            self.status = Some(format!("Not a branch: {}", raw.trim()));
+            return;
+        };
+        let branch = branch.to_string();
 
-        match Command::new("git").args(["checkout", &branch]).output() {
+        // `--` ends the revision list, so a branch whose name also matches a
+        // file on disk is still read as a branch.
+        match Command::new("git")
+            .args(["checkout", &branch, "--"])
+            .output()
+        {
             Ok(out) if out.status.success() => {
                 self.status = Some(format!("Checked out: {branch}"));
                 self.refresh();
@@ -116,6 +125,42 @@ fn run_git_log() -> Vec<String> {
         }
         Err(e) => vec![format!("failed to run git: {e}")],
     }
+}
+
+/// The branch name inside one `git branch` line, or `None` when the line
+/// names no branch that can be checked out.
+///
+/// `git branch` writes a two-column marker before every name: `* ` for the
+/// branch HEAD is on, `+ ` for one that is checked out in *another*
+/// worktree, and two spaces otherwise. It is a fixed-width column, so
+/// exactly one marker comes off -- a branch really named `* x` would keep
+/// its own `* `, and there is nothing else to strip.
+///
+/// The pseudo-entries are the other half. In a detached HEAD, `git branch`
+/// prints `* (HEAD detached at b013596)` (or `(no branch)` mid-rebase),
+/// which is prose, not a ref. Git rejects both spellings outright --
+/// `fatal: invalid reference: + 워크트리브랜치` for an unstripped marker --
+/// so neither must reach `git checkout`.
+///
+/// A `+ ` branch is returned, not rejected: `git checkout` refuses it with
+/// "already used by worktree at <path>", which tells the user something.
+///
+/// Branch names themselves need no further care. Git rejects a ref name
+/// containing a space (`fatal: 'space branch name' is not a valid branch
+/// name`), and `git branch` prints non-ASCII names as raw UTF-8 -- verified
+/// against git 2.52 with a Korean branch -- so there is no C-quoting to
+/// undo and no embedded whitespace to split on.
+fn branch_name(raw: &str) -> Option<&str> {
+    let name = raw
+        .strip_prefix("* ")
+        .or_else(|| raw.strip_prefix("+ "))
+        .or_else(|| raw.strip_prefix("  "))
+        .unwrap_or(raw)
+        .trim();
+    if name.is_empty() || name.starts_with('(') {
+        return None;
+    }
+    Some(name)
 }
 
 fn run_git_branches() -> Vec<String> {
@@ -196,5 +241,58 @@ mod tests {
         let mut app = App::new();
         app.branches.clear();
         app.checkout_selected(); // must not panic
+    }
+
+    /// Captured from real git 2.52 in a repo with a Korean branch checked
+    /// out and a second Korean branch held by a linked worktree.
+    const REAL_BRANCH_OUTPUT: &[&str] = &["  master", "* 기능/한글브랜치", "+ 워크트리브랜치"];
+
+    #[test]
+    fn branch_name_strips_every_marker_git_writes() {
+        let names: Vec<_> = REAL_BRANCH_OUTPUT
+            .iter()
+            .map(|line| branch_name(line))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                Some("master"),
+                Some("기능/한글브랜치"),
+                // RED before the fix: `+ ` was left on, and git answered
+                // `fatal: invalid reference: + 워크트리브랜치`.
+                Some("워크트리브랜치"),
+            ]
+        );
+    }
+
+    /// A detached HEAD gives `git branch` nothing to name, so it prints
+    /// prose in parentheses. Checking that out is not a thing.
+    #[test]
+    fn branch_name_rejects_the_detached_head_pseudo_entry() {
+        assert_eq!(branch_name("* (HEAD detached at b013596)"), None);
+        assert_eq!(branch_name("* (HEAD detached from v1.2)"), None);
+        assert_eq!(branch_name("* (no branch, rebasing main)"), None);
+        assert_eq!(branch_name(""), None);
+        assert_eq!(branch_name("   "), None);
+    }
+
+    /// Exactly one marker column comes off. Git permits `*` inside a branch
+    /// name, so a repeated strip would eat a real character.
+    #[test]
+    fn branch_name_strips_one_marker_not_a_run() {
+        assert_eq!(branch_name("* * odd"), Some("* odd"));
+    }
+
+    #[test]
+    fn checkout_reports_a_pseudo_entry_instead_of_running_git() {
+        let mut app = App::new();
+        app.branches = vec!["* (HEAD detached at b013596)".to_string()];
+        app.branch_idx = 0;
+        app.checkout_selected();
+        let status = app.status.expect("a pseudo-entry must explain itself");
+        assert!(
+            status.starts_with("Not a branch"),
+            "unexpected status: {status}"
+        );
     }
 }

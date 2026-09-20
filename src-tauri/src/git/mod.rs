@@ -128,6 +128,21 @@ pub fn worktree_list(repo: &Path) -> YmuxResult<Vec<WorktreeEntry>> {
 /// Parse `git worktree list --porcelain` output into entries. Entries with
 /// a detached HEAD have no `branch` line and are reported with an empty
 /// `branch` field.
+///
+/// Taking the rest of the line verbatim is correct, and deliberately so.
+/// Unlike `git status`/`git ls-files`, the `worktree list` porcelain format
+/// does **not** C-quote: paths and ref names come through as raw UTF-8 with
+/// spaces and non-ASCII intact, and `core.quotePath` does not apply to it
+/// (verified against git 2.52 with a Korean worktree path and a Korean
+/// branch name). So there is no octal-escape decoding to do here. The one
+/// spelling that does not survive is a path containing a newline, which
+/// would need the `-z` form; nothing in ymux can produce one, so it is left
+/// unhandled rather than guessed at.
+///
+/// Note that git reports the path in *its* spelling -- on Windows,
+/// forward slashes and git's own idea of the drive-letter case -- which is
+/// not the spelling [`suggested_worktree_path`] produces. Compare the two
+/// with [`ypath::same_path`], never with `==`.
 pub fn parse_worktree_porcelain(out: &str) -> Vec<WorktreeEntry> {
     let mut entries = Vec::new();
     let mut path: Option<String> = None;
@@ -216,6 +231,44 @@ branch refs/heads/agent/xyz
             .ends_with("/tmp/wt/feature-a"));
     }
 
+    /// git prints worktree paths in its own spelling -- forward slashes on
+    /// Windows -- while `suggested_worktree_path` builds them with the
+    /// platform separator. `==` between the two is false on Windows, so any
+    /// "is this the worktree we made?" check has to go through the key.
+    #[test]
+    fn porcelain_path_and_suggested_path_differ_only_by_spelling() {
+        let out = "worktree C:/Users/u/.ymux-worktrees/agent-x
+HEAD abc
+branch refs/heads/agent/x
+";
+        let list = parse_worktree_porcelain(out);
+        let ours = r"C:\Users\u\.ymux-worktrees\agent-x";
+        assert_ne!(
+            list[0].path, ours,
+            "fixture is wrong: the two spellings must differ byte-wise"
+        );
+        assert!(ypath::same_path(&list[0].path, ours));
+    }
+
+    /// Captured verbatim from real git 2.52 run against a worktree at a
+    /// Korean path containing a space, on a Korean branch. `worktree list
+    /// --porcelain` does not C-quote and ignores `core.quotePath`, so "the
+    /// rest of the line" is the whole path -- spaces, Hangul and all.
+    #[test]
+    fn porcelain_keeps_non_ascii_and_spaces_verbatim() {
+        let out = "worktree C:/tmp/gitexp/한글 워크트리
+HEAD b0135962b6fe5c1d1a3325e2f7aee6ff2ca785be
+branch refs/heads/워크트리브랜치
+";
+        let list = parse_worktree_porcelain(out);
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list[0].path, "C:/tmp/gitexp/한글 워크트리",
+            "the space must not end the path and the Hangul must not be escaped"
+        );
+        assert_eq!(list[0].branch, "워크트리브랜치");
+    }
+
     #[test]
     fn parses_porcelain_detached_head_entry() {
         // Detached HEAD worktrees have no `branch` line at all.
@@ -246,6 +299,51 @@ detached
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    /// Whether the worktree git reported at `entry_path` is the one we asked
+    /// it to create at `asked`.
+    ///
+    /// Compares the *leaf*, not the whole path, because git resolves
+    /// symlinks when it records a worktree -- verified: adding a worktree
+    /// through a Windows junction makes `worktree list --porcelain` report
+    /// the junction's target. `init_test_repo` builds under
+    /// `std::env::temp_dir()`, which on macOS is `/var/folders/...` and
+    /// `/var` is a symlink to `/private/var`, so git's path and ours differ
+    /// by a prefix that no comparison key is allowed to fold away
+    /// (`ypath::same_path` documents symlinks as out of scope, correctly).
+    ///
+    /// The leaf still goes through the key, so the separator and case rules
+    /// apply to it; `porcelain_path_and_suggested_path_differ_only_by_spelling`
+    /// is the deterministic test for the whole-path case.
+    /// The leaf is taken from the *key* of the whole asked-for path rather
+    /// than from `Path::file_name`, so it inherits that path's case rule --
+    /// a bare `Agent-X` on its own proves no Windows syntax and would stay
+    /// case-sensitive, which is right for a path and wrong for a component
+    /// of `C:\wt\Agent-X`.
+    fn worktree_leaf_is(entry_path: &str, asked: &Path) -> bool {
+        let asked_key = ypath::comparison_key(&asked.to_string_lossy());
+        let Some(leaf) = asked_key.rsplit('/').next().filter(|s| !s.is_empty()) else {
+            return false;
+        };
+        let key = ypath::comparison_key(entry_path);
+        key == leaf || key.ends_with(&format!("/{leaf}"))
+    }
+
+    /// The macOS shape, pinned down without needing macOS to run it.
+    #[test]
+    fn worktree_leaf_is_survives_a_resolved_symlink_prefix() {
+        let asked = Path::new("/var/folders/t/ymux_git_test/.ymux-worktrees/agent-x");
+        assert!(worktree_leaf_is(
+            "/private/var/folders/t/ymux_git_test/.ymux-worktrees/agent-x",
+            asked
+        ));
+        // A leaf match, not a substring one.
+        assert!(!worktree_leaf_is("/private/var/wt/super-agent-x", asked));
+        assert!(!worktree_leaf_is("/private/var/wt/agent-y", asked));
+        // Still crosses the Windows separator and case divide.
+        let win = Path::new(r"C:\wt\.ymux-worktrees\Agent-X");
+        assert!(worktree_leaf_is("C:/wt/.ymux-worktrees/agent-x", win));
     }
 
     /// Create a fresh temp dir, `git init` it, configure a commit identity,
@@ -308,13 +406,14 @@ detached
             .iter()
             .find(|e| e.branch == "agent/x")
             .expect("worktree_add must attach to branch 'agent/x', not leave it detached");
+        // Cross-source comparison: `entry.path` is git's spelling (forward
+        // slashes on Windows), `wt_path` is the one this module built with
+        // the platform separator. Byte equality fails on Windows.
         assert!(
-            Path::new(&entry.path)
-                .to_string_lossy()
-                .replace('\\', "/")
-                .ends_with("agent-x"),
-            "entry path should be the suggested worktree path, got {}",
-            entry.path
+            worktree_leaf_is(&entry.path, &wt_path),
+            "entry path should be the suggested worktree path: git said {}, we asked for {}",
+            entry.path,
+            wt_path.display()
         );
 
         // RED (pre-fix): this call failed unconditionally with
@@ -371,12 +470,7 @@ detached
         let list = worktree_list(&repo).expect("worktree_list should succeed");
         let entry = list
             .iter()
-            .find(|e| {
-                Path::new(&e.path)
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .ends_with("tagonly")
-            })
+            .find(|e| worktree_leaf_is(&e.path, &wt_path))
             .expect("worktree entry for the requested path should exist");
 
         // RED (pre-fix): entry.branch == "" (detached), because the
@@ -391,6 +485,50 @@ detached
             entry.branch, "tagonly",
             "expected worktree_add to create/attach local branch 'tagonly', not leave it detached (branch={:?})",
             entry.branch
+        );
+
+        worktree_remove(&wt_path, false).expect("cleanup: worktree_remove should succeed");
+        cleanup_dir(&repo);
+        if let Some(parent) = repo.parent() {
+            let _ = std::fs::remove_dir(parent.join(".ymux-worktrees"));
+        }
+    }
+
+    /// The `porcelain_keeps_non_ascii_and_spaces_verbatim` fixture, against
+    /// the real binary. `core.quotePath` is left at its default (which *is*
+    /// quoting -- `git status --short` octal-escapes the same name), to pin
+    /// down that it does not reach this format. If a future git ever starts
+    /// C-quoting here, the parser needs a decoder and this test is what says
+    /// so.
+    #[test]
+    fn worktree_list_does_not_quote_korean_paths_or_branches() {
+        if !git_available() {
+            eprintln!(
+                "skipping worktree_list_does_not_quote_korean_paths_or_branches: git not on PATH"
+            );
+            return;
+        }
+        let repo = init_test_repo("hangul");
+        let branch = "기능/한글";
+        let wt_path = suggested_worktree_path(&repo, branch, "");
+
+        worktree_add(&repo, branch, &wt_path).expect("worktree_add should succeed");
+
+        let list = worktree_list(&repo).expect("worktree_list should succeed");
+        let entry = list
+            .iter()
+            .find(|e| e.branch == branch)
+            .unwrap_or_else(|| panic!("branch should come back unescaped, got {list:?}"));
+        assert!(
+            !entry.path.contains("\\3"),
+            "path looks C-quoted (octal escapes): {}",
+            entry.path
+        );
+        assert!(
+            worktree_leaf_is(&entry.path, &wt_path),
+            "git said {}, we asked for {}",
+            entry.path,
+            wt_path.display()
         );
 
         worktree_remove(&wt_path, false).expect("cleanup: worktree_remove should succeed");

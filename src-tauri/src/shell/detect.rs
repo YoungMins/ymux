@@ -64,6 +64,76 @@ mod windows_detect {
     /// shell launched in.
     const CMD_OSC7_PROMPT: &str = "prompt $e]7;file:///$P$e\\$P$G";
 
+    /// Console code-page switch chained ahead of every cmd.exe startup
+    /// command.
+    ///
+    /// A Windows console starts on the machine's legacy code page — CP949 on
+    /// Korean Windows, 936 on Chinese — and ConPTY decodes everything a child
+    /// writes through that page before handing it to us. So a tool that
+    /// emits UTF-8 bytes (which is most of them, including every TUI in
+    /// `tools/`) arrives as mojibake, and the mangling happens *below* ymux
+    /// where no amount of frontend decoding can undo it. `chcp 65001` moves
+    /// the console to UTF-8 for both directions; `> nul` swallows chcp's
+    /// "Active code page: 65001" banner so the pane still opens clean.
+    pub(super) const CMD_UTF8_SETUP: &str = "chcp 65001 > nul";
+
+    /// PowerShell / pwsh console encoding setup, prepended to the `-Command`
+    /// bootstrap below.
+    ///
+    /// These property setters call `SetConsoleOutputCP` / `SetConsoleCP`
+    /// underneath, so they fix native programs launched inside the pane too,
+    /// not just PowerShell's own writes. `InputEncoding` is what lets a
+    /// pasted or IME-typed Korean command line reach the shell intact.
+    /// Wrapped in `try`/`catch` for the same reason Git Bash uses `;` below:
+    /// a console host that refuses the switch must not take the shell down
+    /// with it.
+    pub(super) const PWSH_UTF8_SETUP: &str = "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding } catch { }";
+
+    /// Build a cmd.exe `/K` payload that switches to UTF-8 before running
+    /// `script` (which still carries the OSC 7 prompt hook).
+    fn cmd_command(script: &str) -> String {
+        format!("{CMD_UTF8_SETUP} & {script}")
+    }
+
+    /// Build a PowerShell `-Command` payload that switches to UTF-8 before
+    /// running `script` (the OSC 7 prompt installer, optionally preceded by
+    /// a VS Developer Shell launcher).
+    fn pwsh_command(script: &str) -> String {
+        format!("{PWSH_UTF8_SETUP}; {script}")
+    }
+
+    /// Single-quote `s` for POSIX `sh`, so an rcfile path containing spaces
+    /// survives the `-c` wrapper below.
+    fn posix_quote(s: &str) -> String {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
+
+    /// Wrap Git Bash's interactive argv in a `-c` launcher that flips the
+    /// console to UTF-8 and then `exec`s the real shell, so the pane still
+    /// hosts exactly one process and `--rcfile` / `-i` keep their meaning.
+    ///
+    /// `;` rather than `&&` is deliberate: a machine whose `chcp.com` is
+    /// missing from `PATH` must still get a working shell, just without the
+    /// code-page switch. With `&&` the `exec` would never run and the pane
+    /// would die at startup.
+    pub(super) fn bash_utf8_wrapper(bash_args: &[String]) -> Vec<String> {
+        let rendered = bash_args
+            .iter()
+            .map(|a| {
+                if a.starts_with('-') {
+                    a.clone()
+                } else {
+                    posix_quote(a)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        vec![
+            "-c".into(),
+            format!("chcp.com 65001 >/dev/null 2>&1; exec \"$BASH\" {rendered}"),
+        ]
+    }
+
     /// Bash (Git Bash / MSYS) init snippet. Written to a temp rcfile and
     /// passed via `--rcfile` on spawn. It first sources the user's normal
     /// init files so aliases / PS1 / env vars still take effect, then
@@ -126,7 +196,7 @@ esac
                     "-NoLogo".into(),
                     "-NoExit".into(),
                     "-Command".into(),
-                    PWSH_OSC7_INIT.into(),
+                    pwsh_command(PWSH_OSC7_INIT),
                 ],
                 icon: Some("pwsh".into()),
                 color: Some("#012456".into()),
@@ -143,7 +213,7 @@ esac
                     "-NoLogo".into(),
                     "-NoExit".into(),
                     "-Command".into(),
-                    PWSH_OSC7_INIT.into(),
+                    pwsh_command(PWSH_OSC7_INIT),
                 ],
                 icon: Some("powershell".into()),
                 color: Some("#012456".into()),
@@ -158,7 +228,7 @@ esac
             out.push(ShellProfile {
                 name: "Command Prompt".into(),
                 executable: p.to_string_lossy().into_owned(),
-                args: vec!["/Q".into(), "/K".into(), CMD_OSC7_PROMPT.into()],
+                args: vec!["/Q".into(), "/K".into(), cmd_command(CMD_OSC7_PROMPT)],
                 icon: Some("cmd".into()),
                 color: Some("#0c0c0c".into()),
                 env: Vec::new(),
@@ -174,7 +244,7 @@ esac
         if let Some(p) = find_git_bash() {
             // Use a generated rcfile for OSC 7 cwd reporting when we can
             // write one; fall back to plain `--login -i` otherwise.
-            let args = if let Some(rcfile) = ensure_bash_rcfile() {
+            let interactive: Vec<String> = if let Some(rcfile) = ensure_bash_rcfile() {
                 // Forward-slash form of the path plays best with MSYS
                 // bash's argument parsing.
                 let rc = rcfile.to_string_lossy().replace('\\', "/");
@@ -182,6 +252,8 @@ esac
             } else {
                 vec!["--login".into(), "-i".into()]
             };
+            // …then hand that argv to a UTF-8 launcher that `exec`s it.
+            let args = bash_utf8_wrapper(&interactive);
             out.push(ShellProfile {
                 name: "Git Bash".into(),
                 executable: p.to_string_lossy().into_owned(),
@@ -449,7 +521,11 @@ esac
                 if let Some(cmd) = cmd_path.as_ref() {
                     // `call` keeps the outer cmd.exe alive after the batch
                     // finishes so we can chain our OSC 7 prompt setup.
-                    let joined = format!("call \"{}\" & {}", vsdevcmd.display(), CMD_OSC7_PROMPT);
+                    let joined = cmd_command(&format!(
+                        "call \"{}\" & {}",
+                        vsdevcmd.display(),
+                        CMD_OSC7_PROMPT
+                    ));
                     out.push(ShellProfile {
                         name: format!("Developer Command Prompt for VS {label}"),
                         executable: cmd.to_string_lossy().into_owned(),
@@ -471,10 +547,10 @@ esac
                     // chdir-ing into the user's "Source" folder so the
                     // pane inherits the parent cwd like every other shell.
                     let launch_escaped = launch.to_string_lossy().replace('\'', "''");
-                    let script = format!(
+                    let script = pwsh_command(&format!(
                         "& '{}' -SkipAutomaticLocation; {}",
                         launch_escaped, PWSH_OSC7_INIT
-                    );
+                    ));
                     out.push(ShellProfile {
                         name: format!("Developer PowerShell for VS {label}"),
                         executable: ps.to_string_lossy().into_owned(),
@@ -927,5 +1003,255 @@ mod tests {
         for p in &profiles {
             assert!(seen.insert(p.name.clone()), "duplicate name {}", p.name);
         }
+    }
+
+    /// Lowercased file name of a profile's executable, e.g. `"cmd.exe"`.
+    #[cfg(windows)]
+    fn exe_base(p: &ShellProfile) -> String {
+        std::path::Path::new(&p.executable)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    }
+
+    /// The Git Bash launcher has to stay *fail-open*: it is the one profile
+    /// whose encoding setup runs as a command rather than a shell builtin,
+    /// so a machine without `chcp.com` on `PATH` must still get a shell.
+    /// Asserted on the pure builder so it holds whether or not Git Bash is
+    /// installed on the machine running the suite.
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_utf8_wrapper_is_fail_open_and_keeps_the_rcfile() {
+        let inner = vec![
+            "--rcfile".to_string(),
+            "C:/Users/a b/AppData/Roaming/ymux/bash-init.sh".to_string(),
+            "-i".to_string(),
+        ];
+        let args = windows_detect::bash_utf8_wrapper(&inner);
+        assert_eq!(args.len(), 2, "wrapper is `-c <command>`: {args:?}");
+        assert_eq!(args[0], "-c");
+        let cmd = &args[1];
+
+        assert!(cmd.contains("chcp.com 65001"), "no code-page switch: {cmd}");
+        // `;` — not `&&` — so a missing chcp.com cannot abort startup.
+        assert!(
+            !cmd.contains("&&"),
+            "chcp must be chained fail-open with `;`, not `&&`: {cmd}"
+        );
+        let chcp = cmd.find("chcp.com").expect("chcp present");
+        let exec = cmd.find("exec ").expect("exec present");
+        assert!(chcp < exec, "chcp must run before the exec: {cmd}");
+        // The OSC 7 rcfile (and interactivity) must survive the wrapping,
+        // spaces in the path included.
+        assert!(
+            cmd.contains(
+                "exec \"$BASH\" --rcfile 'C:/Users/a b/AppData/Roaming/ymux/bash-init.sh' -i"
+            ),
+            "interactive argv not preserved: {cmd}"
+        );
+
+        // The no-rcfile fallback keeps its login flag.
+        let fallback =
+            windows_detect::bash_utf8_wrapper(&["--login".to_string(), "-i".to_string()]);
+        assert!(
+            fallback[1].ends_with("exec \"$BASH\" --login -i"),
+            "fallback argv not preserved: {:?}",
+            fallback[1]
+        );
+    }
+
+    /// Every Windows shell ymux spawns itself must start on code page 65001.
+    ///
+    /// Windows consoles default to the machine's legacy code page (CP949 on
+    /// Korean Windows, 936 on Chinese), and ConPTY re-encodes through it
+    /// before ymux ever sees a byte — so CJK output garbles below the layer
+    /// the frontend can fix. WSL and Nushell are excluded on purpose: both
+    /// are UTF-8 natively and neither takes a code-page argument.
+    #[cfg(windows)]
+    #[test]
+    fn windows_profiles_start_in_utf8_without_losing_the_osc7_hook() {
+        for p in detect_shells() {
+            let args = p.args.join(" ");
+
+            // WSL is already UTF-8 end to end; it must be left exactly as it
+            // was, or `wsl -d <distro>` stops being a plain distro launch.
+            if p.name.starts_with("WSL: ") {
+                assert_eq!(p.args.len(), 2, "{}: {:?}", p.name, p.args);
+                assert_eq!(p.args[0], "-d", "{}: {:?}", p.name, p.args);
+                assert!(
+                    !args.contains("chcp") && !args.contains("Encoding"),
+                    "{} must carry no code-page setup: {:?}",
+                    p.name,
+                    p.args
+                );
+                continue;
+            }
+            // Nushell is UTF-8 natively and is launched with no args at all.
+            if p.name == "Nushell" {
+                assert!(p.args.is_empty(), "{}: {:?}", p.name, p.args);
+                continue;
+            }
+
+            match exe_base(&p).as_str() {
+                "cmd.exe" => {
+                    assert!(
+                        args.contains(windows_detect::CMD_UTF8_SETUP),
+                        "{} misses `chcp 65001`: {:?}",
+                        p.name,
+                        p.args
+                    );
+                    assert!(
+                        args.contains("]7;file:///$P"),
+                        "{} lost its OSC 7 prompt: {:?}",
+                        p.name,
+                        p.args
+                    );
+                }
+                "powershell.exe" | "pwsh.exe" => {
+                    assert!(
+                        args.contains(windows_detect::PWSH_UTF8_SETUP),
+                        "{} misses the console encoding setup: {:?}",
+                        p.name,
+                        p.args
+                    );
+                    assert!(
+                        args.contains("]7;file:///$p"),
+                        "{} lost its OSC 7 prompt: {:?}",
+                        p.name,
+                        p.args
+                    );
+                }
+                "bash.exe" => {
+                    assert_eq!(p.args[0], "-c", "{}: {:?}", p.name, p.args);
+                    assert!(
+                        args.contains("chcp.com 65001") && args.contains("exec \"$BASH\""),
+                        "{} misses the UTF-8 exec launcher: {:?}",
+                        p.name,
+                        p.args
+                    );
+                    // The rcfile carries the OSC 7 PROMPT_COMMAND hook, so
+                    // losing it would silently kill cwd tracking.
+                    assert!(
+                        args.contains("--rcfile") || args.contains("--login"),
+                        "{} lost its interactive argv: {:?}",
+                        p.name,
+                        p.args
+                    );
+                }
+                other => panic!("unclassified Windows profile {} ({other})", p.name),
+            }
+        }
+    }
+
+    /// End-to-end proof that the argv above actually produces a UTF-8
+    /// console: spawn every detected Windows shell on a real PTY, have it
+    /// report its code page and echo a Korean string back through a shell
+    /// variable, and assert the bytes come back as correct UTF-8.
+    ///
+    /// Reading it out of a variable (rather than matching the typed line) is
+    /// what makes this a round trip: the marker only appears if the shell
+    /// *decoded* the Korean we typed and then *re-encoded* it on the way
+    /// out. Ignored by default because it spawns real shells and a cold
+    /// PowerShell profile can take seconds; run with
+    /// `cargo test -p ymux --no-default-features --lib -- --ignored shells_round_trip`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "spawns real shells; run explicitly with --ignored"]
+    fn windows_shells_round_trip_korean_over_a_real_pty() {
+        use crate::config::model::PaneSpec;
+        use crate::pty::session::{CwdMap, PaneEvent, PtySession};
+        use parking_lot::Mutex;
+        use portable_pty::PtySize;
+        use std::collections::HashMap;
+        use std::sync::mpsc;
+        use std::sync::Arc;
+
+        // `한글` inside brackets so it cannot be satisfied by the echo of the
+        // command line we type.
+        const MARKER: &str = "ymux[한글]";
+
+        let mut checked = 0usize;
+        for p in detect_shells() {
+            if p.name.starts_with("WSL: ") || p.name == "Nushell" {
+                continue;
+            }
+            let script: &[u8] = match exe_base(&p).as_str() {
+                "cmd.exe" => "chcp\r\nset YK=한글\r\necho ymux[%YK%]\r\nexit\r\n".as_bytes(),
+                "powershell.exe" | "pwsh.exe" => {
+                    "[Console]::OutputEncoding.CodePage\r\n$yk = \"한글\"\r\nWrite-Output \"ymux[$yk]\"\r\nexit\r\n".as_bytes()
+                }
+                "bash.exe" => "chcp.com\nyk=한글\necho \"ymux[$yk]\"\nexit\n".as_bytes(),
+                _ => continue,
+            };
+
+            let (tx, rx) = mpsc::channel();
+            let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+            let session = match PtySession::spawn(
+                &PaneSpec::new_default(),
+                &p,
+                PtySize {
+                    rows: 24,
+                    cols: 120,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+                tx,
+                Arc::clone(&cwds),
+                &[],
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("skipping {}: spawn failed: {e}", p.name);
+                    continue;
+                }
+            };
+            // Give the shell a moment to finish its own startup (and its
+            // chcp) before typing at it.
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            session.write(script).expect("write");
+
+            let mut captured = Vec::new();
+            // The OSC 7 hook is the other half of the contract: for Git Bash
+            // it lives in the rcfile the `-c` wrapper now `exec`s into, and
+            // for cmd / PowerShell the code-page setup is chained ahead of
+            // the prompt installer. Counting the parsed events proves the
+            // hook still fires rather than merely still appearing in argv.
+            let mut cwd_events = 0usize;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                    Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
+                    Ok(PaneEvent::Cwd(..)) => cwd_events += 1,
+                    Ok(PaneEvent::Exit(..)) => break,
+                    Err(_) if std::time::Instant::now() > deadline => break,
+                    Err(_) => continue,
+                }
+            }
+            // `from_utf8` (not lossy): invalid bytes are exactly the failure
+            // mode under test, so they must not be papered over.
+            let text = std::str::from_utf8(&captured)
+                .unwrap_or_else(|e| panic!("{}: output is not valid UTF-8: {e}", p.name));
+            assert!(
+                text.contains("65001"),
+                "{} did not report code page 65001: {text:?}",
+                p.name
+            );
+            assert!(
+                text.contains(MARKER),
+                "{} did not round-trip Korean: {text:?}",
+                p.name
+            );
+            assert!(
+                cwd_events > 0,
+                "{} reported no OSC 7 cwd — the encoding setup broke the hook: {text:?}",
+                p.name
+            );
+            checked += 1;
+            eprintln!(
+                "ok: {} round-tripped {MARKER} at cp 65001, {cwd_events} OSC 7 cwd report(s)",
+                p.name
+            );
+        }
+        assert!(checked > 0, "no Windows shell was available to verify");
     }
 }

@@ -343,11 +343,22 @@ pub fn is_binary_file(path: &std::path::Path) -> bool {
     buf[..n].contains(&0u8)
 }
 
-/// Whether `a` and `b` name the same directory. Shells report their cwd
-/// in their own spelling (drive-letter case, a trailing separator), so
-/// fall back to comparing the canonical forms.
+/// Whether `a` and `b` name the same directory.
+///
+/// Three tries, cheapest first.
+///
+/// 1. Byte equality, which is what the host usually sends.
+/// 2. [`ypath::same_path`], which folds the respellings a shell produces
+///    for one directory: drive-letter case, a trailing separator, `/` vs
+///    `\` on Windows, and the decomposed Hangul macOS reports where the
+///    dock's own message carries the composed form.
+/// 3. `canonicalize`, kept because it is the only one of the three that can
+///    see through symlinks, 8.3 short names and a genuinely case-insensitive
+///    volume -- but it costs two syscalls and fails outright on a path that
+///    does not exist, so it goes last.
 fn same_dir(a: &Path, b: &Path) -> bool {
     a == b
+        || ypath::same_path(&a.to_string_lossy(), &b.to_string_lossy())
         || matches!(
             (fs::canonicalize(a), fs::canonicalize(b)),
             (Ok(x), Ok(y)) if x == y
@@ -763,5 +774,31 @@ mod tests {
         assert!(app.change_dir(&path));
         assert_eq!(app.left.selected, picked);
         assert_eq!(app.left.cwd, path);
+    }
+
+    /// The host spells its cwd however its shell spelled it. All of these
+    /// name one directory, and `change_dir` must treat them as "already
+    /// there" -- without needing the path to exist, because `canonicalize`
+    /// cannot answer for a directory that has been renamed out from under
+    /// the dock.
+    #[test]
+    fn same_dir_sees_through_respellings_without_touching_the_disk() {
+        // macOS reports the decomposed spelling; the dock's message carries
+        // the composed one.
+        const NFD: &str = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}";
+        let composed = Path::new("/nowhere/한글");
+        let decomposed = PathBuf::from(format!("/nowhere/{NFD}"));
+        assert_ne!(composed, decomposed.as_path(), "fixture must differ");
+        assert!(same_dir(composed, &decomposed));
+
+        // A Windows shell is free to change the drive-letter case, the
+        // separator, or leave a trailing one.
+        assert!(same_dir(
+            Path::new(r"C:\Nowhere\Repo\"),
+            Path::new("c:/nowhere/repo")
+        ));
+
+        // A POSIX path is case-sensitive, so these stay two directories.
+        assert!(!same_dir(Path::new("/nowhere/a"), Path::new("/nowhere/A")));
     }
 }

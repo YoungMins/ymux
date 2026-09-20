@@ -127,18 +127,30 @@ impl Osc7Parser {
 /// Remembers the last cwd a pane reported, so the reader forwards only real
 /// changes. Shells re-emit OSC 7 on every prompt, and without this the file
 /// dock would re-navigate on every Enter.
+///
+/// Only the comparison *key* is remembered, never handed back out: the raw
+/// cwd string is what travels on to the frontend.
 #[derive(Debug, Default)]
 pub struct CwdChange {
-    last: Option<String>,
+    last_key: Option<String>,
 }
 
 impl CwdChange {
-    /// `true` when `cwd` differs from the previous report. Records it.
+    /// `true` when `cwd` names a different directory than the previous
+    /// report. Records it.
+    ///
+    /// Compared through [`ypath::comparison_key`] rather than byte-wise. A
+    /// shell can respell the same directory between two prompts -- the
+    /// drive-letter case after `cd c:\x`, a trailing separator -- and on
+    /// macOS the same Korean directory name arrives composed from one source
+    /// and decomposed from another. Each respelling would otherwise look like
+    /// a `cd` and re-navigate the file dock.
     pub fn is_new(&mut self, cwd: &str) -> bool {
-        if self.last.as_deref() == Some(cwd) {
+        let key = ypath::comparison_key(cwd);
+        if self.last_key.as_deref() == Some(key.as_str()) {
             return false;
         }
-        self.last = Some(cwd.to_string());
+        self.last_key = Some(key);
         true
     }
 }
@@ -320,5 +332,30 @@ mod tests {
         assert!(!c.is_new("/a"));
         assert!(c.is_new("/b"));
         assert!(c.is_new("/a"));
+    }
+
+    /// The same directory respelled is not a `cd`. macOS reports a decomposed
+    /// Hangul name where the shell's own OSC 7 payload carries the composed
+    /// one, and a Windows shell is free to change the drive-letter case or
+    /// tack on a trailing separator between prompts.
+    #[test]
+    fn cwd_change_ignores_respellings_of_the_same_directory() {
+        const NFC: &str = "한글";
+        const NFD: &str = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}";
+        assert_ne!(NFC, NFD, "fixture is wrong: the spellings must differ");
+
+        let mut c = CwdChange::default();
+        assert!(c.is_new(&format!("/Users/u/{NFC}")));
+        assert!(!c.is_new(&format!("/Users/u/{NFD}")));
+
+        let mut w = CwdChange::default();
+        assert!(w.is_new(r"C:\Work\Repo"));
+        assert!(!w.is_new("c:/work/repo/"));
+
+        // ...but a genuinely different POSIX directory still reports, even
+        // when it differs only in case: `/srv/A` and `/srv/a` are two dirs.
+        let mut p = CwdChange::default();
+        assert!(p.is_new("/srv/a"));
+        assert!(p.is_new("/srv/A"));
     }
 }

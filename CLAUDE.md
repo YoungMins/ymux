@@ -45,11 +45,14 @@ ymux/
 │   └── update/             # Update banner
 ├── crates/
 │   ├── ytheme/             # Shared theme library
-│   └── yipc/               # Inter-tool IPC protocol
+│   ├── yipc/               # Inter-tool IPC protocol
+│   ├── yversion/           # Shared VERSION const (tool footers)
+│   └── ypath/              # Path comparison keys (NFC + syntax-based case folding)
 ├── tools/
 │   ├── ymon/               # System monitor TUI
 │   ├── ydir/               # File manager TUI
 │   ├── ycode/              # Code editor TUI
+│   ├── ygit/               # Git log + branch TUI
 │   └── ylauncher/          # `y` launcher CLI
 ├── scripts/
 │   └── build-tools.mjs     # Build + stage sidecar binaries
@@ -64,7 +67,7 @@ pnpm install                 # Install frontend deps
 pnpm tauri dev               # Run in dev mode (hot reload)
 pnpm tauri build             # MSI on Windows, .app + .dmg on macOS
 cargo test --workspace       # ⚠ Don't use on Linux — pulls GTK
-cargo test -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher
+cargo test -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit
 cargo test --no-default-features --lib -p ymux
 cargo check --no-default-features --lib --tests -p ymux  # Linux safe
 cargo fmt --all              # Format entire workspace
@@ -268,6 +271,37 @@ notch jumping to the top of scrollback. Any new code path that shows a
 previously-hidden pane element (not just the tab strip) needs the same
 `scheduleFit()` call, not a raw `fit()`.
 
+### 15. Never compare two paths with `==` — use `ypath`
+
+Paths reach ymux from producers that spell them differently: a shell's OSC 7
+payload, `git worktree list --porcelain` (forward slashes and git's own
+drive-letter case, even on Windows), a TOML config file, a yipc `ChangeDir`
+message, the filesystem itself. Byte equality between any two of those is
+wrong in at least three ways, and each one shows up as "yDir keeps jumping
+back to row 0":
+
+- **Composition.** macOS reports decomposed (NFD) filenames. The same `한글`
+  directory is different bytes depending on which side produced it.
+- **Case.** `C:\Repo` and `c:\repo` are one directory; `/srv/A` and `/srv/a`
+  are two. Which rule applies is a property of the **path's syntax**, never
+  of `cfg!(windows)` — a Windows ymux drives WSL and SSH shells, and folding
+  a case-sensitive root silently merges distinct files.
+- **Separators.** `\` is a legal POSIX filename character, so it may only be
+  folded to `/` once the path has proved Windows semantics.
+
+`ypath::same_path(a, b)` / `ypath::comparison_key(p)` encode all three.
+The key is **lossy and for comparison only** — never open it, store it in the
+config, or hand it to `git`; keep the raw string for that. Applied today in
+`pty::osc7::CwdChange`, `git/mod.rs`'s worktree tests, and ydir's `same_dir`
+(where it sits *before* `canonicalize`, which still catches symlinks, 8.3
+names and genuinely case-insensitive volumes but costs syscalls and cannot
+answer for a path that no longer exists).
+
+On the frontend the mirror is deliberately partial: `src/filedock/cwdFollow.ts`
+dedupes on `normalize("NFC")` only, because the Rust side has already applied
+the full rule before any cwd is emitted, and a second, differently-opinionated
+case rule in TS is the one way to make the two layers disagree.
+
 ## TDD / Testing
 
 ### Quick run
@@ -278,22 +312,23 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 305, 8 failing on Windows + frontend 186)
+### Test count (Rust 323, 8 failing on Windows + frontend 217)
 
 Measured 2026-09-20 on Windows with `cargo test --workspace --no-fail-fast` and
 `npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 148 (8 fail on Windows) | Config model + TOML round-trip, PTY, OSC 7, shell detect, macOS shell integration, updater, sysmonitor, agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
+| ymux_lib | 152 (8 fail on Windows) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
 | yipc | 14 | Protocol serialization incl. `ChangeDir`/`open-file`, server/client, multi-client, `send_to` fan-out and timeout, broken pipe |
+| ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
 | ymon | 11 | App state, tab cycling, scroll, memory values, process sort |
-| ydir | 32 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog, dock mode (`--dock`, `PendingDir`, `follow_host`, `open_file_link`) |
+| ydir | 33 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog, dock mode (`--dock`, `PendingDir`, `follow_host`, `open_file_link`), `same_dir` respellings |
 | ycode | 69 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
-| ygit | 14 | Porcelain log/worktree parsing, worktree add/remove round-trip |
+| ygit | 18 | Porcelain log/worktree parsing, worktree add/remove round-trip, `git branch` marker stripping (`* `/`+ `) and detached-HEAD pseudo-entries |
 | ylauncher (`y`) | 10 (7 unit + 3 integration) | Tool discovery, PATH scanning, `agent-hook` payload packing and the no-env no-op |
-| _frontend_ | 186 | vitest: layout tree, pane tabs (`tabs.test.ts`), agent tree model, file dock (`cwdFollow`, `dockModel`), bottom-anchored prompt (`bottomAnchor.test.ts`, incl. real-xterm-buffer cases), pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
+| _frontend_ | 217 | vitest: layout tree, pane tabs (`tabs.test.ts`), agent tree model, file dock (`cwdFollow` incl. NFC dedupe, `dockModel`), bottom-anchored prompt (`bottomAnchor.test.ts`, incl. real-xterm-buffer cases), pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
 
 **The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
 `pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,

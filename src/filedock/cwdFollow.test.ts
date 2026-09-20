@@ -68,4 +68,27 @@ describe("CwdFollow", () => {
     vi.advanceTimersByTime(FOLLOW_DEBOUNCE_MS);
     expect(sent).toEqual([]);
   });
+
+  // macOS hands back decomposed filenames. The same Korean directory then
+  // arrives composed from the shell's own OSC 7 payload and decomposed from
+  // a path the filesystem produced, and the two are different strings.
+  const NFC = "한글";
+  const NFD = "한글";
+
+  it("does not re-send a directory whose Hangul arrived decomposed", () => {
+    expect(NFC).not.toBe(NFD); // fixture guard: the bytes really differ
+    follow.activePaneChanged("a", `/Users/u/${NFC}`);
+    vi.advanceTimersByTime(FOLLOW_DEBOUNCE_MS);
+    follow.cwdChanged("a", `/Users/u/${NFD}`);
+    vi.advanceTimersByTime(FOLLOW_DEBOUNCE_MS);
+    expect(sent).toEqual([`/Users/u/${NFC}`]);
+  });
+
+  it("sends the dir as the pane spelled it, not the normalized key", () => {
+    // yDir has to open what it is given, so the decomposed spelling must
+    // survive when it is the first thing seen.
+    follow.activePaneChanged("a", `/Users/u/${NFD}`);
+    vi.advanceTimersByTime(FOLLOW_DEBOUNCE_MS);
+    expect(sent).toEqual([`/Users/u/${NFD}`]);
+  });
 });
