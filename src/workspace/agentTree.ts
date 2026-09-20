@@ -206,3 +206,25 @@ export function parseExpanded(raw: string | null): ExpandedMap {
 export function isExpanded(map: ExpandedMap, wsId: number): boolean {
   return map[String(wsId)] ?? true;
 }
+
+/// Inputs to the panel's single "agent tracking is off" hint row.
+export interface AgentTrackingHintInput {
+  /// `Config.agent_tracking` — off by default.
+  agentTracking: boolean;
+  /// The whole left panel is hidden (Ctrl+B); nothing in it may show.
+  panelCollapsed: boolean;
+}
+
+/// Whether the workspace panel shows its one hint row saying agent tracking
+/// is off.
+///
+/// With `agent_tracking` off the backend never installs the Claude Code
+/// hooks, so the tree has no agent rows to show and nothing on screen says
+/// why — the v0.10.0 discoverability hole. The hint belongs to the *panel*,
+/// not to a workspace: exactly one row, no matter how many workspaces exist.
+export function showsAgentTrackingHint({
+  agentTracking,
+  panelCollapsed,
+}: AgentTrackingHintInput): boolean {
+  return !agentTracking && !panelCollapsed;
+}

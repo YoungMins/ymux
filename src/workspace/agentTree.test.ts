@@ -5,6 +5,7 @@ import {
   newlyWaitingPanes,
   paneLabel,
   parseExpanded,
+  showsAgentTrackingHint,
   workspaceIdOfPane,
   type TreeLabels,
 } from "./agentTree";
@@ -184,5 +185,20 @@ describe("buildAgentTree with tabs", () => {
     expect(tree[0].panes[0].agents).toEqual([]);
     expect(tree[0].panes[0].tabs[0].agents.map((a) => a.label)).toEqual(["claude"]);
     expect(tree[0].panes[0].tabs[1].agents).toEqual([]);
+  });
+});
+
+describe("showsAgentTrackingHint", () => {
+  it("shows the hint when tracking is off and the panel is open", () => {
+    expect(showsAgentTrackingHint({ agentTracking: false, panelCollapsed: false })).toBe(true);
+  });
+
+  it("hides it once tracking is on", () => {
+    expect(showsAgentTrackingHint({ agentTracking: true, panelCollapsed: false })).toBe(false);
+  });
+
+  it("shows nothing while the panel is collapsed", () => {
+    expect(showsAgentTrackingHint({ agentTracking: false, panelCollapsed: true })).toBe(false);
+    expect(showsAgentTrackingHint({ agentTracking: true, panelCollapsed: true })).toBe(false);
   });
 });
