@@ -33,6 +33,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Shared theme palette read by every y* tool; ymux exposes load/save to the
 # settings UI so users can edit yCode's syntax colors without leaving the app.
 ytheme = { path = "../crates/ytheme" }
+# Comparison keys for paths that arrive from different producers (OSC 7,
+# `git worktree list`, the config file). Deliberately not behind `desktop`:
+# `pty/osc7.rs` and `git/mod.rs` both use it and both are covered by
+# `cargo test --no-default-features --lib -p ymux` on Linux CI.
+ypath = { path = "../crates/ypath" }
 # Cross-platform "open file/folder with the OS default app" used by the
 # Config Files settings section.
 opener = "0.7"
