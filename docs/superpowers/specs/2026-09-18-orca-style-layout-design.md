@@ -222,3 +222,76 @@ Every change emits Tauri event `agents:changed` with the full snapshot
 
 Hooks for agents other than Claude Code; editing files from the dock; an
 Orca-style separate chat composer.
+
+---
+
+## 4. Pane tabs (added 2026-09-20)
+
+Panes hold several terminals, switched by a tab strip **inside** the pane, under
+the hotkey bar. Title and hotkey bar are shared by all tabs of a pane; each tab
+is its own PTY session.
+
+```
+┌ pane ───────────────────────┐
+│ my-pane            (title)  │  shared
+│ [build] [test]     (hotkeys)│  shared
+│ ┌pwsh┐┌claude┐┌ycode: x.rs┐ │  tab strip (hidden when only one tab)
+│ terminal of the active tab  │
+└─────────────────────────────┘
+```
+
+### Model
+
+Reuse the existing but unused `LayoutNode::Tabs { active, children }` (Rust and
+TS both already have it; nothing creates it today). A pane gains a tab when it
+is wrapped in a Tabs node whose children are panes. No `PaneSpec` change, so
+the 4-place field-sync rule is untouched.
+
+Rendering: when a Tabs node's children are all panes, the container renders one
+shared chrome — the active child's title row and hotkey bar — then the strip,
+then only the active child's terminal host. `TerminalPane` gains an option to
+render without its own chrome. Nested Tabs (a Tabs child of a Tabs) is not
+created by any command; rendering falls back to today's behaviour.
+
+Non-active tabs stay alive (their PTY keeps running, their xterm stays mounted
+but hidden), as split panes do today.
+
+### Interaction
+
+- `Ctrl+Shift+T` new tab (same shell/cwd as the active tab), `Ctrl+Shift+W`
+  closes the active tab and, on the last one, the pane (today's meaning),
+  `Ctrl+Shift+[` / `Ctrl+Shift+]` previous/next tab. Full CLAUDE.md §6
+  checklist. A `+` button on the strip, a tab context menu (rename, close,
+  close others) and palette commands mirror these.
+- Labels: the pane's own title when the user set one (double-click to rename),
+  otherwise the running program — shell name by default, `claude`, `codex`,
+  `ycode: <file>` etc. from the existing per-pane process scan, which is
+  extended to report the deepest descendant's name (and, for ycode, its file
+  argument) for every pane, not only known agents.
+- Drag-to-reorder tabs is out of scope.
+
+### yDir dock: open a file in a viewer tab
+
+`Enter` on a file in the dock's ydir sends `IpcMessage::Event { kind:
+"open-file", payload: { path } }` to ymux instead of running ycode inside the
+dock. ymux opens it in the **viewer tab** of the pane that was active before
+the dock took focus: one viewer tab per pane, reused — the second Enter
+replaces the file (kill and respawn `ycode <path>` in that tab), so tabs do not
+pile up. Focus moves to the viewer tab. Outside dock mode ydir keeps running
+ycode inline, as today.
+
+### Workspace tree
+
+The left tree becomes Workspace › Pane › Tab › Agent. A pane with a single tab
+omits the tab level, so today's depth is unchanged for simple panes. Agents
+attach to the tab (pane id) they run in.
+
+### Tests
+
+- vitest: tab node helpers (add/close/switch/active clamping, closing the last
+  tab unwraps the Tabs node), label derivation, tree model with tabs, viewer-tab
+  reuse decision.
+- Rust: `Tabs` TOML round-trip with several children; process scan reporting a
+  non-agent descendant; ydir `open-file` message.
+- Manual: strip hidden for a single tab, shortcuts, rename persistence,
+  scrollback per tab, bottom anchor unaffected, dock Enter reuse.
