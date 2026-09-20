@@ -58,13 +58,13 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy (workspace, no tauri deps)
-        run: cargo clippy -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher -- -D warnings
+        run: cargo clippy -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit -- -D warnings
 
       - name: cargo clippy (ymux lib, no tauri runtime)
         run: cargo clippy --no-default-features --lib --tests -p ymux -- -D warnings
 
       - name: cargo test (tools + shared crates)
-        run: cargo test -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher
+        run: cargo test -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit
 
       - name: cargo test (ymux lib, no tauri runtime)
         run: cargo test --no-default-features --lib -p ymux
