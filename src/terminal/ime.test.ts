@@ -256,6 +256,19 @@ describe("ImeBridge on the WKWebView path (no composition events)", () => {
     expect(h.sent).toEqual(["가", "나"]);
   });
 
+  it("sends a keypress-delivered character once", () => {
+    // xterm leaves A–Z to its keypress handler (a caps-lock workaround), and
+    // the same keystroke then lands in the textarea as an `input`. Only one of
+    // the two may reach the PTY.
+    const h = harness();
+    expect(h.bridge.handleKeyDown({ keyCode: 65, key: "A" })).toBe(false);
+    h.target.dispatch("keypress");
+    h.textarea.value = "A";
+    h.target.dispatch("input", { inputType: "insertText", data: "A" });
+    expect(h.sent).toEqual(["A"]);
+    expect(h.target.leaked).toEqual([]);
+  });
+
   it("reports IME keys as xterm's to ignore and other keys as xterm's to handle", () => {
     const h = harness();
     expect(h.bridge.handleKeyDown({ keyCode: 229, key: "ㅇ" })).toBe(true);
@@ -320,6 +333,25 @@ describe("ImeBridge on the composition-event path", () => {
 
     h.target.dispatch("compositionend", { data: "하" });
     expect(h.view.active).toBe(false);
+  });
+
+  it("sends a space that commits a syllable exactly once", () => {
+    // WebView2 + the Windows Korean IME, pressing Space on `하`: the keydown
+    // is the IME's (229), the syllable commits, and the space then arrives as
+    // a `keypress` *and* an `input`. xterm's `_keyPress` would send it (its
+    // keydown was skipped, so `_keyDownHandled` is false) and the mirror would
+    // send it again — `하  ` on the PTY.
+    const h = harness();
+    h.target.dispatch("compositionstart");
+    h.textarea.value = "하";
+    h.target.dispatch("compositionupdate", { data: "하" });
+    expect(h.bridge.handleKeyDown({ keyCode: 229, key: "Process" })).toBe(true);
+    h.target.dispatch("compositionend", { data: "하" });
+    h.target.dispatch("keypress");
+    h.textarea.value = " ";
+    h.target.dispatch("input", { inputType: "insertText", data: " " });
+    expect(h.sent).toEqual(["하", " "]);
+    expect(h.target.leaked).toEqual([]);
   });
 
   it("tracks whether a composition is open", () => {
