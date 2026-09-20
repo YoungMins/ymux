@@ -1880,7 +1880,9 @@ body,
   display: none;
   position: relative;
   flex: 0 0 auto;
-  min-width: 200px;
+  /* Keep in step with DOCK_MIN_WIDTH in src/filedock/dockModel.ts: two
+     floors that drift apart let the drag stop where CSS will not. */
+  min-width: 260px;
   max-width: 50%;
   background: var(--bg);
   border-left: 1px solid var(--border);
