@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::preview::{self, Preview};
+
 #[derive(Debug, Clone)]
 pub struct FileEntry {
     pub name: String,
@@ -87,6 +89,14 @@ pub struct App {
     pub status_msg: Option<String>,
     pub run_dialog: Option<RunDialog>,
     pub open_in_ycode: Option<PathBuf>,
+    /// `ydir --dock`: one listing plus a preview, instead of two listings.
+    /// The right panel exists but is never shown or reloaded.
+    pub dock: bool,
+    /// Dock mode only: whether the preview pane is drawn (Tab).
+    pub show_preview: bool,
+    pub preview: Preview,
+    /// What [`Self::preview`] was built from. `None` forces a rebuild.
+    preview_path: Option<PathBuf>,
 }
 
 impl App {
@@ -102,7 +112,17 @@ impl App {
             status_msg: None,
             run_dialog: None,
             open_in_ycode: None,
+            dock: false,
+            show_preview: true,
+            preview: Preview::Empty,
+            preview_path: None,
         })
+    }
+
+    /// Switch on the dock layout. Only `main` calls this, from `--dock`.
+    pub fn with_dock(mut self, dock: bool) -> Self {
+        self.dock = dock;
+        self
     }
 
     pub fn active_panel(&self) -> &Panel {
@@ -119,11 +139,80 @@ impl App {
         }
     }
 
+    /// Tab. In dock mode there is no second panel to switch to — moving the
+    /// cursor into an invisible one would make every later key act on a
+    /// file the user cannot see (`d` deletes without asking), so the key is
+    /// repurposed to show and hide the preview. The dock footer says so;
+    /// it is the only place Tab is discoverable.
     pub fn toggle_panel(&mut self) {
+        if self.dock {
+            self.show_preview = !self.show_preview;
+            self.status_msg = Some(
+                if self.show_preview {
+                    "Preview: shown"
+                } else {
+                    "Preview: hidden"
+                }
+                .to_string(),
+            );
+            return;
+        }
         self.active = match self.active {
             PanelSide::Left => PanelSide::Right,
             PanelSide::Right => PanelSide::Left,
         };
+    }
+
+    /// Rebuild [`Self::preview`] if the cursor has moved to another entry.
+    /// A no-op outside dock mode, with the preview hidden, and — the common
+    /// case — when the selection has not changed.
+    ///
+    /// The caller must skip this while input is queued: held-down `j` would
+    /// otherwise read a file (or walk a directory) per row.
+    pub fn sync_preview(&mut self) {
+        if !self.dock || !self.show_preview {
+            return;
+        }
+        let Some((path, is_dir)) = self
+            .active_panel()
+            .selected_entry()
+            .map(|e| (e.path.clone(), e.is_dir))
+        else {
+            self.preview = Preview::Empty;
+            self.preview_path = None;
+            return;
+        };
+        if self.preview_path.as_deref() == Some(path.as_path()) {
+            return;
+        }
+        self.preview = preview::read_preview(&path, is_dir, self.show_hidden);
+        self.preview_path = Some(path);
+    }
+
+    /// The name the preview pane puts in its title.
+    pub fn preview_title(&self) -> Option<String> {
+        let path = self.preview_path.as_ref()?;
+        Some(path.file_name()?.to_string_lossy().to_string())
+    }
+
+    /// Force the next [`Self::sync_preview`] to rebuild: the bytes behind
+    /// the same path may have changed.
+    fn invalidate_preview(&mut self) {
+        self.preview_path = None;
+    }
+
+    /// Reload the listings. In dock mode the right panel is never drawn and
+    /// stays pinned at the start dir while the left follows the shell — so
+    /// reloading it can fail on a directory that has since been removed and
+    /// take `refresh`/`paste` down with it.
+    fn reload_panels(&mut self) -> Result<()> {
+        let show_hidden = self.show_hidden;
+        self.left.reload(show_hidden)?;
+        if !self.dock {
+            self.right.reload(show_hidden)?;
+        }
+        self.invalidate_preview();
+        Ok(())
     }
 
     pub fn move_up(&mut self) {
@@ -243,16 +332,14 @@ impl App {
     }
 
     pub fn refresh(&mut self) -> Result<()> {
-        self.left.reload(self.show_hidden)?;
-        self.right.reload(self.show_hidden)?;
+        self.reload_panels()?;
         self.status_msg = Some("Refreshed".to_string());
         Ok(())
     }
 
     pub fn toggle_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
-        let _ = self.left.reload(self.show_hidden);
-        let _ = self.right.reload(self.show_hidden);
+        let _ = self.reload_panels();
         self.status_msg = Some(if self.show_hidden {
             "Hidden files: shown".to_string()
         } else {
@@ -270,6 +357,7 @@ impl App {
                 fs::remove_file(&entry.path)?;
             }
             self.active_panel_mut().reload(show_hidden)?;
+            self.invalidate_preview();
             self.status_msg = Some(format!("Deleted: {}", entry.name));
         }
         Ok(())
@@ -321,9 +409,7 @@ impl App {
                 }
             }
 
-            let show_hidden = self.show_hidden;
-            self.left.reload(show_hidden)?;
-            self.right.reload(show_hidden)?;
+            self.reload_panels()?;
         }
         Ok(())
     }
@@ -335,12 +421,12 @@ pub fn is_binary_file(path: &std::path::Path) -> bool {
         Ok(f) => f,
         Err(_) => return false,
     };
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; preview::BINARY_SNIFF_BYTES];
     let n = match file.read(&mut buf) {
         Ok(n) => n,
         Err(_) => return false,
     };
-    buf[..n].contains(&0u8)
+    preview::is_binary(&buf[..n])
 }
 
 /// Whether `a` and `b` name the same directory.
@@ -800,5 +886,141 @@ mod tests {
 
         // A POSIX path is case-sensitive, so these stay two directories.
         assert!(!same_dir(Path::new("/nowhere/a"), Path::new("/nowhere/A")));
+    }
+
+    // --- dock mode ---------------------------------------------------
+
+    #[test]
+    fn tab_switches_panels_normally_but_toggles_the_preview_in_the_dock() {
+        let (_tmp, path) = setup_temp_dir();
+
+        let mut plain = App::new(path.clone()).unwrap();
+        plain.toggle_panel();
+        assert_eq!(plain.active, PanelSide::Right);
+        assert!(plain.show_preview, "the flag is inert outside the dock");
+
+        // In the dock there is no second panel on screen. Moving the cursor
+        // into one would aim every later key -- `d` included -- at a file
+        // the user cannot see.
+        let mut dock = App::new(path).unwrap().with_dock(true);
+        dock.toggle_panel();
+        assert_eq!(dock.active, PanelSide::Left, "the cursor must not leave");
+        assert!(!dock.show_preview);
+        dock.toggle_panel();
+        assert!(dock.show_preview);
+    }
+
+    #[test]
+    fn sync_preview_reads_the_selected_file_and_then_the_selected_dir() {
+        let (_tmp, path) = setup_temp_dir();
+        let mut app = App::new(path).unwrap().with_dock(true);
+
+        // Entry 0 is `subdir` (directories sort first).
+        app.sync_preview();
+        assert_eq!(app.preview_title().as_deref(), Some("subdir"));
+        assert!(matches!(app.preview, Preview::Dir { .. }));
+
+        let idx = app
+            .left
+            .entries
+            .iter()
+            .position(|e| e.name == "file_a.txt")
+            .unwrap();
+        app.left.selected = idx;
+        app.sync_preview();
+        assert_eq!(app.preview, Preview::Text(vec!["hello".to_string()]));
+        assert_eq!(app.preview_title().as_deref(), Some("file_a.txt"));
+    }
+
+    /// The read happens on the event-loop thread, so it must not repeat
+    /// while the cursor sits still.
+    #[test]
+    fn sync_preview_does_not_re_read_an_unchanged_selection() {
+        let (_tmp, path) = setup_temp_dir();
+        let mut app = App::new(path.clone()).unwrap().with_dock(true);
+        let idx = app
+            .left
+            .entries
+            .iter()
+            .position(|e| e.name == "file_a.txt")
+            .unwrap();
+        app.left.selected = idx;
+        app.sync_preview();
+
+        fs::write(path.join("file_a.txt"), "rewritten").unwrap();
+        app.sync_preview();
+        assert_eq!(
+            app.preview,
+            Preview::Text(vec!["hello".to_string()]),
+            "same path, so nothing should have been read again"
+        );
+
+        // A refresh is the user asking for exactly that re-read.
+        app.refresh().unwrap();
+        app.sync_preview();
+        assert_eq!(app.preview, Preview::Text(vec!["rewritten".to_string()]));
+    }
+
+    #[test]
+    fn sync_preview_is_inert_outside_the_dock_and_while_hidden() {
+        let (_tmp, path) = setup_temp_dir();
+        let mut plain = App::new(path.clone()).unwrap();
+        plain.sync_preview();
+        assert_eq!(plain.preview, Preview::Empty);
+
+        let mut hidden = App::new(path).unwrap().with_dock(true);
+        hidden.show_preview = false;
+        hidden.sync_preview();
+        assert_eq!(hidden.preview, Preview::Empty);
+    }
+
+    #[test]
+    fn sync_preview_clears_itself_in_an_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = App::new(tmp.path().to_path_buf()).unwrap().with_dock(true);
+        app.sync_preview();
+        assert_eq!(app.preview, Preview::Empty);
+        assert_eq!(app.preview_title(), None);
+    }
+
+    /// In the dock the right panel stays pinned at the start dir while the
+    /// left follows the shell, so the two can diverge -- and a `refresh`
+    /// that reloaded the pinned one would bubble a `NotFound` out of `run`
+    /// and take the whole dock down once that directory was deleted.
+    #[test]
+    fn refresh_in_the_dock_ignores_the_panel_it_never_draws() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = tmp.path().join("start");
+        let other = tmp.path().join("other");
+        fs::create_dir(&start).unwrap();
+        fs::create_dir(&other).unwrap();
+
+        let mut app = App::new(start.clone()).unwrap().with_dock(true);
+        assert!(app.change_dir(&other));
+        fs::remove_dir_all(&start).unwrap();
+
+        app.refresh().expect("the dock must survive Ctrl+R");
+        app.toggle_hidden();
+        app.paste().expect("an empty clipboard paste is a no-op");
+    }
+
+    /// Mark, navigate, paste: `c`/`m`/`p` still mean something with one
+    /// panel, because the destination is wherever the cursor has got to.
+    #[test]
+    fn mark_and_paste_work_with_a_single_panel() {
+        let (_tmp, path) = setup_temp_dir();
+        let mut app = App::new(path.clone()).unwrap().with_dock(true);
+        let idx = app
+            .left
+            .entries
+            .iter()
+            .position(|e| e.name == "file_a.txt")
+            .unwrap();
+        app.left.selected = idx;
+        app.mark_copy();
+
+        app.change_dir(&path.join("subdir"));
+        app.paste().unwrap();
+        assert!(path.join("subdir").join("file_a.txt").exists());
     }
 }

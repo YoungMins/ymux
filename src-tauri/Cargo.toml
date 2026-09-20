@@ -42,6 +42,14 @@ ypath = { path = "../crates/ypath" }
 # Config Files settings section.
 opener = "0.7"
 
+# PNG encoding for clipboard images. Pure Rust and deliberately NOT behind
+# `desktop`: the encode half of the clipboard-image path (`paste_images::
+# encode_png_rgba`) is the part worth unit-testing, and those tests have to
+# run under `cargo test --no-default-features --lib -p ymux` on Linux CI.
+# Already in the dependency graph via Tauri's icon handling, so this costs
+# nothing in build time.
+png = "0.17"
+
 # Tauri runtime is gated behind the `desktop` feature, which is on by default
 # so that `pnpm tauri dev` / `pnpm tauri build` work out of the box on the
 # Windows target machines this app is built for. Linux dev hosts that only
@@ -69,6 +77,15 @@ yipc = { path = "../crates/yipc", optional = true }
 # Desktop-only because it wraps a native Tauri plugin.
 tauri-plugin-notification = { version = "2", optional = true }
 
+# System-clipboard access, used to read a pasted screenshot as raw pixels.
+# `image-data` is the feature that exposes `get_image`; on Windows and macOS it
+# is backed by native APIs (the `image` crate it names is a target-specific
+# dependency of unix-non-mac only, so it never compiles for our two targets).
+# Behind `desktop` because on Linux it would drag in x11rb — exactly what the
+# `--no-default-features` test build exists to avoid. `wayland-data-control` is
+# deliberately left off: ymux ships on Windows and macOS only.
+arboard = { version = "3.6.1", default-features = false, features = ["image-data"], optional = true }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.56", features = [
     "Win32_System_Registry",
@@ -78,7 +95,7 @@ windows = { version = "0.56", features = [
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:url", "dep:tauri-plugin-notification"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:url", "dep:tauri-plugin-notification", "dep:arboard"]
 
 [profile.release]
 lto = true

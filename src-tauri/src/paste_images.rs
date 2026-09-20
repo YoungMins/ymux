@@ -78,10 +78,66 @@ fn prune_under(base: &Path, now_millis: u128, retention_millis: u128) -> std::io
     Ok(())
 }
 
+/// An `InvalidInput` error with `msg`, for the shape checks below.
+fn invalid(msg: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, msg)
+}
+
+/// Encode raw 8-bit RGBA pixels as a PNG in memory.
+///
+/// This is the half of the clipboard-image path that has no OS dependency, so
+/// it lives here (with the rest of the `std`-only paste-image logic) rather
+/// than next to the `arboard` call in `clipboard_image.rs` — that module is
+/// `desktop`-gated and its tests never run on Linux CI, while these do.
+///
+/// Rejects a degenerate image rather than producing a technically-valid but
+/// useless file: a 0×0 encode yields a small, well-formed PNG that would sail
+/// straight past the emptiness check in [`save`].
+pub fn encode_png_rgba(width: u32, height: u32, rgba: &[u8]) -> std::io::Result<Vec<u8>> {
+    if width == 0 || height == 0 {
+        return Err(invalid("clipboard image has zero width or height"));
+    }
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|px| px.checked_mul(4))
+        .ok_or_else(|| invalid("clipboard image dimensions overflow"))?;
+    if rgba.len() != expected {
+        return Err(invalid(&format!(
+            "clipboard image is {} bytes, expected {expected} for {width}x{height} RGBA",
+            rgba.len()
+        )));
+    }
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| std::io::Error::other(format!("png header: {e}")))?;
+        writer
+            .write_image_data(rgba)
+            .map_err(|e| std::io::Error::other(format!("png data: {e}")))?;
+        writer
+            .finish()
+            .map_err(|e| std::io::Error::other(format!("png finish: {e}")))?;
+    }
+    Ok(out)
+}
+
 /// Prune old pasted images, then save `bytes` as a new `clip-<now>.png` under
 /// the real OS paste-images directory, returning its absolute path. `retention`
 /// is how long a pasted image is kept before it becomes eligible for pruning.
+///
+/// Empty input is an error, never a 0-byte file: the original bug here was the
+/// webview's `navigator.clipboard.read()` handing over an empty `Uint8Array`,
+/// which this function faithfully wrote to disk as a 0-byte `.png` whose path
+/// was then typed into the shell. A caller with nothing to save must fail
+/// loudly instead.
 pub fn save(bytes: &[u8], retention: std::time::Duration) -> std::io::Result<PathBuf> {
+    if bytes.is_empty() {
+        return Err(invalid("refusing to save an empty paste image"));
+    }
     let dir = paste_images_dir();
     let now_millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -193,6 +249,69 @@ mod tests {
         assert!(
             base.join("keepme.txt").exists(),
             "unrelated files must still be left alone"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn save_rejects_empty_bytes() {
+        // The 0-byte-PNG bug: an empty payload must be an error, and must not
+        // create a file. `save` checks before it touches the filesystem, so
+        // this is safe to call against the real paste-images dir.
+        let err = save(&[], std::time::Duration::from_secs(60))
+            .expect_err("empty input must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn encode_png_rgba_rejects_degenerate_images() {
+        assert_eq!(
+            encode_png_rgba(0, 0, &[]).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput,
+            "0x0 would encode to a valid-but-useless PNG"
+        );
+        assert_eq!(
+            encode_png_rgba(2, 0, &[]).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            encode_png_rgba(2, 2, &[0u8; 8]).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput,
+            "2x2 RGBA needs 16 bytes"
+        );
+    }
+
+    #[test]
+    fn encode_png_rgba_round_trips_through_save() {
+        // A tiny generated image, not the real clipboard: clipboard access
+        // needs a desktop session, so the OS half is covered by the #[ignore]d
+        // test in `clipboard_image.rs` instead.
+        let base = tempdir();
+        #[rustfmt::skip]
+        let rgba: [u8; 16] = [
+            255, 0, 0, 255,    0, 255, 0, 255,
+            0, 0, 255, 128,    9, 9, 9, 0,
+        ];
+        let png_bytes = encode_png_rgba(2, 2, &rgba).expect("encode");
+        assert!(!png_bytes.is_empty());
+        assert_eq!(&png_bytes[..8], b"\x89PNG\r\n\x1a\n", "PNG signature");
+
+        let path = save_under(&base, 4242, &png_bytes).expect("save");
+        let on_disk = std::fs::read(&path).expect("read back");
+        assert_eq!(on_disk, png_bytes);
+
+        let decoder = png::Decoder::new(std::fs::File::open(&path).unwrap());
+        let mut reader = decoder.read_info().expect("decode header");
+        let info = reader.info().clone();
+        assert_eq!((info.width, info.height), (2, 2));
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!(info.bit_depth, png::BitDepth::Eight);
+        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let frame = reader.next_frame(&mut buf).expect("decode pixels");
+        assert_eq!(
+            &buf[..frame.buffer_size()],
+            &rgba[..],
+            "pixels must survive the round trip, alpha included"
         );
         let _ = std::fs::remove_dir_all(&base);
     }

@@ -16,6 +16,9 @@ yipc = { path = "../../crates/yipc" }
 # built. `same_dir` needs them comparable without a disk round-trip.
 ypath = { path = "../../crates/ypath" }
 ratatui = "0.29"
+# Column alignment and truncation count terminal cells, not chars: a Hangul
+# syllable is one char but two cells. Already in the tree via ratatui.
+unicode-width = "0.2"
 crossterm = "0.28"
 anyhow = "1"
 chrono = "0.4"

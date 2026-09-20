@@ -106,3 +106,29 @@ function splitChunks(text: string, size: number): string[] {
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }
+
+/// What a paste should do once the backend has answered "is there an image on
+/// the clipboard?".
+export type ImagePasteDecision =
+  /// Type `write` into the PTY and stop — the clipboard held an image, which
+  /// is now a file on disk.
+  | { kind: "image"; write: string }
+  /// No image. The caller falls through to the ordinary text paste.
+  | { kind: "text" };
+
+/// Decide from `path`, the reply of the `paste_clipboard_image` command.
+///
+/// `null` is the backend's "no image on the clipboard" answer. An empty or
+/// blank path is treated the same way rather than trusted: the bug this whole
+/// path exists to fix was a 0-byte image file whose path got typed into the
+/// user's shell, so a nothing-shaped answer must never turn into a write.
+///
+/// The path is quoted because it can contain spaces — a Windows profile
+/// directory like `C:\Users\John Smith\…` would otherwise reach the receiving
+/// CLI as two arguments. There is no trailing newline: the user presses Enter.
+export function decideImagePaste(
+  path: string | null | undefined,
+): ImagePasteDecision {
+  if (!path || !path.trim()) return { kind: "text" };
+  return { kind: "image", write: `"${path}"` };
+}

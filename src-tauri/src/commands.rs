@@ -325,15 +325,24 @@ pub fn delete_scrollback(pane_id: String) -> YmuxResult<()> {
     crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io)
 }
 
-/// Save a pasted clipboard image (raw PNG bytes) to the paste-images dir,
-/// pruning images older than the configured retention window first, and
-/// return the absolute path so the frontend can type it into the PTY.
+/// If the system clipboard holds an image, save it to the paste-images dir as
+/// a PNG (pruning images older than the configured retention window first) and
+/// return its absolute path, so the frontend can type that path into the PTY.
+/// `Ok(None)` means "no image on the clipboard" — the frontend falls back to
+/// pasting text — while `Err` means an image was found but could not be saved,
+/// which the frontend surfaces in the pane.
+///
+/// Deliberately synchronous: it runs on the main thread, which is where both
+/// the Windows OLE clipboard and macOS's `NSPasteboard` want to be touched.
 #[tauri::command]
-pub fn save_paste_image(state: State<'_, AppState>, bytes: Vec<u8>) -> YmuxResult<String> {
+pub fn paste_clipboard_image(state: State<'_, AppState>) -> YmuxResult<Option<String>> {
+    let Some(png) = crate::clipboard_image::read_clipboard_png().map_err(YmuxError::Io)? else {
+        return Ok(None);
+    };
     let hours = state.config.snapshot().paste_image_retention_hours;
     let retention = std::time::Duration::from_secs(u64::from(hours) * 3600);
-    let path = crate::paste_images::save(&bytes, retention).map_err(YmuxError::Io)?;
-    Ok(path.to_string_lossy().into_owned())
+    let path = crate::paste_images::save(&png, retention).map_err(YmuxError::Io)?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 /// Check whether `cwd` sits inside a git repository (main worktree or a
