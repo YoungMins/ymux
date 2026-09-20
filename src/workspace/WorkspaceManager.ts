@@ -916,8 +916,9 @@ export class WorkspaceManager {
     const spec = findPane(ws.root, paneId);
     if (!spec) return;
     const cache = this.paneCaches.get(ws.id)!;
-    // Not permanent: this tab is not being closed, only re-pointed, so its
-    // saved scrollback must not be deleted out from under a later restore.
+    // Not permanent: this tab is not being closed, only re-pointed. The
+    // saved scrollback is dropped explicitly below instead, *after* the kill,
+    // so nothing can race the delete.
     cache.get(paneId)?.dispose(false);
     cache.delete(paneId);
     // `dispose` fires `killPane` without awaiting and Tauri commands run on a
@@ -925,6 +926,11 @@ export class WorkspaceManager {
     // pane we are about to spawn under the same id. Same hazard the file
     // dock's own restart path handles this way.
     await api.killPane(paneId).catch(() => {});
+    // The pane id is reused, so `spawn()`'s `loadScrollback` would replay the
+    // *previous* file's ycode screen above the new one. Awaited for the same
+    // reason the kill above is: Tauri commands run on a worker pool, and a
+    // fire-and-forget delete could land after the new pane's load.
+    await api.deleteScrollback(paneId).catch(() => {});
     const pane = this.createPane(spec, ["ycode", path]);
     cache.set(paneId, pane);
     ws.root = activateTabFor(ws.root, paneId);
