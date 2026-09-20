@@ -135,6 +135,44 @@ impl<'a> ProcTree<'a> {
         }
         best.map(|(_, p)| p)
     }
+
+    /// The tab label for the shell `root_pid`, or `None` for a bare shell.
+    ///
+    /// A *known* program wins over depth: a working agent constantly spawns
+    /// and reaps helpers (`rg`, `node`, `bash`), so labelling the deepest
+    /// descendant made a busy `claude` flicker through its children's names.
+    /// Only when nothing under the shell is recognised does the old
+    /// deepest-descendant rule apply, which is what still names a `vim` under
+    /// a wrapper.
+    pub fn label_under(&self, root_pid: u32) -> Option<String> {
+        self.known_label_under(root_pid)
+            .or_else(|| self.deepest_under(root_pid).map(proc_label))
+    }
+
+    /// Breadth-first from `root_pid` (exclusive) for the nearest process we
+    /// label by name: a known agent (labelled by its kind, so `node` running
+    /// the claude-code CLI reads `claude`) or one of [`FILE_ARG_EXES`], whose
+    /// own label carries the file it opened. Nearest-wins and cycle-safety
+    /// match [`Self::agent_under`].
+    fn known_label_under(&self, root_pid: u32) -> Option<String> {
+        let mut seen: HashSet<u32> = HashSet::from([root_pid]);
+        let mut queue: VecDeque<u32> = VecDeque::from([root_pid]);
+        while let Some(pid) = queue.pop_front() {
+            for child in self.children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
+                if !seen.insert(child.pid) {
+                    continue;
+                }
+                if let Some(kind) = match_agent(&child.exe_stem, &child.argv) {
+                    return Some(kind.to_string());
+                }
+                if FILE_ARG_EXES.contains(&child.exe_stem.to_ascii_lowercase().as_str()) {
+                    return Some(proc_label(child));
+                }
+                queue.push_back(child.pid);
+            }
+        }
+        None
+    }
 }
 
 /// Executables whose first path-like argument belongs in the label, because
@@ -170,7 +208,7 @@ pub fn scan_labels(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<
     let tree = ProcTree::new(procs);
     shells
         .iter()
-        .filter_map(|(id, pid)| tree.deepest_under(*pid).map(|p| (*id, proc_label(p))))
+        .filter_map(|(id, pid)| tree.label_under(*pid).map(|label| (*id, label)))
         .collect()
 }
 
@@ -514,5 +552,59 @@ mod tests {
         assert_eq!(found.get(&a).map(String::as_str), Some("ycode: README.md"));
         assert!(!found.contains_key(&b), "a bare shell reports no label");
         assert_eq!(found.get(&c).map(String::as_str), Some("claude"));
+    }
+
+    #[test]
+    fn label_prefers_the_known_agent_over_its_busy_children() {
+        // A working `claude` constantly spawns and reaps helpers. Labelling
+        // the deepest descendant would flicker `rg` / `node` / `bash` onto
+        // the tab; the agent itself is what the pane is running.
+        let procs = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(11, Some(10), "claude", &["claude"]),
+            proc(12, Some(11), "rg", &["rg", "--json", "foo"]),
+            proc(13, Some(11), "node", &["node", "build.js"]),
+            proc(14, Some(12), "bash", &["bash", "-c", "true"]),
+        ];
+        let id = Uuid::new_v4();
+        let shells: HashMap<Uuid, u32> = [(id, 10)].into_iter().collect();
+        assert_eq!(
+            scan_labels(&shells, &procs).get(&id).map(String::as_str),
+            Some("claude"),
+        );
+    }
+
+    #[test]
+    fn label_keeps_the_editor_file_when_the_editor_has_children() {
+        // `ycode: <file>` is the whole point of FILE_ARG_EXES, and ycode
+        // shelling out (git, a formatter) must not rename the tab.
+        let procs = vec![
+            proc(10, Some(1), "bash", &[]),
+            proc(11, Some(10), "ycode", &["ycode", "/w/src/main.rs"]),
+            proc(12, Some(11), "git", &["git", "diff"]),
+        ];
+        let id = Uuid::new_v4();
+        let shells: HashMap<Uuid, u32> = [(id, 10)].into_iter().collect();
+        assert_eq!(
+            scan_labels(&shells, &procs).get(&id).map(String::as_str),
+            Some("ycode: main.rs"),
+        );
+    }
+
+    #[test]
+    fn label_falls_back_to_the_deepest_descendant_without_a_known_program() {
+        // Nothing here is an agent or an editor we label specially, so the
+        // old deepest-wins rule still names the tab after what the user is
+        // actually looking at.
+        let procs = vec![
+            proc(10, Some(1), "bash", &[]),
+            proc(11, Some(10), "vim", &["vim", "notes.txt"]),
+        ];
+        let id = Uuid::new_v4();
+        let shells: HashMap<Uuid, u32> = [(id, 10)].into_iter().collect();
+        assert_eq!(
+            scan_labels(&shells, &procs).get(&id).map(String::as_str),
+            Some("vim"),
+        );
     }
 }
