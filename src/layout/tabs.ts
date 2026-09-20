@@ -84,6 +84,16 @@ export function tabIds(group: TabsNode): Uuid[] {
   return group.children.filter(isPaneNode).map((c) => c.id);
 }
 
+/// Do two tab-id lists describe the same strip? Order counts: `PaneGroup`
+/// uses this to decide whether it may update the existing tab buttons in
+/// place (labels change every couple of seconds, and rebuilding drops hover,
+/// focus and the second click of a double-click) or must rebuild them. Same
+/// ids in a different order means the buttons are in the wrong places, so
+/// that has to rebuild too.
+export function sameTabIds(a: readonly Uuid[], b: readonly Uuid[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 export interface PaneGroupEntry {
   /// null for a pane that is not in any group (today's plain pane).
   groupId: Uuid | null;

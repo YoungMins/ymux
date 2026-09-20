@@ -8,6 +8,7 @@ import {
   isVisibleTab,
   paneGroups,
   setActiveTab,
+  sameTabIds,
   stepTab,
   swappablePanes,
   tabIds,
@@ -138,5 +139,22 @@ describe("paneGroups", () => {
     expect(groups[1].groupId).toBeNull();
     expect(groups[1].members.map((p) => p.id)).toEqual([C.id]);
     expect(groups[1].activeIndex).toBe(0);
+  });
+});
+
+describe("sameTabIds", () => {
+  it("is true only for the same ids in the same order", () => {
+    expect(sameTabIds([A.id, B.id], [A.id, B.id])).toBe(true);
+    expect(sameTabIds([], [])).toBe(true);
+  });
+
+  it("is false when a tab was added, removed or replaced", () => {
+    expect(sameTabIds([A.id], [A.id, B.id])).toBe(false);
+    expect(sameTabIds([A.id, B.id], [A.id])).toBe(false);
+    expect(sameTabIds([A.id, B.id], [A.id, C.id])).toBe(false);
+  });
+
+  it("is false for the same set in a different order, so the strip is rebuilt", () => {
+    expect(sameTabIds([A.id, B.id], [B.id, A.id])).toBe(false);
   });
 });

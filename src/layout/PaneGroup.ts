@@ -22,7 +22,7 @@
 import type { HotKeyDef, Uuid } from "../types";
 import type { Pane } from "./Pane";
 import type { PaneNode, TabsNode } from "./tabs";
-import { tabIds } from "./tabs";
+import { sameTabIds, tabIds } from "./tabs";
 import { HotKeyBar } from "../terminal/HotKeyBar";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { t, onLangChange } from "../i18n/i18n";
@@ -53,6 +53,11 @@ export class PaneGroup {
   /// change the active tab costs no HotKeyBar rebuild.
   private boundId: Uuid | null = null;
   private node: TabsNode | null = null;
+  /// The tab ids the strip's buttons were built from, and those buttons by
+  /// pane id. `renderStrip` compares against these to decide between an
+  /// in-place update and a rebuild — see `sameTabIds`.
+  private stripIds: Uuid[] = [];
+  private tabEls = new Map<Uuid, { tab: HTMLElement; label: HTMLElement }>();
 
   constructor(
     readonly id: Uuid,
@@ -96,7 +101,10 @@ export class PaneGroup {
     // Labels are program names, but the `+` button's tooltip and the context
     // menu are translated, so a language switch has to repaint the strip.
     this.cleanupLang = onLangChange(() => {
-      if (this.node) this.renderStrip(this.node);
+      // The translated strings (`×` tooltip, `+` tooltip, the context menu)
+      // are written when a button is built, so a language switch is the one
+      // case that has to rebuild rather than update in place.
+      if (this.node) this.renderStrip(this.node, true);
     });
   }
 
@@ -159,19 +167,45 @@ export class PaneGroup {
     this.element.remove();
   }
 
-  private renderStrip(node: TabsNode): void {
+  /// Draw the strip for `node`. The buttons are only rebuilt when the tab set
+  /// itself moved (or `rebuild` forces it): `refreshLabels` runs on every
+  /// `panes:labels` event, twice a minute at idle and far more often under an
+  /// agent, and replacing the buttons each time dropped `:hover`, dropped
+  /// keyboard focus, and ate the second click of a double-click — which is
+  /// the rename gesture. Everything a label change can touch (the text, the
+  /// tooltip, the active class) is therefore written into the existing
+  /// elements instead.
+  private renderStrip(node: TabsNode, rebuild = false): void {
     const ids = tabIds(node);
     // Spec §4: "tab strip (hidden when only one tab)" — a pane with one tab
     // must look exactly like a pane does today.
     this.strip.style.display = ids.length > 1 ? "" : "none";
-    this.strip.replaceChildren();
+    if (rebuild || !sameTabIds(this.stripIds, ids)) this.rebuildStrip(ids);
 
     ids.forEach((paneId, idx) => {
+      const els = this.tabEls.get(paneId);
+      if (!els) return;
+      const text = this.cb.labelOf(paneId);
+      if (els.label.textContent !== text) {
+        els.label.textContent = text;
+        els.tab.title = text;
+      }
+      els.tab.classList.toggle("pane-tabs__tab--active", idx === node.active);
+    });
+  }
+
+  /// Build the strip's buttons from scratch. Only `renderStrip` calls this,
+  /// and only when the tab set changed or the language did.
+  private rebuildStrip(ids: Uuid[]): void {
+    this.strip.replaceChildren();
+    this.tabEls.clear();
+    this.stripIds = [...ids];
+
+    ids.forEach((paneId) => {
       const tab = document.createElement("button");
       tab.type = "button";
       tab.className = "pane-tabs__tab";
       tab.dataset.paneId = paneId;
-      if (idx === node.active) tab.classList.add("pane-tabs__tab--active");
 
       const text = this.cb.labelOf(paneId);
       const label = document.createElement("span");
@@ -179,6 +213,9 @@ export class PaneGroup {
       label.textContent = text;
       tab.appendChild(label);
       tab.title = text;
+      // The active class is written by `renderStrip`'s in-place pass, which
+      // runs straight after this and on every later label refresh.
+      this.tabEls.set(paneId, { tab, label });
 
       const close = document.createElement("span");
       close.className = "pane-tabs__close";
