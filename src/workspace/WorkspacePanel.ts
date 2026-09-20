@@ -149,7 +149,8 @@ export function mountWorkspacePanel(
       hintError.textContent = "";
       return;
     }
-    hintText.textContent = t("tree.trackingOff");
+    hintText.textContent = t("tree.trackingOffShort");
+    hint.title = t("tree.trackingOff");
     hintAction.textContent = t("tree.trackingOffEnable");
     hintAction.title = t("settings.general.agentTracking");
   }
