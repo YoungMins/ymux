@@ -47,6 +47,18 @@ export class HotKeyBar {
     this.render();
   }
 
+  /// Re-point the bar at another pane. A `PaneGroup` owns one bar for a whole
+  /// tab group and calls this on every tab switch, so the bar always reads and
+  /// writes the active tab's `PaneSpec` and PTY. `opts.paneId` and
+  /// `opts.initialBgColor` are the only copies (the ⚙ manager already mutates
+  /// `initialBgColor` in place), so nothing else can go stale.
+  bind(paneId: Uuid, hotkeys: HotKeyDef[], bgColor: string | null): void {
+    this.opts.paneId = paneId;
+    this.opts.initialBgColor = bgColor;
+    this.hotkeys = [...hotkeys];
+    this.render();
+  }
+
   private render(): void {
     while (this.element.firstChild) this.element.removeChild(this.element.firstChild);
 

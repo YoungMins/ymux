@@ -68,6 +68,11 @@ export interface TerminalPaneOptions {
   /// Run this program directly instead of the spec's shell. Its exit is the
   /// pane's exit (`onExit`). The file dock uses it to host `ydir`.
   argv?: string[];
+  /// Render this pane without its own title row and hotkey bar. Tabs use it:
+  /// a `PaneGroup` draws one shared title + hotkey bar above the strip and
+  /// binds them to the active tab (spec §4). Absent or `true` leaves every
+  /// standalone pane exactly as it is today.
+  ownChrome?: boolean;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -80,8 +85,8 @@ export class TerminalPane implements Pane {
   readonly id: Uuid;
   readonly element: HTMLElement;
   private termHost: HTMLElement;
-  private hotkeyBar: HotKeyBar;
-  private titleEl: HTMLElement;
+  private hotkeyBar: HotKeyBar | null = null;
+  private titleEl: HTMLElement | null = null;
   private term: Terminal;
   private fit: FitAddon;
   private search: SearchAddon;
@@ -160,37 +165,18 @@ export class TerminalPane implements Pane {
       this.opts.onContextMenu?.(ev);
     });
 
-    // Title label shown above the hotkey bar. Falls back to the shell name
-    // when no user title has been set (via `Ctrl+Shift+R`).
-    this.titleEl = document.createElement("div");
-    this.titleEl.className = "pane-title";
-    this.titleEl.textContent = opts.spec.title || opts.spec.shell || t("terminal.defaultTitle");
-    this.element.appendChild(this.titleEl);
-
-    // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
-    // visible ⚙ button so the user can discover the feature.
-    this.hotkeyBar = new HotKeyBar({
-      paneId: this.id,
-      initial: opts.spec.hotkeys ?? [],
-      initialBgColor: opts.spec.bg_color ?? null,
-      onSubmit: () => this.statusMachine.onSubmit(Date.now()),
-      onChange: (next) => {
-        this.spec = { ...this.spec, hotkeys: next };
-        this.opts.onHotKeysChange?.(next);
-      },
-      onBgColorChange: (color) => {
-        this.setBgColor(color);
-        this.opts.onBgColorChange?.(color);
-      },
-    });
-    this.element.appendChild(this.hotkeyBar.element);
-
     // xterm mounts into a child element (not `this.element` directly) so the
     // HotKeyBar sibling doesn't get clobbered when xterm rearranges its
     // internal DOM subtree.
     this.termHost = document.createElement("div");
     this.termHost.className = "pane__term";
     this.element.appendChild(this.termHost);
+
+    if (opts.ownChrome === false) {
+      this.element.classList.add("pane--tab");
+    } else {
+      this.buildChrome();
+    }
 
     const bgColor = opts.spec.bg_color || "#0b0f14";
     this.term = new Terminal({
@@ -415,7 +401,7 @@ export class TerminalPane implements Pane {
   }
 
   private updateLang(): void {
-    if (!this.spec.title && !this.spec.shell) {
+    if (this.titleEl && !this.spec.title && !this.spec.shell) {
       this.titleEl.textContent = t("terminal.defaultTitle");
     }
     if (this.searchInput) {
@@ -580,6 +566,14 @@ export class TerminalPane implements Pane {
     this.statusMachine.onWaiting();
   }
 
+  /// A command was submitted to this pane by something that bypasses xterm's
+  /// `onData` — the group's shared HotKey bar, which writes straight to
+  /// `writePane`. Without it the pane would sit at `idle` while the command
+  /// runs, the same gap `startup_cmd` and the per-pane bar already close.
+  noteSubmit(): void {
+    this.statusMachine.onSubmit(Date.now());
+  }
+
   get status(): PaneStatus {
     return this.statusMachine.status;
   }
@@ -716,7 +710,61 @@ export class TerminalPane implements Pane {
 
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
-    this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
+    if (this.titleEl) {
+      this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
+    }
+  }
+
+  /// Build this pane's own title row and hotkey bar, in front of the terminal
+  /// host. Split out of the constructor because a pane can gain and lose its
+  /// chrome at runtime — see `setOwnChrome`.
+  private buildChrome(): void {
+    // Title label shown above the hotkey bar. Falls back to the shell name
+    // when no user title has been set (via `Ctrl+Shift+R`).
+    this.titleEl = document.createElement("div");
+    this.titleEl.className = "pane-title";
+    this.titleEl.textContent =
+      this.spec.title || this.spec.shell || t("terminal.defaultTitle");
+    this.element.insertBefore(this.titleEl, this.termHost);
+
+    // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
+    // visible ⚙ button so the user can discover the feature.
+    this.hotkeyBar = new HotKeyBar({
+      paneId: this.id,
+      initial: this.spec.hotkeys ?? [],
+      initialBgColor: this.spec.bg_color ?? null,
+      onSubmit: () => this.statusMachine.onSubmit(Date.now()),
+      onChange: (next) => {
+        this.spec = { ...this.spec, hotkeys: next };
+        this.opts.onHotKeysChange?.(next);
+      },
+      onBgColorChange: (color) => {
+        this.setBgColor(color);
+        this.opts.onBgColorChange?.(color);
+      },
+    });
+    this.element.insertBefore(this.hotkeyBar.element, this.termHost);
+  }
+
+  /// Add or drop this pane's own title row and hotkey bar. A pane loses them
+  /// when it is wrapped in a tab group (the `PaneGroup` draws one shared set
+  /// for every tab) and gets them back when that group unwraps to a plain
+  /// pane — and the PTY survives both, so this has to be a live toggle rather
+  /// than a constructor-only option. Idempotent; `WorkspaceManager` calls it
+  /// for every pane on every render.
+  setOwnChrome(enabled: boolean): void {
+    if (enabled === (this.titleEl !== null)) return;
+    if (enabled) {
+      this.element.classList.remove("pane--tab");
+      this.buildChrome();
+      return;
+    }
+    this.element.classList.add("pane--tab");
+    this.titleEl?.remove();
+    this.titleEl = null;
+    this.hotkeyBar?.dispose();
+    this.hotkeyBar?.element.remove();
+    this.hotkeyBar = null;
   }
 
   /// Write literal text into the PTY as if the user had typed it — no
@@ -869,6 +917,7 @@ export class TerminalPane implements Pane {
   ///    caller is added without reading this comment.
   dispose(permanent = false): void {
     this.cleanupLang();
+    this.hotkeyBar?.dispose();
     if (this.statusTimer !== undefined) window.clearInterval(this.statusTimer);
     if (this.scrollbackSaveTimer !== undefined) {
       window.clearTimeout(this.scrollbackSaveTimer);
