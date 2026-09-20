@@ -17,6 +17,7 @@ import {
   type AgentRow,
   type ExpandedMap,
   type PaneRow,
+  type TabRow,
   type TreeLabels,
 } from "./agentTree";
 
@@ -297,6 +298,21 @@ export function mountWorkspacePanel(
     return btn;
   }
 
+  function makeTabRow(tab: TabRow): HTMLElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "workspace-panel__tab";
+    if (tab.active) btn.classList.add("workspace-panel__tab--active");
+    btn.dataset.status = tab.status;
+    btn.textContent = tab.label;
+    btn.title = statusTitle(tab.label, tab.status === "idle" ? null : `status.${tab.status}`);
+    // Shows the tab first (it may be hidden), then focuses it.
+    btn.addEventListener("click", () => {
+      void manager.focusPane(tab.paneId).then(highlight);
+    });
+    return btn;
+  }
+
   function makeAgentRow(paneId: Uuid, agent: AgentRow): HTMLElement {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -329,6 +345,7 @@ export function mountWorkspacePanel(
       manager.agents,
       (id) => manager.paneStatus.get(id) ?? "idle",
       treeLabels(),
+      manager.paneLabels,
     );
     for (const ws of tree) {
       const host = childHosts.get(ws.wsId);
@@ -347,6 +364,10 @@ export function mountWorkspacePanel(
       for (const pane of ws.panes) {
         host.appendChild(makePaneRow(pane));
         for (const agent of pane.agents) host.appendChild(makeAgentRow(pane.paneId, agent));
+        for (const tab of pane.tabs) {
+          host.appendChild(makeTabRow(tab));
+          for (const agent of tab.agents) host.appendChild(makeAgentRow(tab.paneId, agent));
+        }
       }
     }
   }

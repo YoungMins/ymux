@@ -10,7 +10,9 @@ import type {
   Workspace,
 } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
-import { findPane, panes } from "../layout/LayoutTree";
+import { findPane } from "../layout/LayoutTree";
+import { paneGroups } from "../layout/tabs";
+import { tabLabel } from "../terminal/tabLabel";
 
 /// localStorage key for per-workspace expansion (spec §1).
 export const EXPANDED_KEY = "ymux.workspaceTree.expanded";
@@ -29,11 +31,27 @@ export interface AgentRow {
   tool: string | null;
 }
 
-export interface PaneRow {
+/// One tab of a multi-tab pane. Spec §4: the tree becomes Workspace › Pane ›
+/// Tab › Agent, and agents attach to the tab (pane id) they run in.
+export interface TabRow {
   paneId: Uuid;
   label: string;
   status: PaneStatus;
+  active: boolean;
   agents: AgentRow[];
+}
+
+export interface PaneRow {
+  /// For a tab group, the *active* tab — so clicking the row focuses what is
+  /// actually on screen.
+  paneId: Uuid;
+  label: string;
+  status: PaneStatus;
+  /// Agents of a plain pane. Always empty for a group: its agents hang off
+  /// the tab rows instead.
+  agents: AgentRow[];
+  /// Empty when the pane has one tab, so today's depth is unchanged.
+  tabs: TabRow[];
 }
 
 export interface WorkspaceTree {
@@ -101,24 +119,54 @@ export function agentRows(
   return rows;
 }
 
-/// Every pane of every workspace (config order, depth-first within a
-/// layout), each with its agents. Agent entries for pane ids that are in no
+/// Every pane of every workspace (config order, depth-first within a layout),
+/// each with its tabs and agents. Agent entries for pane ids that are in no
 /// layout are simply never looked up.
+///
+/// `processLabels` is the backend's `panes:labels` snapshot; it only decides
+/// what a *tab* is called, because a plain pane row keeps showing its title or
+/// shell exactly as before.
 export function buildAgentTree(
   workspaces: Workspace[],
   agents: AgentSnapshot,
   statusOf: (paneId: Uuid) => PaneStatus,
   labels: TreeLabels,
+  processLabels: Record<Uuid, string> = {},
 ): WorkspaceTree[] {
   return workspaces.map((ws) => ({
     wsId: ws.id,
-    panes: panes(ws.root).map((spec) => {
-      const status = statusOf(spec.id);
+    panes: paneGroups(ws.root).map((group) => {
+      const active = group.members[group.activeIndex] ?? group.members[0];
+      const activeStatus = statusOf(active.id);
+      if (group.members.length < 2) {
+        return {
+          paneId: active.id,
+          label: paneLabel(active, labels),
+          status: activeStatus,
+          agents: agentRows(active.id, agents[active.id], activeStatus, labels),
+          tabs: [],
+        };
+      }
       return {
-        paneId: spec.id,
-        label: paneLabel(spec, labels),
-        status,
-        agents: agentRows(spec.id, agents[spec.id], status, labels),
+        paneId: active.id,
+        label: paneLabel(active, labels),
+        status: activeStatus,
+        agents: [],
+        tabs: group.members.map((spec, idx) => {
+          const status = statusOf(spec.id);
+          return {
+            paneId: spec.id,
+            label: tabLabel({
+              title: spec.title ?? null,
+              shell: spec.shell,
+              process: processLabels[spec.id] ?? null,
+              fallback: labels.terminal,
+            }),
+            status,
+            active: idx === group.activeIndex,
+            agents: agentRows(spec.id, agents[spec.id], status, labels),
+          };
+        }),
       };
     }),
   }));

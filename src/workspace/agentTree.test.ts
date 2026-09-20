@@ -124,3 +124,65 @@ describe("expansion state", () => {
     expect(isExpanded({ "4": false }, 4)).toBe(false);
   });
 });
+
+describe("buildAgentTree with tabs", () => {
+  const G = "gggggggg-gggg-4ggg-8ggg-gggggggggggg";
+  const t1 = newPane("pwsh");
+  const t2 = newPane("pwsh");
+  const plain = newPane("cmd");
+  const tabLabels: TreeLabels = {
+    terminal: "Terminal",
+    browser: "Browser",
+    subagent: "subagent",
+  };
+
+  const ws: Workspace = {
+    id: 1,
+    name: "main",
+    root: {
+      kind: "split",
+      direction: "horizontal",
+      ratio: 0.5,
+      a: { kind: "tabs", id: G, active: 1, children: [paneNode(t1), paneNode(t2)] },
+      b: paneNode(plain),
+    },
+  };
+
+  it("collapses a group into one pane row that carries its tabs", () => {
+    const tree = buildAgentTree([ws], {}, () => "idle", tabLabels, {});
+    expect(tree[0].panes).toHaveLength(2);
+    const group = tree[0].panes[0];
+    // The row addresses the active tab, so clicking it focuses what is shown.
+    expect(group.paneId).toBe(t2.id);
+    expect(group.tabs.map((x) => x.paneId)).toEqual([t1.id, t2.id]);
+    expect(group.tabs.map((x) => x.active)).toEqual([false, true]);
+  });
+
+  it("omits the tab level for a pane with a single tab", () => {
+    const tree = buildAgentTree([ws], {}, () => "idle", tabLabels, {});
+    expect(tree[0].panes[1].paneId).toBe(plain.id);
+    expect(tree[0].panes[1].tabs).toEqual([]);
+  });
+
+  it("labels tabs from the running program, and a title still wins", () => {
+    const named = structuredClone(ws);
+    (named.root as { a: { children: { title: string | null }[] } }).a.children[0].title = "build";
+    const tree = buildAgentTree([named], {}, () => "idle", tabLabels, {
+      [t2.id]: "claude",
+    });
+    expect(tree[0].panes[0].tabs.map((x) => x.label)).toEqual(["build", "claude"]);
+  });
+
+  it("attaches agents to the tab they run in, not to the group", () => {
+    const agents: AgentSnapshot = {
+      [t1.id]: {
+        lead: { kind: "claude", status: "working", source: "hook", tool: null },
+        subagents: [],
+      },
+    };
+    const tree = buildAgentTree([ws], agents, () => "running", tabLabels, {});
+    expect(tree[0].panes[0].agents).toEqual([]);
+    expect(tree[0].panes[0].tabs[0].agents.map((a) => a.label)).toEqual(["claude"]);
+    expect(tree[0].panes[0].tabs[1].agents).toEqual([]);
+  });
+});

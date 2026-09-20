@@ -1667,6 +1667,7 @@ body,
 }
 
 .workspace-panel__pane,
+.workspace-panel__tab,
 .workspace-panel__agent {
   width: 100%;
   min-width: 0;
@@ -1689,8 +1690,33 @@ body,
 }
 
 .workspace-panel__pane:hover,
+.workspace-panel__tab:hover,
 .workspace-panel__agent:hover {
   background: var(--bg-hover);
+}
+
+/* One level deeper than a pane row: Workspace > Pane > Tab > Agent. */
+.workspace-panel__tab {
+  display: block;
+  padding: 0 6px 0 28px;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+}
+
+.workspace-panel__tab--active {
+  color: var(--fg);
+}
+
+.workspace-panel__tab[data-status="running"] {
+  background: var(--status-running-bg);
+}
+
+.workspace-panel__tab[data-status="done"] {
+  background: var(--status-done-bg);
+}
+
+.workspace-panel__tab[data-status="attention"] {
+  background: var(--status-attention-bg);
 }
 
 .workspace-panel__pane[data-status="running"] {
