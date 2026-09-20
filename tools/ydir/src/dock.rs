@@ -76,17 +76,27 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Args {
 /// nothing to follow, which keeps ydir exactly as it was before dock mode.
 /// A failed connect just ends the thread. The dock keeps working, it just
 /// stops following.
-/// Connect to the ymux host and introduce ourselves. `None` on any failure —
-/// the dock keeps working, it just loses that one capability.
-fn connect_client(address: &str, pane_id: String) -> Option<IpcClient> {
+/// Connect to the ymux host and introduce ourselves under `tool`. `None` on
+/// any failure — the dock keeps working, it just loses that one capability.
+///
+/// The name matters: the host's `send_to(tool, …)` fans a message out to
+/// *every* client registered under it, so the two connections this module
+/// opens must not share one. Only the `ChangeDir` follower answers to
+/// `"ydir"`; the outbound `open-file` link registers under its own name and
+/// therefore never has a push queued into a socket it does not read.
+fn connect_client(address: &str, tool: &str, pane_id: String) -> Option<IpcClient> {
     let mut client = IpcClient::connect(address).ok()?;
     let hello = IpcMessage::Hello {
-        tool: "ydir".into(),
+        tool: tool.into(),
         pane_id,
     };
     client.send(&hello).ok()?;
     Some(client)
 }
+
+/// Tool name the outbound `open-file` link registers under. Deliberately not
+/// `"ydir"` — see [`connect_client`].
+const OPEN_FILE_TOOL: &str = "ydir-openfile";
 
 pub fn follow_host(
     dock: bool,
@@ -101,7 +111,7 @@ pub fn follow_host(
     std::thread::Builder::new()
         .name("ydir-ipc".into())
         .spawn(move || {
-            let Some(mut client) = connect_client(&address, pane_id) else {
+            let Some(mut client) = connect_client(&address, "ydir", pane_id) else {
                 return;
             };
             while let Ok(msg) = client.recv() {
@@ -122,7 +132,9 @@ pub fn follow_host(
 ///
 /// A second connection, not a reuse of `follow_host`'s: that one is parked in
 /// a blocking `recv()`. The server accepts many clients, and either
-/// connection failing leaves the other intact.
+/// connection failing leaves the other intact. It registers as
+/// [`OPEN_FILE_TOOL`], so the host's `ChangeDir` pushes to `"ydir"` never
+/// pile up unread in this socket.
 pub fn open_file_link(
     dock: bool,
     address: Option<String>,
@@ -136,7 +148,7 @@ pub fn open_file_link(
     std::thread::Builder::new()
         .name("ydir-openfile".into())
         .spawn(move || {
-            let Some(mut client) = connect_client(&address, pane_id) else {
+            let Some(mut client) = connect_client(&address, OPEN_FILE_TOOL, pane_id) else {
                 return;
             };
             while let Ok(path) = rx.recv() {
@@ -210,6 +222,24 @@ mod tests {
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap(),
             "/w/README.md"
+        );
+
+        // The link is registered by now (it just spoke), and it must NOT be
+        // registered as "ydir": `send_to` fans out to every client under a
+        // name, and this connection reads only its own acks, so a ChangeDir
+        // landing here would sit unread until the host's write timeout
+        // killed the socket and dock-Enter stopped working.
+        assert_eq!(
+            server
+                .send_to(
+                    "ydir",
+                    &IpcMessage::ChangeDir {
+                        path: "/elsewhere".into()
+                    }
+                )
+                .unwrap(),
+            0,
+            "the open-file link must not answer to the follower's tool name"
         );
         server.shutdown();
     }
