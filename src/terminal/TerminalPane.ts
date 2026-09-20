@@ -27,6 +27,7 @@ import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
+import { preparePaste } from "./paste";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
@@ -923,11 +924,19 @@ export class TerminalPane implements Pane {
       // clipboard.read() unsupported/denied, or save failed — fall through to
       // the text path below.
     }
-    // Existing text-paste behaviour, unchanged.
+    // Text. Framed and sanitized by `preparePaste` — bracketed when the
+    // foreground app asked for it (xterm tracks DECSET 2004 for us in
+    // `term.modes`), ESC-defanged always, and chunked when huge. Awaited in
+    // order: a `void` loop would not guarantee the IPC sees the chunks in
+    // sequence, and a reordered chunk is a scrambled paste.
     try {
       const text = await navigator.clipboard.readText();
-      if (text && this.spawned) {
-        void api.writePane(this.id, ENCODER.encode(text));
+      if (!text || !this.spawned) return;
+      const chunks = preparePaste(text, {
+        bracketed: this.term.modes.bracketedPasteMode,
+      });
+      for (const chunk of chunks) {
+        await api.writePane(this.id, ENCODER.encode(chunk));
       }
     } catch {
       // Clipboard access denied or empty — silent fail.
