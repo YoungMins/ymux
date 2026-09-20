@@ -1211,11 +1211,17 @@ mod tests {
             session.write(script).expect("write");
 
             let mut captured = Vec::new();
+            // The OSC 7 hook is the other half of the contract: for Git Bash
+            // it lives in the rcfile the `-c` wrapper now `exec`s into, and
+            // for cmd / PowerShell the code-page setup is chained ahead of
+            // the prompt installer. Counting the parsed events proves the
+            // hook still fires rather than merely still appearing in argv.
+            let mut cwd_events = 0usize;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
             loop {
                 match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                     Ok(PaneEvent::Data(_, b)) => captured.extend_from_slice(&b),
-                    Ok(PaneEvent::Cwd(..)) => {}
+                    Ok(PaneEvent::Cwd(..)) => cwd_events += 1,
                     Ok(PaneEvent::Exit(..)) => break,
                     Err(_) if std::time::Instant::now() > deadline => break,
                     Err(_) => continue,
@@ -1235,8 +1241,16 @@ mod tests {
                 "{} did not round-trip Korean: {text:?}",
                 p.name
             );
+            assert!(
+                cwd_events > 0,
+                "{} reported no OSC 7 cwd — the encoding setup broke the hook: {text:?}",
+                p.name
+            );
             checked += 1;
-            eprintln!("ok: {} round-tripped {MARKER} at cp 65001", p.name);
+            eprintln!(
+                "ok: {} round-tripped {MARKER} at cp 65001, {cwd_events} OSC 7 cwd report(s)",
+                p.name
+            );
         }
         assert!(checked > 0, "no Windows shell was available to verify");
     }
