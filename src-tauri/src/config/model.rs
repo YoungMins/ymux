@@ -29,7 +29,14 @@ use uuid::Uuid;
 ///   7 — POSIX shells (`sh`, `dash`, `ksh`) gained an `$ENV`-based OSC 7
 ///       hook. A v6 cache holds an `sh` profile with an empty `env`, so
 ///       those panes would keep reporting no cwd until a re-detect.
-pub const CONFIG_VERSION: u32 = 7;
+///   8 — Windows shells now start on UTF-8 (code page 65001): cmd.exe
+///       chains `chcp`, PowerShell sets `[Console]::OutputEncoding`, and
+///       Git Bash is wrapped in a `-c` launcher. The switch lives entirely
+///       in the detector's argument lists, so a v7 cache keeps spawning
+///       shells on the machine's legacy code page — CP949 on Korean
+///       Windows — and every CJK glyph in those panes stays garbled until
+///       a re-detect.
+pub const CONFIG_VERSION: u32 = 8;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
