@@ -8,11 +8,13 @@ import {
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
 import { askText, askConfirm } from "../ui/Dialog";
+import { describeError } from "../ipc/bridge";
 import type { Uuid } from "../types";
 import {
   buildAgentTree,
   isExpanded,
   parseExpanded,
+  showsAgentTrackingHint,
   EXPANDED_KEY,
   type AgentRow,
   type ExpandedMap,
@@ -22,6 +24,10 @@ import {
 } from "./agentTree";
 
 const COLLAPSE_KEY = "ymux:workspace-panel:collapsed";
+
+/// Class that hides the whole panel. Also the second input to
+/// `showsAgentTrackingHint` — a hidden panel shows no hint either.
+const COLLAPSED_CLASS = "workspace-panel--collapsed";
 
 /// Vertical travel (px) before a press turns into a reorder drag. Below this a
 /// press is still a plain click, so switching workspaces stays a single tap.
@@ -84,7 +90,7 @@ export function mountWorkspacePanel(
 ): () => void {
   const panel = document.createElement("div");
   panel.className = "workspace-panel";
-  if (readCollapsed()) panel.classList.add("workspace-panel--collapsed");
+  if (readCollapsed()) panel.classList.add(COLLAPSED_CLASS);
 
   const header = document.createElement("div");
   header.className = "workspace-panel__header";
@@ -94,6 +100,60 @@ export function mountWorkspacePanel(
   const list = document.createElement("div");
   list.className = "workspace-panel__list";
   panel.appendChild(list);
+
+  // ── "Agent tracking is off" hint ───────────────────────────────────
+  // One row for the whole panel, and a sibling of the list rather than a
+  // member of it, for three separate reasons: `rebuild()` empties the list,
+  // `rows`'s indices feed `moveWorkspace`, and a pointerdown inside a
+  // `.workspace-panel__row` starts a workspace drag. Being a child of
+  // `.workspace-panel` also means the collapsed panel hides it for free.
+  const hint = document.createElement("div");
+  hint.className = "workspace-panel__hint";
+  const hintText = document.createElement("div");
+  hintText.className = "workspace-panel__hint-text";
+  hint.appendChild(hintText);
+  const hintAction = document.createElement("button");
+  hintAction.type = "button";
+  hintAction.className = "workspace-panel__hint-action";
+  hint.appendChild(hintAction);
+  const hintError = document.createElement("div");
+  hintError.className = "workspace-panel__hint-error";
+  hint.appendChild(hintError);
+  // Same path as the Settings toggle: the backend installs the hooks, and
+  // only once that write succeeded does `agent_tracking` flip — so a failure
+  // needs no revert, the hint simply stays and says what went wrong.
+  hintAction.addEventListener("click", () => {
+    hintAction.disabled = true;
+    hintError.textContent = "";
+    manager
+      .setAgentTracking(true) // → notifyTree() → renderHint() hides this row
+      .catch((e) => {
+        hintError.textContent = `${t("settings.general.agentTrackingFailed")} ${describeError(e)}`;
+      })
+      .finally(() => {
+        hintAction.disabled = false;
+      });
+  });
+  panel.appendChild(hint);
+
+  /// Show or hide the hint, re-reading `t(...)` every time: a language change
+  /// calls `rebuild()`, which never touches panel-level children, so copy set
+  /// once at mount would go stale.
+  function renderHint(): void {
+    const show = showsAgentTrackingHint({
+      agentTracking: manager.agentTracking,
+      panelCollapsed: panel.classList.contains(COLLAPSED_CLASS),
+    });
+    hint.style.display = show ? "" : "none";
+    if (!show) {
+      hintError.textContent = "";
+      return;
+    }
+    hintText.textContent = t("tree.trackingOffShort");
+    hint.title = t("tree.trackingOff");
+    hintAction.textContent = t("tree.trackingOffEnable");
+    hintAction.title = t("settings.general.agentTracking");
+  }
 
   const addBtn = document.createElement("button");
   addBtn.className = "workspace-panel__add";
@@ -413,6 +473,7 @@ export function mountWorkspacePanel(
       noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${label}`);
       noteBtn.classList.toggle("workspace-panel__note-btn--has-notes", hasNotes(id));
     }
+    renderHint();
   }
 
   manager.onWorkspacesChange(rebuild);
@@ -420,7 +481,10 @@ export function mountWorkspacePanel(
     highlight();
     renderTree();
   };
-  const cleanupTree = manager.onTreeChange(renderTree);
+  const cleanupTree = manager.onTreeChange(() => {
+    renderTree();
+    renderHint(); // the Settings toggle reaches the panel through here
+  });
   const cleanupNotesSub = onNotesChange(() => highlight());
   const cleanupLang = onLangChange(() => {
     header.textContent = t("workspace.panelTitle");
@@ -461,7 +525,9 @@ export function refreshWorkspacePanel(host: HTMLElement): void {
 export function toggleWorkspacePanel(manager: WorkspaceManager): void {
   const panel = document.querySelector<HTMLElement>(".workspace-panel");
   if (!panel) return;
-  const collapsed = panel.classList.toggle("workspace-panel--collapsed");
+  const collapsed = panel.classList.toggle(COLLAPSED_CLASS);
   writeCollapsed(collapsed);
+  // Re-runs renderHint(), so the hint agrees with the panel it lives in.
+  (panel as unknown as { __ymuxHighlight?: () => void }).__ymuxHighlight?.();
   requestAnimationFrame(() => manager.refitActive());
 }

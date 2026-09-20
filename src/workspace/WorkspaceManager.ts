@@ -1359,6 +1359,8 @@ export class WorkspaceManager {
     await api.setAgentTracking(enabled);
     this.config.agent_tracking = enabled;
     this.persistDebounced();
+    // The workspace panel's "tracking is off" hint keys off this.
+    this.notifyTree();
   }
 
   /// Can the user see pane `paneId` right now — window focused and its
