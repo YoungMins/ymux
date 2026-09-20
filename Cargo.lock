@@ -6440,6 +6440,7 @@ dependencies = [
  "dirs 5.0.1",
  "opener",
  "parking_lot",
+ "png",
  "portable-pty",
  "reqwest 0.12.28",
  "serde",
