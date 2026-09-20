@@ -244,7 +244,10 @@ export class TerminalPane implements Pane {
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
-        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e")) return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t")) return false;
+        // Ctrl/Cmd+Shift+[ / ] → previous / next tab, handled at window level.
+        // On `code`, because Shift+bracket is layout-dependent.
+        if (ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight")) return false;
         // Ctrl/Cmd+Shift+Left/Right → swap pane position (window level).
         if (ev.shiftKey && (k === "arrowleft" || k === "arrowright")) return false;
         // Font zoom. Matched on `code` for the same layout-independence

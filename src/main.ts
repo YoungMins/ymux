@@ -172,6 +172,27 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl+Shift+T new tab in the focused pane.
+    if (mod && ev.shiftKey && (key === "T" || key === "t")) {
+      ev.preventDefault();
+      void manager.newTabInFocused();
+      return;
+    }
+
+    // Ctrl+Shift+[ / Ctrl+Shift+] previous / next tab. Matched on `ev.code`
+    // for the same layout-independence reason as the digit and font
+    // bindings: the character Shift+bracket produces varies by keyboard.
+    if (mod && ev.shiftKey && !ev.altKey && ev.code === "BracketLeft") {
+      ev.preventDefault();
+      manager.stepTabInFocused(-1);
+      return;
+    }
+    if (mod && ev.shiftKey && !ev.altKey && ev.code === "BracketRight") {
+      ev.preventDefault();
+      manager.stepTabInFocused(1);
+      return;
+    }
+
     // Ctrl+Tab cycle. Deliberately Ctrl on macOS too: Cmd+Tab is the OS
     // application switcher and never reaches the webview.
     if (ev.ctrlKey && !ev.shiftKey && key === "Tab") {

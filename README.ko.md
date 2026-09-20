@@ -210,6 +210,8 @@ macOS 에서는 아래의 모든 `Ctrl` 이 `Cmd` 로 바뀝니다. 그래야 `C
 | `Ctrl+Shift+H`                 | `Cmd+Shift+H`      | 현재 pane을 가로로 분할             |
 | `Ctrl+Shift+V`                 | `Cmd+Shift+V`      | 현재 pane을 세로로 분할             |
 | `Ctrl+Shift+W`                 | `Cmd+Shift+W`      | 포커스된 pane 닫기                  |
+| `Ctrl+Shift+T`                 | `Cmd+Shift+T`      | 포커스된 pane에 새 탭               |
+| `Ctrl+Shift+[` / `]`           | `Cmd+Shift+[` / `]` | pane 안에서 이전 / 다음 탭         |
 | `Ctrl+Shift+Z`                 | `Cmd+Shift+Z`      | 포커스된 pane 확대 / 원복           |
 | `Ctrl+Shift+←/→`               | `Cmd+Shift+←/→`    | 이전 / 다음 pane과 자리 바꾸기      |
 | `Ctrl+Shift+R`                 | `Cmd+Shift+R`      | 포커스된 pane 이름 변경             |

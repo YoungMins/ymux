@@ -214,6 +214,8 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+H`              | `Cmd+Shift+H`      | Split pane horizontally              |
 | `Ctrl+Shift+V`              | `Cmd+Shift+V`      | Split pane vertically                |
 | `Ctrl+Shift+W`              | `Cmd+Shift+W`      | Close focused pane                   |
+| `Ctrl+Shift+T`              | `Cmd+Shift+T`      | New tab in focused pane              |
+| `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | Previous / next tab in pane         |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | Swap pane with previous / next       |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
