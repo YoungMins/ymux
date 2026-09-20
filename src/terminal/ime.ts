@@ -63,6 +63,15 @@ export interface ImeHost {
   font: () => { family: string; size: number };
   /// Deliver text to the terminal as user input.
   send: (data: string) => void;
+  /// Timers, injectable so the deferred-newline fallback is testable without
+  /// real time passing. Defaults to the global timer functions.
+  clock?: ImeClock;
+}
+
+/// The two timer functions the deferred newline needs.
+export interface ImeClock {
+  setTimeout(handler: () => void, ms: number): number;
+  clearTimeout(id: number): void;
 }
 
 export interface ImeEventTarget {
@@ -112,7 +121,16 @@ export interface ImeKeyEvent {
   isComposing?: boolean;
   keyCode?: number;
   key?: string;
+  /// Physical key. The only one of these fields an IME does not overwrite:
+  /// the Enter that commits a Hangul syllable arrives as `key: "Process"`,
+  /// `keyCode: 229` — but `code: "Enter"`.
+  code?: string;
 }
+
+/// How long a held Enter waits for the composition to commit before going out
+/// anyway. Long enough for the IME's own `compositionend`, short enough that a
+/// platform which never fires one does not feel like a dropped keystroke.
+const ENTER_HOLD_MS = 200;
 
 /// Keys that carry no text and must not end an IME run: pressing Shift to
 /// reach `ㄲ` mid-syllable would otherwise drop the buffer on the floor.
@@ -127,6 +145,20 @@ const MODIFIER_KEYCODES = new Set([16, 17, 18, 20, 91, 92, 93, 224]);
 /// consumed; `key === "Process"` is what older WebKit reports instead.
 export function isCompositionKey(ev: ImeKeyEvent): boolean {
   return ev.isComposing === true || ev.keyCode === 229 || ev.key === "Process";
+}
+
+/// True for Return / Enter, including the keypad's.
+///
+/// Matched on `code` wherever the event carries one, because that is the field
+/// an IME leaves alone. Matching `keyCode === 13` alone would miss exactly the
+/// case this exists for — the Enter that commits a composition, which every
+/// engine reports as 229. `keyCode` / `key` stay as the fallback for events
+/// that carry no `code` at all.
+export function isEnterKey(ev: ImeKeyEvent): boolean {
+  if (ev.code !== undefined) {
+    return ev.code === "Enter" || ev.code === "NumpadEnter";
+  }
+  return ev.keyCode === 13 || ev.key === "Enter";
 }
 
 /// Number of leading characters `a` and `b` share.
@@ -156,9 +188,21 @@ export class ImeBridge {
   private composing = false;
   /// The textarea content already reflected in the PTY. The diff base.
   private mirrored = "";
+  /// Bumped on every `compositionstart`. A held Enter remembers the value it
+  /// was held under, so the commit of a *later* composition cannot release it.
+  private compositionSeq = 0;
+  /// The Enter being held back until the open composition commits, if any.
+  private heldEnter: { seq: number; timer: number } | null = null;
   private cleanups: Array<() => void> = [];
+  private readonly clock: ImeClock;
 
-  constructor(private readonly host: ImeHost) {}
+  constructor(private readonly host: ImeHost) {
+    this.clock = host.clock ?? {
+      setTimeout: (handler, ms) =>
+        globalThis.setTimeout(handler, ms) as unknown as number,
+      clearTimeout: (id) => globalThis.clearTimeout(id),
+    };
+  }
 
   get isComposing(): boolean {
     return this.composing;
@@ -167,6 +211,11 @@ export class ImeBridge {
   install(): void {
     this.on("compositionstart", (ev) => {
       ev.stopImmediatePropagation();
+      // An Enter still held from the previous composition belongs to that one.
+      // Release it before the new session opens: the user did press it, and
+      // dropping a keystroke silently is worse than delivering it late.
+      this.flushHeldEnter();
+      this.compositionSeq++;
       this.composing = true;
       this.paint("");
     });
@@ -183,6 +232,10 @@ export class ImeBridge {
       // behind is already accounted for — resync rather than re-send it.
       this.reset();
       if (data) this.host.send(data);
+      // Last, deliberately: the whole point of holding the Enter is that the
+      // composed text reaches the PTY first. A shell that saw the CR first
+      // would run an empty line and leave the text on the next prompt.
+      this.flushHeldEnter();
     });
     // A keystroke whose keydown xterm did not cancel — one the IME claimed
     // (keyCode 229), or A–Z, which xterm defers to keypress on purpose — goes
@@ -223,12 +276,59 @@ export class ImeBridge {
   /// longer corresponds to anything in the textarea, and a later diff against
   /// a stale mirror would spray backspaces at whatever came next.
   handleKeyDown(ev: ImeKeyEvent): boolean {
+    // Enter is checked ahead of `isCompositionKey`, because the Enter that
+    // commits a composition *is* a composition key (keyCode 229) and would
+    // otherwise be claimed above and never sent at all.
+    if (isEnterKey(ev)) {
+      if (this.composing) {
+        this.holdEnter();
+        // Ours now — xterm must not send the CR yet, and will not, because the
+        // caller turns this `true` into a `false` from its own key handler.
+        return true;
+      }
+      // No composition open — including every keystroke under WKWebView, which
+      // fires none. Unchanged behaviour: the run ends and xterm sends the CR.
+      this.reset();
+      return false;
+    }
     if (isCompositionKey(ev)) return true;
     if (ev.keyCode !== undefined && MODIFIER_KEYCODES.has(ev.keyCode)) {
       return false;
     }
     this.reset();
     return false;
+  }
+
+  /// Hold the CR back until the open composition commits, with a timer as the
+  /// floor: a platform that opens a composition and never closes it must not
+  /// eat the keystroke outright.
+  private holdEnter(): void {
+    // Auto-repeat, or a second Enter inside one composition: one CR is enough.
+    if (this.heldEnter) return;
+    const seq = this.compositionSeq;
+    const timer = this.clock.setTimeout(
+      () => this.releaseEnter(seq),
+      ENTER_HOLD_MS,
+    );
+    this.heldEnter = { seq, timer };
+  }
+
+  /// Send a held Enter, if the one being released is still the current one.
+  /// Idempotent: the timer firing after a commit already released it is a
+  /// no-op, and so is a commit with nothing held.
+  private releaseEnter(seq: number): void {
+    const held = this.heldEnter;
+    if (!held || held.seq !== seq) return;
+    this.heldEnter = null;
+    this.clock.clearTimeout(held.timer);
+    // Through `send`, i.e. `term.input`, so the CR is indistinguishable from a
+    // typed Enter — same activity flag, same status-machine submit.
+    this.host.send("\r");
+  }
+
+  /// Release whatever is held, whichever composition it belongs to.
+  private flushHeldEnter(): void {
+    if (this.heldEnter) this.releaseEnter(this.heldEnter.seq);
   }
 
   /// Drop the mirror and the buffer behind it, so the next run starts clean.
@@ -242,6 +342,11 @@ export class ImeBridge {
     this.cleanups = [];
     this.composing = false;
     this.mirrored = "";
+    // The pane is going away; a CR fired at it afterwards has nowhere to land.
+    if (this.heldEnter) {
+      this.clock.clearTimeout(this.heldEnter.timer);
+      this.heldEnter = null;
+    }
   }
 
   private on(type: string, listener: ImeListener): void {
