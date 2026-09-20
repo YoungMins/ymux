@@ -5,7 +5,7 @@
 //! opened in a pane is never steered by the dock.
 
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use yipc::{IpcClient, IpcMessage};
@@ -76,6 +76,18 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Args {
 /// nothing to follow, which keeps ydir exactly as it was before dock mode.
 /// A failed connect just ends the thread. The dock keeps working, it just
 /// stops following.
+/// Connect to the ymux host and introduce ourselves. `None` on any failure —
+/// the dock keeps working, it just loses that one capability.
+fn connect_client(address: &str, pane_id: String) -> Option<IpcClient> {
+    let mut client = IpcClient::connect(address).ok()?;
+    let hello = IpcMessage::Hello {
+        tool: "ydir".into(),
+        pane_id,
+    };
+    client.send(&hello).ok()?;
+    Some(client)
+}
+
 pub fn follow_host(
     dock: bool,
     address: Option<String>,
@@ -89,16 +101,9 @@ pub fn follow_host(
     std::thread::Builder::new()
         .name("ydir-ipc".into())
         .spawn(move || {
-            let Ok(mut client) = IpcClient::connect(&address) else {
+            let Some(mut client) = connect_client(&address, pane_id) else {
                 return;
             };
-            let hello = IpcMessage::Hello {
-                tool: "ydir".into(),
-                pane_id,
-            };
-            if client.send(&hello).is_err() {
-                return;
-            }
             while let Ok(msg) = client.recv() {
                 if let IpcMessage::ChangeDir { path } = msg {
                     if tx.send(PathBuf::from(path)).is_err() {
@@ -109,6 +114,42 @@ pub fn follow_host(
         })
         .ok()?;
     Some(rx)
+}
+
+/// Dock mode under ymux only: a channel whose paths are relayed to the host
+/// as `open-file` events. `None` outside dock mode or outside ymux, which is
+/// exactly what keeps a plain `ydir` launching ycode inline (spec §4).
+///
+/// A second connection, not a reuse of `follow_host`'s: that one is parked in
+/// a blocking `recv()`. The server accepts many clients, and either
+/// connection failing leaves the other intact.
+pub fn open_file_link(
+    dock: bool,
+    address: Option<String>,
+    pane_id: String,
+) -> Option<Sender<PathBuf>> {
+    if !dock {
+        return None;
+    }
+    let address = address.filter(|a| !a.is_empty())?;
+    let (tx, rx) = channel::<PathBuf>();
+    std::thread::Builder::new()
+        .name("ydir-openfile".into())
+        .spawn(move || {
+            let Some(mut client) = connect_client(&address, pane_id) else {
+                return;
+            };
+            while let Ok(path) = rx.recv() {
+                let msg = yipc::open_file_event(&path.to_string_lossy());
+                if client.send(&msg).is_err() {
+                    break; // the host is gone
+                }
+                // The host always acks; drain it so the socket doesn't fill.
+                let _ = client.recv();
+            }
+        })
+        .ok()?;
+    Some(tx)
 }
 
 #[cfg(test)]
@@ -140,6 +181,37 @@ mod tests {
         };
         assert_eq!(args(&["--dock", "/work"]), want);
         assert_eq!(args(&["/work", "--dock"]), want);
+    }
+
+    #[test]
+    fn open_file_link_is_off_outside_dock_mode_or_ymux() {
+        assert!(open_file_link(false, Some("tcp:127.0.0.1:1".into()), String::new()).is_none());
+        assert!(open_file_link(true, None, String::new()).is_none());
+        assert!(open_file_link(true, Some(String::new()), String::new()).is_none());
+    }
+
+    #[test]
+    fn open_file_link_relays_a_path_to_the_host_as_an_open_file_event() {
+        let (tx, rx) = channel::<String>();
+        let handler: MessageHandler = Box::new(move |msg, writer| {
+            if let Some(path) = yipc::open_file_path(&msg) {
+                let _ = tx.send(path.to_string());
+            }
+            writer
+                .write_all(IpcMessage::Ack.to_line().unwrap().as_bytes())
+                .ok();
+            writer.flush().ok();
+        });
+        let server = IpcServer::start(handler).unwrap();
+        let link = open_file_link(true, Some(server.address().to_string()), "dock".into())
+            .expect("dock mode with an address gets a link");
+
+        link.send(PathBuf::from("/w/README.md")).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "/w/README.md"
+        );
+        server.shutdown();
     }
 
     #[test]
