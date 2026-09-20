@@ -711,6 +711,18 @@ export class TerminalPane implements Pane {
     this.element.style.background = bg;
   }
 
+  /// Write a hotkey list edited elsewhere back into this pane. The shared
+  /// `HotKeyBar` of a `PaneGroup` edits the active tab's list, and the tab's
+  /// own `PaneSpec` copy has to follow — `buildChrome()` seeds its bar from
+  /// `this.spec` when the group unwraps and the pane gets its chrome back,
+  /// so without this the pane came back with its pre-grouping hotkeys.
+  /// Mirrors `setBgColor`. The `?.` is the grouped case: a tab has no bar of
+  /// its own, which is exactly when this is called.
+  setHotKeys(hotkeys: HotKeyDef[]): void {
+    this.spec = { ...this.spec, hotkeys };
+    this.hotkeyBar?.bind(this.id, hotkeys, this.spec.bg_color || null);
+  }
+
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
     if (this.titleEl) {

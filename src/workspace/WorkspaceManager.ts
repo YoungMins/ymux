@@ -600,6 +600,12 @@ export class WorkspaceManager {
             this.updatePaneSpec(paneId, (p) => {
               p.hotkeys = hotkeys;
             });
+            // The config tree alone is not enough: the pane keeps its own
+            // `PaneSpec` copy and rebuilds its bar from it when the group
+            // unwraps, so it would come back with the pre-grouping list.
+            // Same write-both dance as `onBgColorChange` below.
+            const pane = this.findPaneById(paneId);
+            if (pane instanceof TerminalPane) pane.setHotKeys(hotkeys);
           },
           onBgColorChange: (paneId, color) => {
             this.updatePaneSpec(paneId, (p) => {
