@@ -312,14 +312,14 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 322, 8 failing on Windows + frontend 217)
+### Test count (Rust 323, 8 failing on Windows + frontend 217)
 
 Measured 2026-09-20 on Windows with `cargo test --workspace --no-fail-fast` and
 `npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 151 (8 fail on Windows) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
+| ymux_lib | 152 (8 fail on Windows) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
 | yipc | 14 | Protocol serialization incl. `ChangeDir`/`open-file`, server/client, multi-client, `send_to` fan-out and timeout, broken pipe |
 | ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |

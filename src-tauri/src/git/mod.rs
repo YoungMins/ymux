@@ -301,6 +301,51 @@ detached
             .unwrap_or(false)
     }
 
+    /// Whether the worktree git reported at `entry_path` is the one we asked
+    /// it to create at `asked`.
+    ///
+    /// Compares the *leaf*, not the whole path, because git resolves
+    /// symlinks when it records a worktree -- verified: adding a worktree
+    /// through a Windows junction makes `worktree list --porcelain` report
+    /// the junction's target. `init_test_repo` builds under
+    /// `std::env::temp_dir()`, which on macOS is `/var/folders/...` and
+    /// `/var` is a symlink to `/private/var`, so git's path and ours differ
+    /// by a prefix that no comparison key is allowed to fold away
+    /// (`ypath::same_path` documents symlinks as out of scope, correctly).
+    ///
+    /// The leaf still goes through the key, so the separator and case rules
+    /// apply to it; `porcelain_path_and_suggested_path_differ_only_by_spelling`
+    /// is the deterministic test for the whole-path case.
+    /// The leaf is taken from the *key* of the whole asked-for path rather
+    /// than from `Path::file_name`, so it inherits that path's case rule --
+    /// a bare `Agent-X` on its own proves no Windows syntax and would stay
+    /// case-sensitive, which is right for a path and wrong for a component
+    /// of `C:\wt\Agent-X`.
+    fn worktree_leaf_is(entry_path: &str, asked: &Path) -> bool {
+        let asked_key = ypath::comparison_key(&asked.to_string_lossy());
+        let Some(leaf) = asked_key.rsplit('/').next().filter(|s| !s.is_empty()) else {
+            return false;
+        };
+        let key = ypath::comparison_key(entry_path);
+        key == leaf || key.ends_with(&format!("/{leaf}"))
+    }
+
+    /// The macOS shape, pinned down without needing macOS to run it.
+    #[test]
+    fn worktree_leaf_is_survives_a_resolved_symlink_prefix() {
+        let asked = Path::new("/var/folders/t/ymux_git_test/.ymux-worktrees/agent-x");
+        assert!(worktree_leaf_is(
+            "/private/var/folders/t/ymux_git_test/.ymux-worktrees/agent-x",
+            asked
+        ));
+        // A leaf match, not a substring one.
+        assert!(!worktree_leaf_is("/private/var/wt/super-agent-x", asked));
+        assert!(!worktree_leaf_is("/private/var/wt/agent-y", asked));
+        // Still crosses the Windows separator and case divide.
+        let win = Path::new(r"C:\wt\.ymux-worktrees\Agent-X");
+        assert!(worktree_leaf_is("C:/wt/.ymux-worktrees/agent-x", win));
+    }
+
     /// Create a fresh temp dir, `git init` it, configure a commit identity,
     /// and commit one file. Returns the repo path. Caller must remove it.
     fn init_test_repo(name: &str) -> PathBuf {
@@ -363,10 +408,9 @@ detached
             .expect("worktree_add must attach to branch 'agent/x', not leave it detached");
         // Cross-source comparison: `entry.path` is git's spelling (forward
         // slashes on Windows), `wt_path` is the one this module built with
-        // the platform separator. Byte equality fails on Windows; the
-        // comparison key is what makes the two comparable.
+        // the platform separator. Byte equality fails on Windows.
         assert!(
-            ypath::same_path(&entry.path, &wt_path.to_string_lossy()),
+            worktree_leaf_is(&entry.path, &wt_path),
             "entry path should be the suggested worktree path: git said {}, we asked for {}",
             entry.path,
             wt_path.display()
@@ -426,7 +470,7 @@ detached
         let list = worktree_list(&repo).expect("worktree_list should succeed");
         let entry = list
             .iter()
-            .find(|e| ypath::same_path(&e.path, &wt_path.to_string_lossy()))
+            .find(|e| worktree_leaf_is(&e.path, &wt_path))
             .expect("worktree entry for the requested path should exist");
 
         // RED (pre-fix): entry.branch == "" (detached), because the
@@ -481,7 +525,7 @@ detached
             entry.path
         );
         assert!(
-            ypath::same_path(&entry.path, &wt_path.to_string_lossy()),
+            worktree_leaf_is(&entry.path, &wt_path),
             "git said {}, we asked for {}",
             entry.path,
             wt_path.display()
