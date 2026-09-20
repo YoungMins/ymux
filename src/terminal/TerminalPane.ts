@@ -17,7 +17,11 @@ import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
-import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
+import {
+  restoreScrollGuard,
+  restoreRevealLines,
+  shouldDeferRestoreReveal,
+} from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
@@ -116,6 +120,12 @@ export class TerminalPane implements Pane {
   /// Lines to scroll up once the shell has painted its first output, to bring
   /// restored scrollback back into view. 0 = nothing to reveal.
   private pendingRestoreReveal = 0;
+  /// Set when a restore landed in a pane with no layout box (a tab spawned
+  /// while hidden): the reveal amount depends on the row count, which is
+  /// still xterm's 80×24 default at that point, so it is recomputed and
+  /// applied at the first fit that can measure the pane. See
+  /// `shouldDeferRestoreReveal`.
+  private restoreRevealDeferred = false;
   /// Whether the user has typed in this pane during this app run. Gates
   /// scrollback persistence so an idle, restored-but-untouched pane never
   /// re-saves and can't compound its own history across restarts.
@@ -462,8 +472,14 @@ export class TerminalPane implements Pane {
           // The guard keeps the history safe but parks it above the viewport,
           // so the pane opens showing only a bare prompt — indistinguishable
           // from "nothing was restored". Reveal it by scrolling up once the
-          // shell has painted (see the data listener below).
-          this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
+          // shell has painted (see the data listener below) — or, for a tab
+          // spawned while hidden, at the first fit that can measure the pane,
+          // since `this.term.rows` is still the 80×24 default here.
+          if (shouldDeferRestoreReveal(true, this.measurable())) {
+            this.restoreRevealDeferred = true;
+          } else {
+            this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
+          }
         }
       } catch {
         // No prior scrollback (or load failed) — start clean.
@@ -484,12 +500,7 @@ export class TerminalPane implements Pane {
       // scheduled here happens strictly after the shell's opening burst (with
       // its `\x1b[2J` clear) has been applied — scrolling any earlier would be
       // undone by that clear.
-      this.term.write(bytes, () => {
-        if (this.pendingRestoreReveal > 0) {
-          this.term.scrollLines(-this.pendingRestoreReveal);
-          this.pendingRestoreReveal = 0;
-        }
-      });
+      this.term.write(bytes, () => this.revealRestored());
       this.statusMachine.onOutput(Date.now());
       this.scheduleScrollbackSave();
     });
@@ -802,10 +813,39 @@ export class TerminalPane implements Pane {
         // visible again or was re-parented by a layout rebuild — both of
         // which reset the DOM scrollbar behind xterm's back.
         this.resyncViewportScroll();
+        this.settleDeferredRestore();
       } catch {
         // fit throws when the element has zero size; ignore.
       }
     });
+  }
+
+  /// Does this pane have a layout box right now? A hidden tab
+  /// (`.pane--tab-hidden`, `display: none`) has none, so `FitAddon` cannot
+  /// measure it and xterm stays at its 80×24 default.
+  private measurable(): boolean {
+    return this.termHost.clientHeight > 0 && this.termHost.clientWidth > 0;
+  }
+
+  /// Scroll restored scrollback back into view, once. Called from the PTY
+  /// data callback (so it lands after the shell's opening `\x1b[2J`) and from
+  /// `settleDeferredRestore`.
+  private revealRestored(): void {
+    if (this.pendingRestoreReveal <= 0) return;
+    this.term.scrollLines(-this.pendingRestoreReveal);
+    this.pendingRestoreReveal = 0;
+  }
+
+  /// A restore that had to wait for a real layout box: the pane has just been
+  /// fitted, so the row count is finally the one the user sees. Compute the
+  /// reveal from it and apply it now — the shell's startup burst is long
+  /// past by the time a hidden tab is shown, so waiting for more PTY data
+  /// would leave the history parked out of sight indefinitely.
+  private settleDeferredRestore(): void {
+    if (!this.restoreRevealDeferred || !this.measurable()) return;
+    this.restoreRevealDeferred = false;
+    this.pendingRestoreReveal = restoreRevealLines(this.term.rows);
+    this.revealRestored();
   }
 
   /// Put xterm's DOM scrollbar back in step with the buffer after a layout

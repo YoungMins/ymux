@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { Terminal } from "@xterm/headless";
-import { restoreScrollGuard, restoreRevealLines } from "./restoreGuard";
+import {
+  restoreScrollGuard,
+  restoreRevealLines,
+  shouldDeferRestoreReveal,
+} from "./restoreGuard";
 
 function write(term: Terminal, data: string): Promise<void> {
   return new Promise((resolve) => term.write(data, resolve));
@@ -74,6 +78,66 @@ describe("restoreScrollGuard", () => {
     expect(restoreRevealLines(8)).toBe(6);
     expect(restoreRevealLines(2)).toBe(0);
     expect(restoreRevealLines(1)).toBe(0);
+  });
+
+  it("defers the reveal only for a restore into a pane with no layout box", () => {
+    // A tab spawned while hidden (`Ctrl+Shift+T` while another tab is shown,
+    // or the dock's viewer tab) has no layout box, so `fit()` leaves xterm at
+    // its 80×24 default and a reveal computed now would be 22 lines — wrong
+    // for the size the pane actually gets when it is shown.
+    expect(shouldDeferRestoreReveal(true, false)).toBe(true);
+    // Visible pane: reveal from the real row count, as before.
+    expect(shouldDeferRestoreReveal(true, true)).toBe(false);
+    // Nothing was restored — there is nothing to reveal either way.
+    expect(shouldDeferRestoreReveal(false, false)).toBe(false);
+    expect(shouldDeferRestoreReveal(false, true)).toBe(false);
+  });
+
+  it("a deferred reveal lands correctly when the pane is shown at another size", async () => {
+    // The hidden-tab case end to end: the guard is written at xterm's 24-row
+    // default because the pane had no layout box, the shell's burst lands,
+    // and only then is the tab shown and fitted — here to 40 rows.
+    const guardRows = 24;
+    const shownRows = 40;
+    const term = new Terminal({
+      rows: guardRows,
+      cols: 40,
+      scrollback: 500,
+      allowProposedApi: true,
+    });
+    for (let i = 1; i <= 60; i++) await write(term, `line-${i}\r\n`);
+    await write(term, "-- restored --\r\n");
+    await write(term, restoreScrollGuard(guardRows));
+    await write(term, CONPTY_STARTUP_BURST);
+    term.resize(40, shownRows);
+
+    const viewport = (): string[] => {
+      const buf = term.buffer.active;
+      const out: string[] = [];
+      for (let y = buf.viewportY; y < buf.viewportY + shownRows; y++) {
+        out.push(buf.getLine(y)?.translateToString(true) ?? "");
+      }
+      return out;
+    };
+    const rowOf = (lines: string[], needle: string): number =>
+      lines.findIndex((l) => l.includes(needle));
+
+    // Growing the viewport does not pull the parked history back into view:
+    // the prompt is still alone at the top. Something must scroll.
+    expect(rowOf(viewport(), "-- restored --")).toBe(-1);
+
+    // The reveal is keyed to the rows the pane is *shown* at, not the rows
+    // the guard was written with. Measured with both: at `shownRows` the
+    // separator lands at row 36 of 40 with the prompt just under it, which is
+    // the intended "history fills the view, prompt at the bottom"; at
+    // `guardRows` (22 lines) the prompt stops mid-screen at row 22 and the
+    // bottom of the view is empty.
+    term.scrollLines(-restoreRevealLines(shownRows));
+    const shown = viewport();
+    expect(rowOf(shown, "-- restored --")).toBeGreaterThan(shownRows - 6);
+    expect(rowOf(shown, "PS D:\\>")).toBeGreaterThan(shownRows - 4);
+    expect(shown.join("\n")).toContain("line-60");
+    term.dispose();
   });
 
   it("without the guard the same burst erases a viewport-sized history (documents the bug)", async () => {
