@@ -121,12 +121,32 @@ export function removePane(root: LayoutNode, paneId: Uuid): LayoutNode | null {
   }
   if (root.kind === "tabs") {
     const children: LayoutNode[] = [];
-    for (const c of root.children) {
+    let removedAbove = 0;
+    let changed = false;
+    root.children.forEach((c, idx) => {
       const next = removePane(c, paneId);
-      if (next !== null) children.push(next);
-    }
+      if (next === null) {
+        // This child *was* the pane. Tabs below the active one shift it up,
+        // so decrement rather than only clamping — otherwise closing tab 1
+        // of 3 silently switches which tab is showing.
+        changed = true;
+        if (idx < root.active) removedAbove += 1;
+        return;
+      }
+      if (next !== c) changed = true;
+      children.push(next);
+    });
+    if (!changed) return root;
     if (children.length === 0) return null;
-    const active = Math.min(root.active, children.length - 1);
+    // One tab left is just a pane: unwrap, so the strip disappears and the
+    // pane gets its own title row and hotkey bar back. This is what makes
+    // "the last tab closes the pane" mean exactly what closing a pane always
+    // meant — `closeFocused` needs no tab-specific branch.
+    if (children.length === 1) return children[0];
+    const active = Math.min(
+      Math.max(0, root.active - removedAbove),
+      children.length - 1,
+    );
     return { ...root, active, children };
   }
   return root;
