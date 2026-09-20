@@ -348,7 +348,7 @@ fn draw_panel(
 /// footer is the only place that is discoverable.
 fn footer_keys(dock: bool) -> &'static [(&'static str, &'static str)] {
     if dock {
-        &[("Enter", " Open  "), ("BS", " Up  "), ("Tab", " Preview  ")]
+        &[("Enter", " Open  "), ("BS", " Up  "), ("Tab", " Prev  ")]
     } else {
         &[
             ("q", " Quit  "),
@@ -373,6 +373,13 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::Rgb(0xe5, 0xc0, 0x7b)),
     ));
     let text = Line::from(spans);
+    // The right-aligned release version identifies a tool the user ran
+    // themselves. The dock's yDir is started by ymux, which shows its own
+    // version, and 9 cells is a third of a 34-cell dock footer.
+    if app.dock {
+        frame.render_widget(Paragraph::new(text), area);
+        return;
+    }
     // Right-aligned ymux release version. See ymon::draw_footer for the
     // same split pattern across the y* tool family.
     let version = format!(" v{} ", yversion::VERSION);
@@ -727,5 +734,115 @@ mod tests {
             date: 0,
         };
         assert_eq!(columns_line(&cols, "a.txt", "1 B", "x"), "a.txt     ");
+    }
+
+    /// Render the dock for real, through ratatui's test backend, and read
+    /// the cells back. Closest thing to looking at it without a TTY.
+    fn render_dock(width: u16, height: u16, dir: &std::path::Path) -> Vec<String> {
+        let mut app = App::new(dir.to_path_buf()).unwrap().with_dock(true);
+        app.sync_preview();
+        let mut terminal = Terminal::new(backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                // A wide glyph lives in one cell and blanks the next, so
+                // walking every cell would double every space after it.
+                let mut row = String::new();
+                let mut x = 0u16;
+                while x < width {
+                    let sym = buf[(x, y)].symbol();
+                    row.push_str(sym);
+                    x += width_of(sym).max(1) as u16;
+                }
+                row.trim_end().to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_dock_draws_one_listing_over_a_preview_of_the_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("보고서.txt"), "첫 번째 줄\n두 번째 줄\n").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("안쪽.md"), "x").unwrap();
+
+        // 34 cells ~= the 260 px minimum; 24 rows is a short window.
+        let rows = render_dock(34, 24, dir);
+        let screen = rows.join("\n");
+
+        // One listing, not two: no vertical rule anywhere in the body.
+        for (i, row) in rows.iter().enumerate().take(rows.len() - 1) {
+            assert!(
+                !row.trim_start_matches('│')
+                    .trim_end_matches('│')
+                    .contains('│'),
+                "row {i} has a second panel: {row:?}"
+            );
+        }
+        // Both entries are listed, with the dir first and marked.
+        assert!(screen.contains("[D] sub"), "{screen}");
+        assert!(screen.contains("보고서.txt"), "{screen}");
+        // The preview is under it, titled with the selected entry.
+        let preview_top = rows
+            .iter()
+            .rposition(|r| r.starts_with('┌'))
+            .expect("a second box below the listing");
+        assert!(rows[preview_top].contains("sub"), "{:?}", rows[preview_top]);
+        assert!(
+            rows[preview_top + 1].contains("안쪽.md"),
+            "the directory preview lists its own entries: {:?}",
+            rows[preview_top + 1]
+        );
+        // Footer says what Tab does here.
+        assert!(rows.last().unwrap().contains("Tab Prev"), "{screen}");
+    }
+
+    #[test]
+    fn a_hangul_file_preview_renders_its_own_characters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("메모.txt"), "첫 번째 줄\n두 번째 줄\n").unwrap();
+
+        let rows = render_dock(34, 24, dir);
+        let screen = rows.join("\n");
+        assert!(screen.contains("첫 번째 줄"), "{screen}");
+        assert!(screen.contains("두 번째 줄"), "{screen}");
+        assert!(!screen.contains('\u{fffd}'), "{screen}");
+        // Every row fits the terminal: a wide glyph must not push one over.
+        for row in &rows {
+            assert!(width_of(row) <= 34, "row too wide: {row:?}");
+        }
+    }
+
+    /// A dock too short to split shows the listing alone, and nothing that
+    /// reads as a half-drawn preview.
+    #[test]
+    fn a_short_dock_drops_the_preview_entirely() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
+        let rows = render_dock(34, 10, tmp.path());
+        assert_eq!(
+            rows.iter().filter(|r| r.starts_with('┌')).count(),
+            1,
+            "only the listing has a box: {rows:?}"
+        );
+    }
+
+    /// The old byte-slicing title crashed here; the dock is where the
+    /// truncation actually happens.
+    #[test]
+    fn a_narrow_dock_over_a_hangul_path_renders_instead_of_panicking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("프로젝트 문서 보관함");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("메모.txt"), "내용").unwrap();
+        for width in [8u16, 16, 24, 34, 60] {
+            let rows = render_dock(width, 24, &dir);
+            for row in &rows {
+                assert!(width_of(row) <= width as usize, "{width}: {row:?}");
+            }
+        }
     }
 }
