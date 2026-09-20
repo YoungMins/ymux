@@ -330,7 +330,7 @@ fn draw_panel(
         if area.width > info_w + 2 {
             let info_area = Rect {
                 x: area.x + area.width - info_w - 2,
-                y: area.y + area.height - 1,
+                y: area.y + area.height.saturating_sub(1),
                 width: info_w + 1,
                 height: 1,
             };

@@ -117,7 +117,10 @@ export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
 - **File dock**: `Ctrl+Shift+E` toggles a collapsible right-side panel running
   `ydir`, which follows the active pane's working directory as you `cd`
   around. Press Enter on a file there to open it in a reused viewer tab
-  instead of leaving the dock.
+  instead of leaving the dock. In the dock yDir drops the two-panel layout
+  for one file list with a preview of the selected file or folder beneath
+  it; `Tab` shows and hides the preview. Drag the dock's left edge to
+  resize it.
 - **Pane zoom**: `Ctrl+Shift+Z` hides every other pane so you can focus.
   Press again to restore the split.
 - **Scrollback search**: `Ctrl+F` opens a find bar on the focused terminal.

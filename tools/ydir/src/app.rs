@@ -421,12 +421,12 @@ pub fn is_binary_file(path: &std::path::Path) -> bool {
         Ok(f) => f,
         Err(_) => return false,
     };
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; preview::BINARY_SNIFF_BYTES];
     let n = match file.read(&mut buf) {
         Ok(n) => n,
         Err(_) => return false,
     };
-    buf[..n].contains(&0u8)
+    preview::is_binary(&buf[..n])
 }
 
 /// Whether `a` and `b` name the same directory.

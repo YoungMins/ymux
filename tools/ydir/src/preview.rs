@@ -38,6 +38,14 @@ pub const MAX_PREVIEW_ENTRIES: usize = 200;
 /// cap, for the same reason: `node_modules` must not stall a cursor move.
 pub const MAX_PREVIEW_SCAN: usize = 512;
 
+/// How much of a file's head decides whether it is binary.
+///
+/// Deliberately smaller than [`MAX_PREVIEW_BYTES`] and shared with
+/// `app::is_binary_file`: Enter and the preview must agree about one file,
+/// or a NUL at byte 20000 gets "(binary file)" in the dock and then opens
+/// happily in ycode.
+pub const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+
 /// A tab is drawn as this many spaces. Rendering a literal `\t` into a
 /// ratatui buffer produces a one-cell hole, not a stop.
 const TAB_WIDTH: usize = 4;
@@ -81,7 +89,7 @@ pub fn split_dock(body: u16) -> (u16, u16) {
 /// different thing (a latin-1 file, say) and is decoded lossily rather than
 /// truncating everything after it.
 pub fn decode_preview(chunk: &[u8], max_lines: usize) -> Preview {
-    if chunk.contains(&0u8) {
+    if is_binary(chunk) {
         return Preview::Binary;
     }
     let end = match std::str::from_utf8(chunk) {
@@ -96,6 +104,12 @@ pub fn decode_preview(chunk: &[u8], max_lines: usize) -> Preview {
     };
     let text = String::from_utf8_lossy(&chunk[..end]);
     Preview::Text(text.lines().take(max_lines).map(sanitize).collect())
+}
+
+/// Whether the head of a file reads as binary: a NUL byte in the first
+/// [`BINARY_SNIFF_BYTES`].
+pub fn is_binary(head: &[u8]) -> bool {
+    head[..head.len().min(BINARY_SNIFF_BYTES)].contains(&0u8)
 }
 
 /// Make one line safe to render: tabs become spaces, and every other
@@ -246,6 +260,19 @@ mod tests {
     fn decode_drops_escape_sequences() {
         let p = decode_preview(b"\x1b[2Jgone\x07\n", 10);
         assert_eq!(lines(&p), ["[2Jgone"]);
+    }
+
+    #[test]
+    fn the_binary_sniff_stops_at_its_window() {
+        // The same window Enter uses, so the dock and ycode cannot
+        // disagree about whether one file is text.
+        let mut late = vec![b'x'; BINARY_SNIFF_BYTES];
+        late.push(0);
+        assert!(!is_binary(&late));
+        let mut early = vec![b'x'; BINARY_SNIFF_BYTES - 1];
+        early.push(0);
+        assert!(is_binary(&early));
+        assert!(!is_binary(b""));
     }
 
     #[test]
