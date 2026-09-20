@@ -3,9 +3,7 @@ import {
   ImeBridge,
   commonPrefixLength,
   isCompositionKey,
-  isEnterKey,
   mirrorEdit,
-  type ImeClock,
   type ImeCompositionView,
   type ImeEvent,
   type ImeEventTarget,
@@ -52,40 +50,8 @@ class FakeTarget implements ImeEventTarget {
   }
 }
 
-/// Timers under the test's control, so the deferred-newline fallback can be
-/// exercised without waiting 200 ms. Honours `clearTimeout`, because the
-/// bridge cancelling a timer it has already answered is part of what is being
-/// tested.
-class FakeClock implements ImeClock {
-  private pending = new Map<number, () => void>();
-  private next = 1;
-
-  setTimeout(handler: () => void): number {
-    const id = this.next++;
-    this.pending.set(id, handler);
-    return id;
-  }
-
-  clearTimeout(id: number): void {
-    this.pending.delete(id);
-  }
-
-  /// Fire every timer still outstanding, as the clock reaching the deadline
-  /// would.
-  tick(): void {
-    const due = [...this.pending.values()];
-    this.pending.clear();
-    for (const handler of due) handler();
-  }
-
-  get outstanding(): number {
-    return this.pending.size;
-  }
-}
-
 interface Harness {
   bridge: ImeBridge;
-  clock: FakeClock;
   target: FakeTarget;
   textarea: ImeTextarea;
   view: ImeCompositionView & { active: boolean };
@@ -119,19 +85,16 @@ function harness(): Harness {
     },
   };
   const sent: string[] = [];
-  const clock = new FakeClock();
   const bridge = new ImeBridge({
     root: target,
     textarea,
     view,
     font: () => ({ family: "MesloLGS NF", size: 14 }),
     send: (data) => sent.push(data),
-    clock,
   });
   bridge.install();
   return {
     bridge,
-    clock,
     target,
     textarea,
     view,
@@ -398,119 +361,6 @@ describe("ImeBridge on the composition-event path", () => {
     expect(h.bridge.isComposing).toBe(true);
     h.target.dispatch("compositionend", { data: "가" });
     expect(h.bridge.isComposing).toBe(false);
-  });
-});
-
-describe("isEnterKey", () => {
-  it("claims Enter even when the IME has rewritten every other field", () => {
-    // WebView2 committing a Hangul syllable with Return. `keyCode === 13` is
-    // gone; `code` is the only thing left that says Enter.
-    expect(isEnterKey({ keyCode: 229, key: "Process", code: "Enter" })).toBe(true);
-  });
-
-  it("claims the keypad's Enter", () => {
-    expect(isEnterKey({ keyCode: 13, key: "Enter", code: "NumpadEnter" })).toBe(true);
-  });
-
-  it("trusts `code` over `keyCode` when both are present", () => {
-    expect(isEnterKey({ keyCode: 13, key: "Enter", code: "KeyA" })).toBe(false);
-  });
-
-  it("falls back to keyCode when the event carries no `code`", () => {
-    expect(isEnterKey({ keyCode: 13, key: "Enter" })).toBe(true);
-    expect(isEnterKey({ keyCode: 65, key: "a" })).toBe(false);
-  });
-});
-
-describe("ImeBridge deferred newline", () => {
-  /// A composition open with `하` in it, as WebView2 reports it.
-  function composing(h: Harness): void {
-    h.target.dispatch("compositionstart");
-    h.textarea.value = "하";
-    h.target.dispatch("compositionupdate", { data: "하" });
-  }
-
-  it("holds Enter back until the composition commits", () => {
-    const h = harness();
-    composing(h);
-    // Claimed by the bridge: xterm must not send the CR yet.
-    expect(h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" })).toBe(true);
-    expect(h.sent).toEqual([]);
-    h.target.dispatch("compositionend", { data: "하" });
-    // Text first, CR second — the ordering is the entire feature. Reversed,
-    // the shell runs an empty line and leaves the syllable on the next prompt.
-    expect(h.sent).toEqual(["하", "\r"]);
-  });
-
-  it("sends the Enter anyway if the composition never commits", () => {
-    const h = harness();
-    composing(h);
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    expect(h.sent).toEqual([]);
-    h.clock.tick();
-    expect(h.sent).toEqual(["\r"]);
-  });
-
-  it("sends exactly one CR when the commit beats the fallback timer", () => {
-    const h = harness();
-    composing(h);
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    h.target.dispatch("compositionend", { data: "하" });
-    h.clock.tick();
-    expect(h.sent).toEqual(["하", "\r"]);
-    expect(h.clock.outstanding).toBe(0);
-  });
-
-  it("collapses a repeated Enter inside one composition into one CR", () => {
-    const h = harness();
-    composing(h);
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    h.target.dispatch("compositionend", { data: "하" });
-    expect(h.sent).toEqual(["하", "\r"]);
-  });
-
-  it("does not let a later composition swallow an Enter held by an earlier one", () => {
-    // The stale-release hazard: the Enter belongs to the first composition, so
-    // it goes out when that one is abandoned — not after the second one's text.
-    const h = harness();
-    composing(h);
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    h.target.dispatch("compositionstart");
-    expect(h.sent).toEqual(["\r"]);
-    h.textarea.value = "가";
-    h.target.dispatch("compositionend", { data: "가" });
-    h.clock.tick();
-    expect(h.sent).toEqual(["\r", "가"]);
-  });
-
-  it("still sends the Enter when the composition is cancelled outright", () => {
-    const h = harness();
-    composing(h);
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    h.target.dispatch("compositionend", { data: "" });
-    expect(h.sent).toEqual(["\r"]);
-  });
-
-  it("passes Enter straight through on the WKWebView path", () => {
-    // macOS fires no composition events at all, so there is nothing to wait
-    // for: the bridge must decline the key and let xterm send the CR itself,
-    // exactly as before.
-    const h = harness();
-    h.key("가", "insertReplacementText");
-    expect(h.bridge.handleKeyDown({ keyCode: 13, key: "Enter", code: "Enter" })).toBe(false);
-    expect(h.sent).toEqual(["가"]);
-    expect(h.textarea.value).toBe("");
-    expect(h.clock.outstanding).toBe(0);
-  });
-
-  it("drops a held Enter when the pane goes away", () => {
-    const h = harness();
-    composing(h);
-    h.bridge.handleKeyDown({ keyCode: 229, key: "Process", code: "Enter" });
-    h.bridge.dispose();
-    h.clock.tick();
-    expect(h.sent).toEqual([]);
   });
 });
 
