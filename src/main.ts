@@ -2,6 +2,8 @@
 // detected shells from the Rust backend, then mounts the workspace bar and
 // workspace host and wires keyboard shortcuts.
 
+// MUST be the first import: refuses to boot inside a frame (security).
+import "./bootGuard";
 import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";

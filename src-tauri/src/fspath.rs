@@ -109,6 +109,16 @@ pub fn caller_allowed(label: &str) -> bool {
 /// top-level document and can forge `Origin` — which is why the label check
 /// ([`caller_allowed`]) is not optional. If a wry/Tauri upgrade ever starts
 /// handling frame web messages, this reasoning must be revisited.
+///
+/// ## What this cannot see: ymux's own document inside a frame
+///
+/// If a `browser` pane framed `http://tauri.localhost/` itself, that frame's
+/// requests would carry label `main` *and* the local Origin, and nothing in
+/// the request tells a subframe from the top-level document (the fetch
+/// headers — `Sec-Fetch-*`, `Referer` — are the same for both). That case is
+/// stopped before it can issue a request: the CSP's `frame-ancestors 'none'`
+/// refuses the load, and `src/bootGuard.ts` refuses to boot when
+/// `window.top !== window`.
 pub fn origin_is_local<S: AsRef<str>>(origin: Option<&str>, allowed: &[S]) -> bool {
     let Some(origin) = origin else {
         return false;
