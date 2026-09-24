@@ -2,13 +2,12 @@
 name = "ylauncher"
 version = "0.1.0"
 edition = "2021"
-description = "Launcher CLI for the ymux tool family — lists and dispatches y* tools"
+description = "The `y` binary: relays Claude Code hook events into ymux's agent tree"
 
 [[bin]]
 name = "y"
 path = "src/main.rs"
 
 [dependencies]
-ytheme = { path = "../../crates/ytheme" }
 yipc = { path = "../../crates/yipc" }
 serde_json = "1"
