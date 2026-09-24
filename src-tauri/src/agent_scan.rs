@@ -2,7 +2,7 @@
 //! shell. The matcher and tree walk are pure (tested on Linux); only the
 //! sysinfo refresh + emit loop is desktop-gated.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use uuid::Uuid;
@@ -15,6 +15,10 @@ pub struct ProcEntry {
     /// Executable file stem: `claude` for `/usr/local/bin/claude` or `claude.exe`.
     pub exe_stem: String,
     pub argv: Vec<String>,
+    /// Process start, whole seconds since the Unix epoch (0 when unknown).
+    pub start_secs: u64,
+    /// Working directory, when the OS let us read it.
+    pub cwd: Option<String>,
 }
 
 /// Executables that are an agent by name.
@@ -76,6 +80,7 @@ pub fn exe_stem(exe: Option<&Path>, name: &str) -> String {
 /// Parent → children index over one process snapshot.
 pub struct ProcTree<'a> {
     children: HashMap<u32, Vec<&'a ProcEntry>>,
+    by_pid: HashMap<u32, &'a ProcEntry>,
 }
 
 impl<'a> ProcTree<'a> {
@@ -89,12 +94,18 @@ impl<'a> ProcTree<'a> {
         for list in children.values_mut() {
             list.sort_by_key(|p| p.pid);
         }
-        Self { children }
+        let by_pid = procs.iter().map(|p| (p.pid, p)).collect();
+        Self { children, by_pid }
     }
 
     /// Breadth-first from `root_pid` (exclusive): the agent closest to the
     /// shell wins. Cycle-safe against PID reuse.
     pub fn agent_under(&self, root_pid: u32) -> Option<&'static str> {
+        self.agent_proc_under(root_pid).map(|(kind, _)| kind)
+    }
+
+    /// [`ProcTree::agent_under`], with the process itself.
+    pub fn agent_proc_under(&self, root_pid: u32) -> Option<(&'static str, &'a ProcEntry)> {
         let mut seen: HashSet<u32> = HashSet::from([root_pid]);
         let mut queue: VecDeque<u32> = VecDeque::from([root_pid]);
         while let Some(pid) = queue.pop_front() {
@@ -103,12 +114,51 @@ impl<'a> ProcTree<'a> {
                     continue;
                 }
                 if let Some(kind) = match_agent(&child.exe_stem, &child.argv) {
-                    return Some(kind);
+                    return Some((kind, child));
                 }
                 queue.push_back(child.pid);
             }
         }
         None
+    }
+
+    /// `pid` and every descendant of it. Cycle-safe against PID reuse.
+    pub fn subtree(&self, pid: u32) -> BTreeSet<u32> {
+        let mut out = BTreeSet::from([pid]);
+        let mut queue = VecDeque::from([pid]);
+        while let Some(p) = queue.pop_front() {
+            for child in self.children.get(&p).map(Vec::as_slice).unwrap_or(&[]) {
+                if out.insert(child.pid) {
+                    queue.push_back(child.pid);
+                }
+            }
+        }
+        out
+    }
+
+    /// Every running agent on the machine, once: an agent process whose
+    /// *direct* parent is itself an agent (a node wrapper's native child, a
+    /// daemon's pty host) is the same agent, not a second one.
+    ///
+    /// Only the direct parent counts. An agent further up the tree — ymux
+    /// itself started from an agent's shell, say — does not make the agents
+    /// in ymux's panes part of it; they are separate conversations.
+    pub fn root_agents(&self) -> Vec<(&'static str, &'a ProcEntry)> {
+        let mut out: Vec<(&'static str, &'a ProcEntry)> = self
+            .by_pid
+            .values()
+            .filter_map(|p| match_agent(&p.exe_stem, &p.argv).map(|k| (k, *p)))
+            .filter(|(_, p)| !self.parent_is_agent(p))
+            .collect();
+        out.sort_by_key(|(_, p)| p.pid);
+        out
+    }
+
+    fn parent_is_agent(&self, p: &ProcEntry) -> bool {
+        p.parent
+            .filter(|pp| *pp != p.pid)
+            .and_then(|pp| self.by_pid.get(&pp))
+            .is_some_and(|parent| match_agent(&parent.exe_stem, &parent.argv).is_some())
     }
 
     /// The deepest descendant of `root_pid` (exclusive): a shell that reached
@@ -183,6 +233,78 @@ pub fn scan_panes(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<U
         .collect()
 }
 
+/// The agent process found under one pane's shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneAgent {
+    pub kind: String,
+    pub process: crate::agent_binding::PaneProcess,
+}
+
+/// `pane id → its agent process` for every pane whose shell has one: the same
+/// agent [`scan_panes`] reports, with what `agent_binding` needs to tell which
+/// conversation that process is running.
+pub fn scan_pane_agents(
+    shells: &HashMap<Uuid, u32>,
+    procs: &[ProcEntry],
+) -> HashMap<Uuid, PaneAgent> {
+    let tree = ProcTree::new(procs);
+    shells
+        .iter()
+        .filter_map(|(id, pid)| {
+            let (kind, p) = tree.agent_proc_under(*pid)?;
+            Some((
+                *id,
+                PaneAgent {
+                    kind: kind.to_string(),
+                    process: crate::agent_binding::PaneProcess {
+                        pid: p.pid,
+                        start_secs: p.start_secs,
+                        argv: p.argv.clone(),
+                        subtree: tree.subtree(p.pid),
+                    },
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Every running agent ymux knows how to resume, as `agent_binding` weighs a
+/// competing author of a transcript. `known_id` is filled from the process's
+/// own argv and, for Claude, from `pid_file_id` (its per-process file).
+pub fn other_agents(
+    procs: &[ProcEntry],
+    mut pid_file_id: impl FnMut(&crate::agent_binding::PaneProcess) -> Option<String>,
+) -> Vec<crate::agent_binding::OtherAgent> {
+    use crate::agent_sessions::AgentKind;
+    let tree = ProcTree::new(procs);
+    tree.root_agents()
+        .into_iter()
+        .filter_map(|(kind, p)| {
+            let kind = AgentKind::from_kind(kind)?;
+            let as_pane = crate::agent_binding::PaneProcess {
+                pid: p.pid,
+                start_secs: p.start_secs,
+                argv: p.argv.clone(),
+                subtree: BTreeSet::from([p.pid]),
+            };
+            let known_id = crate::agent_binding::argv_session_id(kind, &p.argv).or_else(|| {
+                if kind == AgentKind::Claude {
+                    pid_file_id(&as_pane)
+                } else {
+                    None
+                }
+            });
+            Some(crate::agent_binding::OtherAgent {
+                kind,
+                pid: p.pid,
+                start_secs: p.start_secs,
+                cwd: p.cwd.clone(),
+                known_id,
+            })
+        })
+        .collect()
+}
+
 /// How often the process tree is re-scanned.
 #[cfg(feature = "desktop")]
 const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -196,6 +318,7 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     use tauri::Manager;
 
+    use crate::agent_scan_disk::claude_pid_file_id;
     use crate::agent_sessions::SharedSessions;
     use crate::agents::SharedAgents;
     use crate::commands::{emit_agents_changed, flush_sessions, observe_pane_session, AppState};
@@ -204,14 +327,19 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
         .name("ymux-agent-scan".into())
         .spawn(move || {
             let mut sys = System::new();
+            // `cwd` is read once per process, like exe and argv: it is how an
+            // agent in some other terminal is told apart from one that could
+            // have written a transcript in a pane's directory
+            // (`agent_binding::guess_transcript`).
             let refresh = ProcessRefreshKind::nothing()
                 .with_exe(UpdateKind::OnlyIfNotSet)
-                .with_cmd(UpdateKind::OnlyIfNotSet);
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .with_cwd(UpdateKind::OnlyIfNotSet);
             loop {
                 std::thread::sleep(SCAN_INTERVAL);
                 let shells = app.state::<AppState>().pty.pids_snapshot();
-                let (found, labels) = if shells.is_empty() {
-                    (HashMap::new(), HashMap::new())
+                let (found, labels, pane_agents, others) = if shells.is_empty() {
+                    (HashMap::new(), HashMap::new(), HashMap::new(), Vec::new())
                 } else {
                     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
                     let procs: Vec<ProcEntry> = sys
@@ -226,9 +354,24 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                                 .iter()
                                 .map(|a| a.to_string_lossy().into_owned())
                                 .collect(),
+                            start_secs: p.start_time(),
+                            cwd: p.cwd().map(|c| c.to_string_lossy().into_owned()),
                         })
                         .collect();
-                    (scan_panes(&shells, &procs), scan_labels(&shells, &procs))
+                    let pane_agents = scan_pane_agents(&shells, &procs);
+                    // Only worth enumerating every agent on the machine when a
+                    // pane has one whose conversation may need guessing.
+                    let others = if pane_agents.is_empty() {
+                        Vec::new()
+                    } else {
+                        other_agents(&procs, claude_pid_file_id)
+                    };
+                    (
+                        scan_panes(&shells, &procs),
+                        scan_labels(&shells, &procs),
+                        pane_agents,
+                        others,
+                    )
                 };
                 {
                     // Tab labels are separate state from the agent registry and
@@ -262,6 +405,13 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                         )
                     })
                     .collect();
+                // Claude's own pid file for each pane's agent, read outside
+                // every lock (it is a file open per Claude pane per tick).
+                let pid_file_ids: HashMap<Uuid, String> = pane_agents
+                    .iter()
+                    .filter(|(_, a)| a.kind == "claude")
+                    .filter_map(|(id, a)| claude_pid_file_id(&a.process).map(|s| (*id, s)))
+                    .collect();
                 // Registry lock first, session lock second — the same order
                 // `apply_agent_hook` uses, so the two threads cannot deadlock.
                 drop(reg);
@@ -272,19 +422,35 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 }
                 for (id, kind, hook_id) in observations {
                     // The scan cannot see what the agent is doing, only that
-                    // it is there; the frontend derives a process lead's
-                    // status from the pane's own machine, and `working` is
-                    // the conservative answer for `interrupted`.
+                    // it is there, so it reports no status: a hook's stays,
+                    // and a record with none starts at `working` (the
+                    // conservative answer for `interrupted`).
                     observe_pane_session(
                         &app,
                         &mut tracker,
-                        id,
-                        &kind,
-                        crate::agents::AgentStatus::Working,
-                        hook_id,
+                        crate::commands::PaneSessionInput {
+                            pane_id: id,
+                            kind: &kind,
+                            status: None,
+                            hook_session_id: hook_id,
+                            process: pane_agents.get(&id).map(|a| a.process.clone()),
+                            pid_file_session_id: pid_file_ids.get(&id).cloned(),
+                            others: &others,
+                        },
                     );
                 }
+                // A resume that never produced a running agent is declined;
+                // one the scan (or a hook) just confirmed no longer needs
+                // the pane's old scrollback.
+                tracker.expire_pending(crate::agent_sessions::now_secs());
+                let confirmed = tracker.take_confirmed();
                 flush_sessions(&mut tracker);
+                drop(tracker);
+                for pane in confirmed {
+                    if let Err(e) = crate::scrollback::delete_blob(&pane.to_string()) {
+                        tracing::warn!(error = %e, %pane, "deleting a resumed pane's scrollback failed");
+                    }
+                }
             }
         })
         .expect("spawn agent scan thread");
@@ -304,7 +470,131 @@ mod tests {
             parent,
             exe_stem: stem.into(),
             argv: argv(args),
+            start_secs: 0,
+            cwd: None,
         }
+    }
+
+    #[test]
+    fn pane_agent_carries_its_process_identity_and_subtree() {
+        // shell(10) -> node claude-code(12) -> rg(13)
+        let mut procs = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(
+                12,
+                Some(10),
+                "node",
+                &[
+                    "node",
+                    "/n/@anthropic-ai/claude-code/cli.js",
+                    "--resume",
+                    "abc-1",
+                ],
+            ),
+            proc(13, Some(12), "rg", &["rg"]),
+        ];
+        procs[1].start_secs = 1_000;
+        let id = Uuid::new_v4();
+        let shells: HashMap<Uuid, u32> = [(id, 10)].into_iter().collect();
+        let found = scan_pane_agents(&shells, &procs);
+        let a = &found[&id];
+        assert_eq!(a.kind, "claude");
+        assert_eq!(a.process.pid, 12);
+        assert_eq!(a.process.start_secs, 1_000);
+        assert_eq!(a.process.argv[2], "--resume");
+        assert_eq!(
+            a.process.subtree.iter().copied().collect::<Vec<_>>(),
+            vec![12, 13]
+        );
+    }
+
+    #[test]
+    fn agents_in_panes_of_a_ymux_started_from_an_agent_are_still_agents() {
+        // outer claude(1) -> node(2) -> ymux(3) -> pwsh(4) -> claude(5)
+        //                                       -> pwsh(6) -> claude(7)
+        let procs = vec![
+            proc(1, None, "claude", &["claude"]),
+            proc(2, Some(1), "node", &["node", "vite.js"]),
+            proc(3, Some(2), "ymux", &["ymux"]),
+            proc(4, Some(3), "pwsh", &[]),
+            proc(5, Some(4), "claude", &["claude"]),
+            proc(6, Some(3), "pwsh", &[]),
+            proc(7, Some(6), "claude", &["claude"]),
+        ];
+        let pids: Vec<u32> = other_agents(&procs, |_| None)
+            .iter()
+            .map(|o| o.pid)
+            .collect();
+        assert_eq!(pids, vec![1, 5, 7]);
+    }
+
+    #[test]
+    fn a_claude_daemon_chain_is_one_agent() {
+        // Seen in the wild: `claude daemon run` -> `claude --bg-pty-host … --
+        // claude --session-id …` -> `claude --session-id …`.
+        let procs = vec![
+            proc(10, Some(1), "claude", &["claude", "daemon", "run"]),
+            proc(11, Some(10), "claude", &["claude", "--bg-pty-host"]),
+            proc(12, Some(11), "claude", &["claude", "--session-id", "abc-1"]),
+        ];
+        let pids: Vec<u32> = other_agents(&procs, |_| None)
+            .iter()
+            .map(|o| o.pid)
+            .collect();
+        assert_eq!(pids, vec![10]);
+    }
+
+    /// The scan's refresh kind must actually populate what binding relies on:
+    /// with `start_time` left at 0, "began at or after the process started"
+    /// would accept yesterday's transcript, and every pid file would fail its
+    /// start-time check.
+    #[test]
+    fn the_scan_refresh_populates_start_time_and_cwd() {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+        let refresh = ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .with_cwd(UpdateKind::OnlyIfNotSet);
+        let me = Pid::from_u32(std::process::id());
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[me]), true, refresh);
+        let p = sys.process(me).expect("this test process");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(p.start_time() > 0, "start_time must be populated");
+        assert!(p.start_time() <= now + 1);
+        assert!(p.cwd().is_some(), "cwd must be populated");
+    }
+
+    #[test]
+    fn other_agents_lists_each_running_agent_once_with_what_it_is_known_to_hold() {
+        let id = "aaaaaaaa-0000-0000-0000-00000000000a";
+        let mut procs = vec![
+            // A node-hosted Codex whose native child also matches: one agent.
+            proc(
+                20,
+                Some(1),
+                "node",
+                &["node", "/n/@openai/codex/bin/codex.js"],
+            ),
+            proc(21, Some(20), "codex", &["codex"]),
+            // A Claude in some other terminal, resumed by id.
+            proc(30, Some(2), "claude", &["claude", "--resume", id]),
+            // A Claude with nothing in its argv; its pid file says.
+            proc(40, Some(3), "claude", &["claude"]),
+            // Gemini: no resume story, so not a competitor for anything.
+            proc(50, Some(4), "gemini", &["gemini"]),
+        ];
+        procs[3].cwd = Some("/w".into());
+        let others = other_agents(&procs, |p| (p.pid == 40).then(|| "bbbb-1".to_string()));
+        let pids: Vec<u32> = others.iter().map(|o| o.pid).collect();
+        assert_eq!(pids, vec![20, 30, 40]);
+        assert_eq!(others[0].known_id, None);
+        assert_eq!(others[1].known_id.as_deref(), Some(id));
+        assert_eq!(others[2].known_id.as_deref(), Some("bbbb-1"));
+        assert_eq!(others[2].cwd.as_deref(), Some("/w"));
     }
 
     #[test]

@@ -52,19 +52,6 @@ export function spawnAction(params: {
   return { kind: "fresh", missingAgent };
 }
 
-/// Whether this pane should save its scrollback at all.
-///
-/// A pane that resumes its agent neither restores nor saves (spec §5): the
-/// blob it would write is a picture of a conversation that is being continued
-/// for real, and keeping it would only feed the next launch something to
-/// replay above the resumed session.
-export function shouldPersistScrollback(params: {
-  persistEnabled: boolean;
-  resuming: boolean;
-}): boolean {
-  return params.persistEnabled && !params.resuming;
-}
-
 /// Coarse "3 hours ago" for the resume banner.
 ///
 /// Deliberately coarse: the banner is one line of reassurance, not a

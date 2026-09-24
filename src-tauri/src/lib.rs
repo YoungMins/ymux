@@ -4,6 +4,8 @@
 //! `cargo clippy` work even on hosts where the full Tauri runtime toolchain
 //! (WebView2, bundler, etc.) is not available.
 
+// Which conversation a pane's agent process is running (pure).
+pub mod agent_binding;
 pub mod agent_hooks;
 pub mod agent_scan;
 pub mod agent_scan_disk;

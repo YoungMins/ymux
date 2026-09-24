@@ -22,7 +22,6 @@
 //! at most [`MAX_CANDIDATES`] files whose mtime is inside the freshness
 //! window — on the machine this was written on, 3 of 847.
 
-use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -57,6 +56,18 @@ pub struct DiskSession {
     /// The cwd as the transcript itself recorded it (raw spelling).
     pub cwd: String,
     pub modified: SystemTime,
+    /// When the conversation began, in seconds since the Unix epoch, as the
+    /// transcript itself records it — the first top-level `timestamp` of a
+    /// Claude transcript, `session_meta.payload.timestamp` of a Codex rollout.
+    ///
+    /// Deliberately *not* the file's creation time. Claude rewrites the head
+    /// of a live transcript (the `last-prompt` / `mode` / `ai-title` records
+    /// sit above the first conversation record, and move as the session
+    /// goes on), so a file's birth time is the last rewrite, not the start of
+    /// the conversation. The recorded timestamp is written once and carried
+    /// along. `None` when the head has none; such a transcript can never be
+    /// bound by timestamp (see `agent_binding`).
+    pub created: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -159,9 +170,11 @@ pub struct ClaudeMeta {
     /// `"cli"` for a terminal session, `"claude-desktop"` for the desktop app.
     /// Only a `cli` session can have been the thing running in a ymux pane.
     pub entrypoint: Option<String>,
+    /// The first top-level `timestamp` in the head, in epoch seconds.
+    pub created: Option<u64>,
 }
 
-/// Parse the head of a Claude transcript (JSONL). Stops as soon as both
+/// Parse the head of a Claude transcript (JSONL). Stops as soon as all three
 /// fields are known, and ignores any line that is not a JSON object — the
 /// first few records are small control entries (`last-prompt`, `mode`,
 /// `permission-mode`, `atis-latch`) that carry neither field.
@@ -183,7 +196,13 @@ pub fn parse_claude_head(head: &str) -> ClaudeMeta {
                 meta.entrypoint = Some(s.to_string());
             }
         }
-        if meta.cwd.is_some() && meta.entrypoint.is_some() {
+        if meta.created.is_none() {
+            meta.created = v
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .and_then(parse_rfc3339_secs);
+        }
+        if meta.cwd.is_some() && meta.entrypoint.is_some() && meta.created.is_some() {
             break;
         }
     }
@@ -203,6 +222,10 @@ pub struct CodexMeta {
     /// a subagent rollout — the object `{"subagent": {…}}`, which reads back
     /// here as `None`.
     pub source: Option<String>,
+    /// `payload.timestamp` (falling back to the line's own `timestamp`), in
+    /// epoch seconds: when the session was created. A resumed session keeps
+    /// appending to its original rollout, so this stays the original date.
+    pub created: Option<u64>,
 }
 
 /// Parse a Codex rollout's first line.
@@ -235,10 +258,16 @@ pub fn parse_codex_meta(first_line: &str) -> Option<CodexMeta> {
     if cwd.is_empty() {
         return None;
     }
+    let created = p
+        .get("timestamp")
+        .or_else(|| v.get("timestamp"))
+        .and_then(|t| t.as_str())
+        .and_then(parse_rfc3339_secs);
     Some(CodexMeta {
         id,
         cwd,
         source: p.get("source").and_then(|x| x.as_str()).map(str::to_string),
+        created,
     })
 }
 
@@ -323,7 +352,8 @@ fn candidates_in(
     out
 }
 
-/// Newest resumable Claude session for `cwd` under a `.claude/projects` root.
+/// Every resumable Claude transcript for `cwd` under a `.claude/projects`
+/// root, newest (by mtime) first.
 ///
 /// The project directory name is derived from `cwd`, so this is one
 /// `read_dir` of the projects root (22 entries here) plus one of the matching
@@ -331,15 +361,18 @@ fn candidates_in(
 /// *inside* the transcript with `ypath::same_path` (rule 15) — mangling folds
 /// `_`, `.` and `-` together, so the directory name alone cannot prove a
 /// match.
-pub fn newest_claude_session(
-    projects_root: &Path,
-    cwd: &str,
-    now: SystemTime,
-    claimed: &HashSet<String>,
-) -> Option<DiskSession> {
+///
+/// This only says which transcripts *could* belong to a pane in `cwd`; which
+/// one actually does is `agent_binding`'s decision, made against the agent
+/// process running in the pane. "The newest one here" is not an answer: it
+/// is whichever conversation anyone touched last in that directory.
+pub fn claude_candidates(projects_root: &Path, cwd: &str, now: SystemTime) -> Vec<DiskSession> {
     let mut budget = MAX_DIR_ENTRIES;
     let mut dirs: Vec<PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(projects_root).ok()?.flatten() {
+    let Ok(entries) = std::fs::read_dir(projects_root) else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
         if budget == 0 {
             break;
         }
@@ -350,42 +383,45 @@ pub fn newest_claude_session(
             dirs.push(entry.path());
         }
     }
-    let mut best: Option<DiskSession> = None;
+    let mut all: Vec<Candidate> = Vec::new();
     for dir in dirs {
-        for c in candidates_in(&dir, now, FRESH_WINDOW, &mut budget) {
-            if best.as_ref().is_some_and(|b| b.modified >= c.modified) {
-                continue;
-            }
-            let Some(stem) = c.path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if !is_valid_session_id(stem) || claimed.contains(stem) {
-                continue;
-            }
-            let Some(head) = read_head(&c.path, MAX_HEAD_LINES) else {
-                continue;
-            };
-            let meta = parse_claude_head(&head);
-            // A transcript with no recorded cwd cannot be confirmed, and one
-            // started from the desktop app was never in a terminal.
-            let Some(found_cwd) = meta.cwd else { continue };
-            if meta.entrypoint.as_deref() != Some("cli") {
-                continue;
-            }
-            if !ypath::same_path(cwd, &found_cwd) {
-                continue;
-            }
-            best = Some(DiskSession {
-                session_id: stem.to_string(),
-                cwd: found_cwd,
-                modified: c.modified,
-            });
-        }
+        all.extend(candidates_in(&dir, now, FRESH_WINDOW, &mut budget));
     }
-    best
+    all.sort_by_key(|c| std::cmp::Reverse(c.modified));
+    all.truncate(MAX_CANDIDATES);
+    let mut out = Vec::new();
+    for c in all {
+        let Some(stem) = c.path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !is_valid_session_id(stem) {
+            continue;
+        }
+        let Some(head) = read_head(&c.path, MAX_HEAD_LINES) else {
+            continue;
+        };
+        let meta = parse_claude_head(&head);
+        // A transcript with no recorded cwd cannot be confirmed, and one
+        // started from the desktop app was never in a terminal.
+        let Some(found_cwd) = meta.cwd else { continue };
+        if meta.entrypoint.as_deref() != Some("cli") {
+            continue;
+        }
+        if !ypath::same_path(cwd, &found_cwd) {
+            continue;
+        }
+        out.push(DiskSession {
+            session_id: stem.to_string(),
+            cwd: found_cwd,
+            modified: c.modified,
+            created: meta.created,
+        });
+    }
+    out
 }
 
-/// Newest resumable Codex session for `cwd` under a `.codex/sessions` root.
+/// Every resumable Codex rollout for `cwd` under a `.codex/sessions` root,
+/// newest (by mtime) first. See [`claude_candidates`] for why this is a list.
 ///
 /// The tree is `YYYY/MM/DD/`, but the date directory is *not* a usable filter:
 /// 44 of the 847 rollouts here have an mtime on a later day than their
@@ -393,12 +429,7 @@ pub fn newest_claude_session(
 /// Narrowing by directory date would therefore skip exactly the sessions most
 /// worth resuming. Instead every day directory is listed — `read_dir` only,
 /// no file is opened — and the mtime window does the narrowing: 3 of 847 here.
-pub fn newest_codex_session(
-    sessions_root: &Path,
-    cwd: &str,
-    now: SystemTime,
-    claimed: &HashSet<String>,
-) -> Option<DiskSession> {
+pub fn codex_candidates(sessions_root: &Path, cwd: &str, now: SystemTime) -> Vec<DiskSession> {
     let mut budget = MAX_DIR_ENTRIES;
     let mut all: Vec<Candidate> = Vec::new();
     // YYYY / MM / DD
@@ -427,6 +458,7 @@ pub fn newest_codex_session(
     all.sort_by_key(|c| std::cmp::Reverse(c.modified));
     all.truncate(MAX_CANDIDATES);
 
+    let mut out = Vec::new();
     for c in all {
         let Some(head) = read_head(&c.path, 1) else {
             continue;
@@ -434,19 +466,82 @@ pub fn newest_codex_session(
         let Some(meta) = parse_codex_meta(head.trim_end()) else {
             continue;
         };
-        if !codex_is_resumable(&meta)
-            || claimed.contains(&meta.id)
-            || !ypath::same_path(cwd, &meta.cwd)
-        {
+        if !codex_is_resumable(&meta) || !ypath::same_path(cwd, &meta.cwd) {
             continue;
         }
-        return Some(DiskSession {
+        out.push(DiskSession {
             session_id: meta.id,
             cwd: meta.cwd,
             modified: c.modified,
+            created: meta.created,
         });
     }
-    None
+    out
+}
+
+/// Seconds since the Unix epoch for an RFC 3339 timestamp as both CLIs write
+/// them (`2026-09-18T12:31:01.889Z`, or with a `±HH:MM` offset). Fractional
+/// seconds are dropped — rounding *down* — which is the safe direction for
+/// "was this conversation created at or after that process started?": the
+/// process start time is whole seconds rounded down too, so a transcript
+/// written after the process began can never compare as earlier.
+///
+/// Hand-rolled because the crate has no date library and this is the only
+/// place that needs one. `None` for anything it does not fully understand.
+pub fn parse_rfc3339_secs(s: &str) -> Option<u64> {
+    let b = s.as_bytes();
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') {
+        return None;
+    }
+    if b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| -> Option<i64> {
+        let part = s.get(r)?;
+        if part.is_empty() || !part.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        part.parse().ok()
+    };
+    let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (hour, min, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    // Skip fractional seconds, then read the zone.
+    let mut i = 19;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        let start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+    }
+    let offset = match *b.get(i)? {
+        b'Z' | b'z' if i + 1 == b.len() => 0,
+        sign @ (b'+' | b'-') if i + 6 == b.len() && b[i + 3] == b':' => {
+            let off = num(i + 1..i + 3)? * 3600 + num(i + 4..i + 6)? * 60;
+            if sign == b'+' {
+                off
+            } else {
+                -off
+            }
+        }
+        _ => return None,
+    };
+    // Days from civil (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + hour * 3600 + min * 60 + sec - offset;
+    u64::try_from(secs).ok()
 }
 
 /// `~/.claude/projects`, or `None` if the OS has no home directory.
@@ -459,48 +554,95 @@ pub fn codex_sessions_root() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".codex").join("sessions"))
 }
 
-/// Newest resumable session for `agent` in `cwd`, against the real transcript
-/// roots in the user's home directory.
-///
-/// `claimed` holds the session ids other panes already own. Skipping them is
-/// what keeps two panes open in the same directory from converging on one
-/// conversation: without it, a rescan 30 s later would hand pane A the newest
-/// transcript in that directory, which is pane B's.
-pub fn newest_session(
-    agent: AgentKind,
-    cwd: &str,
-    claimed: &HashSet<String>,
-) -> Option<DiskSession> {
+/// Every transcript for `agent` in `cwd` that a pane could be running,
+/// against the real transcript roots in the user's home directory.
+pub fn candidate_sessions(agent: AgentKind, cwd: &str) -> Vec<DiskSession> {
+    let root = match agent {
+        AgentKind::Claude => claude_projects_root(),
+        AgentKind::Codex => codex_sessions_root(),
+    };
+    let Some(root) = root else {
+        return Vec::new();
+    };
     let now = SystemTime::now();
     match agent {
-        AgentKind::Claude => newest_claude_session(&claude_projects_root()?, cwd, now, claimed),
-        AgentKind::Codex => newest_codex_session(&codex_sessions_root()?, cwd, now, claimed),
+        AgentKind::Claude => claude_candidates(&root, cwd, now),
+        AgentKind::Codex => codex_candidates(&root, cwd, now),
     }
 }
 
+/// `~/.claude/sessions`: one `<pid>.json` per running interactive Claude.
+pub fn claude_pid_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude").join("sessions"))
+}
+
+/// Largest pid file believed. The real ones are under 1 KB.
+const MAX_PID_FILE_BYTES: u64 = 64 * 1024;
+
+/// Read `<dir>/<pid>.json` — by name, never by listing the directory. Missing,
+/// oversized or unparseable is `None`: the file is undocumented, so anything
+/// unexpected means "don't know".
+pub fn read_claude_pid_file(dir: &Path, pid: u32) -> Option<crate::agent_binding::ClaudePidFile> {
+    let path = dir.join(format!("{pid}.json"));
+    if std::fs::metadata(&path).ok()?.len() > MAX_PID_FILE_BYTES {
+        return None;
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    crate::agent_binding::parse_claude_pid_file(&text).filter(|f| f.pid == pid)
+}
+
+/// The session id Claude's own pid file names for `proc`, when it is
+/// believable (`agent_binding::registry_session_id`).
+pub fn claude_pid_file_id(proc: &crate::agent_binding::PaneProcess) -> Option<String> {
+    let file = read_claude_pid_file(&claude_pid_dir()?, proc.pid)?;
+    crate::agent_binding::registry_session_id(proc, &file)
+}
+
+/// Directory entries one existence check may visit. The check runs as a pane
+/// spawns, so it is bounded well below [`MAX_DIR_ENTRIES`]; the fast paths
+/// below make the typical answer a single `stat`.
+pub const MAX_EXISTS_ENTRIES: usize = 5_000;
+
 /// Whether the transcript for `session_id` is still on disk.
 ///
-/// Deliberately a *search by id*, not a path rebuilt from the record's `cwd`.
-/// Two reasons, one per agent:
+/// A *search by id*, not only a path rebuilt from the record's `cwd`. Two
+/// reasons, one per agent:
 ///
 /// * Claude's directory name is derived from the cwd, and the spelling in the
 ///   record came from whatever produced it — a hook-borne record carries the
 ///   shell's OSC 7 spelling, which from Git Bash is `/d/Git/ymux`, not
-///   `D:\Git\ymux`. Rebuilding the name from that finds nothing.
+///   `D:\Git\ymux`. So the directory `cwd_hint` mangles to is tried first
+///   (one `stat`, and right for every disk-scanned record), and only then
+///   every project directory.
 /// * Codex's filename embeds a timestamp *before* the id, so there is no path
 ///   to rebuild at all; and asking "is this still the newest session here?"
 ///   would decline a perfectly good resume as soon as any later Codex run
-///   touched the same directory.
+///   touched the same directory. The date tree is walked newest first, since
+///   a resumable session was active in the last day.
 ///
-/// Both walks read directory entries only — 22 project directories here for
-/// Claude, the date tree for Codex — and open nothing.
-pub fn transcript_exists_under(agent: AgentKind, root: &Path, session_id: &str) -> bool {
+/// Both read directory entries only and open nothing, and both give up
+/// (answering "gone") after `budget` entries.
+pub fn transcript_exists_within(
+    agent: AgentKind,
+    root: &Path,
+    session_id: &str,
+    cwd_hint: &str,
+    mut budget: usize,
+) -> bool {
     if !is_valid_session_id(session_id) {
         return false;
     }
-    let mut budget = MAX_DIR_ENTRIES;
+    let file_name = format!("{session_id}.jsonl");
     match agent {
         AgentKind::Claude => {
+            if !cwd_hint.is_empty()
+                && root
+                    .join(claude_project_dir_name(cwd_hint))
+                    .join(&file_name)
+                    .is_file()
+            {
+                return true;
+            }
             let Ok(entries) = std::fs::read_dir(root) else {
                 return false;
             };
@@ -509,66 +651,160 @@ pub fn transcript_exists_under(agent: AgentKind, root: &Path, session_id: &str) 
                     return false;
                 }
                 budget -= 1;
-                if entry.path().join(format!("{session_id}.jsonl")).is_file() {
+                if entry.path().join(&file_name).is_file() {
                     return true;
                 }
             }
             false
         }
         AgentKind::Codex => {
-            let suffix = format!("-{session_id}.jsonl");
-            let mut level: Vec<PathBuf> = vec![root.to_path_buf()];
-            for depth in 0..4 {
-                let mut next = Vec::new();
-                for dir in &level {
-                    let Ok(entries) = std::fs::read_dir(dir) else {
-                        continue;
-                    };
-                    for entry in entries.flatten() {
-                        if budget == 0 {
-                            return false;
-                        }
-                        budget -= 1;
-                        // `YYYY/MM/DD` are directories; the fourth level is
-                        // the rollout files themselves.
-                        if depth == 3 {
-                            if entry
-                                .file_name()
-                                .to_str()
-                                .is_some_and(|n| n.ends_with(&suffix))
-                            {
-                                return true;
-                            }
-                        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                            next.push(entry.path());
-                        }
-                    }
-                }
-                level = next;
-            }
-            false
+            let suffix = format!("-{file_name}");
+            codex_find(root, 0, &suffix, &mut budget)
         }
     }
+}
+
+/// Depth-first over `YYYY/MM/DD/rollout-*.jsonl`, newest name first at every
+/// level.
+fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut names: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if depth == 3 {
+            if name.ends_with(suffix) {
+                return true;
+            }
+        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            names.push((name, entry.path()));
+        }
+    }
+    names.sort_by(|a, b| b.0.cmp(&a.0));
+    names
+        .iter()
+        .any(|(_, path)| codex_find(path, depth + 1, suffix, budget))
+}
+
+/// [`transcript_exists_within`] with the default budget.
+pub fn transcript_exists_under(
+    agent: AgentKind,
+    root: &Path,
+    session_id: &str,
+    cwd_hint: &str,
+) -> bool {
+    transcript_exists_within(agent, root, session_id, cwd_hint, MAX_EXISTS_ENTRIES)
 }
 
 /// [`transcript_exists_under`] against the real roots in the user's home
 /// directory. A machine with no home directory has no transcripts either, so
 /// nothing is resumable there.
-pub fn transcript_exists(agent: AgentKind, session_id: &str) -> bool {
+pub fn transcript_exists(agent: AgentKind, session_id: &str, cwd_hint: &str) -> bool {
     let root = match agent {
         AgentKind::Claude => claude_projects_root(),
         AgentKind::Codex => codex_sessions_root(),
     };
-    root.is_some_and(|r| transcript_exists_under(agent, &r, session_id))
+    root.is_some_and(|r| transcript_exists_under(agent, &r, session_id, cwd_hint))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// No session ids claimed by other panes.
     fn none() -> HashSet<String> {
         HashSet::new()
+    }
+
+    /// The newest unclaimed candidate — what these ordering and filtering
+    /// tests look at. Which candidate a pane actually gets is decided in
+    /// `agent_binding`, against the process running in it.
+    fn newest_claude_session(
+        root: &Path,
+        cwd: &str,
+        now: SystemTime,
+        claimed: &HashSet<String>,
+    ) -> Option<DiskSession> {
+        claude_candidates(root, cwd, now)
+            .into_iter()
+            .find(|d| !claimed.contains(&d.session_id))
+    }
+
+    fn newest_codex_session(
+        root: &Path,
+        cwd: &str,
+        now: SystemTime,
+        claimed: &HashSet<String>,
+    ) -> Option<DiskSession> {
+        codex_candidates(root, cwd, now)
+            .into_iter()
+            .find(|d| !claimed.contains(&d.session_id))
+    }
+
+    #[test]
+    fn rfc3339_timestamps_parse_to_epoch_seconds() {
+        // 2026-09-18T12:31:01Z = 1789734661 (`date -u -d … +%s`).
+        assert_eq!(
+            parse_rfc3339_secs("2026-09-18T12:31:01.889Z"),
+            Some(1_789_734_661)
+        );
+        assert_eq!(
+            parse_rfc3339_secs("2026-09-18T12:31:01Z"),
+            Some(1_789_734_661)
+        );
+        assert_eq!(
+            parse_rfc3339_secs("2026-09-18T21:31:01+09:00"),
+            Some(1_789_734_661),
+            "an offset is applied"
+        );
+        assert_eq!(parse_rfc3339_secs("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            parse_rfc3339_secs("2000-02-29T00:00:00Z"),
+            Some(951_782_400)
+        );
+        for bad in [
+            "",
+            "yesterday",
+            "2026-09-18",
+            "2026-09-18T12:31:01",
+            "2026-13-18T12:31:01Z",
+            "2026-09-18T12:31:01.Z",
+            "2026-09-18T12:31:01Zjunk",
+        ] {
+            assert_eq!(parse_rfc3339_secs(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn claude_head_reports_when_the_conversation_began() {
+        // The control records at the top carry no timestamp; the first one
+        // that does is the conversation's first record.
+        let head = concat!(
+            r#"{"type":"ai-title","aiTitle":"x","sessionId":"20aebce7"}"#,
+            "\n",
+            r#"{"type":"mode","mode":"normal","sessionId":"20aebce7"}"#,
+            "\n",
+            r#"{"parentUuid":null,"type":"attachment","timestamp":"2026-09-18T12:31:01.889Z","entrypoint":"cli","cwd":"/w"}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-18T12:40:00.000Z"}"#,
+            "\n",
+        );
+        assert_eq!(parse_claude_head(head).created, Some(1_789_734_661));
+    }
+
+    #[test]
+    fn codex_meta_reports_when_the_session_began() {
+        let line = r#"{"timestamp":"2026-09-23T01:54:14.590Z","type":"session_meta","payload":{"id":"01a07644-42b3-7183-a7fd-70379b88af1f","timestamp":"2026-09-23T01:54:14.479Z","cwd":"/w","source":"cli"}}"#;
+        let meta = parse_codex_meta(line).expect("parses");
+        assert_eq!(meta.created, parse_rfc3339_secs("2026-09-23T01:54:14Z"));
     }
 
     fn tempdir(tag: &str) -> PathBuf {
@@ -1013,17 +1249,19 @@ mod tests {
             &root.join("D--Git-ymux").join(format!("{id}.jsonl")),
             &claude_transcript("D:\\Git\\ymux", "cli"),
         );
-        assert!(transcript_exists_under(AgentKind::Claude, &root, id));
+        assert!(transcript_exists_under(AgentKind::Claude, &root, id, ""));
         assert!(!transcript_exists_under(
             AgentKind::Claude,
             &root,
-            "cccccccc-0000-0000-0000-00000000000f"
+            "cccccccc-0000-0000-0000-00000000000f",
+            ""
         ));
         // And it refuses an id that is not safe to build a filename from.
         assert!(!transcript_exists_under(
             AgentKind::Claude,
             &root,
-            "../evil"
+            "../evil",
+            ""
         ));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1045,12 +1283,84 @@ mod tests {
                 "{}",
             );
         }
-        assert!(transcript_exists_under(AgentKind::Codex, &root, mine));
-        assert!(transcript_exists_under(AgentKind::Codex, &root, newer));
+        assert!(transcript_exists_under(AgentKind::Codex, &root, mine, ""));
+        assert!(transcript_exists_under(AgentKind::Codex, &root, newer, ""));
         assert!(!transcript_exists_under(
             AgentKind::Codex,
             &root,
-            "01a00000-0000-0000-0000-00000000002c"
+            "01a00000-0000-0000-0000-00000000002c",
+            ""
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_existence_check_is_one_stat_when_the_cwd_says_where_to_look() {
+        let root = tempdir("claude-exists-fast");
+        let id = "aaaaaaaa-0000-0000-0000-00000000001f";
+        for n in 0..20 {
+            std::fs::create_dir_all(root.join(format!("C--other-{n}"))).expect("mkdir");
+        }
+        write(
+            &root.join("D--Work-proj").join(format!("{id}.jsonl")),
+            &claude_transcript("D:\\Work\\proj", "cli"),
+        );
+        // No directory walk allowed at all: only the derived path is tried.
+        assert!(transcript_exists_within(
+            AgentKind::Claude,
+            &root,
+            id,
+            "D:\\Work\\proj",
+            0
+        ));
+        // A hint spelled differently (Git Bash's OSC 7) misses the fast path
+        // and falls back to the bounded walk.
+        assert!(!transcript_exists_within(
+            AgentKind::Claude,
+            &root,
+            id,
+            "/d/Work/proj",
+            0
+        ));
+        assert!(transcript_exists_within(
+            AgentKind::Claude,
+            &root,
+            id,
+            "/d/Work/proj",
+            100
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_codex_existence_check_walks_newest_first_and_is_bounded() {
+        let root = tempdir("codex-exists-bounded");
+        let recent = "01a00000-0000-0000-0000-00000000003a";
+        // Many old days, and the session in the newest one.
+        for day in 1..=28 {
+            std::fs::create_dir_all(root.join(format!("2025/01/{day:02}"))).expect("mkdir");
+        }
+        write(
+            &root
+                .join("2026/09/23")
+                .join(format!("rollout-2026-09-23T10-00-00-{recent}.jsonl")),
+            "{}",
+        );
+        // Found with a budget far below the size of the tree...
+        assert!(transcript_exists_within(
+            AgentKind::Codex,
+            &root,
+            recent,
+            "",
+            8
+        ));
+        // ...and a budget of nothing finds nothing, rather than walking on.
+        assert!(!transcript_exists_within(
+            AgentKind::Codex,
+            &root,
+            recent,
+            "",
+            1
         ));
         let _ = std::fs::remove_dir_all(&root);
     }

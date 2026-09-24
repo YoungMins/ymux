@@ -292,10 +292,15 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
     observe_pane_session(
         app,
         &mut tracker,
-        ev.pane_id,
-        &lead.kind,
-        lead.status,
-        hook_id,
+        PaneSessionInput {
+            pane_id: ev.pane_id,
+            kind: &lead.kind,
+            status: Some(lead.status),
+            hook_session_id: hook_id,
+            process: None,
+            pid_file_session_id: None,
+            others: &[],
+        },
     );
     flush_sessions(&mut tracker);
 }
@@ -307,24 +312,50 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
 /// saved backlog is dead history that would sit above the resumed
 /// conversation, so it is skipped entirely.
 ///
-/// `startup_cmd` is the pane's own saved startup command, so any selector it
-/// already carries can be stripped rather than fighting ours.
-#[tauri::command]
+/// `startup_cmd` is the pane's own saved startup command, so the flags it
+/// provably carries over are kept (and any selector dropped). `shell` is the
+/// pane's shell profile name: the command is typed into that shell, so it is
+/// quoted by that shell's rules (`agent_sessions::ShellFamily`).
+///
+/// `async` so it runs off the main thread: the session lock is shared with
+/// the scan thread, and the transcript check touches the disk. The lock is
+/// never held across that check.
+#[tauri::command(async)]
 pub fn get_agent_session(
     webview: Webview,
     request: Request<'_>,
+    state: State<'_, AppState>,
     sessions: State<'_, SharedSessions>,
     pane_id: Uuid,
     startup_cmd: Option<String>,
+    shell: Option<String>,
 ) -> YmuxResult<ResumeOutcome> {
     guard_local(&webview, &request, "get_agent_session")?;
-    let tracker = sessions.0.lock();
-    Ok(crate::agent_sessions::outcome_for(
-        tracker.get(pane_id),
+    let family = shell
+        .as_deref()
+        .and_then(|name| {
+            state
+                .config
+                .snapshot()
+                .shell(name)
+                .map(|p| crate::agent_sessions::ShellFamily::from_executable(&p.executable))
+        })
+        .unwrap_or(crate::agent_sessions::ShellFamily::Unknown);
+    let now = crate::agent_sessions::now_secs();
+    // Copy the record out; the disk check below runs without the lock.
+    let record = sessions.0.lock().get(pane_id).cloned();
+    let outcome = crate::agent_sessions::outcome_for(
+        record.as_ref(),
         startup_cmd.as_deref().unwrap_or_default(),
-        crate::agent_sessions::now_secs(),
+        family,
+        now,
         crate::agent_sessions::transcript_exists,
-    ))
+    );
+    // A resume: the frontend types the command next, and until the scan sees
+    // the resumed agent running the pane's old scrollback stays on disk. A
+    // transcript that is gone: the record is declined now.
+    sessions.0.lock().note_outcome(pane_id, &outcome, now);
+    Ok(outcome)
 }
 
 /// Forget a pane's session entirely. Called when the user closes a pane for
@@ -353,31 +384,46 @@ pub fn flush_sessions(tracker: &mut crate::agent_sessions::SessionTracker) {
     }
 }
 
+/// What one caller knows about a pane's agent, for [`observe_pane_session`].
+pub struct PaneSessionInput<'a> {
+    pub pane_id: Uuid,
+    pub kind: &'a str,
+    pub status: Option<crate::agents::AgentStatus>,
+    pub hook_session_id: Option<String>,
+    /// The agent process the scan found; `None` from the hook listener.
+    pub process: Option<crate::agent_binding::PaneProcess>,
+    /// What Claude's pid file says that process is running, already vetted.
+    pub pid_file_session_id: Option<String>,
+    /// Every other agent process on the machine (empty from the hook
+    /// listener, which never guesses).
+    pub others: &'a [crate::agent_binding::OtherAgent],
+}
+
 /// Feed one pane's current state into the session tracker.
 ///
 /// Shared by the hook listener and the process scan so both write the same
-/// store. The transcript lookup is only reached when the tracker's throttle
-/// allows it, and it is skipped entirely for a pane with no known cwd —
-/// without one there is nothing to match a transcript against.
+/// store. The transcript lookup is only reached while the pane's agent process
+/// is not yet tied to a conversation, and it is skipped entirely for a pane
+/// with no known cwd — without one there is nothing to match against.
 pub fn observe_pane_session(
     app: &AppHandle,
     tracker: &mut crate::agent_sessions::SessionTracker,
-    pane_id: Uuid,
-    kind: &str,
-    status: crate::agents::AgentStatus,
-    hook_session_id: Option<String>,
+    input: PaneSessionInput<'_>,
 ) {
     let obs = crate::agent_sessions::PaneObservation {
-        pane_id,
-        kind: kind.to_string(),
-        cwd: app.state::<AppState>().pty.cwd_for(pane_id),
-        status,
-        hook_session_id,
+        pane_id: input.pane_id,
+        kind: input.kind.to_string(),
+        cwd: app.state::<AppState>().pty.cwd_for(input.pane_id),
+        status: input.status,
+        hook_session_id: input.hook_session_id,
+        process: input.process,
+        pid_file_session_id: input.pid_file_session_id,
     };
     tracker.observe(
         &obs,
         crate::agent_sessions::now_secs(),
-        crate::agent_scan_disk::newest_session,
+        input.others,
+        crate::agent_scan_disk::candidate_sessions,
     );
 }
 
@@ -557,7 +603,10 @@ pub fn notify(
 /// Thin wrapper — the actual fs logic lives in [`crate::scrollback`] so it
 /// can be unit-tested without a running webview (and on Linux CI, where this
 /// `desktop`-gated module doesn't even compile).
-#[tauri::command]
+///
+/// `async` so the file write, and the wait for the session lock the scan
+/// thread shares, happen off the main thread.
+#[tauri::command(async)]
 pub fn save_scrollback(
     webview: Webview,
     request: Request<'_>,
@@ -566,23 +615,28 @@ pub fn save_scrollback(
     blob: String,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "save_scrollback")?;
-    // A pane whose agent is mid-conversation neither restores nor saves
-    // (spec §5). Enforced here rather than only in the frontend because the
-    // condition is "has a fresh record", not "was resumed at spawn": the
-    // *first* Claude session in a pane is not resumed, and a blob it wrote
-    // would sit unread until the record went stale and then be replayed —
-    // putting back exactly the dead screen this feature removes. Any blob
-    // already on disk goes with it.
-    let suppressed = Uuid::parse_str(&pane_id).is_ok_and(|id| {
+    // The backend alone decides (spec §5). A pane whose agent is
+    // mid-conversation neither restores nor saves — the condition is "has a
+    // fresh record", not "was resumed at spawn": the *first* Claude session
+    // in a pane is not resumed, and a blob it wrote would sit unread until
+    // the record went stale and then be replayed, putting back exactly the
+    // dead screen this feature removes. A pane whose resume is still
+    // unconfirmed keeps its old blob untouched: if the resume fails, that
+    // blob is what the next launch restores.
+    use crate::agent_sessions::ScrollbackAction;
+    let action = Uuid::parse_str(&pane_id).map_or(ScrollbackAction::Save, |id| {
         sessions
             .0
             .lock()
-            .suppresses_scrollback(id, crate::agent_sessions::now_secs())
+            .scrollback_action(id, crate::agent_sessions::now_secs())
     });
-    if suppressed {
-        return crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io);
+    match action {
+        ScrollbackAction::Save => {
+            crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
+        }
+        ScrollbackAction::Skip => Ok(()),
+        ScrollbackAction::Delete => crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io),
     }
-    crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
 }
 
 /// Load the persisted scrollback for `pane_id`, or an empty string if none
