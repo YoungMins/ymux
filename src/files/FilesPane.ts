@@ -935,7 +935,9 @@ export class FilesPane implements Pane {
         return this.togglePreview();
       case "escape": {
         const clip = getClipboard();
-        if (clip?.mode === "cut") setClipboard(null);
+        // Only the pane that made a cut may cancel it: Esc in another pane
+        // (or the dock) is about *that* pane's selection.
+        if (clip?.mode === "cut" && clip.owner === this.id) setClipboard(null);
         else this.setSel(selectOnly(names, this.sel.cursor));
         return;
       }
@@ -1128,6 +1130,7 @@ export class FilesPane implements Pane {
     if (!targets.length || listed === null) return;
     setClipboard({
       mode,
+      owner: this.id,
       dir: listed,
       items: targets.map((e) => ({ path: e.path, name: e.name, is_dir: e.is_dir })),
     });
