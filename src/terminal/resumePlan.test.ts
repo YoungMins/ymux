@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 
 import {
   spawnAction,
-  shouldPersistScrollback,
   describeAge,
   type ResumePlan,
 } from "./resumePlan";
@@ -62,29 +61,6 @@ describe("spawnAction", () => {
       kind: "fresh",
       missingAgent: "claude",
     });
-  });
-});
-
-describe("shouldPersistScrollback", () => {
-  it("stops saving for a pane that resumed its agent", () => {
-    expect(
-      shouldPersistScrollback({ persistEnabled: true, resuming: true }),
-    ).toBe(false);
-  });
-
-  it("keeps saving for every other pane", () => {
-    expect(
-      shouldPersistScrollback({ persistEnabled: true, resuming: false }),
-    ).toBe(true);
-  });
-
-  it("never saves when persistence is off", () => {
-    expect(
-      shouldPersistScrollback({ persistEnabled: false, resuming: false }),
-    ).toBe(false);
-    expect(
-      shouldPersistScrollback({ persistEnabled: false, resuming: true }),
-    ).toBe(false);
   });
 });
 

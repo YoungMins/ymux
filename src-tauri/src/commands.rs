@@ -337,14 +337,23 @@ pub fn get_agent_session(
                 .map(|p| crate::agent_sessions::ShellFamily::from_executable(&p.executable))
         })
         .unwrap_or(crate::agent_sessions::ShellFamily::Unknown);
-    let tracker = sessions.0.lock();
-    Ok(crate::agent_sessions::outcome_for(
+    let now = crate::agent_sessions::now_secs();
+    let mut tracker = sessions.0.lock();
+    let outcome = crate::agent_sessions::outcome_for(
         tracker.get(pane_id),
         startup_cmd.as_deref().unwrap_or_default(),
         family,
-        crate::agent_sessions::now_secs(),
+        now,
         crate::agent_sessions::transcript_exists,
-    ))
+    );
+    // The frontend types the command next. Until the scan sees the resumed
+    // agent running, the pane's old scrollback stays on disk.
+    if matches!(outcome, ResumeOutcome::Resume { .. }) {
+        if let Some(id) = tracker.get(pane_id).map(|s| s.session_id.clone()) {
+            tracker.begin_resume(pane_id, &id, now);
+        }
+    }
+    Ok(outcome)
 }
 
 /// Forget a pane's session entirely. Called when the user closes a pane for
@@ -582,23 +591,28 @@ pub fn save_scrollback(
     blob: String,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "save_scrollback")?;
-    // A pane whose agent is mid-conversation neither restores nor saves
-    // (spec §5). Enforced here rather than only in the frontend because the
-    // condition is "has a fresh record", not "was resumed at spawn": the
-    // *first* Claude session in a pane is not resumed, and a blob it wrote
-    // would sit unread until the record went stale and then be replayed —
-    // putting back exactly the dead screen this feature removes. Any blob
-    // already on disk goes with it.
-    let suppressed = Uuid::parse_str(&pane_id).is_ok_and(|id| {
+    // The backend alone decides (spec §5). A pane whose agent is
+    // mid-conversation neither restores nor saves — the condition is "has a
+    // fresh record", not "was resumed at spawn": the *first* Claude session
+    // in a pane is not resumed, and a blob it wrote would sit unread until
+    // the record went stale and then be replayed, putting back exactly the
+    // dead screen this feature removes. A pane whose resume is still
+    // unconfirmed keeps its old blob untouched: if the resume fails, that
+    // blob is what the next launch restores.
+    use crate::agent_sessions::ScrollbackAction;
+    let action = Uuid::parse_str(&pane_id).map_or(ScrollbackAction::Save, |id| {
         sessions
             .0
             .lock()
-            .suppresses_scrollback(id, crate::agent_sessions::now_secs())
+            .scrollback_action(id, crate::agent_sessions::now_secs())
     });
-    if suppressed {
-        return crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io);
+    match action {
+        ScrollbackAction::Save => {
+            crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
+        }
+        ScrollbackAction::Skip => Ok(()),
+        ScrollbackAction::Delete => crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io),
     }
-    crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
 }
 
 /// Load the persisted scrollback for `pane_id`, or an empty string if none

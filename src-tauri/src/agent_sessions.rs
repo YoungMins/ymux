@@ -798,8 +798,40 @@ pub struct SessionTracker {
     last_disk_scan: BTreeMap<Uuid, u64>,
     /// Pane id -> the agent process running in it.
     bindings: BTreeMap<Uuid, Binding>,
+    /// Pane id -> a resume handed to the frontend that no running agent has
+    /// confirmed yet.
+    pending: BTreeMap<Uuid, PendingResume>,
+    /// Panes whose resume was just confirmed, for the caller to act on.
+    confirmed: Vec<Uuid>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
+}
+
+/// A resume plan the frontend is carrying out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingResume {
+    session_id: String,
+    /// Epoch seconds after which an unconfirmed resume counts as failed.
+    deadline: u64,
+}
+
+/// How long a resumed agent has to show up running before the resume is
+/// declared failed and its record declined, so the same failing command is
+/// not typed again on every launch. Generous: the shell has to start, run
+/// its profile, and then start the agent, and the scan only looks every 2 s.
+pub const RESUME_CONFIRM_WINDOW: u64 = 90;
+
+/// What `save_scrollback` should do with a pane's blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbackAction {
+    /// A plain shell pane (or one whose agent has gone): save as always.
+    Save,
+    /// A resume is in flight: keep whatever is on disk, write nothing. If the
+    /// resume fails, the old blob is still there for the next launch.
+    Skip,
+    /// A live agent pane: its blob would be a picture of a conversation that
+    /// resumes for real, so none is kept (spec §5).
+    Delete,
 }
 
 impl SessionTracker {
@@ -927,6 +959,12 @@ impl SessionTracker {
                 .or_else(|| existing.map(|s| s.cwd.clone()))
                 .unwrap_or_default();
             self.record(agent, obs, &id, cwd, source, now);
+            // Only an exact id confirms a resume: the resumed transcript
+            // began before the process did, so a guess never could.
+            if self.pending.get(&pane).is_some_and(|p| p.session_id == id) {
+                self.pending.remove(&pane);
+                self.confirmed.push(pane);
+            }
             if let Some(process) = key {
                 self.bindings.insert(
                     pane,
@@ -1098,11 +1136,59 @@ impl SessionTracker {
             .is_some_and(|s| s.is_fresh_at(now) && !s.cwd.is_empty())
     }
 
+    /// What to do with `pane_id`'s scrollback blob. The backend alone
+    /// decides; the frontend just offers the blob.
+    pub fn scrollback_action(&self, pane_id: Uuid, now: u64) -> ScrollbackAction {
+        if self.pending.contains_key(&pane_id) {
+            ScrollbackAction::Skip
+        } else if self.suppresses_scrollback(pane_id, now) {
+            ScrollbackAction::Delete
+        } else {
+            ScrollbackAction::Save
+        }
+    }
+
+    /// The frontend is about to type the resume command for `session_id`
+    /// into `pane_id`. Until a running agent confirms it (by an exact id —
+    /// its argv, pid file or hook), the pane's old scrollback is kept.
+    pub fn begin_resume(&mut self, pane_id: Uuid, session_id: &str, now: u64) {
+        self.pending.insert(
+            pane_id,
+            PendingResume {
+                session_id: session_id.to_string(),
+                deadline: now + RESUME_CONFIRM_WINDOW,
+            },
+        );
+    }
+
+    /// Decline every resume whose deadline passed without an agent showing
+    /// up: the command failed (bad id, agent not installed, exited at once),
+    /// and typing it again on every launch for a day would not fix it.
+    pub fn expire_pending(&mut self, now: u64) {
+        let expired: Vec<Uuid> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| now > p.deadline)
+            .map(|(id, _)| *id)
+            .collect();
+        for pane in expired {
+            self.pending.remove(&pane);
+            self.dirty |= self.store.deactivate(pane);
+        }
+    }
+
+    /// Panes whose resume a running agent has confirmed since the last call.
+    /// Their saved scrollback is now dead history and can go.
+    pub fn take_confirmed(&mut self) -> Vec<Uuid> {
+        std::mem::take(&mut self.confirmed)
+    }
+
     /// The user closed the pane for good. Mirrors `delete_scrollback`.
     pub fn forget(&mut self, pane_id: Uuid) {
         self.dirty |= self.store.remove(pane_id);
         self.last_disk_scan.remove(&pane_id);
         self.bindings.remove(&pane_id);
+        self.pending.remove(&pane_id);
     }
 }
 
@@ -2418,5 +2504,118 @@ mod tests {
             panic!("a fresh record with a live transcript must resume");
         };
         assert_eq!(plan.command, format!("codex resume {ID_A} --model gpt-5"));
+    }
+
+    /// A tracker holding last launch's live record for `pane` (id `ID_A`).
+    fn tracker_with_last_launch(pane: Uuid, now: u64) -> SessionTracker {
+        let mut store = AgentSessionStore::default();
+        let mut old = session(pane, ID_A, IdSource::Disk);
+        old.cwd = CWD.to_string();
+        old.updated_at = now - 3600;
+        store.put(old);
+        SessionTracker::from_store(store)
+    }
+
+    #[test]
+    fn a_resume_keeps_the_old_scrollback_until_the_agent_is_seen_running() {
+        let pane = Uuid::from_u128(1);
+        let now = 100_000;
+        let mut t = tracker_with_last_launch(pane, now);
+        assert_eq!(t.scrollback_action(pane, now), ScrollbackAction::Delete);
+        t.begin_resume(pane, ID_A, now);
+        // In flight: nothing is written, and nothing is deleted.
+        assert_eq!(t.scrollback_action(pane, now + 5), ScrollbackAction::Skip);
+        assert!(t.take_confirmed().is_empty());
+        // The scan sees the resumed agent, by its own argv.
+        tick(
+            &mut t,
+            now + 6,
+            &[(
+                pane,
+                process(
+                    10,
+                    now + 3,
+                    &["claude", "--resume", ID_A, CLAUDE_SKIP_PERMISSIONS],
+                ),
+            )],
+            &[],
+            &[],
+        );
+        assert_eq!(t.take_confirmed(), vec![pane], "now the old blob can go");
+        assert!(t.take_confirmed().is_empty(), "once");
+        assert_eq!(t.scrollback_action(pane, now + 6), ScrollbackAction::Delete);
+        t.expire_pending(now + 10 * RESUME_CONFIRM_WINDOW);
+        assert!(
+            t.get(pane).is_some_and(|s| s.active),
+            "a confirmed resume never expires"
+        );
+    }
+
+    #[test]
+    fn a_resume_that_never_produced_an_agent_is_not_retried() {
+        // The agent exited (or never started) before any scan saw it, so
+        // `exited_panes` cannot report it; the deadline does.
+        let pane = Uuid::from_u128(1);
+        let now = 100_000;
+        let mut t = tracker_with_last_launch(pane, now);
+        t.begin_resume(pane, ID_A, now);
+        t.expire_pending(now + RESUME_CONFIRM_WINDOW);
+        assert_eq!(
+            t.scrollback_action(pane, now + RESUME_CONFIRM_WINDOW),
+            ScrollbackAction::Skip,
+            "not yet"
+        );
+        t.expire_pending(now + RESUME_CONFIRM_WINDOW + 1);
+        assert!(t.take_confirmed().is_empty());
+        let rec = t.get(pane).expect("kept");
+        assert!(
+            !rec.active,
+            "declined, so the next launch does not retry it"
+        );
+        assert_eq!(
+            outcome_for(Some(rec), "", ShellFamily::Posix, now + 200, |_| true),
+            ResumeOutcome::None
+        );
+        // The pane is a shell again, and saves like one — its old blob was
+        // never deleted, so the next launch restores it.
+        assert_eq!(t.scrollback_action(pane, now + 200), ScrollbackAction::Save);
+        assert!(t.take_dirty());
+    }
+
+    #[test]
+    fn a_guessed_transcript_never_confirms_a_resume() {
+        // Only the process naming the id counts; a pane whose process is a
+        // plain `claude` has not resumed anything, whatever is on disk.
+        let pane = Uuid::from_u128(1);
+        let now = 100_000;
+        let mut t = tracker_with_last_launch(pane, now);
+        t.begin_resume(pane, ID_A, now);
+        tick(
+            &mut t,
+            now + 6,
+            &[(pane, process(10, now + 3, &["claude"]))],
+            &[disk_at(ID_A, CWD, now + 4)],
+            &[],
+        );
+        assert!(t.take_confirmed().is_empty());
+    }
+
+    #[test]
+    fn a_hook_or_the_pid_file_confirms_a_resume_too() {
+        let pane = Uuid::from_u128(1);
+        let now = 100_000;
+        for via_hook in [true, false] {
+            let mut t = tracker_with_last_launch(pane, now);
+            t.begin_resume(pane, ID_A, now);
+            let mut o = obs(pane, "claude", Some(CWD));
+            o.process = Some(process(10, now + 3, &["claude"]));
+            if via_hook {
+                o.hook_session_id = Some(ID_A.to_string());
+            } else {
+                o.pid_file_session_id = Some(ID_A.to_string());
+            }
+            t.observe(&o, now + 6, &[], |_, _| vec![]);
+            assert_eq!(t.take_confirmed(), vec![pane], "via_hook={via_hook}");
+        }
     }
 }

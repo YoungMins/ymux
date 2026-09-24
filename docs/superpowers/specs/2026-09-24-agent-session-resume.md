@@ -121,6 +121,13 @@ restored on start. `shouldSaveScrollback` gains that condition, and
 `spawn()`'s restore path skips it. Everything else about scrollback
 persistence stays as it is, for shell panes.
 
+**Amendment (resume fixes):** the backend alone decides (`save_scrollback` →
+`SessionTracker::scrollback_action`), and a resumed pane's old blob is deleted
+only once the scan sees the resumed agent running under an exact id (argv, pid
+file or hook). Until then it is left alone; a resume that shows no running
+agent within `RESUME_CONFIRM_WINDOW` (90 s) is declined, so it is not retried
+on the next launch and that launch restores the old blob instead.
+
 ## 6. Components
 
 - Rust: `agent_sessions.rs` (store + staleness + pure `resume_argv` and the

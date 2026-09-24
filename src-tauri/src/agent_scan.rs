@@ -446,7 +446,18 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                         },
                     );
                 }
+                // A resume that never produced a running agent is declined;
+                // one the scan (or a hook) just confirmed no longer needs
+                // the pane's old scrollback.
+                tracker.expire_pending(crate::agent_sessions::now_secs());
+                let confirmed = tracker.take_confirmed();
                 flush_sessions(&mut tracker);
+                drop(tracker);
+                for pane in confirmed {
+                    if let Err(e) = crate::scrollback::delete_blob(&pane.to_string()) {
+                        tracing::warn!(error = %e, %pane, "deleting a resumed pane's scrollback failed");
+                    }
+                }
             }
         })
         .expect("spawn agent scan thread");

@@ -26,12 +26,7 @@ import {
 import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
-import {
-  spawnAction,
-  shouldPersistScrollback,
-  describeAge,
-  type ResumePlan,
-} from "./resumePlan";
+import { spawnAction, describeAge, type ResumePlan } from "./resumePlan";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
 import { decideImagePaste, preparePaste } from "./paste";
@@ -106,8 +101,9 @@ export class TerminalPane implements Pane {
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
   /// The plan this pane came up with, once `spawn()` has asked for one.
-  /// Non-null means the agent was resumed, so this pane neither restored
-  /// nor saves scrollback for the rest of its life (spec §5).
+  /// Non-null means the agent is being resumed, so the pane did not replay
+  /// its saved scrollback. Whether it *saves* scrollback is the backend's
+  /// call (`save_scrollback`), which knows whether the resume took.
   private resumePlan: ResumePlan | null = null;
   /// Set when a recent session could not be resumed because its transcript is
   /// gone: the pane starts normally but says so first (spec §4.3).
@@ -515,13 +511,10 @@ export class TerminalPane implements Pane {
     });
     this.resumePlan = action.kind === "resume" ? action.plan : null;
     this.missingAgent = action.kind === "resume" ? null : action.missingAgent;
-    if (action.kind === "resume") {
-      // The blob this pane last wrote is a picture of the conversation we
-      // are about to continue for real. Drop it now, or a later launch that
-      // declines the resume (stale record, transcript pruned) would replay
-      // that dead screen (spec §5).
-      void api.deleteScrollback(this.id).catch(() => {});
-    }
+    // A resumed pane skips the replay but does not delete its saved blob:
+    // the backend drops it once the scan sees the resumed agent running, and
+    // keeps it if the resume fails — so a failed resume never costs the pane
+    // its scrollback.
 
     // Restore prior scrollback (if persistence is enabled and a save exists)
     // BEFORE the live PTY listener is registered below, so replayed history
@@ -1083,14 +1076,10 @@ export class TerminalPane implements Pane {
   private scheduleScrollbackSave(): void {
     if (
       !shouldSaveScrollback({
-        persistEnabled: shouldPersistScrollback({
-          persistEnabled: this.opts.persistScrollback?.() ?? false,
-          // A resumed pane neither restored nor saves: the blob would be a
-          // picture of a conversation that is being continued for real, and
-          // keeping it only gives the next launch something to replay above
-          // the resumed session (spec §5).
-          resuming: this.resumePlan !== null,
-        }),
+        // Agent panes are not special-cased here: `save_scrollback` decides
+        // per pane whether to write, skip (a resume still in flight) or drop
+        // (a live agent) the blob (spec §5).
+        persistEnabled: this.opts.persistScrollback?.() ?? false,
         hadUserActivity: this.hadUserActivity,
       })
     ) {
