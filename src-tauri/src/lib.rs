@@ -74,11 +74,6 @@ pub mod embedded_browser;
 #[cfg(feature = "desktop")]
 pub mod sysmonitor;
 
-// Inter-pane IPC server. Desktop-only because it emits Tauri events and
-// requires the yipc crate.
-#[cfg(feature = "desktop")]
-pub mod ipc_server;
-
 // Settings panel backend — ytheme load/save + open-with-default-app for
 // the Config Files section. Desktop-only because the commands plug into
 // the Tauri invoke handler.

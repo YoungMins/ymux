@@ -1,7 +1,7 @@
 //! Agent registry: which coding agents (Claude Code, Codex, …) run in which
 //! pane, and what they are doing. A pure state machine — no Tauri, no IO — so
 //! it is unit-tested on Linux. Two feeds:
-//! - Claude Code hooks, relayed by `y agent-hook claude` over yipc
+//! - Claude Code http hooks, received by `hook_http`
 //!   ([`AgentRegistry::apply_hook`]): precise, and the only source of
 //!   subagents.
 //! - The 2 s process scan in `agent_scan` ([`AgentRegistry::apply_scan`]):
@@ -53,7 +53,7 @@ pub struct PaneAgents {
 /// What the frontend sees: pane id → agents. Panes with none are absent.
 pub type AgentSnapshot = BTreeMap<Uuid, PaneAgents>;
 
-/// One hook invocation, as `y agent-hook` packs it into the IPC payload.
+/// One hook invocation, as `hook_http::hook_event` packs it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct HookEvent {
     pub pane_id: Uuid,
