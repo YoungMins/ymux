@@ -454,6 +454,17 @@ pub fn save(store: &AgentSessionStore) -> std::io::Result<()> {
 /// *new* conversation in the same pane.
 pub const DISK_RESCAN_INTERVAL: u64 = 30;
 
+/// Granularity `updated_at` is rounded down to.
+///
+/// The scan ticks every 2 s, and a record whose only change is a new
+/// `updated_at` would otherwise rewrite the store file every two seconds for
+/// as long as an agent is running. Quantizing the timestamp makes those ticks
+/// compare equal, so `AgentSessionStore::put` reports no change and the file
+/// is written about once a minute instead. The cost is up to a minute of
+/// under-reporting against a 24 h freshness window, which is nothing, and it
+/// errs toward calling a record stale rather than fresh.
+pub const PERSIST_GRANULARITY: u64 = 60;
+
 /// What one scan tick knows about a pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneObservation {
@@ -596,7 +607,7 @@ impl SessionTracker {
             interrupted: obs.status != AgentStatus::Done,
             active: true,
             source,
-            updated_at: now,
+            updated_at: now - (now % PERSIST_GRANULARITY),
         });
         self.dirty |= changed;
     }
@@ -1140,13 +1151,47 @@ mod tests {
             Some(disk(ID_A, "D:\\Git\\ymux"))
         });
         // Much later, still the same agent and no new disk scan result.
-        let later = 1_000 + DISK_RESCAN_INTERVAL;
+        let later = 1_000 + 5 * PERSIST_GRANULARITY;
         t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), later, |_, _| {
             None
         });
         let rec = t.get(pane).expect("still recorded");
-        assert_eq!(rec.updated_at, later, "the 24h window measures liveness");
+        assert_eq!(
+            rec.updated_at,
+            later - (later % PERSIST_GRANULARITY),
+            "the 24h window measures liveness, quantized to the persist grid"
+        );
         assert_eq!(rec.session_id, ID_A);
+    }
+
+    #[test]
+    fn an_unchanged_record_does_not_dirty_the_store_every_tick() {
+        // The scan ticks every 2 s. Without the quantized timestamp each tick
+        // would count as a change and rewrite the store file forever.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let start = 10 * PERSIST_GRANULARITY;
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), start, |_, _| {
+            Some(disk(ID_A, "D:\\Git\\ymux"))
+        });
+        assert!(t.take_dirty(), "the first record is a real change");
+        for tick in 1..(PERSIST_GRANULARITY / 2) {
+            t.observe(
+                &obs(pane, "claude", Some("D:/Git/ymux")),
+                start + tick * 2,
+                |_, _| None,
+            );
+        }
+        assert!(
+            !t.take_dirty(),
+            "ticks inside one grid step must not rewrite the file"
+        );
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            start + PERSIST_GRANULARITY,
+            |_, _| None,
+        );
+        assert!(t.take_dirty(), "and the next grid step does");
     }
 
     #[test]
