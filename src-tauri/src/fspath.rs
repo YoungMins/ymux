@@ -35,13 +35,13 @@
 
 use std::path::{Path, PathBuf};
 
-/// Only the app's own main webview may ask about or open local paths.
+/// Only the app's own main webview may call a `guard_local` command.
 ///
-/// This is not theoretical: `capabilities/browser-children.json` grants
-/// `core:default` to every `eb-*` child webview on `http(s)://**`, so the
-/// page loaded in an embedded browser pane can reach `invoke`. Without this
-/// check any website the user visits could enumerate their filesystem
-/// through the probe and open arbitrary local files through the opener.
+/// This is not theoretical: Tauri injects `invoke` into every webview it
+/// creates, capability or not, and never ACL-checks ymux's own commands, so
+/// the page loaded in an `eb-*` embedded browser pane can call any of them.
+/// Without this check any website the user visits could spawn a program,
+/// type into a shell or read the filesystem.
 pub fn caller_allowed(label: &str) -> bool {
     label == "main"
 }
@@ -92,6 +92,23 @@ pub fn caller_allowed(label: &str) -> bool {
 /// Fails closed. A missing header, `null` (a sandboxed or `data:` frame), an
 /// unparseable value or a host-only near-miss such as
 /// `http://tauri.localhost.evil.com` all return `false`.
+///
+/// ## What this relies on: an iframe cannot reach the `postMessage` IPC
+///
+/// Tauri's fallback transport (`window.ipc.postMessage`, used when the
+/// `fetch` to the IPC protocol fails) builds the request headers from a
+/// JSON field **the page supplies** (`handle_ipc_message`, `tauri-2.10.3` `src/ipc/protocol.rs:185`), so on
+/// that path `Origin` is forgeable. What keeps a `browser`-pane iframe off
+/// it on Windows is WebView2 itself: wry subscribes only to
+/// `ICoreWebView2::add_WebMessageReceived` (`wry-0.54.4`
+/// `src/webview2/mod.rs:892`), which fires for the *top-level* document;
+/// an iframe's `chrome.webview.postMessage` is delivered to
+/// `ICoreWebView2Frame2::WebMessageReceived`, which needs a `FrameCreated`
+/// subscription wry never makes. The iframe's only working transport is
+/// `fetch`, where the browser sets `Origin`. An `eb-*` child *is* a
+/// top-level document and can forge `Origin` — which is why the label check
+/// ([`caller_allowed`]) is not optional. If a wry/Tauri upgrade ever starts
+/// handling frame web messages, this reasoning must be revisited.
 pub fn origin_is_local<S: AsRef<str>>(origin: Option<&str>, allowed: &[S]) -> bool {
     let Some(origin) = origin else {
         return false;
@@ -127,17 +144,21 @@ fn request_origin<'a>(request: &'a tauri::ipc::Request<'_>) -> Option<&'a str> {
     request.headers().get("Origin")?.to_str().ok()
 }
 
-/// The single gate on the filesystem / text-file / git command surface.
+/// The gate on every ymux command whose only legitimate caller is ymux's
+/// own document — which is all of them except the two in
+/// [`crate::ipc_guard::EMBEDDED_CHILD_COMMANDS`].
 ///
-/// Called on the first line of every one of those commands. It is not
+/// Called on the first line of every one of those commands, and
+/// `ipc_guard::tests::every_registered_command_starts_with_a_guard` fails if
+/// one is missing (CLAUDE.md rule 16). It is not
 /// defence in depth — it is the *only* defence, because `src-tauri/build.rs`
 /// is a bare `tauri_build::build()` with no `AppManifest`, so
 /// `RuntimeAuthority::has_app_manifest()` is false and Tauri skips the ACL
 /// check entirely for ymux's own commands (`tauri-2.10.3`
 /// `src/webview/mod.rs:1802`). The capability files govern `core:` and
 /// plugin permissions only; adding ymux's commands to one would require an
-/// `AppManifest`, which would switch ACL enforcement on for all ~50
-/// existing commands at once. See the spec's §1.5.
+/// `AppManifest`, which would switch ACL enforcement on for every
+/// command at once. See the spec's §1.5.
 ///
 /// `cmd` only names the caller in the error message.
 #[cfg(feature = "desktop")]
@@ -558,7 +579,7 @@ mod tests {
     #[test]
     fn only_the_main_webview_may_ask() {
         assert!(caller_allowed("main"));
-        // Embedded browser panes carry `core:default` on http(s) origins, so
+        // Tauri injects `invoke` into embedded browser panes, so
         // a page loaded in one can reach `invoke`.
         assert!(!caller_allowed("eb-1234"));
         assert!(!caller_allowed("eb-main"));
@@ -647,6 +668,48 @@ mod tests {
 
     /// The near-misses a naive `starts_with` or `contains` would wave
     /// through.
+    #[test]
+    fn origin_rejects_other_local_looking_origins() {
+        let app = ["http://tauri.localhost/"];
+        // Tauri's own IPC endpoint and asset protocol are not ymux's
+        // document; a page that can name them has not proved anything.
+        assert!(!origin_is_local(Some("http://ipc.localhost"), &app));
+        assert!(!origin_is_local(Some("http://asset.localhost"), &app));
+        assert!(!origin_is_local(Some("http://localhost"), &app));
+        assert!(!origin_is_local(Some("http://127.0.0.1"), &app));
+        // Userinfo trickery: the host here is `evil.example`.
+        assert!(!origin_is_local(
+            Some("http://tauri.localhost@evil.example"),
+            &app
+        ));
+        // A non-default port on the right host is a different origin.
+        assert!(!origin_is_local(Some("http://tauri.localhost:8080"), &app));
+        // macOS: another custom scheme on the same host is not the app.
+        assert!(!origin_is_local(
+            Some("ipc://localhost"),
+            &["tauri://localhost/"]
+        ));
+        assert!(!origin_is_local(
+            Some("https://localhost"),
+            &["tauri://localhost/"]
+        ));
+    }
+
+    /// Every label shape an embedded browser can have is refused, whatever
+    /// pane id it carries.
+    #[test]
+    fn embedded_browser_labels_never_pass_the_label_check() {
+        for label in [
+            "eb-0f8fad5b-d9cb-469f-a165-70867728950e",
+            "browser-0f8fad5b-d9cb-469f-a165-70867728950e",
+            "main ",
+            " main",
+            "main\0",
+        ] {
+            assert!(!caller_allowed(label), "{label:?}");
+        }
+    }
+
     #[test]
     fn origin_rejects_host_and_port_near_misses() {
         let app = ["http://tauri.localhost/"];
