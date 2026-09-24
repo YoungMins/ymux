@@ -16,8 +16,9 @@
 
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -42,9 +43,25 @@ pub const MAX_HEAD: usize = 16 * 1024;
 /// an empty 204 rather than refused, because any non-2xx would show up as a
 /// hook error in the user's Claude session.
 pub const MAX_BODY: usize = 8 * 1024 * 1024;
-/// Per-connection read/write timeout. Claude sends the whole request at once
-/// over loopback; anything slower is not Claude.
-pub const IO_TIMEOUT: Duration = Duration::from_secs(2);
+/// Resource limits of the receiver. Any local user can connect (the token is
+/// only checked once the head has arrived), so every connection is bounded
+/// in time as a whole and in number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Whole-connection budget, from accept to close — reading the head and
+    /// body, writing the reply and any drain. Not per read: a client
+    /// trickling a byte a second still runs out. Claude sends its whole
+    /// request at once over loopback; anything slower is not Claude.
+    pub deadline: Duration,
+    /// Connections served at once; more are closed on accept.
+    pub max_conns: usize,
+}
+
+/// The limits the app runs with.
+pub const LIMITS: Limits = Limits {
+    deadline: Duration::from_secs(3),
+    max_conns: 32,
+};
 
 /// Optional hook fields forwarded when present (what `y agent-hook` packed).
 const OPTIONAL_FIELDS: &[&str] = &["agent_id", "agent_type", "tool_name"];
@@ -248,7 +265,57 @@ pub fn bind_loopback(port: u16) -> io::Result<TcpListener> {
 pub type KnownPane = Arc<dyn Fn(Uuid) -> bool + Send + Sync>;
 pub type OnEvent = Arc<dyn Fn(HookEvent) + Send + Sync>;
 
-/// Run the accept loop on a background thread for the life of the process.
+/// One of at most `max` concurrently served connections; frees its slot on
+/// drop.
+#[derive(Debug)]
+pub struct ConnSlot(Arc<AtomicUsize>);
+
+impl ConnSlot {
+    /// A slot, or `None` when `max` are already taken.
+    pub fn acquire(count: &Arc<AtomicUsize>, max: usize) -> Option<Self> {
+        let prev = count.fetch_add(1, Ordering::SeqCst);
+        if prev >= max {
+            count.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Self(count.clone()))
+    }
+}
+
+impl Drop for ConnSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Time left before `deadline`, or `None` once it has passed.
+pub fn remaining(deadline: Instant, now: Instant) -> Option<Duration> {
+    deadline
+        .checked_duration_since(now)
+        .filter(|d| !d.is_zero())
+}
+
+/// One `read` that may not outlast `deadline`: the socket's read timeout is
+/// set to the time left before every read, so a slow client can never
+/// stretch the connection past it.
+fn read_by(stream: &mut TcpStream, buf: &mut [u8], deadline: Instant) -> io::Result<usize> {
+    let left = remaining(deadline, Instant::now()).ok_or(io::ErrorKind::TimedOut)?;
+    stream.set_read_timeout(Some(left))?;
+    stream.read(buf)
+}
+
+/// Run the accept loop on a background thread for the life of the process,
+/// with the app's [`LIMITS`].
+pub fn serve(
+    listener: TcpListener,
+    token: String,
+    known_pane: KnownPane,
+    on_event: OnEvent,
+) -> io::Result<std::thread::JoinHandle<()>> {
+    serve_with(listener, token, known_pane, on_event, LIMITS)
+}
+
+/// [`serve`] with explicit limits.
 /// Each connection is served on its own short-lived thread; accepted events
 /// go through one channel to a single applier thread that calls `on_event`.
 ///
@@ -256,13 +323,15 @@ pub type OnEvent = Arc<dyn Fn(HookEvent) + Send + Sync>;
 /// so queueing each event *before* its response keeps the registry's order
 /// equal to Claude's (a `Stop` can't overtake the last `PostToolUse`), while
 /// the response still never waits for `on_event` and its locks.
-pub fn serve(
+pub fn serve_with(
     listener: TcpListener,
     token: String,
     known_pane: KnownPane,
     on_event: OnEvent,
+    limits: Limits,
 ) -> io::Result<std::thread::JoinHandle<()>> {
     let token: Arc<str> = token.into();
+    let live = Arc::new(AtomicUsize::new(0));
     let (tx, rx) = std::sync::mpsc::channel::<HookEvent>();
     std::thread::Builder::new()
         .name("ymux-hook-apply".into())
@@ -276,11 +345,17 @@ pub fn serve(
         .spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
+                // Over the cap: dropping the stream closes it at once.
+                let Some(slot) = ConnSlot::acquire(&live, limits.max_conns) else {
+                    continue;
+                };
+                let deadline = Instant::now() + limits.deadline;
                 let (token, known_pane, tx) = (token.clone(), known_pane.clone(), tx.clone());
                 let _ = std::thread::Builder::new()
                     .name("ymux-hook-conn".into())
                     .spawn(move || {
-                        let _ = handle(stream, &token, &*known_pane, &tx);
+                        let _slot = slot;
+                        let _ = handle(stream, &token, &*known_pane, &tx, deadline);
                     });
             }
         })
@@ -292,9 +367,8 @@ fn handle(
     token: &str,
     known_pane: &(dyn Fn(Uuid) -> bool + Send + Sync),
     queue: &std::sync::mpsc::Sender<HookEvent>,
+    deadline: Instant,
 ) -> io::Result<()> {
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let mut buf = Vec::with_capacity(4096);
     let mut chunk = [0u8; 4096];
     let head_end = loop {
@@ -302,50 +376,77 @@ fn handle(
             break i;
         }
         if buf.len() > MAX_HEAD {
-            return reply(&mut stream, 431);
+            return reply(&mut stream, 431, deadline);
         }
-        let n = stream.read(&mut chunk)?;
+        let n = read_by(&mut stream, &mut chunk, deadline)?;
         if n == 0 {
             return Ok(());
         }
         buf.extend_from_slice(&chunk[..n]);
     };
     let Some(head) = parse_head(&buf[..head_end]) else {
-        return reply(&mut stream, 400);
+        return reply(&mut stream, 400, deadline);
     };
     let (pane, len) = match authorize(&head, token, known_pane) {
         Verdict::Accept { pane, len } => (pane, len),
-        Verdict::Ignore => return reply(&mut stream, 204),
-        Verdict::Reject(status) => return reply(&mut stream, status),
+        Verdict::Ignore => {
+            reply(&mut stream, 204, deadline)?;
+            // Only a quiet 204 is worth a drain: it goes to a legitimate
+            // Claude that may still be uploading (see `drain`). A rejected
+            // client gets its status and the door, never our time.
+            drain(&mut stream, deadline);
+            return Ok(());
+        }
+        Verdict::Reject(status) => return reply(&mut stream, status, deadline),
     };
+    // `head_end + 4 <= buf.len()`: the blank line was found inside `buf`.
     let mut body = buf.split_off(head_end + 4);
     if body.len() < len {
-        let have = body.len();
+        let mut have = body.len();
         body.resize(len, 0);
-        stream.read_exact(&mut body[have..])?;
+        while have < len {
+            let n = read_by(&mut stream, &mut body[have..], deadline)?;
+            if n == 0 {
+                return Ok(());
+            }
+            have += n;
+        }
     }
     body.truncate(len);
     let Some(event) = hook_event(&body, pane) else {
-        return reply(&mut stream, 400);
+        return reply(&mut stream, 400, deadline);
     };
     let _ = queue.send(event);
-    reply(&mut stream, 204)
+    reply(&mut stream, 204, deadline)
 }
 
 /// Upper bound on request bytes discarded after an early reply.
 const MAX_DRAIN: u64 = MAX_BODY as u64 + MAX_HEAD as u64;
 
-/// Write `status`, half-close, then read and discard whatever the client is
-/// still sending (bounded by [`MAX_DRAIN`] and [`IO_TIMEOUT`]). Closing a
-/// socket with unread bytes queued makes the OS send a reset instead of a
-/// clean close, and a client still uploading a large body — a Claude outside
-/// ymux posting a big `PostToolUse` — would see that as a failed hook.
-fn reply(stream: &mut TcpStream, status: u16) -> io::Result<()> {
+/// Write `status` (within the deadline) and half-close.
+fn reply(stream: &mut TcpStream, status: u16, deadline: Instant) -> io::Result<()> {
+    let left = remaining(deadline, Instant::now()).ok_or(io::ErrorKind::TimedOut)?;
+    stream.set_write_timeout(Some(left))?;
     stream.write_all(response(status).as_bytes())?;
     stream.flush()?;
     let _ = stream.shutdown(std::net::Shutdown::Write);
-    let _ = io::copy(&mut (&*stream).take(MAX_DRAIN), &mut io::sink());
     Ok(())
+}
+
+/// Read and discard what the client is still sending, bounded by
+/// [`MAX_DRAIN`] and the deadline. Closing a socket with unread bytes queued
+/// makes the OS send a reset instead of a clean close, and a client still
+/// uploading a large body — a Claude outside ymux posting a big
+/// `PostToolUse` — would see that as a failed hook.
+fn drain(stream: &mut TcpStream, deadline: Instant) {
+    let mut chunk = [0u8; 8192];
+    let mut left = MAX_DRAIN;
+    while left > 0 {
+        match read_by(stream, &mut chunk, deadline) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => left = left.saturating_sub(n as u64),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -720,6 +821,205 @@ mod tests {
             .map(|_| rx.recv_timeout(Duration::from_secs(5)).unwrap())
             .collect();
         assert_eq!(got, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn conn_slots_are_capped_and_freed() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let a = ConnSlot::acquire(&count, 2).unwrap();
+        let _b = ConnSlot::acquire(&count, 2).unwrap();
+        assert!(ConnSlot::acquire(&count, 2).is_none());
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            2,
+            "a refused acquire frees itself"
+        );
+        drop(a);
+        assert!(ConnSlot::acquire(&count, 2).is_some());
+    }
+
+    #[test]
+    fn remaining_runs_out() {
+        let now = Instant::now();
+        let later = now + Duration::from_millis(5);
+        assert_eq!(remaining(later, now), Some(Duration::from_millis(5)));
+        assert_eq!(remaining(now, now), None);
+        assert_eq!(remaining(now, later), None);
+    }
+
+    fn start_with(limits: Limits) -> (u16, mpsc::Receiver<HookEvent>) {
+        let listener = bind_loopback(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        let tx = parking_lot::Mutex::new(tx);
+        serve_with(
+            listener,
+            TOKEN.into(),
+            Arc::new(ours),
+            Arc::new(move |ev| {
+                let _ = tx.lock().send(ev);
+            }),
+            limits,
+        )
+        .unwrap();
+        (port, rx)
+    }
+
+    /// Read until the server closes (or 10 s pass); how long that took.
+    fn time_to_close(s: &mut TcpStream) -> Duration {
+        let t = Instant::now();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut sink = Vec::new();
+        let _ = s.read_to_end(&mut sink);
+        t.elapsed()
+    }
+
+    /// A client trickling one byte at a time — each read well inside any
+    /// per-read timeout — is still cut off at the whole-request deadline.
+    #[test]
+    fn a_trickling_client_is_cut_off_at_the_deadline() {
+        let (port, _rx) = start_with(Limits {
+            deadline: Duration::from_millis(600),
+            max_conns: 4,
+        });
+        let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let mut w = s.try_clone().unwrap();
+        let t = Instant::now();
+        let trickle = std::thread::spawn(move || {
+            for b in b"POST /ymux-agent-hook HTTP/1.1\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+                if w.write_all(&[*b]).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let _ = time_to_close(&mut s);
+        assert!(
+            t.elapsed() < Duration::from_millis(2500),
+            "{:?}",
+            t.elapsed()
+        );
+        let _ = trickle.join();
+    }
+
+    #[test]
+    fn connections_over_the_cap_are_closed_at_once() {
+        let limits = Limits {
+            deadline: Duration::from_secs(5),
+            max_conns: 2,
+        };
+        let (port, rx) = start_with(limits);
+        let idle: Vec<TcpStream> = (0..2)
+            .map(|_| TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap())
+            .collect();
+        std::thread::sleep(Duration::from_millis(100));
+        let mut extra = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        assert!(time_to_close(&mut extra) < Duration::from_secs(2));
+        drop(idle);
+        std::thread::sleep(Duration::from_millis(100));
+        let body = r#"{"hook_event_name":"Stop"}"#;
+        let resp = send(port, &request(port, &pane().to_string(), TOKEN, "", body));
+        assert_eq!(resp, response(204), "slots come back");
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
+    /// A rejected request is answered and closed without waiting for the
+    /// body it announced.
+    #[test]
+    fn a_rejected_request_is_not_drained() {
+        let (port, _rx) = start_with(Limits {
+            deadline: Duration::from_secs(5),
+            max_conns: 4,
+        });
+        let head = format!(
+            "POST {HOOK_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+             X-Ymux-Pane: {}\r\nX-Ymux-Token: guess\r\nContent-Length: 8000000\r\n\r\n",
+            pane()
+        );
+        let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        s.write_all(head.as_bytes()).unwrap();
+        s.write_all(&[b'x'; 1000]).unwrap();
+        assert!(time_to_close(&mut s) < Duration::from_secs(2));
+    }
+
+    /// Tiny xorshift so the fuzz cases are reproducible without a new
+    /// dependency.
+    fn rng(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    /// Hostile input must never panic: the release profile aborts on panic,
+    /// which would take the whole app down.
+    #[test]
+    fn hostile_heads_and_bodies_never_panic() {
+        let alphabet: &[u8] = b"POST /ymux-agent-hook HTTP/1.1\r\n:Content-Length:X-Ymux-Token \
+                                Transfer-Encoding Origin Host 127.0.0.1 -+0123456789\xff\x00{}\"";
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..20_000 {
+            let len = (rng(&mut seed) % 200) as usize;
+            let bytes: Vec<u8> = (0..len)
+                .map(|_| alphabet[(rng(&mut seed) % alphabet.len() as u64) as usize])
+                .collect();
+            if let Some(head) = parse_head(&bytes) {
+                let _ = authorize(&head, TOKEN, ours);
+            }
+            let _ = hook_event(&bytes, pane());
+        }
+        for cl in [
+            "-1",
+            "",
+            " ",
+            "+5",
+            "0x10",
+            "99999999999999999999999999",
+            "18446744073709551615",
+            "1e9",
+            "5, 5",
+        ] {
+            let head = claude_head(&[("content-length", cl)]);
+            assert!(!matches!(
+                authorize(&head, TOKEN, ours),
+                Verdict::Accept { len, .. } if len > MAX_BODY
+            ));
+        }
+    }
+
+    /// The same hostile framings over a real socket: each gets an answer or
+    /// a close, and the listener keeps serving afterwards.
+    #[test]
+    fn listener_survives_hostile_requests() {
+        let (port, rx) = start_with(Limits {
+            deadline: Duration::from_millis(800),
+            max_conns: 8,
+        });
+        let p = pane().to_string();
+        let raws: Vec<Vec<u8>> = vec![
+            b"\r\n\r\n".to_vec(),
+            b"POST\r\n\r\n".to_vec(),
+            b"GET / HTTP/1.1\r\n\xff\xfe: x\r\n\r\n".to_vec(),
+            format!("POST {HOOK_PATH} HTTP/1.1\r\nX-Ymux-Pane: {p}\r\nX-Ymux-Token: {TOKEN}\r\nContent-Length: -1\r\n\r\n").into_bytes(),
+            format!("POST {HOOK_PATH} HTTP/1.1\r\nX-Ymux-Pane: {p}\r\nX-Ymux-Token: {TOKEN}\r\nContent-Length: 99999999999999999999\r\n\r\n").into_bytes(),
+            format!("POST {HOOK_PATH} HTTP/1.1\r\nX-Ymux-Pane: {p}\r\nX-Ymux-Token: {TOKEN}\r\nContent-Length: 50\r\n\r\nshort").into_bytes(),
+            format!("POST {HOOK_PATH} HTTP/1.1\r\nX-Ymux-Pane: {p}\r\nX-Ymux-Token: {TOKEN}\r\nContent-Length: 4\r\n\r\n").bytes().chain([0xff, 0xfe, 0, b'{']).collect(),
+        ];
+        for raw in raws {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            let _ = s.write_all(&raw);
+            let _ = s.shutdown(std::net::Shutdown::Write);
+            assert!(time_to_close(&mut s) < Duration::from_secs(3));
+        }
+        let body = r#"{"hook_event_name":"Stop"}"#;
+        assert_eq!(
+            send(port, &request(port, &p, TOKEN, "", body)),
+            response(204)
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap().event,
+            "Stop"
+        );
     }
 
     #[test]
