@@ -309,7 +309,7 @@ export class EditorPane implements Pane {
       this.draftTimer = null;
       // Not permanent (a shutdown path): the pending draft is the whole
       // point of drafts, so write it now rather than lose the last 2 s.
-      if (!permanent && draftFileAction(this.draftUnanswered(), this.dirty) === "write") {
+      if (!permanent && draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") {
         this.writeDraft();
       }
     }
@@ -507,7 +507,7 @@ export class EditorPane implements Pane {
     // Saved: the draft has nothing left to protect. (Typing during the
     // write left the buffer dirty; its draft stays. A pending recovered
     // draft is not this buffer's and is left for the user to answer.)
-    if (draftFileAction(this.draftUnanswered(), this.dirty) === "delete") void this.discardDraft();
+    if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "delete") void this.discardDraft();
     this.say(t("editor.saved"));
     return true;
   }
@@ -693,6 +693,9 @@ export class EditorPane implements Pane {
           this.setBanner({ kind: "deleted" });
           this.renderChrome();
           this.opts.onDirtyChange?.();
+          // The buffer just became the only copy: draft it now, not on the
+          // next keystroke.
+          if (draftFileAction(this.draftUnanswered(), this.dirty, true) === "write") this.writeDraft();
         }
         return;
       }
@@ -728,7 +731,7 @@ export class EditorPane implements Pane {
 
   private onDocChange(): void {
     this.refreshDirty();
-    const action = draftFileAction(this.draftUnanswered(), this.dirty);
+    const action = draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk);
     if (action === "write") this.scheduleDraft();
     else if (action === "delete" && (this.draftOnDisk || this.draftTimer !== null)) {
       void this.discardDraft();
@@ -749,7 +752,7 @@ export class EditorPane implements Pane {
     if (this.draftTimer !== null) clearTimeout(this.draftTimer);
     this.draftTimer = window.setTimeout(() => {
       this.draftTimer = null;
-      if (draftFileAction(this.draftUnanswered(), this.dirty) === "write") this.writeDraft();
+      if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") this.writeDraft();
     }, DRAFT_DELAY_MS);
   }
 

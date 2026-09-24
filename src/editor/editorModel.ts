@@ -172,9 +172,17 @@ export function closeState(s: BufferState): { unsaved: boolean; savable: boolean
 /// `unanswered` is true both while a recovered draft is offered and before
 /// the pane has even looked for one: a draft nobody has been offered is
 /// never overwritten or deleted.
-export function draftFileAction(unanswered: boolean, dirty: boolean): "keep" | "write" | "delete" {
+///
+/// `deletedOnDisk` counts like `dirty`: once the file is gone the buffer is
+/// the only copy, clean or not, so it is drafted — and typing then undoing
+/// back to "clean" must not delete that draft.
+export function draftFileAction(
+  unanswered: boolean,
+  dirty: boolean,
+  deletedOnDisk = false,
+): "keep" | "write" | "delete" {
   if (unanswered) return "keep";
-  return dirty ? "write" : "delete";
+  return dirty || deletedOnDisk ? "write" : "delete";
 }
 
 export interface WriteStamp {

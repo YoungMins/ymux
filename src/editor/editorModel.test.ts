@@ -170,6 +170,12 @@ describe("draftFileAction", () => {
     expect(draftFileAction(false, true)).toBe("write");
     expect(draftFileAction(false, false)).toBe("delete");
   });
+
+  it("drafts a clean buffer whose file was deleted — it is the only copy", () => {
+    expect(draftFileAction(false, false, true)).toBe("write");
+    expect(draftFileAction(false, true, true)).toBe("write");
+    expect(draftFileAction(true, false, true)).toBe("keep");
+  });
 });
 
 describe("writeArgsFor", () => {
