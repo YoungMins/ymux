@@ -2780,3 +2780,400 @@ body,
     transition: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Git pane (src/git/GitPane.ts)
+
+   The files pane's parts again — 22px bordered buttons, the bordered --bg
+   box, the 11px status line, the 2px accent cursor bar — so the three GUI
+   panes read as one family. The git pane's own thing is the graph: lane
+   lines run unbroken from row to row, in ygit's six lane colours
+   (tools/ygit/src/graph.rs: yellow, cyan, green, magenta, blue, red),
+   retuned for this background. HEAD's node is the one filled, haloed dot.
+--------------------------------------------------------------------------- */
+.git-pane {
+  --git-sel: rgba(127, 219, 202, 0.1);
+  --git-sel-focused: rgba(127, 219, 202, 0.17);
+  --lane-0: #e5c07b;
+  --lane-1: #56b6c2;
+  --lane-2: #98c379;
+  --lane-3: #c678dd;
+  --lane-4: #61afef;
+  --lane-5: #e06c75;
+  min-width: 0;
+}
+
+.git__where {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.git__head {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  padding: 1px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.git__head[hidden] {
+  display: none;
+}
+
+.git__head--detached {
+  color: var(--status-warn);
+  border-color: var(--status-warn);
+}
+
+.git__repo {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.git__main {
+  flex-direction: row;
+}
+
+.git-pane--narrow .git__main {
+  flex-direction: column;
+}
+
+.git__log {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  outline: none;
+}
+
+.git__row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 6px;
+  color: var(--fg);
+  font-size: 12.5px;
+  cursor: default;
+  user-select: none;
+}
+
+.git__row:hover {
+  background: var(--bg-alt);
+}
+
+.git__row--sel,
+.git__row--sel:hover {
+  background: var(--git-sel);
+}
+
+.git__log--focused .git__row--sel {
+  background: var(--git-sel-focused);
+}
+
+.git__row--cursor {
+  box-shadow: inset 2px 0 0 var(--fg-muted);
+}
+
+.git__log--focused .git__row--cursor {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.git__graph {
+  flex: 0 0 auto;
+  align-self: stretch;
+  overflow: hidden;
+}
+
+.git__graph svg {
+  display: block;
+}
+
+.git-lane {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.git-node {
+  stroke-width: 1.6;
+  fill: var(--bg);
+}
+
+.git-node--head {
+  stroke-width: 2;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+.git-lane--c0, .git-node--c0 { stroke: var(--lane-0); color: var(--lane-0); }
+.git-lane--c1, .git-node--c1 { stroke: var(--lane-1); color: var(--lane-1); }
+.git-lane--c2, .git-node--c2 { stroke: var(--lane-2); color: var(--lane-2); }
+.git-lane--c3, .git-node--c3 { stroke: var(--lane-3); color: var(--lane-3); }
+.git-lane--c4, .git-node--c4 { stroke: var(--lane-4); color: var(--lane-4); }
+.git-lane--c5, .git-node--c5 { stroke: var(--lane-5); color: var(--lane-5); }
+
+.git-node--head.git-node--c0 { fill: var(--lane-0); }
+.git-node--head.git-node--c1 { fill: var(--lane-1); }
+.git-node--head.git-node--c2 { fill: var(--lane-2); }
+.git-node--head.git-node--c3 { fill: var(--lane-3); }
+.git-node--head.git-node--c4 { fill: var(--lane-4); }
+.git-node--head.git-node--c5 { fill: var(--lane-5); }
+
+.git__hash,
+.git__date {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.git__date {
+  width: 10ch;
+  text-align: right;
+}
+
+/* UI font, not Cascadia: subjects and branch names are often Hangul. */
+.git__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.git__subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.git__author {
+  flex: 0 0 auto;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.git-pane--narrow .git__author,
+.git-pane--tiny .git__date {
+  display: none;
+}
+
+.git__chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.git__chip--head {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.git__chip--detached {
+  color: var(--bg);
+  background: var(--status-warn);
+  border-color: var(--status-warn);
+  font-weight: 600;
+}
+
+.git__chip--branch {
+  color: var(--accent);
+  border-color: rgba(127, 219, 202, 0.4);
+}
+
+.git__chip--tag {
+  color: var(--status-warn);
+  border-color: rgba(229, 192, 123, 0.4);
+}
+
+.git__side {
+  flex: 0 0 34%;
+  min-width: 200px;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  min-height: 0;
+}
+
+.git-pane--narrow .git__side {
+  flex: 0 0 40%;
+  max-width: none;
+  min-width: 0;
+  border-left: 0;
+  border-top: 1px solid var(--border);
+}
+
+.git__list {
+  flex: 1 1 50%;
+  min-height: 0;
+  overflow-y: auto;
+  outline: none;
+  padding-bottom: 4px;
+}
+
+.git__worktrees {
+  border-top: 1px solid var(--border);
+}
+
+.git__header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 10px 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.git__list:focus .git__header {
+  color: var(--accent);
+}
+
+.git__count {
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.git__subhead {
+  padding: 6px 10px 2px 24px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.git__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px 0 8px;
+  color: var(--fg);
+  font-size: 12.5px;
+  cursor: default;
+  user-select: none;
+}
+
+.git__item--two {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.git__item:hover {
+  background: var(--bg-alt);
+}
+
+.git__item--sel,
+.git__item--sel:hover {
+  background: var(--git-sel);
+}
+
+.git__list:focus .git__item--sel {
+  background: var(--git-sel-focused);
+}
+
+.git__item--cursor {
+  box-shadow: inset 2px 0 0 var(--fg-muted);
+}
+
+.git__list:focus .git__item--cursor {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.git__mark {
+  flex: 0 0 10px;
+  color: var(--accent);
+  font-size: 9px;
+  text-align: center;
+}
+
+.git__item--current .git__name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.git__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.git__wt {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.git__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.git__tag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+.git__empty {
+  padding: 4px 10px 4px 24px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}

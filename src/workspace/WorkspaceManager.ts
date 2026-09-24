@@ -15,7 +15,7 @@ import type {
   Workspace,
 } from "../types";
 import { listen as tauriListen } from "@tauri-apps/api/event";
-import { api } from "../ipc/bridge";
+import { api, gitApi } from "../ipc/bridge";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { clampFontSize, DEFAULT_FONT_SIZE } from "./fontSize";
 import { BrowserPane } from "../browser/BrowserPane";
@@ -23,6 +23,7 @@ import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
 import { FilesPane } from "../files/FilesPane";
 import { baseName } from "../files/fileModel";
 import { EditorPane } from "../editor/EditorPane";
+import { GitPane } from "../git/GitPane";
 import { fileName } from "../editor/editorModel";
 import { closePlan, closeResult, type Closable, type CloseChoice } from "../editor/closeGuard";
 import { coldDraftEntry, orphanDraftIds } from "../editor/draft";
@@ -58,8 +59,8 @@ import {
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
-import { promptWorktreeBranch } from "./WorktreeModal";
-import { askChoice, askConfirm, askText } from "../ui/Dialog";
+import { promptWorktreeBranch, removeWorktreeFlow } from "../git/worktreeFlow";
+import { askChoice, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
@@ -545,6 +546,34 @@ export class WorkspaceManager {
         openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
       });
     }
+    if (spec.pane_kind === "git") {
+      return new GitPane({
+        id: spec.id,
+        dir: spec.cwd ?? null,
+        title: spec.title ?? null,
+        ownChrome: groupOfPane(this.active.root, spec.id) === null,
+        onFocus: () => {
+          this.focusedPaneId = spec.id;
+        },
+        onDirChange: (dir) => {
+          this.updatePaneSpec(spec.id, (p) => {
+            p.cwd = dir;
+          });
+          this.refreshTabChrome();
+        },
+        onActivePaneChange: (cb) => this.onActivePaneChange(cb),
+        // Follow the pane the user works in — but only in this pane's own
+        // workspace (a hidden workspace's git pane must not chase the
+        // visible one's terminals), and never itself.
+        followTarget: () => {
+          const id = this.activePaneId();
+          if (!id || id === spec.id) return null;
+          return this.workspaceOfPane(id) === this.workspaceOfPane(spec.id) ? id : null;
+        },
+        worktreeBaseDir: () => this.worktreeBaseDir,
+        openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
+      });
+    }
     if (spec.pane_kind === "editor") {
       return new EditorPane({
         id: spec.id,
@@ -650,7 +679,12 @@ export class WorkspaceManager {
       // render invisible. Only a group's `update()` ever sets the class, so
       // clearing it for every ungrouped pane is safe and idempotent.
       if (!grouped) pane.element.classList.remove("pane--tab-hidden");
-      if (pane instanceof TerminalPane || pane instanceof FilesPane || pane instanceof EditorPane) {
+      if (
+        pane instanceof TerminalPane ||
+        pane instanceof FilesPane ||
+        pane instanceof EditorPane ||
+        pane instanceof GitPane
+      ) {
         pane.setOwnChrome(!grouped);
       }
     }
@@ -783,6 +817,7 @@ export class WorkspaceManager {
       { label: t("shortcut.splitH"), onSelect: () => void this.splitFocused("horizontal") },
       { label: t("shortcut.splitV"), onSelect: () => void this.splitFocused("vertical") },
       { label: t("files.here"), onSelect: () => void this.splitFocusedFiles("horizontal") },
+      { label: t("git.here"), onSelect: () => void this.splitFocusedGit("horizontal") },
       "separator",
       ...TOOL_MENU.map((tool) => ({
         label: tool.label,
@@ -1004,6 +1039,12 @@ export class WorkspaceManager {
     if (spec?.pane_kind === "files") {
       return spec.title || (spec.cwd ? baseName(spec.cwd) : t("files.title"));
     }
+    // A git pane: its repository's folder name (the pane keeps the root in cwd).
+    if (spec?.pane_kind === "git") {
+      const pane = this.findPaneById(paneId);
+      if (pane instanceof GitPane) return pane.label();
+      return spec.title || (spec.cwd ? baseName(spec.cwd) : t("git.title"));
+    }
     // An editor pane: its file's name, marked while it has unsaved edits.
     if (spec?.pane_kind === "editor") {
       const base = spec.title || (spec.file_path ? fileName(spec.file_path) : t("editor.untitled"));
@@ -1140,6 +1181,19 @@ export class WorkspaceManager {
     const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
     spec.pane_kind = "files";
     await this.insertSplit(ws, focusId, direction, spec, "files split failed");
+  }
+
+  /// Split the focused pane and open a git pane on the repository of the
+  /// focused pane's live directory (its OSC 7 cwd, else its stored cwd). The
+  /// git pane then follows the active pane until pinned.
+  async splitFocusedGit(direction: SplitDir): Promise<void> {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const liveCwd = await api.getPaneCwd(focusId).catch(() => null);
+    const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
+    spec.pane_kind = "git";
+    await this.insertSplit(ws, focusId, direction, spec, "git split failed");
   }
 
   /// Split the focused pane and open an empty editor pane in the new slot
@@ -1369,26 +1423,30 @@ export class WorkspaceManager {
     return true;
   }
 
-  /// Ask the user whether to remove the git worktree at `wtPath`, and do so
-  /// if confirmed. A dirty worktree gets a second, forced-removal prompt.
-  /// Errors are logged, never thrown — worktree cleanup is best-effort and
-  /// must not fail the pane close / workspace delete that triggered it.
+  /// Offer to remove the git worktree at `wtPath`, through the git pane's
+  /// removal flow (src/git/worktreeFlow.ts): one confirmation that lists what
+  /// goes with it, `--force` only when the listed changes demand it, and a
+  /// failure shown rather than retried with `--force`. (This used to force on
+  /// *any* failure — on Windows that includes a directory still in use.)
+  /// Never throws: cleanup must not fail the pane close / workspace delete
+  /// that triggered it.
   private async offerWorktreeRemoval(wtPath: string): Promise<void> {
-    const ok = await askConfirm(
-      t("worktree.removeConfirm").replace("{path}", wtPath),
-    );
-    if (!ok) return;
+    let entry;
     try {
-      await api.gitWorktreeRemove(wtPath, false);
-    } catch {
-      // Dirty worktree or similar — offer a forced removal.
-      if (await askConfirm(t("worktree.removeForce"))) {
-        try {
-          await api.gitWorktreeRemove(wtPath, true);
-        } catch (e) {
-          console.error("worktree remove failed", e);
-        }
-      }
+      // Asked from inside it, the worktree itself is the `current` entry —
+      // the comparison is done in Rust (rule 15).
+      entry = (await gitApi.worktrees(wtPath)).find((w) => w.current);
+    } catch (e) {
+      // Already gone, or no longer a repository: nothing to remove.
+      console.warn("worktree lookup failed", wtPath, e);
+      return;
+    }
+    if (!entry) return;
+    try {
+      // The pane that showed it is closing, so it is not "shown" any more.
+      await removeWorktreeFlow({ ...entry, current: false });
+    } catch (e) {
+      console.error("worktree remove failed", e);
     }
   }
 

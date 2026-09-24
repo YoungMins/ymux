@@ -440,6 +440,10 @@ pub enum PaneKind {
     /// A text editor rendered by the frontend (`src/editor/EditorPane.ts`).
     /// It has no PTY. The file it has open is the pane's `file_path`.
     Editor,
+    /// A git log / branch / worktree view rendered by the frontend
+    /// (`src/git/GitPane.ts`). It has no PTY. The repository is the one
+    /// containing the pane's `cwd`.
+    Git,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -563,6 +567,16 @@ impl PaneSpec {
         Self {
             pane_kind: PaneKind::Editor,
             file_path: path.into(),
+            ..Self::new_default()
+        }
+    }
+
+    /// A git pane on the repository containing `cwd`. `None` makes the
+    /// frontend follow the active pane's directory from the start.
+    pub fn new_git(cwd: Option<String>) -> Self {
+        Self {
+            pane_kind: PaneKind::Git,
+            cwd,
             ..Self::new_default()
         }
     }
@@ -1323,6 +1337,40 @@ shell = "PowerShell 7"
             .collect();
         let loaded: Config = toml::from_str(&stripped).expect("deserialize");
         assert_eq!(loaded.workspaces[0].panes()[0].file_path, "");
+    }
+
+    /// A git pane keeps its kind and its repository directory (`cwd`)
+    /// through TOML, nested in a split and in a tab group — the two
+    /// tagged-enum shapes rule 3 warns about. It needs no field of its own
+    /// (spec §0.2): the repository is found from `cwd`.
+    #[test]
+    fn git_pane_kind_and_cwd_roundtrip_nested() {
+        let git = PaneSpec::new_git(Some("D:\\작업\\ymux".into()));
+        let in_tabs = PaneSpec::new_git(None);
+        let mut config = Config::default();
+        config.workspaces[0].root = LayoutNode::Split {
+            direction: SplitDir::Vertical,
+            ratio: 0.4,
+            a: Box::new(LayoutNode::Pane(git.clone())),
+            b: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 1,
+                children: vec![
+                    LayoutNode::Pane(PaneSpec::new_default()),
+                    LayoutNode::Pane(in_tabs.clone()),
+                ],
+            }),
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(toml_str.contains("pane_kind = \"git\""), "{toml_str}");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        let a = panes.iter().find(|p| p.id == git.id).unwrap();
+        let b = panes.iter().find(|p| p.id == in_tabs.id).unwrap();
+        assert_eq!(a.pane_kind, PaneKind::Git);
+        assert_eq!(a.cwd.as_deref(), Some("D:\\작업\\ymux"));
+        assert_eq!(b.pane_kind, PaneKind::Git);
+        assert_eq!(b.cwd, None);
     }
 
     /// A files pane keeps its kind and its directory (`cwd`) through TOML,

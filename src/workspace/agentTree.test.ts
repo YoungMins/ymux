@@ -98,6 +98,13 @@ describe("paneLabel", () => {
     expect(paneLabel(ed, labels)).toBe("main.rs");
     expect(paneLabel({ ...ed, title: "Notes" }, labels)).toBe("Notes");
   });
+
+  it("names a git pane by its repository folder", () => {
+    const git: PaneSpec = { ...newPane("", "C:/src/ymux"), pane_kind: "git" };
+    expect(paneLabel(git, labels)).toBe("ymux");
+    expect(paneLabel({ ...git, cwd: "D:\\작업\\저장소" }, labels)).toBe("저장소");
+    expect(paneLabel({ ...git, cwd: null }, labels)).toBe("Git");
+  });
 });
 
 describe("workspaceIdOfPane", () => {
