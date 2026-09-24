@@ -249,7 +249,13 @@ pub type KnownPane = Arc<dyn Fn(Uuid) -> bool + Send + Sync>;
 pub type OnEvent = Arc<dyn Fn(HookEvent) + Send + Sync>;
 
 /// Run the accept loop on a background thread for the life of the process.
-/// Each connection is served on its own short-lived thread.
+/// Each connection is served on its own short-lived thread; accepted events
+/// go through one channel to a single applier thread that calls `on_event`.
+///
+/// Order matters: Claude Code sends hook N+1 only after hook N's response,
+/// so queueing each event *before* its response keeps the registry's order
+/// equal to Claude's (a `Stop` can't overtake the last `PostToolUse`), while
+/// the response still never waits for `on_event` and its locks.
 pub fn serve(
     listener: TcpListener,
     token: String,
@@ -257,29 +263,35 @@ pub fn serve(
     on_event: OnEvent,
 ) -> io::Result<std::thread::JoinHandle<()>> {
     let token: Arc<str> = token.into();
+    let (tx, rx) = std::sync::mpsc::channel::<HookEvent>();
+    std::thread::Builder::new()
+        .name("ymux-hook-apply".into())
+        .spawn(move || {
+            for ev in rx {
+                on_event(ev);
+            }
+        })?;
     std::thread::Builder::new()
         .name("ymux-hook-http".into())
         .spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
-                let (token, known_pane, on_event) =
-                    (token.clone(), known_pane.clone(), on_event.clone());
+                let (token, known_pane, tx) = (token.clone(), known_pane.clone(), tx.clone());
                 let _ = std::thread::Builder::new()
                     .name("ymux-hook-conn".into())
                     .spawn(move || {
-                        let _ = handle(stream, &token, &*known_pane, &*on_event);
+                        let _ = handle(stream, &token, &*known_pane, &tx);
                     });
             }
         })
 }
 
-/// Serve one request. The response is written (and the socket shut) before
-/// `on_event` runs, so Claude never waits on ymux's registry locks.
+/// Serve one request: queue the accepted event, then answer.
 fn handle(
     mut stream: TcpStream,
     token: &str,
     known_pane: &(dyn Fn(Uuid) -> bool + Send + Sync),
-    on_event: &(dyn Fn(HookEvent) + Send + Sync),
+    queue: &std::sync::mpsc::Sender<HookEvent>,
 ) -> io::Result<()> {
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
@@ -316,15 +328,23 @@ fn handle(
     let Some(event) = hook_event(&body, pane) else {
         return reply(&mut stream, 400);
     };
-    reply(&mut stream, 204)?;
-    on_event(event);
-    Ok(())
+    let _ = queue.send(event);
+    reply(&mut stream, 204)
 }
 
+/// Upper bound on request bytes discarded after an early reply.
+const MAX_DRAIN: u64 = MAX_BODY as u64 + MAX_HEAD as u64;
+
+/// Write `status`, half-close, then read and discard whatever the client is
+/// still sending (bounded by [`MAX_DRAIN`] and [`IO_TIMEOUT`]). Closing a
+/// socket with unread bytes queued makes the OS send a reset instead of a
+/// clean close, and a client still uploading a large body — a Claude outside
+/// ymux posting a big `PostToolUse` — would see that as a failed hook.
 fn reply(stream: &mut TcpStream, status: u16) -> io::Result<()> {
     stream.write_all(response(status).as_bytes())?;
     stream.flush()?;
     let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = io::copy(&mut (&*stream).take(MAX_DRAIN), &mut io::sink());
     Ok(())
 }
 
@@ -646,6 +666,60 @@ mod tests {
         let garbage = send(port, b"hello\r\n\r\n");
         assert!(garbage.starts_with("HTTP/1.1 400 "), "{garbage}");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    /// A Claude outside ymux posting a big `PostToolUse` (a `Read` result):
+    /// the quiet 204 must arrive intact, not as a connection reset from
+    /// closing on an unread body.
+    #[test]
+    fn listener_ignores_a_large_body_without_resetting() {
+        let (port, rx) = start();
+        let big = format!(
+            r#"{{"hook_event_name":"PostToolUse","tool_response":"{}"}}"#,
+            "x".repeat(6 * 1024 * 1024)
+        );
+        for (pane, token) in [("", ""), ("", "guess")] {
+            let raw = request(port, pane, token, "", &big);
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            s.write_all(&raw).expect("whole body written");
+            let mut out = String::new();
+            s.read_to_string(&mut out).expect("clean close, no reset");
+            let want = if token.is_empty() { 204 } else { 403 };
+            assert_eq!(out, response(want));
+        }
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    /// Claude sends hook N+1 only after N's response; the registry must see
+    /// them in that order even when applying one is slow.
+    #[test]
+    fn listener_applies_events_in_arrival_order() {
+        let listener = bind_loopback(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        let tx = parking_lot::Mutex::new(tx);
+        serve(
+            listener,
+            TOKEN.into(),
+            Arc::new(ours),
+            Arc::new(move |ev: HookEvent| {
+                // Earlier events are slower to apply.
+                let n: u64 = ev.session_id.parse().unwrap();
+                std::thread::sleep(Duration::from_millis((5 - n) * 40));
+                let _ = tx.lock().send(n);
+            }),
+        )
+        .unwrap();
+        for n in 0..5 {
+            let body = format!(r#"{{"hook_event_name":"PostToolUse","session_id":"{n}"}}"#);
+            let resp = send(port, &request(port, &pane().to_string(), TOKEN, "", &body));
+            assert_eq!(resp, response(204));
+        }
+        let got: Vec<u64> = (0..5)
+            .map(|_| rx.recv_timeout(Duration::from_secs(5)).unwrap())
+            .collect();
+        assert_eq!(got, vec![0, 1, 2, 3, 4]);
     }
 
     #[test]
