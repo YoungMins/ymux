@@ -236,25 +236,24 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
         emit_agents_changed(app, &reg.snapshot());
     }
     drop(reg);
-    if let Some(lead) = lead {
-        let sessions = app.state::<SharedSessions>();
-        let mut tracker = sessions.0.lock();
-        if ev.event == "SessionEnd" {
-            // The user quit the agent; keep the record but stop offering to
-            // resume it (spec §4's "decline, don't delete").
-            tracker.note_agent_exit(ev.pane_id);
-        } else {
-            observe_pane_session(
-                app,
-                &mut tracker,
-                ev.pane_id,
-                &lead.kind,
-                lead.status,
-                hook_id,
-            );
-        }
-        flush_sessions(&mut tracker);
-    }
+    // `SessionEnd` clears the pane's agents, so there is no lead to read here
+    // and nothing to record — which is right: a hook cannot distinguish "the
+    // user quit Claude" from "ymux is killing every PTY on the way out", and
+    // deactivating on the second would erase exactly the records the next
+    // launch needs. The process scan's `exited_panes` makes that distinction
+    // (it only reports panes still in `live`), so the decision belongs there.
+    let Some(lead) = lead else { return };
+    let sessions = app.state::<SharedSessions>();
+    let mut tracker = sessions.0.lock();
+    observe_pane_session(
+        app,
+        &mut tracker,
+        ev.pane_id,
+        &lead.kind,
+        lead.status,
+        hook_id,
+    );
+    flush_sessions(&mut tracker);
 }
 
 /// The resume plan for one pane, or `None` when it should start normally.

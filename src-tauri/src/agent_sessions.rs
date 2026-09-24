@@ -185,6 +185,13 @@ pub const CLAUDE_SKIP_PERMISSIONS: &str = "--dangerously-skip-permissions";
 /// Token-aware rather than a regex over the raw string, so `claude --resume
 /// "my session"` loses both tokens and `echo --resume` is left untouched.
 ///
+/// Every flag in the drop lists was read off `--help` on this machine, not
+/// guessed: Claude has `-c/--continue`, `-r/--resume`, `--fork-session`,
+/// `--teleport` and `--from-pr`; Codex has the `resume` and `fork`
+/// subcommands and `--last`. (`--fork` is *not* a Claude flag — the real
+/// spelling is `--fork-session`, and it means "when resuming, create a new
+/// session ID", which is exactly the opposite of continuing.)
+///
 /// It also drops any flag [`resume_argv`] supplies itself, so a user whose
 /// startup command already carries `--dangerously-skip-permissions` gets it
 /// once, not twice.
@@ -200,7 +207,12 @@ pub fn strip_selector(startup_cmd: &str, agent: AgentKind) -> Option<Vec<String>
         AgentKind::Codex => {
             let mut out = vec![tokens[0].clone()];
             let mut rest = &tokens[1..];
-            if rest.first().map(String::as_str) == Some("resume") {
+            // `fork` is the same shape as `resume` (`codex fork [SESSION_ID]`)
+            // and forks rather than continues, so it goes the same way.
+            if matches!(
+                rest.first().map(String::as_str),
+                Some("resume") | Some("fork")
+            ) {
                 rest = &rest[1..];
                 // `resume` may be followed by a bare positional session id.
                 if rest
@@ -221,7 +233,7 @@ pub fn strip_selector(startup_cmd: &str, agent: AgentKind) -> Option<Vec<String>
         let drop_with_value = matches!(t, "--resume" | "-r" | "--teleport" | "--from-pr");
         let drop_alone = matches!(
             t,
-            "-c" | "--continue" | "--last" | "--fork" | CLAUDE_SKIP_PERMISSIONS
+            "-c" | "--continue" | "--last" | "--fork-session" | CLAUDE_SKIP_PERMISSIONS
         );
         if drop_with_value {
             i += 1;
@@ -781,6 +793,12 @@ mod tests {
             strip_selector("claude --resume=old-id-1234", c),
             Some(vec!["claude".into()])
         );
+        // `claude --help`: "--fork-session  When resuming, create a new
+        // session ID" — i.e. it forks instead of continuing, so it goes too.
+        assert_eq!(
+            strip_selector("claude --resume old-id-1234 --fork-session", c),
+            Some(vec!["claude".into()])
+        );
     }
 
     #[test]
@@ -805,6 +823,11 @@ mod tests {
         );
         assert_eq!(
             strip_selector("codex resume --last", k),
+            Some(vec!["codex".into()])
+        );
+        // `codex fork` has the same shape and forks instead of continuing.
+        assert_eq!(
+            strip_selector("codex fork 01a07644-42b3-7183-a7fd-70379b88af1f", k),
             Some(vec!["codex".into()])
         );
         assert_eq!(
