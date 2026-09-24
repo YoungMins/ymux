@@ -18,13 +18,15 @@ export interface ShellProfile {
 
 /// `files` is a GUI file manager with no PTY; its directory is `cwd`.
 /// `editor` is a GUI text editor with no PTY; its file is `file_path`.
+/// `git` is a GUI log / branch / worktree view with no PTY; its repo is found from `cwd`.
 export type PaneKind =
   | "terminal"
   | "browser"
   | "native_browser"
   | "embedded_browser"
   | "files"
-  | "editor";
+  | "editor"
+  | "git";
 
 export interface HotKeyDef {
   label: string;
