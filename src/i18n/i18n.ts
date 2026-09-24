@@ -209,13 +209,6 @@ const strings: Translations = {
     ar: "حجم خط الطرفية", pt: "Tamanho da fonte do terminal", ru: "Размер шрифта терминала",
     tr: "Terminal yazı tipi boyutu", de: "Terminal-Schriftgröße", vi: "Cỡ chữ terminal",
   },
-  "shortcut.fontSize": {
-    en: "Increase / decrease font size", ko: "글자 크기 확대 / 축소", ja: "文字サイズを拡大 / 縮小",
-    zh: "增大 / 减小字体", hi: "फ़ॉन्ट आकार बढ़ाएँ / घटाएँ", es: "Aumentar / reducir tamaño de fuente",
-    fr: "Augmenter / réduire la taille de police", ar: "تكبير / تصغير حجم الخط",
-    pt: "Aumentar / diminuir tamanho da fonte", ru: "Увеличить / уменьшить шрифт",
-    tr: "Yazı tipini büyüt / küçült", de: "Schrift vergrößern / verkleinern", vi: "Tăng / giảm cỡ chữ",
-  },
   "shortcut.fontIncrease": {
     en: "Increase font size", ko: "글자 크기 확대", ja: "文字サイズを拡大", zh: "增大字体",
     hi: "फ़ॉन्ट आकार बढ़ाएँ", es: "Aumentar tamaño de fuente", fr: "Augmenter la taille de police",
@@ -733,28 +726,14 @@ const strings: Translations = {
   },
 
   // ── Help overlay ────────────────────────────────────────────────
-  "help.title": {
-    en: "Keyboard Shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット", zh: "键盘快捷键",
-    hi: "कीबोर्ड शॉर्टकट", es: "Atajos de teclado", fr: "Raccourcis clavier", ar: "اختصارات لوحة المفاتيح",
-    pt: "Atalhos do teclado", ru: "Сочетания клавиш", tr: "Klavye kısayolları", de: "Tastaturkürzel", vi: "Phím tắt bàn phím",
-  },
-  "help.close": {
-    en: "Close", ko: "닫기", ja: "閉じる", zh: "关闭",
-    hi: "बंद करें", es: "Cerrar", fr: "Fermer", ar: "إغلاق",
-    pt: "Fechar", ru: "Закрыть", tr: "Kapat", de: "Schließen", vi: "Đóng",
-  },
   "help.langLabel": {
     en: "Language", ko: "언어", ja: "言語", zh: "语言",
     hi: "भाषा", es: "Idioma", fr: "Langue", ar: "اللغة",
     pt: "Idioma", ru: "Язык", tr: "Dil", de: "Sprache", vi: "Ngôn ngữ",
   },
-  "help.buttonTitle": {
-    en: "Keyboard shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット", zh: "键盘快捷键",
-    hi: "कीबोर्ड शॉर्टकट", es: "Atajos de teclado", fr: "Raccourcis clavier", ar: "اختصارات لوحة المفاتيح",
-    pt: "Atalhos do teclado", ru: "Сочетания клавиш", tr: "Klavye kısayolları", de: "Tastaturkürzel", vi: "Phím tắt bàn phím",
-  },
 
-  // ── Shortcut descriptions (used in help overlay table) ─────────
+  // ── Shortcut descriptions (used in the Settings panel's Shortcuts table
+  // and the Command Palette) ──────────────────────────────────────────
   "shortcut.switchWs": {
     en: "Switch to workspace 1 – 9",
     ko: "워크스페이스 1 – 9로 전환",
@@ -891,19 +870,19 @@ const strings: Translations = {
     vi: "Chọn khung trước đó",
   },
   "shortcut.openLink": {
-    en: "Open link in default browser",
-    ko: "기본 브라우저로 링크 열기",
-    ja: "リンクをデフォルトブラウザで開く",
-    zh: "在默认浏览器中打开链接",
-    hi: "डिफ़ॉल्ट ब्राउज़र में लिंक खोलें",
-    es: "Abrir enlace en el navegador predeterminado",
-    fr: "Ouvrir le lien dans le navigateur par défaut",
-    ar: "فتح الرابط في المتصفح الافتراضي",
-    pt: "Abrir link no navegador padrão",
-    ru: "Открыть ссылку в браузере по умолчанию",
-    tr: "Bağlantıyı varsayılan tarayıcıda aç",
-    de: "Link im Standardbrowser öffnen",
-    vi: "Mở liên kết trong trình duyệt mặc định",
+    en: "Open a link or file (executables are revealed, not run)",
+    ko: "링크나 파일 열기 (실행 파일은 실행 대신 표시)",
+    ja: "リンクやファイルを開く（実行ファイルは実行せず表示）",
+    zh: "打开链接或文件（可执行文件仅显示，不运行）",
+    hi: "लिंक या फ़ाइल खोलें (एक्ज़ीक्यूटेबल चलाए नहीं, दिखाए जाते हैं)",
+    es: "Abrir un enlace o archivo (los ejecutables se muestran, no se ejecutan)",
+    fr: "Ouvrir un lien ou un fichier (les exécutables sont révélés, pas exécutés)",
+    ar: "فتح رابط أو ملف (يتم عرض الملفات التنفيذية بدلاً من تشغيلها)",
+    pt: "Abrir um link ou arquivo (executáveis são revelados, não executados)",
+    ru: "Открыть ссылку или файл (исполняемые файлы показываются, а не запускаются)",
+    tr: "Bağlantı veya dosya aç (çalıştırılabilir dosyalar çalıştırılmaz, gösterilir)",
+    de: "Link oder Datei öffnen (Ausführbare Dateien werden angezeigt, nicht ausgeführt)",
+    vi: "Mở liên kết hoặc tệp (tệp thực thi chỉ được hiển thị, không chạy)",
   },
   "shortcut.zoom": {
     en: "Zoom / unzoom focused pane",
@@ -1080,21 +1059,6 @@ const strings: Translations = {
     tr: "Odaklanmış paneli yeniden adlandır",
     de: "Fokussierten Bereich umbenennen",
     vi: "Đổi tên khung đang chọn",
-  },
-  "shortcut.helpToggle": {
-    en: "Show / hide this shortcut reference",
-    ko: "단축키 안내 팝업 표시 / 숨기기",
-    ja: "ショートカット一覧を表示 / 非表示",
-    zh: "显示 / 隐藏快捷键参考",
-    hi: "शॉर्टकट संदर्भ दिखाएँ / छिपाएँ",
-    es: "Mostrar / ocultar referencia de atajos",
-    fr: "Afficher / masquer la référence des raccourcis",
-    ar: "إظهار / إخفاء مرجع الاختصارات",
-    pt: "Mostrar / ocultar referência de atalhos",
-    ru: "Показать / скрыть справку по сочетаниям",
-    tr: "Kısayol referansını göster / gizle",
-    de: "Tastaturkürzel-Referenz ein-/ausblenden",
-    vi: "Hiện / ẩn bảng tham chiếu phím tắt",
   },
   "shortcut.palette": {
     en: "Open command palette",
