@@ -72,6 +72,14 @@ export function parseDraft(blob: string): Draft | null {
   };
 }
 
+/// What a failed draft write means for the user. `too_large`: this buffer
+/// is over the draft cap, so the safety net is off for this file until it
+/// shrinks — say so, once, rather than fail silently. Anything else is a
+/// transient IO error, logged; the next edit retries.
+export function draftWriteFailure(kind: string): "netOff" | "transient" {
+  return kind === "too_large" ? "netOff" : "transient";
+}
+
 /// The startup sweep: drafts whose pane id exists nowhere in the config (the
 /// pane was closed, its workspace deleted, the config edited by hand). A
 /// draft of a pane that is still in the config — hydrated or not — is kept.

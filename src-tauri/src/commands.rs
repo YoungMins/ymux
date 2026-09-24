@@ -610,6 +610,15 @@ pub fn save_editor_draft(
     blob: String,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "save_editor_draft")?;
+    // Its own kind, so the pane can tell the user the safety net is off for
+    // this file rather than failing silently.
+    if blob.len() > crate::drafts::MAX_DRAFT_BYTES {
+        return Err(YmuxError::TooLarge(format!(
+            "draft of {} bytes is over the {} byte cap",
+            blob.len(),
+            crate::drafts::MAX_DRAFT_BYTES
+        )));
+    }
     crate::drafts::save(&pane_id, &blob).map_err(YmuxError::Io)
 }
 

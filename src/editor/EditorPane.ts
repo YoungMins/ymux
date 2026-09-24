@@ -47,7 +47,7 @@ import {
 } from "./editorModel";
 import { closeDecision, closeResult, type CloseChoice } from "./closeGuard";
 import { eolLabel, needsEolWarning, saveEol, type Eol } from "./eol";
-import { draftDisposition, encodeDraft, parseDraft, type DiskView, type Draft } from "./draft";
+import { draftDisposition, draftWriteFailure, encodeDraft, parseDraft, type DiskView, type Draft } from "./draft";
 
 export interface EditorPaneOptions {
   id: Uuid;
@@ -171,6 +171,8 @@ export class EditorPane implements Pane {
   private draftChecked = false;
   /// Looking for the draft failed (IO): leave whatever is there alone.
   private draftUnreadable = false;
+  /// The last draft write was refused as over the cap (already told).
+  private draftNetOff = false;
   /// Non-null while the pane cannot show an editable file.
   private problem: { text: string; retry: boolean } | null = null;
   private loadGen = 0;
@@ -782,9 +784,20 @@ export class EditorPane implements Pane {
       savedAt: Date.now(),
     };
     this.draftOnDisk = true;
-    return api.saveEditorDraft(this.id, encodeDraft(draft)).catch((e) => {
-      console.warn("editor: draft save failed", e);
-    });
+    return api.saveEditorDraft(this.id, encodeDraft(draft)).then(
+      () => {
+        this.draftNetOff = false;
+      },
+      (e) => {
+        console.warn("editor: draft save failed", e);
+        if (draftWriteFailure(errorKind(e)) === "netOff" && !this.draftNetOff) {
+          // Once per episode, and it stays on the status line: the user has
+          // to know this file's unsaved edits have no crash protection.
+          this.draftNetOff = true;
+          this.say(fill(t("editor.draftTooLarge"), { name: this.displayName() }), true);
+        }
+      },
+    );
   }
 
   /// Look for this pane's draft and offer it. `disk` is what the load found:

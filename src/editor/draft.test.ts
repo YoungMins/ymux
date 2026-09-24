@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coldDraftEntry, draftDisposition, encodeDraft, orphanDraftIds, parseDraft, type Draft } from "./draft";
+import { coldDraftEntry, draftDisposition, draftWriteFailure, encodeDraft, orphanDraftIds, parseDraft, type Draft } from "./draft";
 
 const draft: Draft = {
   v: 1,
@@ -24,6 +24,14 @@ describe("draft encode/parse", () => {
     expect(parseDraft(JSON.stringify({ ...draft, eol: "weird" }))).toBeNull();
     expect(parseDraft(JSON.stringify({ ...draft, base: null }))).toBeNull();
     expect(parseDraft(JSON.stringify({ ...draft, text: 3 }))).toBeNull();
+  });
+});
+
+describe("draftWriteFailure", () => {
+  it("reports the safety net off for an over-cap draft, and nothing else", () => {
+    expect(draftWriteFailure("too_large")).toBe("netOff");
+    expect(draftWriteFailure("other")).toBe("transient");
+    expect(draftWriteFailure("permission_denied")).toBe("transient");
   });
 });
 
