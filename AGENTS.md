@@ -94,7 +94,7 @@ Missing any of these causes the field to silently disappear during save/load.
 
 ### 4. CI Sidecar Files
 
-Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. If you add new sidecar binaries, update:
+Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. Today there is exactly one sidecar, `y` (the Claude Code hook relay). If you add or remove one, update:
 - `src-tauri/tauri.conf.json` → `bundle.externalBin`
 - `.github/workflows/release.yml` → dummy file creation loop
 - `scripts/build-tools.mjs` → TOOLS array
@@ -269,7 +269,7 @@ git push origin v0.8.4
 
 CI automatically:
 1. Runs tests on Linux (fast fail)
-2. Builds the MSI on Windows (with sidecar tools) **and creates the release** —
+2. Builds the MSI on Windows (with the `y` sidecar) **and creates the release** —
    it goes first precisely so exactly one job ever creates it
 3. Builds the arm64 `.dmg` on macOS and uploads it onto that release
 4. Rewrites the release body with install info + auto-generated notes
