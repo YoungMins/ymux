@@ -51,6 +51,18 @@ export function t(key: string): string {
   return entry[current] ?? entry.en ?? key;
 }
 
+/// Keys under `prefix` missing any of the 13 languages, as `key:lang`. The
+/// table is `Partial` (older sections are en/ko/ja only), so tsc cannot
+/// enforce rule 7; a test calls this for the sections that must be complete.
+export function translationGaps(prefix: string): string[] {
+  const gaps: string[] = [];
+  for (const [key, entry] of Object.entries(strings)) {
+    if (!key.startsWith(prefix)) continue;
+    for (const { code } of ALL_LANGS) if (!entry[code]) gaps.push(`${key}:${code}`);
+  }
+  return gaps;
+}
+
 type Translations = Record<string, Partial<Record<Lang, string>>>;
 
 const strings: Translations = {
@@ -1290,28 +1302,282 @@ const strings: Translations = {
 
   // ── File dock ──────────────────────────────────────────────────
   "filedock.toggle": {
-    en: "Toggle file dock (yDir)", ko: "파일 도크 토글 (yDir)", ja: "ファイルドックの切り替え (yDir)",
-    zh: "切换文件停靠栏 (yDir)", hi: "फ़ाइल डॉक टॉगल करें (yDir)", es: "Alternar panel de archivos (yDir)",
-    fr: "Basculer le dock de fichiers (yDir)", ar: "تبديل لوحة الملفات (yDir)", pt: "Alternar painel de arquivos (yDir)",
-    ru: "Переключить панель файлов (yDir)", tr: "Dosya panelini aç/kapat (yDir)", de: "Dateileiste umschalten (yDir)", vi: "Bật/tắt thanh tệp (yDir)",
+    en: "Toggle file dock", ko: "파일 도크 토글", ja: "ファイルドックの切り替え",
+    zh: "切换文件停靠栏", hi: "फ़ाइल डॉक टॉगल करें", es: "Alternar panel de archivos",
+    fr: "Basculer le dock de fichiers", ar: "تبديل لوحة الملفات", pt: "Alternar painel de arquivos",
+    ru: "Переключить панель файлов", tr: "Dosya panelini aç/kapat", de: "Dateileiste umschalten", vi: "Bật/tắt thanh tệp",
   },
-  "filedock.exited": {
-    en: "yDir has exited.", ko: "yDir가 종료되었습니다.", ja: "yDir が終了しました。",
-    zh: "yDir 已退出。", hi: "yDir बंद हो गया है।", es: "yDir se ha cerrado.",
-    fr: "yDir s'est arrêté.", ar: "تم إغلاق yDir.", pt: "O yDir foi encerrado.",
-    ru: "yDir завершил работу.", tr: "yDir kapandı.", de: "yDir wurde beendet.", vi: "yDir đã thoát.",
+
+  // ── Files pane (src/files/FilesPane.ts) ────────────────────────
+  "files.title": {
+    en: "Files", ko: "파일", ja: "ファイル",
+    zh: "文件", hi: "फ़ाइलें", es: "Archivos",
+    fr: "Fichiers", ar: "الملفات", pt: "Arquivos",
+    ru: "Файлы", tr: "Dosyalar", de: "Dateien", vi: "Tệp",
   },
-  "filedock.failed": {
-    en: "yDir could not be started.", ko: "yDir를 시작할 수 없습니다.", ja: "yDir を起動できませんでした。",
-    zh: "无法启动 yDir。", hi: "yDir शुरू नहीं हो सका।", es: "No se pudo iniciar yDir.",
-    fr: "Impossible de démarrer yDir.", ar: "تعذّر تشغيل yDir.", pt: "Não foi possível iniciar o yDir.",
-    ru: "Не удалось запустить yDir.", tr: "yDir başlatılamadı.", de: "yDir konnte nicht gestartet werden.", vi: "Không thể khởi động yDir.",
+  "files.here": {
+    en: "Files here", ko: "여기서 파일 보기", ja: "ここでファイルを表示",
+    zh: "在此处浏览文件", hi: "यहाँ फ़ाइलें", es: "Archivos aquí",
+    fr: "Fichiers ici", ar: "الملفات هنا", pt: "Arquivos aqui",
+    ru: "Файлы здесь", tr: "Buradaki dosyalar", de: "Dateien hier", vi: "Tệp tại đây",
   },
-  "filedock.restart": {
-    en: "Restart", ko: "다시 시작", ja: "再起動",
-    zh: "重新启动", hi: "पुनः आरंभ करें", es: "Reiniciar",
-    fr: "Redémarrer", ar: "إعادة التشغيل", pt: "Reiniciar",
-    ru: "Перезапустить", tr: "Yeniden başlat", de: "Neu starten", vi: "Khởi động lại",
+  "files.splitCommand": {
+    en: "Split: files pane", ko: "분할: 파일 창", ja: "分割: ファイルペイン",
+    zh: "拆分：文件窗格", hi: "विभाजित करें: फ़ाइल पेन", es: "Dividir: panel de archivos",
+    fr: "Diviser : volet de fichiers", ar: "تقسيم: لوحة الملفات", pt: "Dividir: painel de arquivos",
+    ru: "Разделить: панель файлов", tr: "Böl: dosya bölmesi", de: "Teilen: Dateibereich", vi: "Chia: ô tệp",
+  },
+  "files.up": {
+    en: "Up one folder (Backspace)", ko: "상위 폴더 (Backspace)", ja: "1 つ上のフォルダー (Backspace)",
+    zh: "上一级文件夹 (Backspace)", hi: "एक फ़ोल्डर ऊपर (Backspace)", es: "Subir una carpeta (Retroceso)",
+    fr: "Dossier parent (Retour arrière)", ar: "مجلد لأعلى (Backspace)", pt: "Subir uma pasta (Backspace)",
+    ru: "На уровень вверх (Backspace)", tr: "Bir üst klasör (Backspace)", de: "Einen Ordner nach oben (Rücktaste)", vi: "Lên một thư mục (Backspace)",
+  },
+  "files.refresh": {
+    en: "Refresh (F5)", ko: "새로 고침 (F5)", ja: "更新 (F5)",
+    zh: "刷新 (F5)", hi: "रीफ़्रेश करें (F5)", es: "Actualizar (F5)",
+    fr: "Actualiser (F5)", ar: "تحديث (F5)", pt: "Atualizar (F5)",
+    ru: "Обновить (F5)", tr: "Yenile (F5)", de: "Aktualisieren (F5)", vi: "Làm mới (F5)",
+  },
+  "files.newFolder": {
+    en: "New folder (F7)", ko: "새 폴더 (F7)", ja: "新しいフォルダー (F7)",
+    zh: "新建文件夹 (F7)", hi: "नया फ़ोल्डर (F7)", es: "Nueva carpeta (F7)",
+    fr: "Nouveau dossier (F7)", ar: "مجلد جديد (F7)", pt: "Nova pasta (F7)",
+    ru: "Новая папка (F7)", tr: "Yeni klasör (F7)", de: "Neuer Ordner (F7)", vi: "Thư mục mới (F7)",
+  },
+  "files.newFile": {
+    en: "New file", ko: "새 파일", ja: "新しいファイル",
+    zh: "新建文件", hi: "नई फ़ाइल", es: "Nuevo archivo",
+    fr: "Nouveau fichier", ar: "ملف جديد", pt: "Novo arquivo",
+    ru: "Новый файл", tr: "Yeni dosya", de: "Neue Datei", vi: "Tệp mới",
+  },
+  "files.showHidden": {
+    en: "Show hidden files", ko: "숨김 파일 표시", ja: "隠しファイルを表示",
+    zh: "显示隐藏文件", hi: "छिपी फ़ाइलें दिखाएँ", es: "Mostrar archivos ocultos",
+    fr: "Afficher les fichiers cachés", ar: "إظهار الملفات المخفية", pt: "Mostrar arquivos ocultos",
+    ru: "Показывать скрытые файлы", tr: "Gizli dosyaları göster", de: "Versteckte Dateien anzeigen", vi: "Hiện tệp ẩn",
+  },
+  "files.togglePreview": {
+    en: "Show preview (Tab)", ko: "미리 보기 표시 (Tab)", ja: "プレビューを表示 (Tab)",
+    zh: "显示预览 (Tab)", hi: "पूर्वावलोकन दिखाएँ (Tab)", es: "Mostrar vista previa (Tab)",
+    fr: "Afficher l'aperçu (Tab)", ar: "إظهار المعاينة (Tab)", pt: "Mostrar pré-visualização (Tab)",
+    ru: "Показывать просмотр (Tab)", tr: "Önizlemeyi göster (Tab)", de: "Vorschau anzeigen (Tab)", vi: "Hiện xem trước (Tab)",
+  },
+  "files.editPath": {
+    en: "Type a path", ko: "경로 입력", ja: "パスを入力",
+    zh: "输入路径", hi: "पाथ टाइप करें", es: "Escribir una ruta",
+    fr: "Saisir un chemin", ar: "اكتب مسارًا", pt: "Digitar um caminho",
+    ru: "Ввести путь", tr: "Yol yazın", de: "Pfad eingeben", vi: "Nhập đường dẫn",
+  },
+  "files.open": {
+    en: "Open", ko: "열기", ja: "開く",
+    zh: "打开", hi: "खोलें", es: "Abrir",
+    fr: "Ouvrir", ar: "فتح", pt: "Abrir",
+    ru: "Открыть", tr: "Aç", de: "Öffnen", vi: "Mở",
+  },
+  "files.openDefault": {
+    en: "Open with default app", ko: "기본 앱으로 열기", ja: "既定のアプリで開く",
+    zh: "用默认应用打开", hi: "डिफ़ॉल्ट ऐप से खोलें", es: "Abrir con la aplicación predeterminada",
+    fr: "Ouvrir avec l'application par défaut", ar: "فتح بالتطبيق الافتراضي", pt: "Abrir com o aplicativo padrão",
+    ru: "Открыть в приложении по умолчанию", tr: "Varsayılan uygulamayla aç", de: "Mit Standard-App öffnen", vi: "Mở bằng ứng dụng mặc định",
+  },
+  "files.reveal": {
+    en: "Show in file manager", ko: "파일 관리자에서 보기", ja: "ファイルマネージャーで表示",
+    zh: "在文件管理器中显示", hi: "फ़ाइल मैनेजर में दिखाएँ", es: "Mostrar en el administrador de archivos",
+    fr: "Afficher dans le gestionnaire de fichiers", ar: "إظهار في مدير الملفات", pt: "Mostrar no gerenciador de arquivos",
+    ru: "Показать в файловом менеджере", tr: "Dosya yöneticisinde göster", de: "Im Dateimanager anzeigen", vi: "Hiện trong trình quản lý tệp",
+  },
+  "files.openTerminal": {
+    en: "Open terminal here", ko: "여기서 터미널 열기", ja: "ここでターミナルを開く",
+    zh: "在此处打开终端", hi: "यहाँ टर्मिनल खोलें", es: "Abrir terminal aquí",
+    fr: "Ouvrir un terminal ici", ar: "فتح الطرفية هنا", pt: "Abrir terminal aqui",
+    ru: "Открыть терминал здесь", tr: "Burada terminal aç", de: "Terminal hier öffnen", vi: "Mở terminal tại đây",
+  },
+  "files.cut": {
+    en: "Cut", ko: "잘라내기", ja: "切り取り",
+    zh: "剪切", hi: "काटें", es: "Cortar",
+    fr: "Couper", ar: "قص", pt: "Recortar",
+    ru: "Вырезать", tr: "Kes", de: "Ausschneiden", vi: "Cắt",
+  },
+  "files.rename": {
+    en: "Rename (F2)", ko: "이름 바꾸기 (F2)", ja: "名前の変更 (F2)",
+    zh: "重命名 (F2)", hi: "नाम बदलें (F2)", es: "Cambiar nombre (F2)",
+    fr: "Renommer (F2)", ar: "إعادة التسمية (F2)", pt: "Renomear (F2)",
+    ru: "Переименовать (F2)", tr: "Yeniden adlandır (F2)", de: "Umbenennen (F2)", vi: "Đổi tên (F2)",
+  },
+  "files.trash": {
+    en: "Move to Trash", ko: "휴지통으로 이동", ja: "ごみ箱に移動",
+    zh: "移到回收站", hi: "ट्रैश में ले जाएँ", es: "Mover a la papelera",
+    fr: "Mettre à la corbeille", ar: "نقل إلى سلة المهملات", pt: "Mover para a lixeira",
+    ru: "Переместить в корзину", tr: "Çöp kutusuna taşı", de: "In den Papierkorb verschieben", vi: "Chuyển vào Thùng rác",
+  },
+  "files.deletePermanent": {
+    en: "Delete permanently", ko: "영구 삭제", ja: "完全に削除",
+    zh: "永久删除", hi: "स्थायी रूप से हटाएँ", es: "Eliminar permanentemente",
+    fr: "Supprimer définitivement", ar: "حذف نهائي", pt: "Excluir permanentemente",
+    ru: "Удалить навсегда", tr: "Kalıcı olarak sil", de: "Endgültig löschen", vi: "Xóa vĩnh viễn",
+  },
+  "files.copyPath": {
+    en: "Copy path", ko: "경로 복사", ja: "パスをコピー",
+    zh: "复制路径", hi: "पाथ कॉपी करें", es: "Copiar ruta",
+    fr: "Copier le chemin", ar: "نسخ المسار", pt: "Copiar caminho",
+    ru: "Копировать путь", tr: "Yolu kopyala", de: "Pfad kopieren", vi: "Sao chép đường dẫn",
+  },
+  "files.renamePrompt": {
+    en: "New name", ko: "새 이름", ja: "新しい名前",
+    zh: "新名称", hi: "नया नाम", es: "Nuevo nombre",
+    fr: "Nouveau nom", ar: "الاسم الجديد", pt: "Novo nome",
+    ru: "Новое имя", tr: "Yeni ad", de: "Neuer Name", vi: "Tên mới",
+  },
+  "files.newFolderPrompt": {
+    en: "Name of the new folder", ko: "새 폴더 이름", ja: "新しいフォルダーの名前",
+    zh: "新文件夹的名称", hi: "नए फ़ोल्डर का नाम", es: "Nombre de la nueva carpeta",
+    fr: "Nom du nouveau dossier", ar: "اسم المجلد الجديد", pt: "Nome da nova pasta",
+    ru: "Имя новой папки", tr: "Yeni klasörün adı", de: "Name des neuen Ordners", vi: "Tên thư mục mới",
+  },
+  "files.newFilePrompt": {
+    en: "Name of the new file", ko: "새 파일 이름", ja: "新しいファイルの名前",
+    zh: "新文件的名称", hi: "नई फ़ाइल का नाम", es: "Nombre del nuevo archivo",
+    fr: "Nom du nouveau fichier", ar: "اسم الملف الجديد", pt: "Nome do novo arquivo",
+    ru: "Имя нового файла", tr: "Yeni dosyanın adı", de: "Name der neuen Datei", vi: "Tên tệp mới",
+  },
+  "files.defaultFolderName": {
+    en: "New folder", ko: "새 폴더", ja: "新しいフォルダー",
+    zh: "新建文件夹", hi: "नया फ़ोल्डर", es: "Nueva carpeta",
+    fr: "Nouveau dossier", ar: "مجلد جديد", pt: "Nova pasta",
+    ru: "Новая папка", tr: "Yeni klasör", de: "Neuer Ordner", vi: "Thư mục mới",
+  },
+  "files.defaultFileName": {
+    en: "new-file.txt", ko: "새 파일.txt", ja: "新しいファイル.txt",
+    zh: "新建文件.txt", hi: "new-file.txt", es: "archivo-nuevo.txt",
+    fr: "nouveau-fichier.txt", ar: "new-file.txt", pt: "novo-arquivo.txt",
+    ru: "new-file.txt", tr: "yeni-dosya.txt", de: "neue-datei.txt", vi: "tep-moi.txt",
+  },
+  "files.confirmTrash": {
+    en: "Move {name} to the Trash?", ko: "{name}을(를) 휴지통으로 옮길까요?", ja: "{name} をごみ箱に移動しますか？",
+    zh: "将 {name} 移到回收站？", hi: "{name} को ट्रैश में ले जाएँ?", es: "¿Mover {name} a la papelera?",
+    fr: "Mettre {name} à la corbeille ?", ar: "نقل {name} إلى سلة المهملات؟", pt: "Mover {name} para a lixeira?",
+    ru: "Переместить {name} в корзину?", tr: "{name} çöp kutusuna taşınsın mı?", de: "{name} in den Papierkorb verschieben?", vi: "Chuyển {name} vào Thùng rác?",
+  },
+  "files.confirmTrashMany": {
+    en: "Move {n} items to the Trash?", ko: "항목 {n}개를 휴지통으로 옮길까요?", ja: "{n} 個の項目をごみ箱に移動しますか？",
+    zh: "将 {n} 个项目移到回收站？", hi: "{n} आइटम ट्रैश में ले जाएँ?", es: "¿Mover {n} elementos a la papelera?",
+    fr: "Mettre {n} éléments à la corbeille ?", ar: "نقل {n} عناصر إلى سلة المهملات؟", pt: "Mover {n} itens para a lixeira?",
+    ru: "Переместить элементы ({n}) в корзину?", tr: "{n} öğe çöp kutusuna taşınsın mı?", de: "{n} Elemente in den Papierkorb verschieben?", vi: "Chuyển {n} mục vào Thùng rác?",
+  },
+  "files.confirmDelete": {
+    en: "Permanently delete {name}? This can't be undone.", ko: "{name}을(를) 영구 삭제할까요? 되돌릴 수 없습니다.", ja: "{name} を完全に削除しますか？元に戻せません。",
+    zh: "永久删除 {name}？此操作无法撤销。", hi: "{name} को स्थायी रूप से हटाएँ? इसे पूर्ववत नहीं किया जा सकता।", es: "¿Eliminar {name} permanentemente? No se puede deshacer.",
+    fr: "Supprimer définitivement {name} ? Cette action est irréversible.", ar: "حذف {name} نهائيًا؟ لا يمكن التراجع عن ذلك.", pt: "Excluir {name} permanentemente? Não é possível desfazer.",
+    ru: "Удалить {name} навсегда? Это нельзя отменить.", tr: "{name} kalıcı olarak silinsin mi? Bu geri alınamaz.", de: "{name} endgültig löschen? Das kann nicht rückgängig gemacht werden.", vi: "Xóa vĩnh viễn {name}? Không thể hoàn tác.",
+  },
+  "files.confirmDeleteMany": {
+    en: "Permanently delete {n} items? This can't be undone.", ko: "항목 {n}개를 영구 삭제할까요? 되돌릴 수 없습니다.", ja: "{n} 個の項目を完全に削除しますか？元に戻せません。",
+    zh: "永久删除 {n} 个项目？此操作无法撤销。", hi: "{n} आइटम स्थायी रूप से हटाएँ? इसे पूर्ववत नहीं किया जा सकता।", es: "¿Eliminar {n} elementos permanentemente? No se puede deshacer.",
+    fr: "Supprimer définitivement {n} éléments ? Cette action est irréversible.", ar: "حذف {n} عناصر نهائيًا؟ لا يمكن التراجع عن ذلك.", pt: "Excluir {n} itens permanentemente? Não é possível desfazer.",
+    ru: "Удалить элементы ({n}) навсегда? Это нельзя отменить.", tr: "{n} öğe kalıcı olarak silinsin mi? Bu geri alınamaz.", de: "{n} Elemente endgültig löschen? Das kann nicht rückgängig gemacht werden.", vi: "Xóa vĩnh viễn {n} mục? Không thể hoàn tác.",
+  },
+  "files.trashFailed": {
+    en: "Couldn't move to the Trash ({reason}). Delete permanently instead?", ko: "휴지통으로 옮기지 못했습니다 ({reason}). 대신 영구 삭제할까요?", ja: "ごみ箱に移動できませんでした ({reason})。代わりに完全に削除しますか？",
+    zh: "无法移到回收站（{reason}）。改为永久删除？", hi: "ट्रैश में नहीं ले जा सके ({reason})। इसके बजाय स्थायी रूप से हटाएँ?", es: "No se pudo mover a la papelera ({reason}). ¿Eliminar permanentemente?",
+    fr: "Impossible de mettre à la corbeille ({reason}). Supprimer définitivement ?", ar: "تعذّر النقل إلى سلة المهملات ({reason}). هل تريد الحذف نهائيًا بدلًا من ذلك؟", pt: "Não foi possível mover para a lixeira ({reason}). Excluir permanentemente?",
+    ru: "Не удалось переместить в корзину ({reason}). Удалить навсегда?", tr: "Çöp kutusuna taşınamadı ({reason}). Bunun yerine kalıcı olarak silinsin mi?", de: "Verschieben in den Papierkorb fehlgeschlagen ({reason}). Stattdessen endgültig löschen?", vi: "Không thể chuyển vào Thùng rác ({reason}). Xóa vĩnh viễn thay thế?",
+  },
+  "files.conflict": {
+    en: "{name} already exists here.", ko: "{name}이(가) 이미 여기에 있습니다.", ja: "{name} はすでにここにあります。",
+    zh: "{name} 已存在于此处。", hi: "{name} यहाँ पहले से मौजूद है।", es: "{name} ya existe aquí.",
+    fr: "{name} existe déjà ici.", ar: "{name} موجود هنا بالفعل.", pt: "{name} já existe aqui.",
+    ru: "{name} уже есть здесь.", tr: "{name} burada zaten var.", de: "{name} ist hier bereits vorhanden.", vi: "{name} đã có ở đây.",
+  },
+  "files.conflictDir": {
+    en: "A folder can't replace or be replaced. Keep both, or skip it.", ko: "폴더는 덮어쓰거나 덮어쓸 수 없습니다. 둘 다 유지하거나 건너뛰세요.", ja: "フォルダーは置き換えできません。両方を残すか、スキップしてください。",
+    zh: "文件夹不能替换或被替换。请保留两者或跳过。", hi: "फ़ोल्डर न बदल सकता है न बदला जा सकता है। दोनों रखें या छोड़ दें।", es: "Una carpeta no puede reemplazar ni ser reemplazada. Conserve ambas u omítala.",
+    fr: "Un dossier ne peut ni remplacer ni être remplacé. Gardez les deux ou ignorez-le.", ar: "لا يمكن للمجلد أن يستبدل أو يُستبدل. احتفظ بالاثنين أو تخطَّه.", pt: "Uma pasta não pode substituir nem ser substituída. Mantenha ambas ou pule.",
+    ru: "Папку нельзя заменить или заменить ею. Сохраните оба или пропустите.", tr: "Klasör değiştiremez veya değiştirilemez. İkisini de tutun ya da atlayın.", de: "Ein Ordner kann nicht ersetzen oder ersetzt werden. Beide behalten oder überspringen.", vi: "Thư mục không thể thay thế hoặc bị thay thế. Giữ cả hai hoặc bỏ qua.",
+  },
+  "files.replace": {
+    en: "Replace", ko: "바꾸기", ja: "置き換える",
+    zh: "替换", hi: "बदलें", es: "Reemplazar",
+    fr: "Remplacer", ar: "استبدال", pt: "Substituir",
+    ru: "Заменить", tr: "Değiştir", de: "Ersetzen", vi: "Thay thế",
+  },
+  "files.keepBoth": {
+    en: "Keep both", ko: "둘 다 유지", ja: "両方を残す",
+    zh: "保留两者", hi: "दोनों रखें", es: "Conservar ambos",
+    fr: "Garder les deux", ar: "الاحتفاظ بالاثنين", pt: "Manter ambos",
+    ru: "Сохранить оба", tr: "İkisini de tut", de: "Beide behalten", vi: "Giữ cả hai",
+  },
+  "files.skip": {
+    en: "Skip", ko: "건너뛰기", ja: "スキップ",
+    zh: "跳过", hi: "छोड़ें", es: "Omitir",
+    fr: "Ignorer", ar: "تخطي", pt: "Pular",
+    ru: "Пропустить", tr: "Atla", de: "Überspringen", vi: "Bỏ qua",
+  },
+  "files.applyToAll": {
+    en: "Do this for the rest", ko: "나머지에도 똑같이 적용", ja: "残りにも同じ操作を適用",
+    zh: "对其余项目执行相同操作", hi: "बाकी के लिए भी यही करें", es: "Hacer lo mismo con el resto",
+    fr: "Faire de même pour le reste", ar: "طبّق ذلك على الباقي", pt: "Fazer o mesmo com o restante",
+    ru: "Сделать так же для остальных", tr: "Kalanlar için de bunu yap", de: "Für den Rest genauso", vi: "Làm như vậy cho phần còn lại",
+  },
+  "files.empty": {
+    en: "This folder is empty.", ko: "빈 폴더입니다.", ja: "このフォルダーは空です。",
+    zh: "此文件夹为空。", hi: "यह फ़ोल्डर खाली है।", es: "Esta carpeta está vacía.",
+    fr: "Ce dossier est vide.", ar: "هذا المجلد فارغ.", pt: "Esta pasta está vazia.",
+    ru: "Папка пуста.", tr: "Bu klasör boş.", de: "Dieser Ordner ist leer.", vi: "Thư mục này trống.",
+  },
+  "files.cantOpen": {
+    en: "Can't open this folder.", ko: "이 폴더를 열 수 없습니다.", ja: "このフォルダーを開けません。",
+    zh: "无法打开此文件夹。", hi: "यह फ़ोल्डर नहीं खुल सका।", es: "No se puede abrir esta carpeta.",
+    fr: "Impossible d'ouvrir ce dossier.", ar: "تعذّر فتح هذا المجلد.", pt: "Não é possível abrir esta pasta.",
+    ru: "Не удаётся открыть папку.", tr: "Bu klasör açılamıyor.", de: "Dieser Ordner kann nicht geöffnet werden.", vi: "Không mở được thư mục này.",
+  },
+  "files.goUp": {
+    en: "Go up", ko: "상위로 이동", ja: "上へ移動",
+    zh: "向上", hi: "ऊपर जाएँ", es: "Subir",
+    fr: "Remonter", ar: "الانتقال لأعلى", pt: "Subir",
+    ru: "Вверх", tr: "Yukarı çık", de: "Nach oben", vi: "Lên trên",
+  },
+  "files.retry": {
+    en: "Try again", ko: "다시 시도", ja: "再試行",
+    zh: "重试", hi: "फिर से कोशिश करें", es: "Reintentar",
+    fr: "Réessayer", ar: "إعادة المحاولة", pt: "Tentar novamente",
+    ru: "Повторить", tr: "Tekrar dene", de: "Erneut versuchen", vi: "Thử lại",
+  },
+  "files.items": {
+    en: "{n} items", ko: "항목 {n}개", ja: "{n} 個の項目",
+    zh: "{n} 个项目", hi: "{n} आइटम", es: "{n} elementos",
+    fr: "{n} éléments", ar: "{n} عناصر", pt: "{n} itens",
+    ru: "Элементов: {n}", tr: "{n} öğe", de: "{n} Elemente", vi: "{n} mục",
+  },
+  "files.selected": {
+    en: "{n} of {total} selected", ko: "{total}개 중 {n}개 선택", ja: "{total} 個中 {n} 個を選択",
+    zh: "已选择 {n}/{total} 个", hi: "{total} में से {n} चयनित", es: "{n} de {total} seleccionados",
+    fr: "{n} sur {total} sélectionnés", ar: "تم تحديد {n} من {total}", pt: "{n} de {total} selecionados",
+    ru: "Выбрано {n} из {total}", tr: "{total} öğeden {n} seçildi", de: "{n} von {total} ausgewählt", vi: "Đã chọn {n}/{total}",
+  },
+  "files.working": {
+    en: "Working…", ko: "처리 중…", ja: "処理中…",
+    zh: "处理中…", hi: "काम जारी है…", es: "Procesando…",
+    fr: "Traitement…", ar: "جارٍ العمل…", pt: "Processando…",
+    ru: "Выполняется…", tr: "İşleniyor…", de: "Wird ausgeführt…", vi: "Đang xử lý…",
+  },
+  "files.binary": {
+    en: "Binary file, no text preview.", ko: "바이너리 파일이라 미리 볼 수 없습니다.", ja: "バイナリファイルのためプレビューできません。",
+    zh: "二进制文件，无文本预览。", hi: "बाइनरी फ़ाइल, टेक्स्ट पूर्वावलोकन नहीं।", es: "Archivo binario, sin vista previa de texto.",
+    fr: "Fichier binaire, pas d'aperçu texte.", ar: "ملف ثنائي، لا توجد معاينة نصية.", pt: "Arquivo binário, sem pré-visualização de texto.",
+    ru: "Двоичный файл, текстового просмотра нет.", tr: "İkili dosya, metin önizlemesi yok.", de: "Binärdatei, keine Textvorschau.", vi: "Tệp nhị phân, không có xem trước văn bản.",
+  },
+  "files.previewEmpty": {
+    en: "Empty file.", ko: "빈 파일입니다.", ja: "空のファイルです。",
+    zh: "空文件。", hi: "खाली फ़ाइल।", es: "Archivo vacío.",
+    fr: "Fichier vide.", ar: "ملف فارغ.", pt: "Arquivo vazio.",
+    ru: "Пустой файл.", tr: "Boş dosya.", de: "Leere Datei.", vi: "Tệp trống.",
+  },
+  "files.previewMore": {
+    en: "More not shown.", ko: "나머지는 표시하지 않았습니다.", ja: "以降は表示していません。",
+    zh: "其余内容未显示。", hi: "बाकी नहीं दिखाया गया।", es: "El resto no se muestra.",
+    fr: "La suite n'est pas affichée.", ar: "لم يُعرض الباقي.", pt: "O restante não é exibido.",
+    ru: "Остальное не показано.", tr: "Kalanı gösterilmiyor.", de: "Weiteres wird nicht angezeigt.", vi: "Phần còn lại không hiển thị.",
   },
 
   // ── Worktree ───────────────────────────────────────────────────

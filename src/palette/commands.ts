@@ -144,6 +144,11 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       },
     },
     {
+      id: "pane.splitFiles",
+      label: () => t("files.splitCommand"),
+      action: () => void manager.splitFocusedFiles("horizontal"),
+    },
+    {
       id: "filedock.toggle",
       label: () => t("filedock.toggle"),
       keybinding: "Ctrl+Shift+E",

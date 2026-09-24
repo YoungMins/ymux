@@ -311,6 +311,11 @@ impl App {
     ///
     /// Asking for the directory the panel already shows is a no-op that
     /// keeps the cursor where the user left it.
+    ///
+    /// Test-only since ymux's dock stopped hosting ydir (spec §5 step 2):
+    /// its only caller was the dock's `ChangeDir` follower. Kept, not
+    /// deleted, so its `same_dir` tests run until the crate goes in step 6.
+    #[cfg(test)]
     pub fn change_dir(&mut self, path: &Path) -> bool {
         if !path.is_dir() {
             return false;
@@ -442,6 +447,7 @@ pub fn is_binary_file(path: &std::path::Path) -> bool {
 ///    see through symlinks, 8.3 short names and a genuinely case-insensitive
 ///    volume -- but it costs two syscalls and fails outright on a path that
 ///    does not exist, so it goes last.
+#[cfg(test)]
 fn same_dir(a: &Path, b: &Path) -> bool {
     a == b
         || ypath::same_path(&a.to_string_lossy(), &b.to_string_lossy())

@@ -4,7 +4,6 @@ import {
   DOCK_STATE_VERSION,
   DOCK_MIN_WIDTH,
   clampDockWidth,
-  dockArgv,
   parseDockState,
   serializeDockState,
 } from "./dockModel";
@@ -91,15 +90,5 @@ describe("clampDockWidth", () => {
 
   it("treats a non-finite width as the minimum", () => {
     expect(clampDockWidth(Number.NaN, 1000)).toBe(DOCK_MIN_WIDTH);
-  });
-});
-
-describe("dockArgv", () => {
-  it("passes the start dir after --dock, unsplit", () => {
-    expect(dockArgv("C:\\work dir")).toEqual(["ydir", "--dock", "C:\\work dir"]);
-  });
-
-  it("omits the dir when it is unknown", () => {
-    expect(dockArgv(null)).toEqual(["ydir", "--dock"]);
   });
 });

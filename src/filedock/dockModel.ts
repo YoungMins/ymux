@@ -1,8 +1,10 @@
 // Pure pieces of the file dock: the persisted open/width state
-// (localStorage `ymux.fileDock`), the width clamp used while dragging, and
-// the ydir command line.
+// (localStorage `ymux.fileDock`) and the width clamp used while dragging.
 
-/// Widths are in px, and what they buy is columns of yDir. At the default
+/// Widths are in px. They were sized for yDir's terminal columns, which is
+/// the history below; the files pane that replaced it drops its date column
+/// under 380 px and its size column under 270 px, so the same two numbers
+/// still mean "full listing" and "names plus sizes". At the default
 /// 13 px terminal font a monospace cell is ~7.6 px wide, and the dock
 /// spends 2 cells on yDir's panel border plus ~6 px on its resizer.
 ///
@@ -63,10 +65,4 @@ export function clampDockWidth(width: number, containerWidth: number): number {
   if (!Number.isFinite(width)) return DOCK_MIN_WIDTH;
   const max = Math.max(DOCK_MIN_WIDTH, Math.floor(containerWidth / 2));
   return Math.min(max, Math.max(DOCK_MIN_WIDTH, Math.round(width)));
-}
-
-/// The dock's process. `--dock` makes ydir follow ChangeDir over yipc. The
-/// dir is one argv element, so spaces need no quoting.
-export function dockArgv(cwd: string | null): string[] {
-  return cwd ? ["ydir", "--dock", cwd] : ["ydir", "--dock"];
 }

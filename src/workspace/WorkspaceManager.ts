@@ -20,6 +20,8 @@ import { TerminalPane } from "../terminal/TerminalPane";
 import { clampFontSize, DEFAULT_FONT_SIZE } from "./fontSize";
 import { BrowserPane } from "../browser/BrowserPane";
 import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
+import { FilesPane } from "../files/FilesPane";
+import { baseName } from "../files/fileModel";
 import type { Pane } from "../layout/Pane";
 import {
   findPane,
@@ -499,6 +501,27 @@ export class WorkspaceManager {
         },
       });
     }
+    if (spec.pane_kind === "files") {
+      return new FilesPane({
+        id: spec.id,
+        dir: spec.cwd ?? null,
+        title: spec.title ?? null,
+        ownChrome: groupOfPane(this.active.root, spec.id) === null,
+        onFocus: () => {
+          this.focusedPaneId = spec.id;
+        },
+        onDirChange: (dir) => {
+          this.updatePaneSpec(spec.id, (p) => {
+            p.cwd = dir;
+          });
+          this.refreshTabChrome();
+        },
+        // The files pane is the focused pane when Enter is pressed, so the
+        // viewer tab opens in its own group — beside the file list (§3.7).
+        openFile: (path) => this.openFileInViewerTab(path),
+        openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
+      });
+    }
     const resolvedShell = this.resolveShell(spec.shell);
     const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
     return new TerminalPane({
@@ -582,7 +605,7 @@ export class WorkspaceManager {
       // render invisible. Only a group's `update()` ever sets the class, so
       // clearing it for every ungrouped pane is safe and idempotent.
       if (!grouped) pane.element.classList.remove("pane--tab-hidden");
-      if (pane instanceof TerminalPane) {
+      if (pane instanceof TerminalPane || pane instanceof FilesPane) {
         pane.setOwnChrome(!grouped);
       }
     }
@@ -714,6 +737,7 @@ export class WorkspaceManager {
       "separator",
       { label: t("shortcut.splitH"), onSelect: () => void this.splitFocused("horizontal") },
       { label: t("shortcut.splitV"), onSelect: () => void this.splitFocused("vertical") },
+      { label: t("files.here"), onSelect: () => void this.splitFocusedFiles("horizontal") },
       "separator",
       ...TOOL_MENU.map((tool) => ({
         label: tool.label,
@@ -948,6 +972,10 @@ export class WorkspaceManager {
   /// the process scan, else the shell name (`src/terminal/tabLabel.ts`).
   tabLabelFor(paneId: Uuid): string {
     const spec = this.getPaneSpec(paneId);
+    // A files pane has no shell or process: its label is the folder it shows.
+    if (spec?.pane_kind === "files") {
+      return spec.title || (spec.cwd ? baseName(spec.cwd) : t("files.title"));
+    }
     return tabLabel({
       title: spec?.title ?? null,
       shell: spec?.shell ?? "",
@@ -1063,6 +1091,50 @@ export class WorkspaceManager {
       pane.focus();
     } catch (e) {
       console.error("browser split failed", e);
+    }
+    this.persistDebounced();
+  }
+
+  /// Split the focused pane and open a files pane in the new slot, showing
+  /// the focused pane's live directory (its OSC 7 cwd, else its stored cwd;
+  /// a files pane's stored cwd *is* the folder it shows).
+  async splitFocusedFiles(direction: SplitDir): Promise<void> {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const liveCwd = await api.getPaneCwd(focusId).catch(() => null);
+    const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
+    spec.pane_kind = "files";
+    await this.insertSplit(ws, focusId, direction, spec, "files split failed");
+  }
+
+  /// Split `anchorId` (or the active pane) with a terminal whose cwd is
+  /// `dir` — a files pane's "Open terminal here".
+  async splitTerminalAt(anchorId: Uuid | null, dir: string): Promise<void> {
+    const ws = this.active;
+    const target = anchorId && findPane(ws.root, anchorId) ? anchorId : this.activePaneId();
+    if (!target) return;
+    const spec = newPane(this.resolveShell(this.shells[0]?.name ?? ""), dir);
+    await this.insertSplit(ws, target, "horizontal", spec, "terminal split failed");
+  }
+
+  private async insertSplit(
+    ws: Workspace,
+    targetId: Uuid,
+    direction: SplitDir,
+    spec: PaneSpec,
+    failure: string,
+  ): Promise<void> {
+    ws.root = splitPane(ws.root, targetId, direction, spec);
+    const cache = this.paneCaches.get(ws.id)!;
+    const pane = this.createPane(spec);
+    cache.set(spec.id, pane);
+    this.renderWorkspace(ws);
+    try {
+      await pane.spawn();
+      pane.focus();
+    } catch (e) {
+      console.error(failure, e);
     }
     this.persistDebounced();
   }

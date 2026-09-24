@@ -434,6 +434,9 @@ pub enum PaneKind {
     Browser,
     NativeBrowser,
     EmbeddedBrowser,
+    /// A GUI file manager rendered by the frontend (`src/files/FilesPane.ts`).
+    /// It has no PTY. The directory it shows is the pane's `cwd`.
+    Files,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -529,6 +532,16 @@ impl PaneSpec {
             hotkeys: Vec::new(),
             bg_color: String::new(),
             worktree_path: String::new(),
+        }
+    }
+
+    /// A files pane showing `cwd`. `None` lets the frontend open the home
+    /// directory on first show.
+    pub fn new_files(cwd: Option<String>) -> Self {
+        Self {
+            pane_kind: PaneKind::Files,
+            cwd,
+            ..Self::new_default()
         }
     }
 }
@@ -1233,6 +1246,39 @@ shell = "PowerShell 7"
         assert!(loaded_spec.hotkeys[0].batch);
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
         assert_eq!(loaded_spec.worktree_path, "C:\\wt\\agent-1");
+    }
+
+    /// A files pane keeps its kind and its directory (`cwd`) through TOML,
+    /// nested in a split *and* in a tab group: the two tagged-enum shapes
+    /// rule 3 warns about. The directory is the files pane's only state.
+    #[test]
+    fn files_pane_kind_and_cwd_roundtrip_nested() {
+        let files = PaneSpec::new_files(Some("D:\\작업\\src".into()));
+        let in_tabs = PaneSpec::new_files(Some("/home/me".into()));
+        let mut config = Config::default();
+        config.workspaces[0].root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Pane(files.clone())),
+            b: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 0,
+                children: vec![
+                    LayoutNode::Pane(in_tabs.clone()),
+                    LayoutNode::Pane(PaneSpec::new_default()),
+                ],
+            }),
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(toml_str.contains("pane_kind = \"files\""), "{toml_str}");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        let a = panes.iter().find(|p| p.id == files.id).unwrap();
+        let b = panes.iter().find(|p| p.id == in_tabs.id).unwrap();
+        assert_eq!(a.pane_kind, PaneKind::Files);
+        assert_eq!(a.cwd.as_deref(), Some("D:\\작업\\src"));
+        assert_eq!(b.pane_kind, PaneKind::Files);
+        assert_eq!(b.cwd.as_deref(), Some("/home/me"));
     }
 
     /// `cwd` and `title` must survive the round-trip for a pane nested inside

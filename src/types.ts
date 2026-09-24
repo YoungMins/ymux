@@ -16,7 +16,8 @@ export interface ShellProfile {
   env?: [string, string][];
 }
 
-export type PaneKind = "terminal" | "browser" | "native_browser" | "embedded_browser";
+/// `files` is a GUI file manager with no PTY; its directory is `cwd`.
+export type PaneKind = "terminal" | "browser" | "native_browser" | "embedded_browser" | "files";
 
 export interface HotKeyDef {
   label: string;

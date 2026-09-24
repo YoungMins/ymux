@@ -1980,7 +1980,7 @@ body,
   color: var(--bg);
 }
 
-/* File dock (yDir) ---------------------------------------------------- */
+/* File dock ------------------------------------------------------------ */
 .app-body {
   flex: 1 1 auto;
   display: flex;
@@ -2021,40 +2021,9 @@ body,
   background: var(--accent);
 }
 
-.file-dock__body {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* The dock runs one fixed tool: no title to rename, no HotKey bar. */
-.file-dock .pane-title,
-.file-dock .hotkey-bar {
-  display: none;
-}
-
-.file-dock__message {
-  margin: auto;
-  padding: 16px;
-  text-align: center;
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-
-.file-dock__restart {
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.file-dock__restart:hover {
-  border-color: var(--accent);
+/* The dock hosts one files pane directly (src/filedock/FileDock.ts). */
+.file-dock > .files-pane {
+  padding: 6px 6px 4px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2096,4 +2065,477 @@ body,
 
 .path-link-tip--visible {
   display: block;
+}
+
+/* ---------------------------------------------------------------------------
+   Files pane (src/files/FilesPane.ts)
+
+   Built from the same parts as the browser pane's nav row and the workspace
+   panel: 22px bordered icon buttons, --bg-alt for chrome, --bg-hover for the
+   hovered/active row. The one accent is the keyboard cursor, a 2px bar on the
+   row's left edge (muted when the list is not focused), plus folder icons.
+   Names use the UI font rather than Cascadia, which has no Hangul glyphs;
+   sizes and dates use the mono face with tabular figures so columns align.
+--------------------------------------------------------------------------- */
+.files-pane {
+  --files-sel: rgba(127, 219, 202, 0.1);
+  --files-sel-focused: rgba(127, 219, 202, 0.17);
+}
+
+.files__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.files__btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.files__btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.files__btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.files__btn[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.files__bar-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--border);
+}
+
+.files__crumbs {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: text;
+}
+
+.files__crumbs[hidden] {
+  display: none;
+}
+
+.files__crumb {
+  flex: 0 0 auto;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  padding: 1px 4px;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.files__crumb:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.files__crumb--current {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+
+.files__crumb--current:hover {
+  background: none;
+}
+
+.files__crumb-sep {
+  flex: 0 0 auto;
+  padding: 0 1px;
+  color: var(--fg-muted);
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.files__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  outline: none;
+}
+
+.files__main {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.files-pane--wide .files__main {
+  flex-direction: row;
+}
+
+.files__list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  outline: none;
+}
+
+.files__spacer {
+  position: relative;
+}
+
+.files__row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 9px;
+  color: var(--fg);
+  font-size: 12.5px;
+  cursor: default;
+  user-select: none;
+}
+
+.files__row:hover {
+  background: var(--bg-alt);
+}
+
+.files__row--selected,
+.files__row--selected:hover {
+  background: var(--files-sel);
+}
+
+.files__list--focused .files__row--selected {
+  background: var(--files-sel-focused);
+}
+
+.files__row--cursor {
+  box-shadow: inset 2px 0 0 var(--fg-muted);
+}
+
+.files__list--focused .files__row--cursor {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Cut, waiting for a paste. */
+.files__row--cut {
+  opacity: 0.45;
+}
+
+.files__row--dotfile .files__name {
+  color: var(--fg-muted);
+}
+
+.files__icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-muted);
+}
+
+.files__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.files__row--dir .files__icon,
+.files__preview-entry--dir .files__icon {
+  color: var(--accent);
+}
+
+/* `pre`, not `nowrap`: a name's own spaces are part of the name. */
+.files__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.files__link {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  margin-left: -4px;
+  color: var(--fg-muted);
+}
+
+.files__link[hidden] {
+  display: none;
+}
+
+.files__link svg {
+  width: 10px;
+  height: 10px;
+}
+
+.files__size,
+.files__date {
+  flex: 0 0 auto;
+  text-align: right;
+  color: var(--fg-muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.files__size {
+  width: 9ch;
+}
+
+.files__date {
+  width: 10ch;
+}
+
+.files-pane--narrow .files__date,
+.files-pane--tiny .files__size {
+  display: none;
+}
+
+.files__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.files__overlay[hidden] {
+  display: none;
+}
+
+.files__overlay p {
+  margin: 0;
+  max-width: 44ch;
+  overflow-wrap: anywhere;
+}
+
+.files__overlay--error {
+  pointer-events: auto;
+}
+
+.files__overlay-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.files__overlay-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.files__overlay-btn {
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.files__overlay-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.files__overlay-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.files__preview {
+  flex: 0 0 40%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-alt);
+  border-top: 1px solid var(--border);
+}
+
+.files-pane--wide .files__preview {
+  flex-basis: 38%;
+  border-top: 0;
+  border-left: 1px solid var(--border);
+}
+
+.files-pane--no-preview .files__preview {
+  display: none;
+}
+
+.files__preview-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px 4px;
+  font-size: 12px;
+}
+
+.files__preview-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.files__preview-meta {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+.files__preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 10px 8px;
+}
+
+.files__preview-text {
+  margin: 0;
+  color: var(--fg);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.files__preview-note {
+  margin: 6px 0 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.files__preview-note--error {
+  color: var(--status-critical);
+}
+
+.files__preview-dir {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.files__preview-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  min-width: 0;
+  color: var(--fg);
+}
+
+.files__status {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 3px 4px 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.files__status-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files__status-msg--error {
+  color: var(--status-critical);
+}
+
+/* A GUI pane is the active tab: its group has no PTY to send hotkeys to. */
+.pane-group--no-hotkeys > .hotkey-bar {
+  display: none;
+}
+
+.dialog__detail {
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dialog__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
 }

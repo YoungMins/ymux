@@ -1,5 +1,5 @@
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -19,7 +19,6 @@ use app::App;
 fn main() -> Result<()> {
     let args = dock::parse_args(std::env::args().skip(1));
     let pane_id = std::env::var("YMUX_PANE_ID").unwrap_or_default();
-    let follow = dock::follow_host(args.dock, std::env::var("YMUX_IPC").ok(), pane_id.clone());
     let open_link = dock::open_file_link(args.dock, std::env::var("YMUX_IPC").ok(), pane_id);
     let start_dir = args
         .dir
@@ -31,13 +30,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(
-        &mut terminal,
-        start_dir,
-        args.dock,
-        follow.as_ref(),
-        open_link.as_ref(),
-    );
+    let result = run(&mut terminal, start_dir, args.dock, open_link.as_ref());
 
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
@@ -50,26 +43,12 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     start_dir: std::path::PathBuf,
     dock_mode: bool,
-    follow: Option<&std::sync::mpsc::Receiver<std::path::PathBuf>>,
     open_link: Option<&std::sync::mpsc::Sender<std::path::PathBuf>>,
 ) -> Result<()> {
     let mut app = App::new(start_dir)?.with_dock(dock_mode);
-    let mut pending = dock::PendingDir::default();
 
     loop {
         let input_pending = event::poll(Duration::ZERO)?;
-
-        // Dock mode: apply directory changes pushed by ymux, but only once
-        // the user has stopped typing (see `PendingDir`). `event::poll`
-        // below wakes at least every 100 ms, which bounds the latency.
-        if let Some(rx) = follow {
-            while let Ok(dir) = rx.try_recv() {
-                pending.push(dir);
-            }
-            if let Some(dir) = pending.take_ready(Instant::now(), input_pending) {
-                app.change_dir(&dir);
-            }
-        }
 
         // Reading the selected file is the one thing in the loop that can
         // block on the disk, so it is skipped while keys are queued: a
@@ -83,7 +62,6 @@ fn run(
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                pending.on_key(Instant::now());
                 if key.kind == KeyEventKind::Press {
                     // Run dialog takes priority
                     if app.run_dialog.is_some() {
