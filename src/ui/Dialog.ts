@@ -81,9 +81,13 @@ function open(
 
 /// Ask for a line of text. Resolves to the entered string, or `null` if the
 /// user cancelled. Replaces `window.prompt`.
+///
+/// `selectEnd` pre-selects only `[0, selectEnd)` — a file rename selects the
+/// name without its extension, as every file manager does.
 export async function askText(
   message: string,
   defaultValue = "",
+  opts: { selectEnd?: number } = {},
 ): Promise<string | null> {
   return open((card, done) => {
     const label = document.createElement("div");
@@ -109,6 +113,9 @@ export async function askText(
     ok.addEventListener("click", () => done(input.value));
 
     input.addEventListener("keydown", (ev) => {
+      // The Enter that commits a Hangul/Japanese composition is not a submit:
+      // taking it as one reads `input.value` before the last syllable lands.
+      if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === "Enter") {
         ev.preventDefault();
         done(input.value);
@@ -119,14 +126,74 @@ export async function askText(
     card.append(label, input, row);
     // Select rather than just focus, so a rename can be typed straight over
     // the existing name — the same thing `window.prompt` did.
-    queueMicrotask(() => input.select());
+    queueMicrotask(() => {
+      if (opts.selectEnd !== undefined) input.setSelectionRange(0, opts.selectEnd);
+      else input.select();
+    });
     return input;
   });
 }
 
+export interface Choice {
+  id: string;
+  label: string;
+  primary?: boolean;
+}
+
+/// Ask the user to pick one of `choices`, with an optional checkbox (e.g.
+/// "do this for the rest"). Resolves `null` on Esc or click-outside. The
+/// primary choice gets focus, so Enter picks it.
+export async function askChoice(
+  message: string,
+  detail: string | null,
+  choices: Choice[],
+  checkboxLabel?: string,
+): Promise<{ id: string; checked: boolean } | null> {
+  let box: HTMLInputElement | null = null;
+  const answer = await open((card, done) => {
+    const label = document.createElement("div");
+    label.className = "dialog__message";
+    label.textContent = message;
+    card.appendChild(label);
+
+    if (detail) {
+      const d = document.createElement("div");
+      d.className = "dialog__detail";
+      d.textContent = detail;
+      card.appendChild(d);
+    }
+
+    if (checkboxLabel) {
+      const wrap = document.createElement("label");
+      wrap.className = "dialog__check";
+      box = document.createElement("input");
+      box.type = "checkbox";
+      wrap.append(box, document.createTextNode(checkboxLabel));
+      card.appendChild(wrap);
+    }
+
+    const row = document.createElement("div");
+    row.className = "dialog__buttons";
+    let focus: HTMLElement | null = null;
+    for (const c of choices) {
+      const b = document.createElement("button");
+      b.className = c.primary ? "dialog__btn dialog__btn--primary" : "dialog__btn";
+      b.textContent = c.label;
+      b.addEventListener("click", () => done(c.id));
+      row.appendChild(b);
+      if (c.primary || !focus) focus = b;
+    }
+    card.appendChild(row);
+    return focus ?? card;
+  });
+  if (answer === null) return null;
+  return { id: answer, checked: (box as HTMLInputElement | null)?.checked ?? false };
+}
+
 /// Ask a yes/no question. Resolves `true` only on explicit confirmation.
 /// Replaces `window.confirm`.
-export async function askConfirm(message: string): Promise<boolean> {
+/// `okLabel` names the action ("Move to Trash") instead of a bare "OK".
+export async function askConfirm(message: string, okLabel?: string): Promise<boolean> {
   const answer = await open((card, done) => {
     const label = document.createElement("div");
     label.className = "dialog__message";
@@ -142,7 +209,7 @@ export async function askConfirm(message: string): Promise<boolean> {
 
     const ok = document.createElement("button");
     ok.className = "dialog__btn dialog__btn--primary";
-    ok.textContent = t("dialog.ok");
+    ok.textContent = okLabel ?? t("dialog.ok");
     ok.addEventListener("click", () => done("yes"));
 
     row.append(cancel, ok);
