@@ -95,7 +95,11 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   Claude Code 세션과 서브에이전트, 그리고 가벼운 프로세스 스캔으로 감지하는
   Codex, Gemini, aider 등 다른 CLI. 행을 클릭하면 바로 해당 pane으로
   이동합니다. Claude Code 훅 추적은 기본적으로 꺼져 있으며
-  **설정 → 일반** 에서 켤 수 있습니다.
+  **설정 → 일반** 에서 켤 수 있습니다. 켜면 `~/.claude/settings.json` 에 사용자
+  수준 HTTP 훅이 추가되므로, 켜져 있는 동안에는 ymux 밖의 세션을 포함한 이
+  컴퓨터의 *모든* Claude Code 세션이 훅 이벤트(프롬프트, 도구 입력과 출력)를
+  `127.0.0.1` 의 ymux 포트로 보냅니다. ymux 는 자신의 pane 에서 오지 않은 이벤트는
+  무시하며, 추적을 끄면 훅이 제거됩니다.
 - **Pane별 설정 (⚙)**: 각 터미널의 `⚙` 버튼으로 **배경색** (컬러 피커) 설정과
   **HotKey 버튼** (단일 줄 또는 여러 줄 배치 명령) 관리. 배경색은 재시작 후에도
   유지됩니다.

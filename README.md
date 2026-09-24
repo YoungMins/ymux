@@ -100,7 +100,11 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   their subagents (via hooks), plus Codex, Gemini, aider, and other CLIs (via
   a lightweight process scan). Click any row to jump straight to that pane.
   Claude Code hook tracking is off by default — enable it under
-  **Settings → General**.
+  **Settings → General**. It adds user-level HTTP hooks to
+  `~/.claude/settings.json`, so while it is on, *every* Claude Code session on
+  the machine — including ones outside ymux — sends its hook events (prompts,
+  tool input and output) to ymux's port on `127.0.0.1`. ymux ignores the ones
+  that don't come from its own panes; turning tracking off removes the hooks.
 - **Per-pane settings (⚙)**: the `⚙` button on each terminal opens a settings
   panel where you can set a **custom background color** (via native color picker)
   and manage **HotKey buttons** (single-line or batch multi-line commands bound

@@ -293,7 +293,23 @@ receives it. `commands::start_hook_receiver` wires accepted events into
 `agents.rs`, the tree and the resume binding are unchanged. The rules:
 
 - **Loopback only.** Bind `127.0.0.1`, never `0.0.0.0`, and write `127.0.0.1`
-  (not `localhost`, which may resolve to `::1` first) into the URL.
+  (not `localhost`, which may resolve to `::1` first) into the URL. On Windows
+  `bind_loopback` sets `SO_EXCLUSIVEADDRUSE` (defence in depth: on Windows 11
+  a same-address `SO_REUSEADDR` squat is refused anyway, and a wildcard
+  squatter loses every `127.0.0.1` connection to the specific socket).
+- **Hooks are user-level, so every Claude session sends to the port.** While
+  tracking is on, Claude sessions *outside* ymux POST their hook events —
+  prompts, tool input and output — to `127.0.0.1:<port>` too. A running ymux
+  answers them with a quiet 204 and reads nothing (no token); while ymux is
+  closed, whatever process holds the port receives them. Turning tracking off
+  removes the hooks. This is why the port must never move while a ymux uses
+  it (next bullets) and why the README says so.
+- **Bounded.** The token is checked only after the head arrives, so any local
+  user can connect: each connection has a whole-request deadline
+  (`hook_http::LIMITS`, 3 s, re-applied before every read), at most 32 are
+  served at once (extras are closed on accept), only a quiet 204 drains an
+  unread body, and nothing in the path may panic (release aborts on panic;
+  `hostile_heads_and_bodies_never_panic` fuzzes it).
 - **Token + pane.** ymux mints a fresh token per run (244 CSPRNG bits)
   (`hook_http::new_token`) and injects `YMUX_HOOK_TOKEN` into every PTY next to
   `YMUX_PANE_ID`; Claude Code interpolates both into the headers. Wrong token
@@ -301,9 +317,12 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   header → 403: browsers attach one to every cross-origin POST and can't set
   the custom headers without a preflight, so a web page in a browser pane
   can't forge events; Claude Code's client never sends one (verified against a
-  live 2.1 run). Both headers empty → **204, ignored** — that is a Claude
-  session started outside ymux while ymux runs, and a non-2xx would put a
-  hook error into it. See `hook_http::authorize` for the full order.
+  live 2.1 run). An empty token → **204, ignored** — a Claude session
+  started outside ymux, or in a pane of a ymux without a receiver, and a
+  non-2xx would put a hook error into it. An empty token authorises nothing.
+  `GET /ymux-agent-hook/ping` answers a fixed `ymux-agent-hook/1` with no
+  token (browsers still refused by `Origin`). See `hook_http::authorize` for
+  the full order.
 - **2xx means an empty body.** Answer 204 with no body on success. A 2xx JSON
   body is parsed by Claude Code as hook output (decisions, context) and any
   other 2xx body is an error. The response goes out before the registry is
@@ -313,8 +332,14 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   only, never into the URL, so the port is a literal in the user's
   `settings.json`. It is chosen once, kept in `Config::agent_hook_port`
   (backend-owned, not in `merge_layouts_from` — rule 11) and reused every
-  launch. If it is taken, `choose_port` takes an OS-assigned one; release
-  builds persist it and the startup refresh rewrites the hooks' URL. Debug
+  launch. If it is taken, `choose_port` pings it first: **another ymux →
+  this instance runs without a receiver** (its panes get an empty token and
+  no hook events; the process scan still lists their agents) and leaves the
+  port and `settings.json` alone — moving them would send the first
+  instance's token to a port anyone can take once it exits. No
+  single-instance plugin: that would change launch behaviour. Only a
+  non-ymux holder makes it take an OS-assigned port; release builds persist
+  it and the startup refresh rewrites the hooks' URL. Debug
   builds (`tauri dev`, sharing the live config) neither persist nor refresh
   unless `YMUX_DEV_AGENT_HOOKS=1`.
 - **No `SessionStart`.** Claude Code runs only `command`/`mcp_tool` handlers

@@ -122,7 +122,13 @@ windows = { version = "0.56", features = [
     # ReplaceFileW / SetFileAttributesW: the editor's atomic save keeps a
     # file's ACLs and hidden/system attributes (fsops::imp::write_text).
     "Win32_Storage_FileSystem",
+    # setsockopt(SO_EXCLUSIVEADDRUSE) for the hook receiver (hook_http).
+    "Win32_Networking_WinSock",
 ] }
+# Creates the hook receiver's socket so SO_EXCLUSIVEADDRUSE can be set before
+# bind. Already in the lock via reqwest/tokio; Windows-only because Unix
+# needs no extra socket option.
+socket2 = "0.6"
 
 [features]
 default = ["desktop"]

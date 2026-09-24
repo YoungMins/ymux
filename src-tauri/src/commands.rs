@@ -470,7 +470,9 @@ pub fn set_agent_tracking(
     let port = match (enabled, hook_port.0) {
         (true, None) => {
             return Err(YmuxError::Other(
-                "the Claude Code hook receiver is not running".into(),
+                "this ymux has no Claude Code hook receiver (another ymux instance \
+                 holds its port, or it failed to start)"
+                    .into(),
             ))
         }
         // Uninstall doesn't need the port: it matches any ymux entry.
@@ -490,17 +492,30 @@ pub struct AgentHookPort(pub Option<u16>);
 /// (`crate::hook_http`, CLAUDE.md rule 13) and return its port.
 ///
 /// The port is persisted in `Config::agent_hook_port` and reused, because the
-/// hooks in `~/.claude/settings.json` carry it literally. When it is taken, an
-/// OS-assigned port is used instead and — if `may_persist` (see
-/// `agent_hooks::startup_refresh_allowed`) — saved, so the startup hook
-/// refresh that follows points the hooks at it. Accepted events are applied
-/// after the receiver has already answered, so Claude never waits on a lock.
+/// hooks in `~/.claude/settings.json` carry it literally. When it is taken:
+/// if another ymux answers the ping there, this instance runs **without** a
+/// receiver (`None`) and never touches the port or the hooks — moving them
+/// would strand that instance's panes; otherwise an OS-assigned port is used
+/// and — if `may_persist` (see `agent_hooks::startup_refresh_allowed`) —
+/// saved, so the startup hook refresh that follows points the hooks at it.
+/// Accepted events are applied after the receiver has already answered, so
+/// Claude never waits on a lock.
 pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) -> Option<u16> {
     use crate::hook_http;
     let state = app.state::<AppState>();
     let persisted = state.config.snapshot().agent_hook_port;
-    let (listener, reused) = match hook_http::choose_port(persisted, hook_http::bind_loopback) {
-        Ok(bound) => bound,
+    let bound = hook_http::choose_port(persisted, hook_http::bind_loopback, hook_http::probe_ymux);
+    let (listener, reused) = match bound {
+        Ok(hook_http::Bound::Listening { listener, reused }) => (listener, reused),
+        Ok(hook_http::Bound::HeldByYmux) => {
+            tracing::warn!(
+                port = persisted,
+                "another ymux is receiving Claude Code hooks on this port; this instance \
+                 runs without a receiver, so its panes get no hook events (the process \
+                 scan still lists their agents)"
+            );
+            return None;
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to bind the Claude Code hook receiver");
             return None;

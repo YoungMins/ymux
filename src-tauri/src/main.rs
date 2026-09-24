@@ -163,6 +163,11 @@ fn main() {
                 refresh_allowed,
             );
             app.manage(ymux_lib::commands::AgentHookPort(hook_port));
+            // Without a receiver the token is set *empty* rather than left
+            // out: a ymux started from another ymux's pane would otherwise
+            // hand its panes the parent's token, and their hooks would reach
+            // the parent as 403s (hook errors). Empty is a quiet no-op there.
+            let token = if hook_port.is_some() { token } else { String::new() };
             let state = app.state::<AppState>();
             state.pty.set_extra_env(vec![(
                 ymux_lib::hook_http::TOKEN_ENV.to_string(),

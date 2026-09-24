@@ -28,6 +28,12 @@ use crate::agents::HookEvent;
 /// The one path the receiver answers on. Also the ownership marker of every
 /// hook entry `agent_hooks` installs (CLAUDE.md rule 12).
 pub const HOOK_PATH: &str = "/ymux-agent-hook";
+/// Unauthenticated liveness check: `GET` here answers [`PING_BODY`] and
+/// nothing else, so a second ymux can tell "another ymux has the port" from
+/// "a stranger has the port" (see [`choose_port`]).
+pub const PING_PATH: &str = "/ymux-agent-hook/ping";
+/// The fixed body of a ping answer. Identifies ymux; carries no state.
+pub const PING_BODY: &str = "ymux-agent-hook/1";
 /// Header carrying `$YMUX_PANE_ID` (lower-case: header names are matched
 /// case-insensitively).
 pub const PANE_HEADER: &str = "x-ymux-pane";
@@ -134,6 +140,8 @@ pub enum Verdict {
     Accept { pane: Uuid, len: usize },
     /// Answer an empty 204 and do nothing.
     Ignore,
+    /// Answer [`ping_response`].
+    Ping,
     /// Answer this non-2xx status with an empty body.
     Reject(u16),
 }
@@ -142,14 +150,16 @@ pub enum Verdict {
 /// 1. an `Origin` header → 403. Browsers attach it to every cross-origin
 ///    POST; Claude Code's client never sends one;
 /// 2. a `Host` that isn't loopback → 403 (DNS-rebinding belt and braces);
-/// 3. not `POST` → 405, not [`HOOK_PATH`] → 404;
-/// 4. pane *and* token header both empty → 204, ignored: that is a Claude
-///    session started outside ymux (its env has neither variable) while
-///    ymux happens to run, and a non-2xx would put a hook error in it;
-/// 5. wrong token (constant-time compare), or a pane that isn't a UUID or
+/// 3. `GET` [`PING_PATH`] → the ping answer, no token needed;
+/// 4. not `POST` → 405, not [`HOOK_PATH`] → 404;
+/// 5. an empty token header → 204, ignored: that is a Claude session started
+///    outside ymux (its env has neither variable), or in a pane of a ymux
+///    running without a receiver, and a non-2xx would put a hook error in
+///    it. An empty token authorises nothing, so ignoring it is safe;
+/// 6. wrong token (constant-time compare), or a pane that isn't a UUID or
 ///    isn't one of ours → 403;
-/// 6. no `Content-Length` or any `Transfer-Encoding` → 411;
-/// 7. body over [`MAX_BODY`] → 204, dropped (see there).
+/// 7. no `Content-Length` or any `Transfer-Encoding` → 411;
+/// 8. body over [`MAX_BODY`] → 204, dropped (see there).
 pub fn authorize(head: &RequestHead, token: &str, known_pane: impl Fn(Uuid) -> bool) -> Verdict {
     if head.header("origin").is_some() {
         return Verdict::Reject(403);
@@ -159,7 +169,10 @@ pub fn authorize(head: &RequestHead, token: &str, known_pane: impl Fn(Uuid) -> b
             return Verdict::Reject(403);
         }
     }
-    if head.method != "POST" {
+    if head.method == "GET" && head.path == PING_PATH {
+        return Verdict::Ping;
+    }
+    if head.method != "POST" && head.path == HOOK_PATH {
         return Verdict::Reject(405);
     }
     if head.path != HOOK_PATH {
@@ -167,7 +180,7 @@ pub fn authorize(head: &RequestHead, token: &str, known_pane: impl Fn(Uuid) -> b
     }
     let pane = head.header(PANE_HEADER).unwrap_or("");
     let sent = head.header(TOKEN_HEADER).unwrap_or("");
-    if pane.is_empty() && sent.is_empty() {
+    if sent.is_empty() {
         return Verdict::Ignore;
     }
     if !tokens_equal(sent, token) {
@@ -239,27 +252,134 @@ pub fn response(status: u16) -> String {
     format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 }
 
-/// Bind the receiver: the persisted port when it is set and free, else a
-/// fresh OS-assigned one. Returns the listener and whether it is on
-/// `persisted` (`false` = the caller should persist the new port and
-/// refresh the installed hooks). Generic over `bind` so the decision is
+/// The ping answer: 200 with [`PING_BODY`]. Never sent to Claude (it only
+/// POSTs), so a non-empty body is fine here.
+pub fn ping_response() -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{PING_BODY}",
+        PING_BODY.len()
+    )
+}
+
+/// Outcome of [`choose_port`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Bound<L> {
+    /// Listening; `reused` = on the persisted port. `false` means the
+    /// caller should persist the new port and refresh the installed hooks.
+    Listening { listener: L, reused: bool },
+    /// The persisted port is held by another running ymux. Run without a
+    /// receiver and leave `settings.json` alone: moving the port would
+    /// strand that instance's panes, sending their token to a port anyone
+    /// could take next.
+    HeldByYmux,
+}
+
+/// Bind the receiver: the persisted port when it is set and free; when it is
+/// taken, stand down if `is_ymux` says another ymux holds it, else take a
+/// fresh OS-assigned port. Generic over `bind` / `is_ymux` so the decision is
 /// tested without depending on which ports happen to be free.
 pub fn choose_port<L>(
     persisted: u16,
     mut bind: impl FnMut(u16) -> io::Result<L>,
-) -> io::Result<(L, bool)> {
+    is_ymux: impl FnOnce(u16) -> bool,
+) -> io::Result<Bound<L>> {
     if persisted != 0 {
-        if let Ok(l) = bind(persisted) {
-            return Ok((l, true));
+        match bind(persisted) {
+            Ok(listener) => {
+                return Ok(Bound::Listening {
+                    listener,
+                    reused: true,
+                })
+            }
+            Err(_) if is_ymux(persisted) => return Ok(Bound::HeldByYmux),
+            Err(_) => {}
         }
     }
-    bind(0).map(|l| (l, false))
+    bind(0).map(|listener| Bound::Listening {
+        listener,
+        reused: false,
+    })
 }
 
-/// `TcpListener::bind` on `127.0.0.1:port` — loopback only, never
-/// `0.0.0.0`.
+/// Whether a ymux hook receiver answers on `127.0.0.1:port` (a `GET`
+/// [`PING_PATH`] whose reply is exactly [`ping_response`]). Bounded to about
+/// a second. A stranger faking the answer only makes this ymux run without
+/// hook events — no token is ever sent to it.
+pub fn probe_ymux(port: u16) -> bool {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else {
+        return false;
+    };
+    let deadline = Instant::now() + Duration::from_millis(700);
+    let req =
+        format!("GET {PING_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if s.set_write_timeout(Some(Duration::from_millis(300)))
+        .is_err()
+        || s.write_all(req.as_bytes()).is_err()
+    {
+        return false;
+    }
+    let want = ping_response();
+    let mut got = Vec::with_capacity(want.len());
+    let mut chunk = [0u8; 256];
+    while got.len() <= want.len() {
+        match read_by(&mut s, &mut chunk, deadline) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => got.extend_from_slice(&chunk[..n]),
+        }
+    }
+    got == want.as_bytes()
+}
+
+/// Listen on `127.0.0.1:port` — loopback only, never `0.0.0.0`.
+///
+/// On Windows the socket takes the port with `SO_EXCLUSIVEADDRUSE`: without
+/// it, another process binding the same address with `SO_REUSEADDR` could
+/// share the port and receive hook bodies meant for ymux. Unix needs nothing
+/// extra — std sets only `SO_REUSEADDR`, which never lets a second socket
+/// bind a port that is listening, and `SO_REUSEPORT` sharing needs the owner
+/// to opt in too.
 pub fn bind_loopback(port: u16) -> io::Result<TcpListener> {
-    TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    #[cfg(windows)]
+    {
+        bind_exclusive(addr)
+    }
+    #[cfg(not(windows))]
+    {
+        TcpListener::bind(addr)
+    }
+}
+
+#[cfg(windows)]
+fn bind_exclusive(addr: SocketAddr) -> io::Result<TcpListener> {
+    use std::os::windows::io::AsRawSocket;
+    use windows::Win32::Networking::WinSock::{setsockopt, SOCKET, SOL_SOCKET, SO_REUSEADDR};
+    // `SO_EXCLUSIVEADDRUSE` is `((int)(~SO_REUSEADDR))` in winsock2.h; the
+    // `windows` crate's metadata doesn't carry it.
+    const SO_EXCLUSIVEADDRUSE: i32 = !SO_REUSEADDR;
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    let on = 1i32.to_ne_bytes();
+    // SAFETY: a live socket handle owned by `socket`, and a 4-byte BOOL.
+    let rc = unsafe {
+        setsockopt(
+            SOCKET(socket.as_raw_socket() as usize),
+            SOL_SOCKET,
+            SO_EXCLUSIVEADDRUSE,
+            Some(&on),
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    socket.bind(&addr.into())?;
+    socket.listen(128)?;
+    Ok(socket.into())
 }
 
 pub type KnownPane = Arc<dyn Fn(Uuid) -> bool + Send + Sync>;
@@ -395,6 +515,13 @@ fn handle(
             // Claude that may still be uploading (see `drain`). A rejected
             // client gets its status and the door, never our time.
             drain(&mut stream, deadline);
+            return Ok(());
+        }
+        Verdict::Ping => {
+            let left = remaining(deadline, Instant::now()).ok_or(io::ErrorKind::TimedOut)?;
+            stream.set_write_timeout(Some(left))?;
+            stream.write_all(ping_response().as_bytes())?;
+            let _ = stream.shutdown(std::net::Shutdown::Write);
             return Ok(());
         }
         Verdict::Reject(status) => return reply(&mut stream, status, deadline),
@@ -586,7 +713,7 @@ mod tests {
 
     #[test]
     fn a_wrong_or_missing_token_is_refused() {
-        for bad in ["", "nope", &TOKEN[..31]] {
+        for bad in ["nope", &TOKEN[..31]] {
             assert_eq!(
                 authorize(&claude_head(&[(TOKEN_HEADER, bad)]), TOKEN, ours),
                 Verdict::Reject(403),
@@ -659,51 +786,182 @@ mod tests {
         }
     }
 
+    /// A pane of a ymux that runs without a receiver (another instance
+    /// holds the port) has an id but an empty token: quiet, not an error.
     #[test]
-    fn choose_port_reuses_the_persisted_port_when_free() {
-        let mut tried = Vec::new();
-        let (l, reused) = choose_port(41234, |p| {
-            tried.push(p);
-            Ok(p)
-        })
-        .unwrap();
-        assert_eq!((l, reused), (41234, true));
-        assert_eq!(tried, vec![41234]);
+    fn a_pane_without_a_token_is_ignored_quietly() {
+        let head = claude_head(&[(TOKEN_HEADER, "")]);
+        assert_eq!(authorize(&head, TOKEN, ours), Verdict::Ignore);
+    }
+
+    fn ping_head(extra: &[(&str, &str)]) -> RequestHead {
+        let mut headers: Vec<(String, String)> = vec![("host".into(), "127.0.0.1:41234".into())];
+        headers.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+        RequestHead {
+            method: "GET".into(),
+            path: PING_PATH.into(),
+            headers,
+        }
     }
 
     #[test]
-    fn choose_port_falls_back_to_a_fresh_port() {
+    fn ping_needs_no_token_but_refuses_browsers() {
+        assert_eq!(authorize(&ping_head(&[]), TOKEN, ours), Verdict::Ping);
+        assert_eq!(
+            authorize(
+                &ping_head(&[("origin", "https://evil.example")]),
+                TOKEN,
+                ours
+            ),
+            Verdict::Reject(403)
+        );
+        let mut post = ping_head(&[]);
+        post.method = "POST".into();
+        assert_eq!(authorize(&post, TOKEN, ours), Verdict::Reject(404));
+        let mut get_hook = ping_head(&[]);
+        get_hook.path = HOOK_PATH.into();
+        assert_eq!(authorize(&get_hook, TOKEN, ours), Verdict::Reject(405));
+        let r = ping_response();
+        assert!(r.starts_with("HTTP/1.1 200 "));
+        assert!(r.ends_with(&format!("\r\n\r\n{PING_BODY}")));
+    }
+
+    #[test]
+    fn choose_port_reuses_the_persisted_port_when_free() {
         let mut tried = Vec::new();
-        let (l, reused) = choose_port(41234, |p| {
-            tried.push(p);
-            if p == 0 {
-                Ok(50000)
-            } else {
-                Err(io::ErrorKind::AddrInUse.into())
-            }
-        })
+        let got = choose_port(
+            41234,
+            |p| {
+                tried.push(p);
+                Ok(p)
+            },
+            |_| panic!("no probe when the bind worked"),
+        )
         .unwrap();
-        assert_eq!((l, reused), (50000, false));
-        assert_eq!(tried, vec![41234, 0]);
+        assert_eq!(
+            got,
+            Bound::Listening {
+                listener: 41234,
+                reused: true
+            }
+        );
+        assert_eq!(tried, vec![41234]);
+    }
+
+    fn busy(p: u16) -> io::Result<u16> {
+        if p == 0 {
+            Ok(50000)
+        } else {
+            Err(io::ErrorKind::AddrInUse.into())
+        }
+    }
+
+    #[test]
+    fn choose_port_moves_only_off_a_foreign_holder() {
+        assert_eq!(
+            choose_port(41234, busy, |p| {
+                assert_eq!(p, 41234);
+                false
+            })
+            .unwrap(),
+            Bound::Listening {
+                listener: 50000,
+                reused: false
+            }
+        );
+        // A live ymux holds it: stay off it, never move the hooks.
+        assert_eq!(
+            choose_port(41234, busy, |_| true).unwrap(),
+            Bound::HeldByYmux
+        );
         // First run: nothing persisted, straight to a fresh port.
-        let (_, reused) = choose_port(0, |_| Ok(1u16)).unwrap();
-        assert!(!reused);
+        assert_eq!(
+            choose_port(0, busy, |_| panic!("nothing to probe")).unwrap(),
+            Bound::Listening {
+                listener: 50000,
+                reused: false
+            }
+        );
     }
 
     #[test]
     fn choose_port_with_real_sockets() {
+        // A foreign holder (not ymux): move to a fresh port.
         let taken = bind_loopback(0).unwrap();
-        let busy = taken.local_addr().unwrap().port();
-        let (l, reused) = choose_port(busy, bind_loopback).unwrap();
+        let foreign = taken.local_addr().unwrap().port();
+        let Bound::Listening { listener, reused } =
+            choose_port(foreign, bind_loopback, probe_ymux).unwrap()
+        else {
+            panic!("a foreign holder must not look like ymux");
+        };
         assert!(!reused);
-        let fresh = l.local_addr().unwrap();
-        assert_ne!(fresh.port(), busy);
+        let fresh = listener.local_addr().unwrap();
+        assert_ne!(fresh.port(), foreign);
         assert!(fresh.ip().is_loopback());
-        drop(l);
+        drop(listener);
         drop(taken);
-        let (again, reused) = choose_port(busy, bind_loopback).unwrap();
+        let Bound::Listening { listener, reused } =
+            choose_port(foreign, bind_loopback, probe_ymux).unwrap()
+        else {
+            panic!("free port");
+        };
         assert!(reused);
-        assert_eq!(again.local_addr().unwrap().port(), busy);
+        assert_eq!(listener.local_addr().unwrap().port(), foreign);
+
+        // A live ymux receiver holds it: leave it alone.
+        let (port, _rx) = start();
+        assert!(probe_ymux(port));
+        assert!(matches!(
+            choose_port(port, bind_loopback, probe_ymux).unwrap(),
+            Bound::HeldByYmux
+        ));
+    }
+
+    #[test]
+    fn probe_is_false_for_nothing_and_for_strangers() {
+        let l = bind_loopback(0).unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        assert!(!probe_ymux(port), "nothing listening");
+        // A server that answers something else.
+        let l = bind_loopback(0).unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut c, _)) = l.accept() {
+                let mut b = [0u8; 512];
+                let _ = c.read(&mut b);
+                let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi");
+            }
+        });
+        assert!(!probe_ymux(port));
+    }
+
+    /// While ymux listens, nobody else gets its connections: a same-address
+    /// `SO_REUSEADDR` squat is refused, and a wildcard (`0.0.0.0:port`)
+    /// squatter — which Windows does let bind — still loses every
+    /// connection to `127.0.0.1:port` to the more specific socket. (Measured
+    /// on Windows 11: `SO_EXCLUSIVEADDRUSE` changes neither outcome there —
+    /// it is defence in depth for stacks without enhanced socket security.)
+    #[cfg(windows)]
+    #[test]
+    fn a_squatter_cannot_take_connections_while_ymux_listens() {
+        use socket2::{Domain, Socket, Type};
+        let ours = bind_loopback(0).unwrap();
+        let port = ours.local_addr().unwrap().port();
+        let same = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        same.set_reuse_address(true).unwrap();
+        assert!(same.bind(&ours.local_addr().unwrap().into()).is_err());
+
+        let wild = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        wild.set_reuse_address(true).unwrap();
+        let wild_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+        if wild.bind(&wild_addr.into()).is_ok() && wild.listen(8).is_ok() {
+            wild.set_nonblocking(true).unwrap();
+            let _c = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            ours.set_nonblocking(false).unwrap();
+            let (_s, _) = ours.accept().expect("ymux gets the connection");
+            assert!(wild.accept().is_err(), "the squatter got nothing");
+        }
     }
 
     /// Start a real receiver on an ephemeral port; events arrive on the channel.
@@ -740,6 +998,13 @@ mod tests {
             body.len()
         )
         .into_bytes()
+    }
+
+    #[test]
+    fn listener_answers_ping() {
+        let (port, _rx) = start();
+        let raw = format!("GET {PING_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+        assert_eq!(send(port, raw.as_bytes()), ping_response());
     }
 
     #[test]
