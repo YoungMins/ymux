@@ -29,3 +29,6 @@ logs/
 # Local config
 .env
 .env.local
+
+# Agent git worktrees (Claude Code isolation)
+.claude/worktrees/
