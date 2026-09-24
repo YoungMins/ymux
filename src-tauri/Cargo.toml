@@ -30,8 +30,8 @@ sysinfo = "0.33"
 parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Shared theme palette read by every y* tool; ymux exposes load/save to the
-# settings UI so users can edit yCode's syntax colors without leaving the app.
+# Shared theme palette (theme.toml); ymux exposes load/save to the settings
+# UI, and the editor pane takes its syntax colours from it.
 ytheme = { path = "../crates/ytheme" }
 # Comparison keys for paths that arrive from different producers (OSC 7,
 # `git worktree list`, the config file). Deliberately not behind `desktop`:
@@ -100,7 +100,7 @@ tauri-plugin-notification = { version = "2", optional = true }
 # deliberately left off: ymux ships on Windows and macOS only.
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"], optional = true }
 
-# Move-to-trash for the files pane's delete. `ydir` today deletes with
+# Move-to-trash for the files pane's delete. The retired `ydir` TUI deleted with
 # `remove_dir_all` and no confirmation; the GUI default is trash + a confirm
 # dialog, with permanent delete on Shift+Delete. Desktop-only: on Linux it
 # would pull the freedesktop/DBus stack that `--no-default-features` exists

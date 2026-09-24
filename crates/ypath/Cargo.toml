@@ -2,7 +2,7 @@
 name = "ypath"
 version = "0.1.0"
 edition = "2021"
-description = "Path comparison keys shared by ymux and the y* tools"
+description = "Path comparison keys for ymux (NFC + syntax-based case folding)"
 
 [dependencies]
 unicode-normalization = "0.1"

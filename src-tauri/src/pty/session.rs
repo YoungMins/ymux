@@ -271,10 +271,9 @@ impl PtySession {
 
         // Exit watcher. On Windows the reader above never sees EOF when the
         // child exits by itself (ConPTY keeps the pipe open until the
-        // pseudoconsole is closed), so without this a shell that exits, or
-        // a dock `ydir` the user quits, is never reported. Polls rather
-        // than blocking in `wait()`, which would hold the child lock and
-        // stall `kill`. Ends once the exit is reported, the session is
+        // pseudoconsole is closed), so without this a shell that exits is
+        // never reported. Polls rather than blocking in `wait()`, which would
+        // hold the child lock and stall `kill`. Ends once the exit is reported, the session is
         // killed, or the session is dropped.
         let exit_for_watcher = Arc::clone(&exit);
         let child_for_watcher = Arc::downgrade(&child);

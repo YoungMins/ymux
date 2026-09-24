@@ -36,12 +36,6 @@ pub struct SpawnArgs {
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
-    /// Run this program directly instead of the `shell` profile. The file
-    /// dock uses it for `ydir --dock <dir>`, so that ydir's exit is the
-    /// pane's exit and no shell quoting is involved. Empty (the default)
-    /// spawns the shell as before.
-    #[serde(default)]
-    pub argv: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,17 +141,12 @@ pub fn spawn_pane(
     args: SpawnArgs,
 ) -> YmuxResult<SpawnedPane> {
     guard_local(&webview, &request, "spawn_pane")?;
-    let profile = match crate::pty::direct_profile(&args.argv, crate::pty::sidecar_dir().as_deref())
-    {
-        Some(direct) => direct,
-        None => {
-            let snapshot = state.config.snapshot();
-            snapshot
-                .shell(&args.shell)
-                .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
-                .clone()
-        }
-    };
+    let profile = state
+        .config
+        .snapshot()
+        .shell(&args.shell)
+        .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
+        .clone();
 
     let spec = crate::config::model::PaneSpec {
         id: args.id,
@@ -681,7 +670,7 @@ pub fn paste_clipboard_image(
 // Git pane commands. Like every other command, each starts with
 // `guard_local` (CLAUDE.md rule 16).
 //
-// All of them are `#[tauri::command(async)]`: `tools/ygit` blocks its render
+// All of them are `#[tauri::command(async)]`: the retired `ygit` TUI blocked its render
 // thread on every git call, and a slow repository must not be able to do that
 // to the window. That includes the worktree ones — `worktree remove` deletes
 // a whole checkout, `node_modules/` and all.

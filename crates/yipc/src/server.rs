@@ -6,7 +6,7 @@
 //! Traffic is tool → host only, each message answered on the same
 //! connection by the handler. The host → tool push (`send_to`, and the
 //! per-tool client registry it needed) went away with the file dock's
-//! `ydir --dock` process: the dock is a GUI pane now and follows the active
+//! TUI process: the dock is a GUI pane now and follows the active
 //! pane's directory without a socket.
 
 use std::io::{BufRead, BufReader, Read, Write};

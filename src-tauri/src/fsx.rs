@@ -8,8 +8,8 @@
 //! split `agents.rs`/`agent_scan.rs` and `agent_hooks.rs` already use
 //! (CLAUDE.md rule 1).
 //!
-//! The order and the hidden rule deliberately match `tools/ydir`'s, so the
-//! GUI files pane that replaces it feels the same under the hands.
+//! The order and the hidden rule deliberately match the retired `ydir` TUI's, so
+//! the GUI files pane that replaced it feels the same under the hands.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,8 +35,8 @@ pub struct DirEntryInfo {
 
 /// How much of a file's head decides "binary".
 ///
-/// Ported from `tools/ydir/src/preview.rs`'s `BINARY_SNIFF_BYTES`, and kept
-/// identical for the reason that file gives: the listing and the preview must
+/// Ported from the retired `ydir` TUI's `BINARY_SNIFF_BYTES`, and kept
+/// identical for the reason it gave: the listing and the preview must
 /// agree about one file, or a NUL at byte 20000 shows "(binary file)" in the
 /// preview and then opens as text in the editor.
 pub const BINARY_SNIFF_BYTES: usize = 8 * 1024;
@@ -71,7 +71,7 @@ pub fn apply_hidden(entries: &mut Vec<DirEntryInfo>, show_hidden: bool) {
 
 /// Directories first, then by name, case-insensitively.
 ///
-/// Byte-identical ordering to `tools/ydir/src/app.rs:490`. `to_lowercase`
+/// Byte-identical ordering to the retired `ydir` TUI's. `to_lowercase`
 /// rather than a locale collation for the same reason ydir chose it: it is
 /// the order users have, and changing it is a separate decision from
 /// changing the renderer.
@@ -83,7 +83,7 @@ pub fn sort_entries(entries: &mut [DirEntryInfo]) {
     });
 }
 
-/// Human-readable size, matching `tools/ydir`'s `size_display` exactly
+/// Human-readable size, matching the retired `ydir` TUI's `size_display` exactly
 /// (including `<DIR>` for a directory, so the column reads the same).
 pub fn format_size(size: u64, is_dir: bool) -> String {
     const K: u64 = 1024;
@@ -174,7 +174,7 @@ mod tests {
         );
     }
 
-    /// Hangul sorts by code point after the fold, which is what ydir does;
+    /// Hangul sorts by code point after the fold, which is what ydir did;
     /// the point of the test is that it is stable and does not panic on
     /// multi-byte names.
     #[test]
