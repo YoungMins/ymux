@@ -13,19 +13,34 @@ ymux/
 │   ├── wix/                # WiX fragments (PATH registration)
 │   ├── icons/              # App icons (.ico, .png)
 │   └── src/
-│       ├── main.rs         # Entry point (desktop only)
-│       ├── lib.rs          # Library crate (all modules)
-│       ├── commands.rs     # Tauri IPC commands (desktop)
-│       ├── agents.rs       # Agent tree registry state machine (pure, not desktop-gated)
-│       ├── agent_scan.rs   # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
-│       ├── agent_hooks.rs  # Install/uninstall Claude Code hooks in ~/.claude/settings.json (merge fns pure; file IO desktop)
-│       ├── config/         # Config model + store
-│       ├── pty/            # PTY session management
-│       ├── shell/          # Shell detection (detect.rs)
-│       ├── sysmonitor.rs   # System monitor (desktop)
-│       ├── updater.rs      # Update checker (desktop)
-│       ├── webview.rs      # Native browser (desktop, experimental)
-│       └── ipc_server.rs   # IPC server (desktop); routes agent-hook events
+│       ├── main.rs             # Entry point (desktop only)
+│       ├── lib.rs              # Library crate (all modules)
+│       ├── commands.rs         # Tauri IPC commands (desktop)
+│       ├── agents.rs           # Agent tree registry state machine (pure, not desktop-gated)
+│       ├── agent_scan.rs       # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
+│       ├── agent_scan_disk.rs  # Disk-scan fallback for session resume: finds an agent's transcript by cwd match (pure)
+│       ├── agent_sessions.rs   # Resumable agent sessions: resume argv/command, freshness window (pure)
+│       ├── agent_hooks.rs      # Install/uninstall Claude Code hooks in ~/.claude/settings.json (merge fns pure; file IO desktop)
+│       ├── config/             # Config model + store
+│       ├── drafts.rs           # Editor pane crash-safety drafts, debounced by pane id (pure)
+│       ├── error.rs            # Crate-wide YmuxError / YmuxResult
+│       ├── fspath.rs           # Resolve + open a path lifted from terminal output; reveal-vs-run policy (pure)
+│       ├── fsops.rs            # Filesystem #[tauri::command]s: list/create/rename/copy/move/delete (desktop)
+│       ├── fsx.rs              # Pure decisions behind the Files pane: listing, sort, binary sniff, same-file (pure)
+│       ├── git/                # Git pane backend: log/branch/worktree porcelain parsing + commands
+│       ├── ipc_guard.rs        # Per-command origin/label guard (rule 16); no page can invoke a command unguarded (pure)
+│       ├── clipboard_image.rs  # Read a pasted image off the OS clipboard directly (desktop)
+│       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
+│       ├── pty/                # PTY session management
+│       ├── scrollback.rs       # Persist/restore per-pane terminal scrollback (pure)
+│       ├── shell/              # Shell detection (detect.rs)
+│       ├── textfile.rs         # EOL/BOM/encoding-safe text read/write (pure)
+│       ├── sysmonitor.rs       # System monitor (desktop)
+│       ├── updater.rs          # Update checker (desktop)
+│       ├── webview.rs          # Native browser (desktop, experimental)
+│       ├── embedded_browser.rs # Child-webview browser panes via Window::add_child (desktop)
+│       ├── settings.rs         # Settings panel commands: theme load/save, open config dir (desktop)
+│       └── ipc_server.rs       # IPC server (desktop); routes agent-hook events
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
 │   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction
@@ -38,13 +53,18 @@ ymux/
 │   ├── editor/             # Editor pane (EditorPane, CodeMirror 6 setup, eol, theme)
 │   ├── git/                # Git pane (GitPane, graphLanes, worktreeFlow)
 │   ├── workspace/          # WorkspaceManager + WorkspaceBar + agentTree (workspace panel tree)
-│   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt)
+│   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt), pathLinks (clickable paths)
 │   ├── browser/            # BrowserPane (iframe) + NativeBrowserPane
 │   ├── layout/             # SplitContainer + LayoutTree + PaneGroup/tabs (pane tab groups)
 │   ├── palette/            # Command Palette (Ctrl+Shift+P)
-│   ├── help/               # Help overlay (?)
+│   ├── menu/               # Terminal right-click context menu (ContextMenu.ts)
+│   ├── notes/              # Per-workspace notes overlay (NotesOverlay.ts)
+│   ├── settings/           # Settings panel (⚙): general, syntax colors, shortcuts, config files (SettingsOverlay.ts)
+│   ├── help/               # Orphaned — see CLAUDE.md rule 6, SettingsOverlay.ts replaced its `?` button
 │   ├── hotkey/             # HotKeyManager modal (⚙)
 │   ├── statusbar/          # System monitor status bar
+│   ├── ui/                 # Small shared UI primitives (Dialog.ts)
+│   ├── util/               # Small shared utilities (beep.ts)
 │   └── update/             # Update banner
 ├── crates/
 │   ├── ytheme/             # Shared theme library
@@ -78,7 +98,8 @@ npx tsc --noEmit             # TypeScript type check
 ### 1. Feature Gate: `desktop`
 
 The `ymux` crate uses `#[cfg(feature = "desktop")]` for Tauri-dependent modules:
-- `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`, `ipc_server.rs`
+- `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`, `ipc_server.rs`,
+  `fsops.rs`, `clipboard_image.rs`, `embedded_browser.rs`, `settings.rs`
 
 **Always verify:** `cargo check --no-default-features --lib --tests -p ymux` must pass on Linux.
 
@@ -122,7 +143,9 @@ Update ALL of these (they must match):
 `attachCustomKeyEventHandler` in `TerminalPane.ts` blocks certain keys from reaching xterm so they bubble to ymux's global handler. When adding a new Ctrl+Shift+X shortcut:
 1. Add it to main.ts keydown handler
 2. Add `k === "x"` to the handler's block list in TerminalPane
-3. Add to Help overlay (`HelpOverlay.ts` SHORTCUTS array)
+3. Add to the Settings panel's shortcut reference (`src/settings/SettingsOverlay.ts`
+   `SHORTCUTS` array) — `src/help/HelpOverlay.ts` is orphaned (nothing mounts it any
+   more; `SettingsOverlay.ts` replaced its `?` button), don't edit it
 4. Add to Command Palette (`commands.ts` builtinCommands)
 5. Add i18n key for the description
 6. Add to README keyboard shortcut tables (3 files)
@@ -356,19 +379,22 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 382, 8 failing on Windows + frontend 574)
+### Test count (Rust 384, 8 failing on Windows + frontend 582)
 
 Measured 2026-09-24 on Windows with `cargo test -p ymux --lib`,
 `cargo test -p ytheme -p yipc -p ypath -p ylauncher` and `npx vitest run`.
+(`cargo test -p ymux --lib` needs a dummy `src-tauri/binaries/y-<triple>.exe`
+first — rule 4 — since it builds with the `desktop` feature and Tauri's build
+script validates `externalBin` paths even for `cargo test`.)
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 349 (338 pass, 8 fail on Windows, 3 ignored; 314 without `desktop`) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
+| ymux_lib | 351 (340 pass, 8 fail on Windows, 3 ignored; 316 without `desktop`: 307 pass, 8 fail, 1 ignored) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
 | ytheme | 6 | Theme TOML round-trip, hex parsing, defaults |
 | yipc | 7 on Windows (more on Unix) | Protocol serialization, retired message types rejected, server/client, broken pipe |
 | ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
 | ylauncher (`y`) | 11 (5 unit + 6 integration) | `agent-hook` payload packing, the silent no-env no-op, relay to a live server, usage errors (exit 2) for anything else |
-| _frontend_ | 574 (43 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
+| _frontend_ | 582 (43 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
 
 **The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
 `pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,

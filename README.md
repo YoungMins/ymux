@@ -64,11 +64,12 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   inheritance works without you editing anything.
 - **Numbered workspaces**: `Ctrl+Alt+1` .. `Ctrl+Alt+9` switch between the
   first nine workspaces. Add more at any time with the `+` button in the
-  toolbar — there is no fixed limit — and remove one with the `×` that appears
-  when you hover a workspace tab (the last remaining one can't be deleted).
-  Every workspace saves its own layout. Panes stay alive across switches
-  (tmux-style) so your REPLs and tails don't die. Double-click a workspace
-  button to give it a custom name.
+  workspace panel — there is no fixed limit — and remove one with the `×`
+  that appears when you hover a workspace row (the last remaining one can't
+  be deleted). Every workspace saves its own layout. Panes stay alive across
+  switches (tmux-style) so your REPLs and tails don't die. Double-click a
+  workspace name to rename it; the active workspace's whole block is
+  outlined so it's obvious which one you're in.
 - **Git worktree panes**: the command palette's **"Open pane in new git
   worktree"** prompts for a branch name, creates a git worktree (default: a
   sibling `.ymux-worktrees/<branch>` dir next to the repo, override with
@@ -81,9 +82,19 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   restored"* separator on the next launch. Toggle under **Settings → General**.
 - **Agent status at a glance**: every terminal pane tracks its process —
   idle / running / done / needs-attention — from output activity and the
-  bell / OSC 9 completion signal, shown as a colored pane border plus a dot on
-  the workspace tab. When a CLI finishes out of sight you also get an OS
-  notification and a short beep (toggleable in Settings).
+  bell / OSC 9 completion signal, shown as a colored pane border plus a
+  status tint on its row in the workspace panel. When a CLI finishes out of
+  sight you also get an OS notification and a short beep (toggleable in
+  Settings).
+- **Agent session resume**: restart ymux while a pane is running Claude Code
+  or Codex, and that pane resumes the same conversation instead of just
+  replaying a picture of the old scrollback — `claude --resume <id>
+  --dangerously-skip-permissions` (always added, so you're not re-approving
+  everything you already approved) or `codex resume <id>`. Eligible for up
+  to 24 h after the session was last active. Works even without agent
+  tracking turned on — it reads the CLI's own transcripts from disk to find
+  the session id. Shell-only panes are unaffected and keep restoring
+  scrollback as before.
 - **Agent tree**: the workspace panel lists every pane (and tab) under its
   workspace, with the coding agents running in it — Claude Code sessions and
   their subagents (via hooks), plus Codex, Gemini, aider, and other CLIs (via
@@ -127,8 +138,11 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   collapsed with a tooltip breakdown).
 - **Support on Ko-fi**: a ☕ Support button next to `⚙` opens
   [ko-fi.com/youngminkim](https://ko-fi.com/youngminkim) in the system browser.
-- **Clickable URLs**: `Ctrl+Click` on any `http://` or `https://` link inside
-  a terminal opens it in your default browser.
+- **Clickable links and paths**: `Ctrl+Click` on any `http://` or `https://`
+  link inside a terminal opens it in your default browser. `Ctrl+Click` also
+  works on filesystem paths a command printed (`cat`, `git log`, an agent's
+  answer) — it opens the file with the OS default program. Executables and
+  scripts are revealed in the file manager instead of run.
 - **Settings panel (⚙)**: WinUI 3-style modal with a left sidebar (General,
   Syntax Colors, Shortcuts, Config Files) and right content pane.
   Pick the language, edit the editor pane's syntax color palette with
@@ -155,6 +169,11 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
 - **MSI installer with PATH**: the MSI adds the install directory to the
   system PATH, so `ymux` is available from any terminal right after install.
 - **Lightweight**: Tauri binary + WebView2. Installer target < 10 MB.
+- **Hardened against embedded web content**: every backend command checks the
+  caller's origin, so a page inside a browser pane can't invoke ymux's own
+  IPC. ymux refuses to load if it's ever framed by another page, and the
+  built-in browser only forwards a small fixed set of harmless shortcuts —
+  nothing that could spawn a process or close a pane.
 
 ### Tool panes
 
@@ -164,9 +183,9 @@ that pane and inherits its working directory) or from the command palette.
 
 | Pane | Opens with | What it does |
 |------|-----------|--------------|
-| **Files** | Right-click → *Files here*, the file dock | Browse, preview, rename, create, copy/move, delete to trash |
-| **Editor** | Right-click → *Split: editor pane*, Enter on a file | Syntax-highlighted text editor with save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard |
-| **Git** | Right-click → *Git here* | Commit graph, branch list and checkout, worktree add/remove |
+| **Files** | Right-click → *Files here*, the file dock | Browse, preview, rename, create, multi-select, copy/move, overwrite prompts, delete to trash (with confirmation) |
+| **Editor** | Right-click → *Split: editor pane*, Enter on a file | Syntax-highlighted text editor with save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard, crash-safety drafts, external-change detection |
+| **Git** | Right-click → *Git here* | Commit graph, branch list and checkout, worktree add/remove (with confirmation) |
 
 The standalone `ydir` / `ycode` / `ygit` / `ymon` commands and the `y` launcher
 no longer exist. The install directory still holds a small `y` binary: it is
@@ -239,8 +258,8 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Tab`                  | `Ctrl+Tab`         | Focus next pane                      |
 | `Ctrl+Shift+Tab`            | `Ctrl+Shift+Tab`   | Focus previous pane                  |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | `Cmd+1` .. `Cmd+9` | Switch workspace                    |
-| `Ctrl+Click` on a URL       | `Cmd+Click`        | Open link in default browser         |
-| Double-click workspace button | —                | Rename workspace                     |
+| `Ctrl+Click` on a URL/path  | `Cmd+Click`        | Open link, or a printed file path, with the OS default program |
+| Double-click workspace name  | —                  | Rename workspace                     |
 | Drag a workspace row        | —                  | Reorder workspaces                   |
 | Right-click in a terminal   | —                  | Context menu — copy/paste, split, open a files / editor / git pane |
 | `⚙` button (toolbar)        | —                  | Open Settings (palette, shortcuts, syntax colors, config files) |
