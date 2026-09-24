@@ -15,7 +15,7 @@ import type {
   Workspace,
 } from "../types";
 import { listen as tauriListen } from "@tauri-apps/api/event";
-import { api } from "../ipc/bridge";
+import { api, gitApi } from "../ipc/bridge";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { clampFontSize, DEFAULT_FONT_SIZE } from "./fontSize";
 import { BrowserPane } from "../browser/BrowserPane";
@@ -58,8 +58,8 @@ import {
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
-import { promptWorktreeBranch } from "./WorktreeModal";
-import { askChoice, askConfirm, askText } from "../ui/Dialog";
+import { promptWorktreeBranch, removeWorktreeFlow } from "../git/worktreeFlow";
+import { askChoice, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
@@ -1382,26 +1382,30 @@ export class WorkspaceManager {
     return true;
   }
 
-  /// Ask the user whether to remove the git worktree at `wtPath`, and do so
-  /// if confirmed. A dirty worktree gets a second, forced-removal prompt.
-  /// Errors are logged, never thrown — worktree cleanup is best-effort and
-  /// must not fail the pane close / workspace delete that triggered it.
+  /// Offer to remove the git worktree at `wtPath`, through the git pane's
+  /// removal flow (src/git/worktreeFlow.ts): one confirmation that lists what
+  /// goes with it, `--force` only when the listed changes demand it, and a
+  /// failure shown rather than retried with `--force`. (This used to force on
+  /// *any* failure — on Windows that includes a directory still in use.)
+  /// Never throws: cleanup must not fail the pane close / workspace delete
+  /// that triggered it.
   private async offerWorktreeRemoval(wtPath: string): Promise<void> {
-    const ok = await askConfirm(
-      t("worktree.removeConfirm").replace("{path}", wtPath),
-    );
-    if (!ok) return;
+    let entry;
     try {
-      await api.gitWorktreeRemove(wtPath, false);
-    } catch {
-      // Dirty worktree or similar — offer a forced removal.
-      if (await askConfirm(t("worktree.removeForce"))) {
-        try {
-          await api.gitWorktreeRemove(wtPath, true);
-        } catch (e) {
-          console.error("worktree remove failed", e);
-        }
-      }
+      // Asked from inside it, the worktree itself is the `current` entry —
+      // the comparison is done in Rust (rule 15).
+      entry = (await gitApi.worktrees(wtPath)).find((w) => w.current);
+    } catch (e) {
+      // Already gone, or no longer a repository: nothing to remove.
+      console.warn("worktree lookup failed", wtPath, e);
+      return;
+    }
+    if (!entry) return;
+    try {
+      // The pane that showed it is closing, so it is not "shown" any more.
+      await removeWorktreeFlow({ ...entry, current: false });
+    } catch (e) {
+      console.error("worktree remove failed", e);
     }
   }
 

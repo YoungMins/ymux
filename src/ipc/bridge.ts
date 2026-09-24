@@ -467,14 +467,6 @@ export const api = {
   gitWorktreeAdd: (cwd: string, branch: string, base: string): Promise<string> =>
     call("git_worktree_add", { cwd, branch, base }),
 
-  /// Remove a git worktree at `path`. `force` matches `git worktree remove --force`.
-  gitWorktreeRemove: (path: string, force: boolean): Promise<void> =>
-    call("git_worktree_remove", { path, force }),
-
-  /// List all worktrees for the repo rooted at `cwd`.
-  gitWorktreeList: (cwd: string): Promise<WorktreeEntry[]> =>
-    call("git_worktree_list", { cwd }),
-
   /// Current agent-tree snapshot (pane id → agents).
   getAgents: (): Promise<AgentSnapshot> => call("get_agents"),
 
