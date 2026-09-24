@@ -1283,6 +1283,11 @@ export class WorkspaceManager {
     return out;
   }
 
+  /// Write every editor draft still waiting in its debounce, now.
+  async flushDrafts(): Promise<void> {
+    await Promise.all(this.allEditors().map((e) => e.flushDraft()));
+  }
+
   /// Any unsaved editor anywhere (the `beforeunload` check).
   hasUnsavedEditors(): boolean {
     return this.allEditors().some((e) => e.isDirty());

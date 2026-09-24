@@ -310,7 +310,7 @@ export class EditorPane implements Pane {
       // Not permanent (a shutdown path): the pending draft is the whole
       // point of drafts, so write it now rather than lose the last 2 s.
       if (!permanent && draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") {
-        this.writeDraft();
+        void this.writeDraft();
       }
     }
     // Permanent: the user closed this pane after the guard let it go —
@@ -695,7 +695,7 @@ export class EditorPane implements Pane {
           this.opts.onDirtyChange?.();
           // The buffer just became the only copy: draft it now, not on the
           // next keystroke.
-          if (draftFileAction(this.draftUnanswered(), this.dirty, true) === "write") this.writeDraft();
+          if (draftFileAction(this.draftUnanswered(), this.dirty, true) === "write") void this.writeDraft();
         }
         return;
       }
@@ -752,14 +752,26 @@ export class EditorPane implements Pane {
     if (this.draftTimer !== null) clearTimeout(this.draftTimer);
     this.draftTimer = window.setTimeout(() => {
       this.draftTimer = null;
-      if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") this.writeDraft();
+      if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") void this.writeDraft();
     }, DRAFT_DELAY_MS);
   }
 
-  private writeDraft(): void {
+  /// Write the draft now if one is waiting in its debounce (the window is
+  /// closing without the guard's answer, or the page is unloading).
+  flushDraft(): Promise<void> {
+    if (this.draftTimer === null) return Promise.resolve();
+    clearTimeout(this.draftTimer);
+    this.draftTimer = null;
+    if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) !== "write") {
+      return Promise.resolve();
+    }
+    return this.writeDraft();
+  }
+
+  private writeDraft(): Promise<void> {
     const h = this.handle;
     const f = this.file;
-    if (!h || !f || !this.path || this.pendingDraft) return;
+    if (!h || !f || !this.path || this.pendingDraft) return Promise.resolve();
     const draft: Draft = {
       v: 1,
       path: this.path,
@@ -770,7 +782,7 @@ export class EditorPane implements Pane {
       savedAt: Date.now(),
     };
     this.draftOnDisk = true;
-    void api.saveEditorDraft(this.id, encodeDraft(draft)).catch((e) => {
+    return api.saveEditorDraft(this.id, encodeDraft(draft)).catch((e) => {
       console.warn("editor: draft save failed", e);
     });
   }

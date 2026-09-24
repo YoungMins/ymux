@@ -337,6 +337,14 @@ async function main(): Promise<void> {
       } catch (e) {
         console.error("close guard failed; closing anyway", e);
         ok = true;
+        // Closing without the guard's answer: the drafts are all that
+        // protects unsaved edits, so write the ones still in their 2 s
+        // debounce before the window goes. Bounded, so a hung IPC cannot
+        // keep the window open.
+        await Promise.race([
+          manager.flushDrafts().catch(() => {}),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]);
       } finally {
         closeAsked = false;
       }
@@ -355,6 +363,9 @@ async function main(): Promise<void> {
       ev.preventDefault();
       ev.returnValue = "";
     }
+    // Drafts still in their 2 s debounce go to disk now (fire and forget:
+    // an unload cannot wait), so a reload or teardown loses no edit.
+    void manager.flushDrafts().catch(() => {});
     void manager.flush();
   });
 }
