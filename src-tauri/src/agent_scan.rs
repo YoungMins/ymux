@@ -136,36 +136,29 @@ impl<'a> ProcTree<'a> {
         out
     }
 
-    /// Every agent process on the machine that is not itself inside another
-    /// agent's tree: one entry per running agent, however it was launched
-    /// (a node wrapper's native child is the same agent, not a second one).
+    /// Every running agent on the machine, once: an agent process whose
+    /// *direct* parent is itself an agent (a node wrapper's native child, a
+    /// daemon's pty host) is the same agent, not a second one.
+    ///
+    /// Only the direct parent counts. An agent further up the tree — ymux
+    /// itself started from an agent's shell, say — does not make the agents
+    /// in ymux's panes part of it; they are separate conversations.
     pub fn root_agents(&self) -> Vec<(&'static str, &'a ProcEntry)> {
         let mut out: Vec<(&'static str, &'a ProcEntry)> = self
             .by_pid
             .values()
             .filter_map(|p| match_agent(&p.exe_stem, &p.argv).map(|k| (k, *p)))
-            .filter(|(_, p)| !self.has_agent_ancestor(p))
+            .filter(|(_, p)| !self.parent_is_agent(p))
             .collect();
         out.sort_by_key(|(_, p)| p.pid);
         out
     }
 
-    fn has_agent_ancestor(&self, p: &ProcEntry) -> bool {
-        let mut seen: HashSet<u32> = HashSet::from([p.pid]);
-        let mut cur = p.parent;
-        while let Some(pid) = cur {
-            if !seen.insert(pid) {
-                return false;
-            }
-            let Some(parent) = self.by_pid.get(&pid) else {
-                return false;
-            };
-            if match_agent(&parent.exe_stem, &parent.argv).is_some() {
-                return true;
-            }
-            cur = parent.parent;
-        }
-        false
+    fn parent_is_agent(&self, p: &ProcEntry) -> bool {
+        p.parent
+            .filter(|pp| *pp != p.pid)
+            .and_then(|pp| self.by_pid.get(&pp))
+            .is_some_and(|parent| match_agent(&parent.exe_stem, &parent.argv).is_some())
     }
 
     /// The deepest descendant of `root_pid` (exclusive): a shell that reached
@@ -513,6 +506,66 @@ mod tests {
             a.process.subtree.iter().copied().collect::<Vec<_>>(),
             vec![12, 13]
         );
+    }
+
+    #[test]
+    fn agents_in_panes_of_a_ymux_started_from_an_agent_are_still_agents() {
+        // outer claude(1) -> node(2) -> ymux(3) -> pwsh(4) -> claude(5)
+        //                                       -> pwsh(6) -> claude(7)
+        let procs = vec![
+            proc(1, None, "claude", &["claude"]),
+            proc(2, Some(1), "node", &["node", "vite.js"]),
+            proc(3, Some(2), "ymux", &["ymux"]),
+            proc(4, Some(3), "pwsh", &[]),
+            proc(5, Some(4), "claude", &["claude"]),
+            proc(6, Some(3), "pwsh", &[]),
+            proc(7, Some(6), "claude", &["claude"]),
+        ];
+        let pids: Vec<u32> = other_agents(&procs, |_| None)
+            .iter()
+            .map(|o| o.pid)
+            .collect();
+        assert_eq!(pids, vec![1, 5, 7]);
+    }
+
+    #[test]
+    fn a_claude_daemon_chain_is_one_agent() {
+        // Seen in the wild: `claude daemon run` -> `claude --bg-pty-host … --
+        // claude --session-id …` -> `claude --session-id …`.
+        let procs = vec![
+            proc(10, Some(1), "claude", &["claude", "daemon", "run"]),
+            proc(11, Some(10), "claude", &["claude", "--bg-pty-host"]),
+            proc(12, Some(11), "claude", &["claude", "--session-id", "abc-1"]),
+        ];
+        let pids: Vec<u32> = other_agents(&procs, |_| None)
+            .iter()
+            .map(|o| o.pid)
+            .collect();
+        assert_eq!(pids, vec![10]);
+    }
+
+    /// The scan's refresh kind must actually populate what binding relies on:
+    /// with `start_time` left at 0, "began at or after the process started"
+    /// would accept yesterday's transcript, and every pid file would fail its
+    /// start-time check.
+    #[test]
+    fn the_scan_refresh_populates_start_time_and_cwd() {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+        let refresh = ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .with_cwd(UpdateKind::OnlyIfNotSet);
+        let me = Pid::from_u32(std::process::id());
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[me]), true, refresh);
+        let p = sys.process(me).expect("this test process");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(p.start_time() > 0, "start_time must be populated");
+        assert!(p.start_time() <= now + 1);
+        assert!(p.cwd().is_some(), "cwd must be populated");
     }
 
     #[test]
