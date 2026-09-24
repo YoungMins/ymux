@@ -78,6 +78,7 @@ import {
   navigateTo,
   type NavState,
 } from "./navState";
+import { FollowGate } from "./followGate";
 
 export interface FilesPaneOptions {
   id: Uuid;
@@ -222,6 +223,15 @@ export class FilesPane implements Pane {
   /// Requested vs. actually-listed folder; `actionDir(nav)` is where
   /// create and paste may write, `null` while a navigation is pending.
   private nav: NavState;
+  private readonly gate = new FollowGate({
+    now: () => performance.now(),
+    focused: () => document.activeElement === this.list,
+    apply: (dir) => this.go(dir),
+    setTimer: (fn, ms) => {
+      const id = window.setTimeout(fn, ms);
+      return () => clearTimeout(id);
+    },
+  });
   private title: string | null;
   private entries: FileEntry[] = [];
   private names: string[] = [];
@@ -381,6 +391,7 @@ export class FilesPane implements Pane {
 
   dispose(): void {
     this.disposed = true;
+    this.gate.cancel();
     this.loadGen++;
     this.previewGen++;
     if (this.previewTimer !== null) clearTimeout(this.previewTimer);
@@ -391,9 +402,21 @@ export class FilesPane implements Pane {
 
   // ── Host API ──────────────────────────────────────────────────────────────
 
-  /// Show `dir`. The dock's cwd-follow calls this; so does every in-pane
-  /// navigation. Listed now if on screen, else when next shown.
+  /// Show `dir` because the user asked to. Drops any follow still held.
   navigate(dir: string, prefer?: string): void {
+    this.gate.cancel();
+    this.go(dir, prefer);
+  }
+
+  /// Show `dir` because the followed pane moved there (the dock's
+  /// cwd-follow). Held while the user is typing in the list — see
+  /// followGate.ts — so their next key cannot land on another folder's row.
+  follow(dir: string): void {
+    this.gate.offer(dir);
+  }
+
+  /// Listed now if on screen, else when next shown.
+  private go(dir: string, prefer?: string): void {
     this.dir = dir;
     this.nav = navigateTo(this.nav, dir);
     this.stale = true;
@@ -813,8 +836,16 @@ export class FilesPane implements Pane {
       this.renderRows();
     });
     this.list.addEventListener("focus", () => this.renderRows());
-    this.list.addEventListener("blur", () => this.renderRows());
-    this.list.addEventListener("keydown", (ev) => this.onKey(ev));
+    this.list.addEventListener("blur", () => {
+      this.renderRows();
+      // A follow held for the typing user can land once they have left.
+      this.gate.recheck();
+    });
+    this.list.addEventListener("keydown", (ev) => {
+      // Any key, handled here or not: the user is at the keyboard.
+      this.gate.onKey();
+      this.onKey(ev);
+    });
     this.list.addEventListener("mousedown", (ev) => this.onMouseDown(ev));
     this.list.addEventListener("dblclick", (ev) => {
       const i = this.rowIndexAt(ev.target);
