@@ -240,8 +240,9 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     use tauri::Manager;
 
+    use crate::agent_sessions::SharedSessions;
     use crate::agents::SharedAgents;
-    use crate::commands::{emit_agents_changed, AppState};
+    use crate::commands::{emit_agents_changed, flush_sessions, observe_pane_session, AppState};
 
     std::thread::Builder::new()
         .name("ymux-agent-scan".into())
@@ -286,11 +287,48 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 let live: HashSet<Uuid> = shells.keys().copied().collect();
                 let agents = app.state::<SharedAgents>();
                 let mut reg = agents.0.lock();
+                // Ask before `apply_scan`, which drops the state of a pane
+                // whose agent has gone.
+                let exited = reg.exited_panes(&live, &found);
                 if reg.apply_scan(&live, &found) {
                     // Under the lock, so this can't race a hook-driven emit
                     // out of order (see `commands::apply_agent_hook`).
                     emit_agents_changed(&app, &reg.snapshot());
                 }
+                let observations: Vec<(Uuid, String, Option<String>)> = found
+                    .iter()
+                    .filter(|(id, _)| live.contains(id))
+                    .map(|(id, kind)| {
+                        (
+                            *id,
+                            kind.clone(),
+                            reg.hook_session_id(*id).map(str::to_string),
+                        )
+                    })
+                    .collect();
+                // Registry lock first, session lock second — the same order
+                // `apply_agent_hook` uses, so the two threads cannot deadlock.
+                drop(reg);
+                let sessions = app.state::<SharedSessions>();
+                let mut tracker = sessions.0.lock();
+                for pane in exited {
+                    tracker.note_agent_exit(pane);
+                }
+                for (id, kind, hook_id) in observations {
+                    // The scan cannot see what the agent is doing, only that
+                    // it is there; the frontend derives a process lead's
+                    // status from the pane's own machine, and `working` is
+                    // the conservative answer for `interrupted`.
+                    observe_pane_session(
+                        &app,
+                        &mut tracker,
+                        id,
+                        &kind,
+                        crate::agents::AgentStatus::Working,
+                        hook_id,
+                    );
+                }
+                flush_sessions(&mut tracker);
             }
         })
         .expect("spawn agent scan thread");

@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use std::path::Path;
 
+use crate::agent_sessions::{ResumePlan, SharedSessions};
 use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
@@ -220,7 +221,13 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
     }
     let agents = app.state::<SharedAgents>();
     let mut reg = agents.0.lock();
-    if reg.apply_hook(&ev) {
+    let changed = reg.apply_hook(&ev);
+    // Record the id the hook just carried, then drop the registry lock before
+    // taking the session lock — the scan thread takes them in this order too,
+    // so there is one lock order and no way to deadlock against it.
+    let hook_id = reg.hook_session_id(ev.pane_id).map(str::to_string);
+    let lead = reg.snapshot().get(&ev.pane_id).and_then(|p| p.lead.clone());
+    if changed {
         // Emit while still holding the lock: the hook listener and the scan
         // thread both write the registry, and emitting after release let a
         // newer snapshot overtake an older one, leaving the UI stale. Safe —
@@ -228,6 +235,98 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
         // the registry, and it only queues the JS dispatch (non-blocking).
         emit_agents_changed(app, &reg.snapshot());
     }
+    drop(reg);
+    if let Some(lead) = lead {
+        let sessions = app.state::<SharedSessions>();
+        let mut tracker = sessions.0.lock();
+        if ev.event == "SessionEnd" {
+            // The user quit the agent; keep the record but stop offering to
+            // resume it (spec §4's "decline, don't delete").
+            tracker.note_agent_exit(ev.pane_id);
+        } else {
+            observe_pane_session(
+                app,
+                &mut tracker,
+                ev.pane_id,
+                &lead.kind,
+                lead.status,
+                hook_id,
+            );
+        }
+        flush_sessions(&mut tracker);
+    }
+}
+
+/// The resume plan for one pane, or `None` when it should start normally.
+///
+/// Called by `TerminalPane.spawn()` *before* it decides whether to replay
+/// scrollback (spec §4/§5): for a pane that is about to resume an agent, the
+/// saved backlog is dead history that would sit above the resumed
+/// conversation, so it is skipped entirely.
+///
+/// `startup_cmd` is the pane's own saved startup command, so any selector it
+/// already carries can be stripped rather than fighting ours.
+#[tauri::command]
+pub fn get_agent_session(
+    sessions: State<'_, SharedSessions>,
+    pane_id: Uuid,
+    startup_cmd: Option<String>,
+) -> Option<ResumePlan> {
+    let tracker = sessions.0.lock();
+    crate::agent_sessions::plan_for(
+        tracker.get(pane_id),
+        startup_cmd.as_deref().unwrap_or_default(),
+        crate::agent_sessions::now_secs(),
+        crate::agent_sessions::transcript_exists,
+    )
+}
+
+/// Forget a pane's session entirely. Called when the user closes a pane for
+/// good, mirroring `delete_scrollback`.
+#[tauri::command]
+pub fn clear_agent_session(sessions: State<'_, SharedSessions>, pane_id: Uuid) -> YmuxResult<()> {
+    let mut tracker = sessions.0.lock();
+    tracker.forget(pane_id);
+    flush_sessions(&mut tracker);
+    Ok(())
+}
+
+/// Persist the session store if anything changed. A no-op on an idle tick, so
+/// the 2 s scan does not rewrite the file forever.
+pub fn flush_sessions(tracker: &mut crate::agent_sessions::SessionTracker) {
+    if tracker.take_dirty() {
+        if let Err(e) = crate::agent_sessions::save(tracker.store()) {
+            tracing::warn!(error = %e, "saving agent sessions failed");
+        }
+    }
+}
+
+/// Feed one pane's current state into the session tracker.
+///
+/// Shared by the hook listener and the process scan so both write the same
+/// store. The transcript lookup is only reached when the tracker's throttle
+/// allows it, and it is skipped entirely for a pane with no known cwd —
+/// without one there is nothing to match a transcript against.
+pub fn observe_pane_session(
+    app: &AppHandle,
+    tracker: &mut crate::agent_sessions::SessionTracker,
+    pane_id: Uuid,
+    kind: &str,
+    status: crate::agents::AgentStatus,
+    hook_session_id: Option<String>,
+) {
+    let obs = crate::agent_sessions::PaneObservation {
+        pane_id,
+        kind: kind.to_string(),
+        cwd: app.state::<AppState>().pty.cwd_for(pane_id),
+        status,
+        hook_session_id,
+    };
+    tracker.observe(
+        &obs,
+        crate::agent_sessions::now_secs(),
+        crate::agent_scan_disk::newest_session,
+    );
 }
 
 /// Current agent snapshot, for the frontend's initial render.
