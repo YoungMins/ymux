@@ -312,21 +312,36 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
 /// saved backlog is dead history that would sit above the resumed
 /// conversation, so it is skipped entirely.
 ///
-/// `startup_cmd` is the pane's own saved startup command, so any selector it
-/// already carries can be stripped rather than fighting ours.
+/// `startup_cmd` is the pane's own saved startup command, so the flags it
+/// provably carries over are kept (and any selector dropped). `shell` is the
+/// pane's shell profile name: the command is typed into that shell, so it is
+/// quoted by that shell's rules (`agent_sessions::ShellFamily`).
 #[tauri::command]
 pub fn get_agent_session(
     webview: Webview,
     request: Request<'_>,
+    state: State<'_, AppState>,
     sessions: State<'_, SharedSessions>,
     pane_id: Uuid,
     startup_cmd: Option<String>,
+    shell: Option<String>,
 ) -> YmuxResult<ResumeOutcome> {
     guard_local(&webview, &request, "get_agent_session")?;
+    let family = shell
+        .as_deref()
+        .and_then(|name| {
+            state
+                .config
+                .snapshot()
+                .shell(name)
+                .map(|p| crate::agent_sessions::ShellFamily::from_executable(&p.executable))
+        })
+        .unwrap_or(crate::agent_sessions::ShellFamily::Unknown);
     let tracker = sessions.0.lock();
     Ok(crate::agent_sessions::outcome_for(
         tracker.get(pane_id),
         startup_cmd.as_deref().unwrap_or_default(),
+        family,
         crate::agent_sessions::now_secs(),
         crate::agent_sessions::transcript_exists,
     ))

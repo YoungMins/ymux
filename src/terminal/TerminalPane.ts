@@ -504,6 +504,7 @@ export class TerminalPane implements Pane {
         (await api.getAgentSession(
           this.id,
           this.spec.startup_cmd ?? undefined,
+          this.spec.shell,
         )) ?? null;
     } catch {
       outcome = null;

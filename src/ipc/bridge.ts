@@ -402,13 +402,19 @@ export const api = {
   /// recent session's transcript is gone, or nothing.
   /// Asked before `spawn()` decides whether to replay scrollback: a pane that
   /// resumes its agent skips the replay entirely (spec §4/§5). `startupCmd` is
-  /// the pane's own saved startup command, so a selector it already carries
-  /// can be stripped instead of fighting ours.
+  /// the pane's own saved startup command, whose provably safe flags carry
+  /// over; `shell` is the pane's shell profile name, because the command is
+  /// typed into that shell and quoted by its rules.
   getAgentSession: (
     id: Uuid,
     startupCmd?: string,
+    shell?: string,
   ): Promise<ResumeOutcome | null> =>
-    call("get_agent_session", { paneId: id, startupCmd: startupCmd ?? null }),
+    call("get_agent_session", {
+      paneId: id,
+      startupCmd: startupCmd ?? null,
+      shell: shell ?? null,
+    }),
 
   /// Forget a pane's agent session. Called when the user closes a pane for
   /// good, mirroring `deleteScrollback`.

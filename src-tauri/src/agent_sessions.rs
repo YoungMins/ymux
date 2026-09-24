@@ -181,118 +181,414 @@ pub fn resume_argv(agent: AgentKind, session_id: &str) -> Option<Vec<String>> {
 /// prompts. Verbatim from `claude --help` on this machine.
 pub const CLAUDE_SKIP_PERMISSIONS: &str = "--dangerously-skip-permissions";
 
-/// Strip any conversation selector already present in a saved `startup_cmd`,
-/// returning the command with only its non-selector arguments left.
+/// The quoting rules of the shell a resume command is typed into.
 ///
-/// A pane whose startup command is `claude -c --model opus` plus our
-/// `--resume <id>` is two selectors fighting (spec §3). Returns `None` when
-/// `startup_cmd` does not start the agent at all — then the caller uses the
-/// bare [`resume_argv`] and leaves the unrelated command alone.
-///
-/// Token-aware rather than a regex over the raw string, so `claude --resume
-/// "my session"` loses both tokens and `echo --resume` is left untouched.
-///
-/// Every flag in the drop lists was read off `--help` on this machine, not
-/// guessed: Claude has `-c/--continue`, `-r/--resume`, `--fork-session`,
-/// `--teleport` and `--from-pr`; Codex has the `resume` and `fork`
-/// subcommands and `--last`. (`--fork` is *not* a Claude flag — the real
-/// spelling is `--fork-session`, and it means "when resuming, create a new
-/// session ID", which is exactly the opposite of continuing.)
-///
-/// It also drops any flag [`resume_argv`] supplies itself, so a user whose
-/// startup command already carries `--dangerously-skip-permissions` gets it
-/// once, not twice.
-pub fn strip_selector(startup_cmd: &str, agent: AgentKind) -> Option<Vec<String>> {
-    let tokens = shell_split(startup_cmd);
-    let first = tokens.first()?;
-    if !program_is(first, agent.as_str()) {
-        return None;
-    }
-    // Codex's selector is a subcommand plus an optional positional id, so the
-    // whole `resume …` tail goes; Claude's is a flag.
-    let (mut out, rest) = match agent {
-        AgentKind::Codex => {
-            let mut out = vec![tokens[0].clone()];
-            let mut rest = &tokens[1..];
-            // `fork` is the same shape as `resume` (`codex fork [SESSION_ID]`)
-            // and forks rather than continues, so it goes the same way.
-            if matches!(
-                rest.first().map(String::as_str),
-                Some("resume") | Some("fork")
-            ) {
-                rest = &rest[1..];
-                // `resume` may be followed by a bare positional session id.
-                if rest
-                    .first()
-                    .is_some_and(|t| !t.starts_with('-') && is_valid_session_id(t))
-                {
-                    rest = &rest[1..];
-                }
-            }
-            (std::mem::take(&mut out), rest.to_vec())
-        }
-        AgentKind::Claude => (vec![tokens[0].clone()], tokens[1..].to_vec()),
-    };
+/// The command is typed into the pane's shell (spec §3), so each argument the
+/// user's own startup command carried has to come back out quoted for *that*
+/// shell. Anything this cannot quote with certainty makes the caller fall
+/// back to the bare resume command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellFamily {
+    /// bash / zsh / sh (Git Bash included): `'…'`, `'\''` for a quote.
+    Posix,
+    /// Windows PowerShell and pwsh: `'…'`, `''` for a quote.
+    PowerShell,
+    /// cmd.exe: `"…"`, with no way to escape `"`, `%` or `!` inside.
+    Cmd,
+    /// Anything else — fish, nu, `wsl.exe` (whose inner shell is unknown), an
+    /// unresolved profile: only arguments that need no quoting at all.
+    Unknown,
+}
 
-    let mut i = 0;
-    while i < rest.len() {
-        let t = rest[i].as_str();
-        let drop_with_value = matches!(t, "--resume" | "-r" | "--teleport" | "--from-pr");
-        let drop_alone = matches!(
-            t,
-            "-c" | "--continue" | "--last" | "--fork-session" | CLAUDE_SKIP_PERMISSIONS
-        );
-        if drop_with_value {
-            i += 1;
-            // Its value is optional for every one of these flags, so only eat
-            // a following token when it is not itself a flag.
-            if rest.get(i).is_some_and(|v| !v.starts_with('-')) {
-                i += 1;
+impl ShellFamily {
+    /// Classify a shell profile by its executable's file stem.
+    pub fn from_executable(executable: &str) -> Self {
+        let stem = executable
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(executable)
+            .to_ascii_lowercase();
+        let stem = stem.strip_suffix(".exe").unwrap_or(&stem);
+        match stem {
+            "cmd" => Self::Cmd,
+            "powershell" | "pwsh" => Self::PowerShell,
+            "bash" | "zsh" | "sh" | "dash" | "ksh" => Self::Posix,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn bare_ok(self, c: char) -> bool {
+        c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '.' | '/' | ':' | '=' | '+' | '-')
+            || (c == '\\' && matches!(self, Self::Cmd | Self::PowerShell))
+    }
+
+    /// `token` as it must be typed into this shell to arrive as exactly
+    /// `token`, or `None` when that cannot be done with certainty.
+    pub fn quote(self, token: &str) -> Option<String> {
+        if token.is_empty() || token.chars().any(char::is_control) {
+            return None;
+        }
+        if token.chars().all(|c| self.bare_ok(c)) {
+            return Some(token.to_string());
+        }
+        match self {
+            Self::Posix => Some(format!("'{}'", token.replace('\'', r"'\''"))),
+            Self::PowerShell => {
+                // PowerShell also reads U+2018–U+201B as single quotes; and a
+                // `"` or a trailing `\` is mangled when Windows PowerShell
+                // re-quotes the argument for a native program.
+                if token.contains('"')
+                    || token.ends_with('\\')
+                    || token
+                        .chars()
+                        .any(|c| ('\u{2018}'..='\u{201B}').contains(&c))
+                {
+                    return None;
+                }
+                Some(format!("'{}'", token.replace('\'', "''")))
+            }
+            Self::Cmd => {
+                // `%VAR%` and `!VAR!` expand even inside quotes, `"` cannot be
+                // escaped, and a trailing `\` escapes the closing quote for
+                // the program's own argv parser.
+                if token.contains(['"', '%', '!', '^']) || token.ends_with('\\') {
+                    return None;
+                }
+                Some(format!("\"{token}\""))
+            }
+            Self::Unknown => None,
+        }
+    }
+}
+
+/// Split a saved `startup_cmd` into the arguments `shell` would pass, or
+/// `None` when that cannot be said with certainty.
+///
+/// Deliberately a strict *subset* of each shell's grammar: plain words, and
+/// quoted runs with nothing inside them the shell would still interpret.
+/// Operators (`;`, `&`, `|`, `<`, `>`, parentheses), expansions (`$`, `` ` ``,
+/// `%`, `!`), globs, escapes and anything unbalanced all return `None` — the
+/// caller then types the bare resume command, which is always correct.
+fn split_for(shell: ShellFamily, s: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_word = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_control() && !c.is_whitespace() {
+            return None;
+        }
+        if c.is_whitespace() {
+            if c != ' ' && c != '\t' {
+                return None;
+            }
+            if in_word {
+                out.push(std::mem::take(&mut cur));
+                in_word = false;
             }
             continue;
         }
-        if drop_alone {
-            i += 1;
+        let quote = match c {
+            '"' if shell != ShellFamily::Unknown => Some('"'),
+            '\'' if matches!(shell, ShellFamily::Posix | ShellFamily::PowerShell) => Some('\''),
+            _ => None,
+        };
+        if let Some(q) = quote {
+            in_word = true;
+            let mut closed = false;
+            for d in chars.by_ref() {
+                if d == q {
+                    closed = true;
+                    break;
+                }
+                if d.is_control() || !quoted_char_is_literal(shell, q, d) {
+                    return None;
+                }
+                cur.push(d);
+            }
+            // `""`/`''` right after a closing quote is an escape in cmd and
+            // PowerShell and a concatenation in POSIX: not worth telling apart.
+            if !closed || matches!(chars.peek(), Some('"') | Some('\'')) {
+                return None;
+            }
+            // On Windows the *program* splits its own command line, and to
+            // its parser a `\` run before a `"` escapes the quote.
+            if matches!(shell, ShellFamily::Cmd | ShellFamily::PowerShell) && cur.ends_with('\\') {
+                return None;
+            }
             continue;
         }
-        // `--resume=<id>` / `-r=<id>` spellings.
-        if t.starts_with("--resume=") || t.starts_with("-r=") {
-            i += 1;
-            continue;
+        if !shell.bare_ok(c) {
+            return None;
         }
-        out.push(rest[i].clone());
-        i += 1;
+        cur.push(c);
+        in_word = true;
+    }
+    if in_word {
+        out.push(cur);
     }
     Some(out)
 }
 
-/// The full command to type into the pane's shell: the saved `startup_cmd`'s
-/// surviving arguments (if it started this agent) plus our explicit selector.
+/// Whether `d`, inside a `q`-quoted run, is taken literally by `shell`.
+fn quoted_char_is_literal(shell: ShellFamily, q: char, d: char) -> bool {
+    match (shell, q) {
+        // POSIX single quotes take everything literally.
+        (ShellFamily::Posix, '\'') => true,
+        (ShellFamily::Posix, _) => !matches!(d, '$' | '`' | '\\' | '!'),
+        (ShellFamily::PowerShell, '\'') => !('\u{2018}'..='\u{201B}').contains(&d),
+        (ShellFamily::PowerShell, _) => {
+            !matches!(d, '$' | '`') && !('\u{201C}'..='\u{201E}').contains(&d)
+        }
+        (ShellFamily::Cmd, _) => !matches!(d, '%' | '!' | '^'),
+        (ShellFamily::Unknown, _) => false,
+    }
+}
+
+/// What to do with one flag of the user's startup command on resume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlagRule {
+    /// Re-emit, with exactly one value.
+    KeepValue,
+    /// Re-emit, alone.
+    KeepBool,
+    /// A conversation selector (or something the resume replaces): drop it,
+    /// along with an optional value.
+    DropOptionalValue,
+    /// Drop it and its (required) value.
+    DropValue,
+    /// Drop it alone.
+    Drop,
+}
+
+/// Claude flags read off `claude --help` (2.1.281). Only flags that take
+/// exactly one value or none are kept; variadic flags (`<x...>`: `--add-dir`,
+/// `--allowed-tools`, `--mcp-config`, `--tools`, …), `-p/--print`, `--bg`,
+/// `--worktree` and everything unlisted make the caller fall back to the bare
+/// resume command, because where their values end — or what they do to a
+/// resumed conversation — cannot be read off the command line.
+fn claude_flag(flag: &str) -> Option<FlagRule> {
+    use FlagRule::*;
+    Some(match flag {
+        "--model"
+        | "--agent"
+        | "--append-system-prompt"
+        | "--system-prompt"
+        | "--settings"
+        | "--effort"
+        | "--fallback-model"
+        | "--setting-sources"
+        | "--plugin-dir"
+        | "--debug-file"
+        | "--autocompact" => KeepValue,
+        "--verbose"
+        | "--ide"
+        | "--chrome"
+        | "--no-chrome"
+        | "--strict-mcp-config"
+        | "--disable-slash-commands"
+        | "--brief"
+        | "--ax-screen-reader"
+        | "--exclude-dynamic-system-prompt-sections" => KeepBool,
+        // Selectors, all with an optional value (`[value]` in --help).
+        "-r" | "--resume" | "--from-pr" | "--teleport" => DropOptionalValue,
+        "--session-id" => DropValue,
+        "-c" | "--continue" | "--fork-session" => Drop,
+        // Ours already; once is enough.
+        CLAUDE_SKIP_PERMISSIONS | "--allow-dangerously-skip-permissions" => Drop,
+        _ => return None,
+    })
+}
+
+/// Codex flags read off `codex resume --help` (codex-cli 0.155): the ones it
+/// lists are the only ones that can follow `codex resume <id>`. `-i/--image`
+/// (variadic) and anything unlisted make the caller fall back to bare.
+fn codex_flag(flag: &str) -> Option<FlagRule> {
+    use FlagRule::*;
+    Some(match flag {
+        "-c"
+        | "--config"
+        | "--enable"
+        | "--disable"
+        | "-m"
+        | "--model"
+        | "--local-provider"
+        | "-p"
+        | "--profile"
+        | "-s"
+        | "--sandbox"
+        | "-a"
+        | "--ask-for-approval"
+        | "--add-dir"
+        | "--remote"
+        | "--remote-auth-token-env" => KeepValue,
+        "--oss"
+        | "--search"
+        | "--no-alt-screen"
+        | "--strict-config"
+        | "--approve-for-me"
+        | "--dangerously-bypass-approvals-and-sandbox" => KeepBool,
+        // The pane is spawned in the session's own directory already.
+        "-C" | "--cd" => DropValue,
+        "--last" | "--all" | "--include-non-interactive" | "--worktree" => Drop,
+        _ => return None,
+    })
+}
+
+/// Codex subcommands other than the selectors: a startup command running one
+/// of these is not an interactive session whose flags could carry over.
+const CODEX_SUBCOMMANDS: &[&str] = &[
+    "exec",
+    "e",
+    "review",
+    "login",
+    "logout",
+    "mcp",
+    "plugin",
+    "app-server",
+    "remote-control",
+    "app",
+    "completion",
+    "update",
+    "doctor",
+    "sandbox",
+    "debug",
+    "apply",
+    "a",
+    "queue",
+    "archive",
+    "delete",
+    "migrate-rollouts",
+    "unarchive",
+    "cloud",
+    "exec-server",
+    "features",
+    "help",
+    "agents",
+];
+
+/// The user's own flags from `startup_cmd` that are safe to carry into the
+/// resumed command, as raw (unquoted) arguments, plus the program token.
 ///
-/// Quoting stays the shell's problem because the string is *typed*, not
-/// spawned (spec §3); every token we add is either a literal flag or an id
-/// that passed [`is_valid_session_id`], so neither can carry a space.
-pub fn resume_command(agent: AgentKind, session_id: &str, startup_cmd: &str) -> Option<String> {
-    let argv = resume_argv(agent, session_id)?;
-    let Some(kept) = strip_selector(startup_cmd, agent) else {
-        return Some(argv.join(" "));
+/// `None` means "type the bare resume command": the startup command does not
+/// start this agent, or it cannot be split with certainty for `shell`, or it
+/// carries a flag this does not know to be safe to re-emit. Positional
+/// arguments are prompts and are always dropped — resending `claude "review
+/// the diff"` on every resume would be a new turn each launch.
+pub fn carried_args(
+    startup_cmd: &str,
+    agent: AgentKind,
+    shell: ShellFamily,
+) -> Option<(String, Vec<String>)> {
+    let tokens = split_for(shell, startup_cmd)?;
+    let (program, rest) = tokens.split_first()?;
+    if !program_is(program, agent.as_str()) {
+        return None;
+    }
+    let rules: fn(&str) -> Option<FlagRule> = match agent {
+        AgentKind::Claude => claude_flag,
+        AgentKind::Codex => codex_flag,
     };
-    // `kept[0]` is the program as the user spelled it (possibly a full path);
-    // keep that spelling and append our selector plus their other flags.
-    let mut out: Vec<String> = vec![kept[0].clone()];
+    let mut kept = Vec::new();
+    let mut seen_subcommand = false;
+    let mut i = 0;
+    while i < rest.len() {
+        let t = rest[i].as_str();
+        i += 1;
+        if !t.starts_with('-') || t == "-" {
+            // A positional: a prompt, a session id/name after a selector, or
+            // (Codex) a subcommand.
+            if agent == AgentKind::Codex && !seen_subcommand {
+                seen_subcommand = true;
+                if CODEX_SUBCOMMANDS.contains(&t) {
+                    return None;
+                }
+            }
+            continue;
+        }
+        let (flag, inline) = match t.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v)),
+            _ => (t, None),
+        };
+        match rules(flag)? {
+            FlagRule::KeepValue => {
+                let value = match inline {
+                    Some(v) => v.to_string(),
+                    None => {
+                        let v = rest.get(i)?;
+                        i += 1;
+                        v.clone()
+                    }
+                };
+                kept.push(flag.to_string());
+                kept.push(value);
+            }
+            FlagRule::KeepBool if inline.is_none() => kept.push(flag.to_string()),
+            FlagRule::KeepBool => return None,
+            FlagRule::DropOptionalValue => {
+                if inline.is_none() && rest.get(i).is_some_and(|v| !v.starts_with('-')) {
+                    i += 1;
+                }
+            }
+            FlagRule::DropValue => {
+                if inline.is_none() {
+                    rest.get(i)?;
+                    i += 1;
+                }
+            }
+            FlagRule::Drop if inline.is_none() => {}
+            FlagRule::Drop => return None,
+        }
+    }
+    Some((program.clone(), kept))
+}
+
+/// The full command to type into the pane's shell: our explicit selector plus
+/// whatever of the saved `startup_cmd` is provably safe to carry over, each
+/// argument quoted for `shell`.
+///
+/// Falls back to the bare [`resume_argv`] — never to a best guess — whenever
+/// the startup command is not this agent, cannot be split with certainty, has
+/// a flag not known to be safe, or has an argument `shell` cannot quote with
+/// certainty.
+pub fn resume_command(
+    agent: AgentKind,
+    session_id: &str,
+    startup_cmd: &str,
+    shell: ShellFamily,
+) -> Option<String> {
+    let argv = resume_argv(agent, session_id)?;
+    let bare = argv.join(" ");
+    let Some((program, kept)) = carried_args(startup_cmd, agent, shell) else {
+        return Some(bare);
+    };
+    // The user's own spelling of the program (a full path, say) survives only
+    // when it needs no quoting: a quoted program needs `& ` in PowerShell and
+    // is a different thing again in cmd.
+    let program = if program.chars().all(|c| shell.bare_ok(c)) {
+        program
+    } else {
+        argv[0].clone()
+    };
+    let mut out = vec![program];
     out.extend(argv[1..].iter().cloned());
-    out.extend(kept[1..].iter().cloned());
+    for arg in &kept {
+        match shell.quote(arg) {
+            Some(q) => out.push(q),
+            None => return Some(bare),
+        }
+    }
     Some(out.join(" "))
 }
 
 /// Whether `token` invokes the program `name`, allowing for a path prefix and
-/// a Windows `.exe`/`.cmd`/`.bat` suffix, and for the token being quoted.
+/// a Windows `.exe`/`.cmd`/`.bat` suffix.
 fn program_is(token: &str, name: &str) -> bool {
-    let t = token.trim_matches(['"', '\'']);
-    let stem = t
+    let stem = token
         .rsplit(['/', '\\'])
         .next()
-        .unwrap_or(t)
+        .unwrap_or(token)
         .to_ascii_lowercase();
     let stem = stem
         .strip_suffix(".exe")
@@ -300,38 +596,6 @@ fn program_is(token: &str, name: &str) -> bool {
         .or_else(|| stem.strip_suffix(".bat"))
         .unwrap_or(&stem);
     stem == name
-}
-
-/// Minimal POSIX-ish tokenizer: splits on unquoted whitespace and keeps
-/// quoted runs together (dropping the quotes). Enough to recognize the
-/// selector flags in a saved startup command; it is never used to *build* a
-/// command line, only to decide which tokens survive.
-fn shell_split(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut quote: Option<char> = None;
-    let mut has = false;
-    for c in s.chars() {
-        match quote {
-            Some(q) if c == q => quote = None,
-            Some(_) => cur.push(c),
-            None if c == '"' || c == '\'' => {
-                quote = Some(c);
-                has = true;
-            }
-            None if c.is_whitespace() => {
-                if has || !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                    has = false;
-                }
-            }
-            None => cur.push(c),
-        }
-    }
-    if has || !cur.is_empty() {
-        out.push(cur);
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -896,6 +1160,7 @@ pub enum ResumeOutcome {
 pub fn outcome_for(
     session: Option<&AgentSession>,
     startup_cmd: &str,
+    shell: ShellFamily,
     now: u64,
     transcript_exists: impl FnOnce(&AgentSession) -> bool,
 ) -> ResumeOutcome {
@@ -909,7 +1174,7 @@ pub fn outcome_for(
     if !s.is_fresh_at(now) || s.cwd.is_empty() {
         return ResumeOutcome::None;
     }
-    let Some(command) = resume_command(s.agent, &s.session_id, startup_cmd) else {
+    let Some(command) = resume_command(s.agent, &s.session_id, startup_cmd, shell) else {
         return ResumeOutcome::None;
     };
     if !transcript_exists(s) {
@@ -997,132 +1262,347 @@ mod tests {
         }
     }
 
+    const RID: &str = "abcd-1234";
+
+    fn cmd(agent: AgentKind, startup: &str, shell: ShellFamily) -> String {
+        resume_command(agent, RID, startup, shell).expect("valid id")
+    }
+
+    fn claude_bare() -> String {
+        format!("claude --resume {RID} --dangerously-skip-permissions")
+    }
+
+    const ALL_SHELLS: [ShellFamily; 4] = [
+        ShellFamily::Posix,
+        ShellFamily::PowerShell,
+        ShellFamily::Cmd,
+        ShellFamily::Unknown,
+    ];
+
     #[test]
-    fn strip_selector_removes_continue_and_resume() {
-        let c = AgentKind::Claude;
-        assert_eq!(strip_selector("claude -c", c), Some(vec!["claude".into()]));
+    fn shell_family_comes_from_the_profile_executable() {
+        for (exe, fam) in [
+            ("C:\\Windows\\System32\\cmd.exe", ShellFamily::Cmd),
+            ("powershell.exe", ShellFamily::PowerShell),
+            (
+                "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+                ShellFamily::PowerShell,
+            ),
+            ("C:\\Program Files\\Git\\bin\\bash.exe", ShellFamily::Posix),
+            ("/bin/zsh", ShellFamily::Posix),
+            ("/opt/homebrew/bin/fish", ShellFamily::Unknown),
+            ("C:\\Windows\\System32\\wsl.exe", ShellFamily::Unknown),
+            ("", ShellFamily::Unknown),
+        ] {
+            assert_eq!(ShellFamily::from_executable(exe), fam, "{exe}");
+        }
+    }
+
+    #[test]
+    fn every_selector_in_the_startup_command_is_dropped() {
+        for startup in [
+            "claude -c",
+            "claude --continue",
+            "claude --resume old-id-1234",
+            "claude -r old-id-1234",
+            "claude --resume=old-id-1234",
+            "claude --resume old-id-1234 --fork-session",
+            "claude --session-id 11111111-2222-3333-4444-555555555555",
+            "claude --teleport",
+            "claude --from-pr 12",
+            "claude --dangerously-skip-permissions",
+        ] {
+            for shell in [
+                ShellFamily::Posix,
+                ShellFamily::PowerShell,
+                ShellFamily::Cmd,
+            ] {
+                assert_eq!(
+                    cmd(AgentKind::Claude, startup, shell),
+                    claude_bare(),
+                    "{startup}"
+                );
+            }
+        }
+        for startup in [
+            "codex resume 01a07644-42b3-7183-a7fd-70379b88af1f",
+            "codex resume --last",
+            "codex fork 01a07644-42b3-7183-a7fd-70379b88af1f",
+            "codex -m o3 resume --last",
+            "codex resume my-name",
+        ] {
+            let got = cmd(AgentKind::Codex, startup, ShellFamily::Posix);
+            assert!(
+                got == format!("codex resume {RID}") || got == format!("codex resume {RID} -m o3"),
+                "{startup} -> {got}"
+            );
+            assert!(!got.contains("--last") && !got.contains("my-name") && !got.contains("fork"));
+            assert_eq!(got.matches("resume").count(), 1, "{got}");
+        }
+    }
+
+    #[test]
+    fn known_flags_are_carried_over() {
         assert_eq!(
-            strip_selector("claude --continue", c),
-            Some(vec!["claude".into()])
+            cmd(
+                AgentKind::Claude,
+                "claude -c --model opus --verbose",
+                ShellFamily::Posix
+            ),
+            format!("{} --model opus --verbose", claude_bare())
         );
         assert_eq!(
-            strip_selector("claude --resume old-id-1234", c),
-            Some(vec!["claude".into()])
+            cmd(AgentKind::Claude, "claude --model=opus", ShellFamily::Cmd),
+            format!("{} --model opus", claude_bare())
         );
         assert_eq!(
-            strip_selector("claude -r old-id-1234", c),
-            Some(vec!["claude".into()])
-        );
-        assert_eq!(
-            strip_selector("claude --resume=old-id-1234", c),
-            Some(vec!["claude".into()])
-        );
-        // `claude --help`: "--fork-session  When resuming, create a new
-        // session ID" — i.e. it forks instead of continuing, so it goes too.
-        assert_eq!(
-            strip_selector("claude --resume old-id-1234 --fork-session", c),
-            Some(vec!["claude".into()])
+            cmd(
+                AgentKind::Codex,
+                "codex -m o3 resume --last --search",
+                ShellFamily::PowerShell
+            ),
+            format!("codex resume {RID} -m o3 --search")
         );
     }
 
     #[test]
-    fn strip_selector_keeps_unrelated_flags() {
+    fn a_prompt_in_the_startup_command_is_not_resent_on_every_resume() {
+        for shell in [
+            ShellFamily::Posix,
+            ShellFamily::PowerShell,
+            ShellFamily::Cmd,
+        ] {
+            assert_eq!(
+                cmd(AgentKind::Claude, "claude \"review diff\"", shell),
+                claude_bare()
+            );
+            assert_eq!(
+                cmd(
+                    AgentKind::Claude,
+                    "claude --model opus \"review diff\"",
+                    shell
+                ),
+                format!("{} --model opus", claude_bare())
+            );
+        }
         assert_eq!(
-            strip_selector("claude -c --model opus --verbose", AgentKind::Claude),
-            Some(vec![
-                "claude".into(),
-                "--model".into(),
-                "opus".into(),
-                "--verbose".into()
-            ])
+            cmd(
+                AgentKind::Codex,
+                "codex \"fix the build\"",
+                ShellFamily::Posix
+            ),
+            format!("codex resume {RID}")
         );
     }
 
     #[test]
-    fn strip_selector_handles_codex_subcommand_and_last() {
-        let k = AgentKind::Codex;
+    fn a_quoted_value_is_requoted_for_each_shell() {
+        // The review's case: `; no emoji` must stay inside the argument.
+        let startup_posix = "claude --append-system-prompt 'be terse; no emoji'";
         assert_eq!(
-            strip_selector("codex resume 01a07644-42b3-7183-a7fd-70379b88af1f", k),
-            Some(vec!["codex".into()])
+            cmd(AgentKind::Claude, startup_posix, ShellFamily::Posix),
+            format!(
+                "{} --append-system-prompt 'be terse; no emoji'",
+                claude_bare()
+            )
+        );
+        let startup_dq = "claude --append-system-prompt \"be terse; no emoji\"";
+        assert_eq!(
+            cmd(AgentKind::Claude, startup_dq, ShellFamily::Posix),
+            format!(
+                "{} --append-system-prompt 'be terse; no emoji'",
+                claude_bare()
+            )
         );
         assert_eq!(
-            strip_selector("codex resume --last", k),
-            Some(vec!["codex".into()])
-        );
-        // `codex fork` has the same shape and forks instead of continuing.
-        assert_eq!(
-            strip_selector("codex fork 01a07644-42b3-7183-a7fd-70379b88af1f", k),
-            Some(vec!["codex".into()])
+            cmd(AgentKind::Claude, startup_dq, ShellFamily::PowerShell),
+            format!(
+                "{} --append-system-prompt 'be terse; no emoji'",
+                claude_bare()
+            )
         );
         assert_eq!(
-            strip_selector("codex resume --last --model gpt-5", k),
-            Some(vec!["codex".into(), "--model".into(), "gpt-5".into()])
+            cmd(AgentKind::Claude, startup_dq, ShellFamily::Cmd),
+            format!(
+                "{} --append-system-prompt \"be terse; no emoji\"",
+                claude_bare()
+            )
         );
-    }
-
-    #[test]
-    fn strip_selector_is_quote_aware() {
-        // A quoted value must be eaten with its flag, not left behind as a
-        // stray positional argument.
+        // A shell we cannot quote for gets the bare command, not a guess.
         assert_eq!(
-            strip_selector("claude --resume \"old id\" --model opus", AgentKind::Claude),
-            Some(vec!["claude".into(), "--model".into(), "opus".into()])
+            cmd(AgentKind::Claude, startup_dq, ShellFamily::Unknown),
+            claude_bare()
         );
-    }
-
-    #[test]
-    fn strip_selector_leaves_nothing_to_strip_alone() {
+        // Embedded single quotes.
         assert_eq!(
-            strip_selector("claude", AgentKind::Claude),
-            Some(vec!["claude".into()])
-        );
-        assert_eq!(
-            strip_selector("claude --model opus", AgentKind::Claude),
-            Some(vec!["claude".into(), "--model".into(), "opus".into()])
-        );
-    }
-
-    #[test]
-    fn strip_selector_ignores_a_different_program() {
-        // `echo --resume x` is not a Claude invocation; leave it be and let
-        // the caller fall back to the bare resume command.
-        assert_eq!(strip_selector("echo --resume x", AgentKind::Claude), None);
-        assert_eq!(strip_selector("", AgentKind::Claude), None);
-        assert_eq!(strip_selector("codex", AgentKind::Claude), None);
-    }
-
-    #[test]
-    fn strip_selector_matches_a_pathed_or_exe_program() {
-        assert_eq!(
-            strip_selector("C:\\bin\\claude.exe -c", AgentKind::Claude),
-            Some(vec!["C:\\bin\\claude.exe".into()])
+            cmd(
+                AgentKind::Claude,
+                "claude --append-system-prompt \"don't\"",
+                ShellFamily::Posix
+            ),
+            format!("{} --append-system-prompt 'don'\\''t'", claude_bare())
         );
         assert_eq!(
-            strip_selector("/usr/local/bin/claude --continue", AgentKind::Claude),
-            Some(vec!["/usr/local/bin/claude".into()])
+            cmd(
+                AgentKind::Claude,
+                "claude --append-system-prompt \"don't\"",
+                ShellFamily::PowerShell
+            ),
+            format!("{} --append-system-prompt 'don''t'", claude_bare())
         );
     }
 
     #[test]
-    fn resume_command_merges_with_startup_cmd() {
+    fn anything_not_provably_safe_falls_back_to_the_bare_command() {
+        for startup in [
+            // Operators and expansions outside quotes.
+            "claude --model opus; rm -rf ~",
+            "claude --model opus && echo hi",
+            "claude --model $MODEL",
+            "claude --model `x`",
+            "claude --model %MODEL%",
+            "claude --model opus | tee log",
+            "claude --model (opus)",
+            // Unbalanced or doubled quotes.
+            "claude --append-system-prompt \"unterminated",
+            "claude --append-system-prompt \"a\"\"b\"",
+            // A flag whose values cannot be delimited, or that changes what
+            // the session is.
+            "claude --add-dir a b",
+            "claude --allowed-tools Bash Edit",
+            "claude -p hello",
+            "claude --worktree",
+            "claude --some-future-flag x",
+            // A value flag with no value.
+            "claude --model",
+            // Codex: a non-interactive subcommand, a variadic flag.
+            "codex exec --model o3",
+            "codex -i a.png resume --last",
+        ] {
+            let agent = if startup.starts_with("codex") {
+                AgentKind::Codex
+            } else {
+                AgentKind::Claude
+            };
+            let bare = resume_argv(agent, RID).unwrap().join(" ");
+            for shell in ALL_SHELLS {
+                assert_eq!(cmd(agent, startup, shell), bare, "{startup} in {shell:?}");
+            }
+        }
+        // `$` expands inside double quotes in POSIX shells and PowerShell;
+        // cmd takes it literally.
+        let dollar = "claude --append-system-prompt \"hi $USER\"";
+        for shell in [ShellFamily::Posix, ShellFamily::PowerShell] {
+            assert_eq!(cmd(AgentKind::Claude, dollar, shell), claude_bare());
+        }
         assert_eq!(
-            resume_command(AgentKind::Claude, "abc-123", "claude -c --model opus"),
-            Some("claude --resume abc-123 --dangerously-skip-permissions --model opus".to_string())
+            cmd(AgentKind::Claude, dollar, ShellFamily::Cmd),
+            format!("{} --append-system-prompt \"hi $USER\"", claude_bare())
         );
-        // Unrelated startup command: use the bare resume, don't mangle theirs.
+    }
+
+    #[test]
+    fn cmd_refuses_what_it_cannot_quote() {
+        for value in ["\"50%\"", "\"hi!\"", "\"C:\\dir\\\\\""] {
+            let startup = format!("claude --append-system-prompt {value}");
+            assert_eq!(
+                cmd(AgentKind::Claude, &startup, ShellFamily::Cmd),
+                claude_bare(),
+                "{startup}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_quotes_mean_nothing_to_cmd() {
+        // cmd passes `'be` and `terse'` as two arguments; not something to
+        // reason about.
         assert_eq!(
-            resume_command(AgentKind::Claude, "abc-123", "npm run dev"),
-            Some("claude --resume abc-123 --dangerously-skip-permissions".to_string())
+            cmd(
+                AgentKind::Claude,
+                "claude --append-system-prompt 'be terse'",
+                ShellFamily::Cmd
+            ),
+            claude_bare()
+        );
+    }
+
+    #[test]
+    fn a_different_program_is_left_alone() {
+        for startup in ["echo --resume x", "", "npm run dev", "codex"] {
+            assert_eq!(
+                cmd(AgentKind::Claude, startup, ShellFamily::Posix),
+                claude_bare(),
+                "{startup}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_programs_own_spelling_survives_only_when_it_needs_no_quoting() {
+        // A Windows path is a plain word in cmd and PowerShell...
+        assert_eq!(
+            cmd(
+                AgentKind::Claude,
+                "C:\\bin\\claude.exe -c",
+                ShellFamily::PowerShell
+            ),
+            format!("C:\\bin\\claude.exe --resume {RID} --dangerously-skip-permissions")
         );
         assert_eq!(
-            resume_command(AgentKind::Codex, "abc-123", "codex resume --last"),
-            Some("codex resume abc-123".to_string())
+            cmd(
+                AgentKind::Claude,
+                "C:\\bin\\claude.exe -c",
+                ShellFamily::Cmd
+            ),
+            format!("C:\\bin\\claude.exe --resume {RID} --dangerously-skip-permissions")
         );
-        // The user's own spelling of the program survives.
+        // ...but in Git Bash its backslashes are escapes: plain `claude`.
         assert_eq!(
-            resume_command(AgentKind::Claude, "abc-123", "C:\\bin\\claude.exe -c"),
-            Some("C:\\bin\\claude.exe --resume abc-123 --dangerously-skip-permissions".to_string())
+            cmd(
+                AgentKind::Claude,
+                "C:\\bin\\claude.exe -c",
+                ShellFamily::Posix
+            ),
+            claude_bare()
         );
+        assert_eq!(
+            cmd(
+                AgentKind::Claude,
+                "/usr/local/bin/claude --continue",
+                ShellFamily::Posix
+            ),
+            format!("/usr/local/bin/claude --resume {RID} --dangerously-skip-permissions")
+        );
+        // A path with a space would need `& '…'` in PowerShell.
+        assert_eq!(
+            cmd(
+                AgentKind::Claude,
+                "\"C:\\Program Files\\claude\\claude.exe\" --model opus",
+                ShellFamily::PowerShell
+            ),
+            format!("{} --model opus", claude_bare())
+        );
+    }
+
+    #[test]
+    fn quoting_round_trips_per_shell() {
+        assert_eq!(ShellFamily::Posix.quote("a b"), Some("'a b'".into()));
+        assert_eq!(ShellFamily::Posix.quote("it's"), Some("'it'\\''s'".into()));
+        assert_eq!(ShellFamily::Posix.quote("C:\\x"), Some("'C:\\x'".into()));
+        assert_eq!(ShellFamily::Posix.quote("a\nb"), None);
+        assert_eq!(
+            ShellFamily::PowerShell.quote("it's"),
+            Some("'it''s'".into())
+        );
+        assert_eq!(ShellFamily::PowerShell.quote("C:\\x"), Some("C:\\x".into()));
+        assert_eq!(ShellFamily::PowerShell.quote("a \"b\""), None);
+        assert_eq!(ShellFamily::PowerShell.quote("a\u{2019}b c"), None);
+        assert_eq!(ShellFamily::PowerShell.quote("dir\\ x\\"), None);
+        assert_eq!(ShellFamily::Cmd.quote("a & b"), Some("\"a & b\"".into()));
+        assert_eq!(ShellFamily::Cmd.quote("50% off"), None);
+        assert_eq!(ShellFamily::Unknown.quote("a b"), None);
+        assert_eq!(ShellFamily::Unknown.quote("opus"), Some("opus".into()));
     }
 
     #[test]
@@ -1335,6 +1815,7 @@ mod tests {
             AgentKind::Claude,
             ID_A,
             "claude -c --dangerously-skip-permissions --model opus",
+            ShellFamily::Posix,
         )
         .expect("valid id");
         assert_eq!(
@@ -1345,11 +1826,6 @@ mod tests {
         assert_eq!(
             cmd,
             format!("claude --resume {ID_A} --dangerously-skip-permissions --model opus")
-        );
-        // And `strip_selector` is where that happens, so it is visible there.
-        assert_eq!(
-            strip_selector("claude --dangerously-skip-permissions", AgentKind::Claude),
-            Some(vec!["claude".to_string()])
         );
     }
 
@@ -1505,7 +1981,7 @@ mod tests {
         let rec = t.get(pane).expect("record survives");
         assert!(!rec.active);
         assert_eq!(
-            outcome_for(Some(rec), "", 1_000, |_| true),
+            outcome_for(Some(rec), "", ShellFamily::Posix, 1_000, |_| true),
             ResumeOutcome::None
         );
         // And the pane can start a fresh conversation afterwards.
@@ -1545,7 +2021,7 @@ mod tests {
         let rec = t.get(pane).expect("record kept");
         assert!(!rec.active, "an ended conversation must not come back");
         assert_eq!(
-            outcome_for(Some(rec), "", 1_010, |_| true),
+            outcome_for(Some(rec), "", ShellFamily::Posix, 1_010, |_| true),
             ResumeOutcome::None
         );
     }
@@ -1715,7 +2191,7 @@ mod tests {
         let rec = t.get(pane).expect("kept");
         assert!(!rec.active);
         assert_eq!(
-            outcome_for(Some(rec), "", 100_010, |_| true),
+            outcome_for(Some(rec), "", ShellFamily::Posix, 100_010, |_| true),
             ResumeOutcome::None
         );
     }
@@ -1824,7 +2300,7 @@ mod tests {
         let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Hook);
         s.cwd = String::new();
         assert_eq!(
-            outcome_for(Some(&s), "", s.updated_at, |_| true),
+            outcome_for(Some(&s), "", ShellFamily::Posix, s.updated_at, |_| true),
             ResumeOutcome::None
         );
     }
@@ -1887,7 +2363,9 @@ mod tests {
         let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Disk);
         s.agent = AgentKind::Claude;
         let now = s.updated_at + 3 * 3600;
-        let ResumeOutcome::Resume { plan } = outcome_for(Some(&s), "", now, |_| true) else {
+        let ResumeOutcome::Resume { plan } =
+            outcome_for(Some(&s), "", ShellFamily::Posix, now, |_| true)
+        else {
             panic!("a fresh record with a live transcript must resume");
         };
         assert_eq!(plan.agent, "claude");
@@ -1905,6 +2383,7 @@ mod tests {
             outcome_for(
                 Some(&s),
                 "",
+                ShellFamily::Posix,
                 s.updated_at + FRESH_WINDOW.as_secs() + 1,
                 |_| true
             ),
@@ -1913,13 +2392,16 @@ mod tests {
         // Transcript pruned by the agent itself. This one the user does hear
         // about (spec §4.3): they were expecting a conversation back.
         assert_eq!(
-            outcome_for(Some(&s), "", now, |_| false),
+            outcome_for(Some(&s), "", ShellFamily::Posix, now, |_| false),
             ResumeOutcome::Missing {
                 agent: "claude".to_string()
             }
         );
         // No record at all.
-        assert_eq!(outcome_for(None, "", now, |_| true), ResumeOutcome::None);
+        assert_eq!(
+            outcome_for(None, "", ShellFamily::Posix, now, |_| true),
+            ResumeOutcome::None
+        );
     }
 
     #[test]
@@ -1929,6 +2411,7 @@ mod tests {
         let ResumeOutcome::Resume { plan } = outcome_for(
             Some(&s),
             "codex resume --last --model gpt-5",
+            ShellFamily::Posix,
             s.updated_at,
             |_| true,
         ) else {
