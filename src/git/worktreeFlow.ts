@@ -39,7 +39,10 @@ export function changeLines(changes: readonly StatusEntry[]): string {
 export function commitLines(commits: readonly CommitInfo[], moreExist: boolean): string {
   const { shown, more } = clip(commits, LIST_MAX);
   const lines = shown.map((c) => `${c.short}  ${c.subject}`);
-  if (more || moreExist) lines.push(fill(t("git.more"), { n: more || "…" }));
+  // The backend stops counting at MAX_ORPHANS, so past that there is no
+  // number to give.
+  if (moreExist) lines.push(t("git.andMore"));
+  else if (more) lines.push(fill(t("git.more"), { n: more }));
   return lines.join("\n");
 }
 

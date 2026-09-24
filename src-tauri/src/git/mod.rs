@@ -1593,6 +1593,49 @@ branch refs/heads/lockedish
         cleanup_dir(&wt);
     }
 
+    /// What the removal dialog must say about a detached worktree's own
+    /// commits: its HEAD reflog lives in the worktree's admin dir
+    /// (`.git/worktrees/<id>/logs/HEAD`), which `git worktree remove`
+    /// deletes. Unlike a checkout, the reflog cannot bring them back — the
+    /// objects merely linger, reachable from nothing, until gc.
+    #[test]
+    fn removing_a_detached_worktree_takes_its_reflog_with_it() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("strand");
+        let wt = sibling(&repo, "wt");
+        let wt_path = wt.join("d");
+        worktree_add(&repo, "agent/strand", &wt_path).expect("worktree add");
+        git_ok(&wt_path, &["checkout", "-q", "--detach"]);
+        std::fs::write(wt_path.join("s.txt"), "x\n").unwrap();
+        git_ok(&wt_path, &["add", "s.txt"]);
+        git_ok(&wt_path, &["commit", "-q", "-m", "stranded"]);
+        let hash = git_ok(&wt_path, &["rev-parse", "HEAD"]).trim().to_string();
+
+        let s = work_status(&wt_path, true).unwrap();
+        assert!(s.detached);
+        assert_eq!(s.orphans.len(), 1);
+
+        let admin = repo.join(".git").join("worktrees");
+        assert!(admin.read_dir().unwrap().next().is_some());
+        worktree_remove(&wt_path, false).expect("clean, so no force needed");
+
+        assert!(
+            admin
+                .read_dir()
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+            "the worktree's admin dir — its HEAD reflog — is gone"
+        );
+        let all = git_ok(&repo, &["log", "--all", "--reflog", "--format=%H"]);
+        assert!(!all.contains(&hash), "no ref or reflog reaches it any more");
+        git_ok(&repo, &["cat-file", "-e", &hash]);
+
+        cleanup_dir(&repo);
+        cleanup_dir(&wt);
+    }
+
     /// `checkout_track` makes a local branch from a remote one instead of
     /// detaching HEAD on `origin/<name>`.
     #[test]
