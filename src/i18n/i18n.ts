@@ -1483,6 +1483,12 @@ const strings: Translations = {
     fr: "Impossible de mettre à la corbeille ({reason}). Supprimer définitivement ?", ar: "تعذّر النقل إلى سلة المهملات ({reason}). هل تريد الحذف نهائيًا بدلًا من ذلك؟", pt: "Não foi possível mover para a lixeira ({reason}). Excluir permanentemente?",
     ru: "Не удалось переместить в корзину ({reason}). Удалить навсегда?", tr: "Çöp kutusuna taşınamadı ({reason}). Bunun yerine kalıcı olarak silinsin mi?", de: "Verschieben in den Papierkorb fehlgeschlagen ({reason}). Stattdessen endgültig löschen?", vi: "Không thể chuyển vào Thùng rác ({reason}). Xóa vĩnh viễn thay thế?",
   },
+  "files.inUse": {
+    en: "Couldn't delete: a file is open in another program. Close it and try again.", ko: "삭제하지 못했습니다: 다른 프로그램에서 파일을 사용 중입니다. 닫은 뒤 다시 시도하세요.", ja: "削除できませんでした: 別のプログラムがファイルを使用中です。閉じてからやり直してください。",
+    zh: "无法删除：文件正被其他程序使用。请关闭后重试。", hi: "हटाया नहीं जा सका: फ़ाइल किसी दूसरे प्रोग्राम में खुली है। उसे बंद करके फिर कोशिश करें।", es: "No se pudo eliminar: un archivo está abierto en otro programa. Ciérrelo e inténtelo de nuevo.",
+    fr: "Suppression impossible : un fichier est ouvert dans un autre programme. Fermez-le et réessayez.", ar: "تعذّر الحذف: الملف مفتوح في برنامج آخر. أغلقه وحاول مجددًا.", pt: "Não foi possível excluir: um arquivo está aberto em outro programa. Feche-o e tente novamente.",
+    ru: "Не удалось удалить: файл открыт в другой программе. Закройте её и повторите.", tr: "Silinemedi: dosya başka bir programda açık. Kapatıp tekrar deneyin.", de: "Löschen nicht möglich: Eine Datei ist in einem anderen Programm geöffnet. Schließen Sie es und versuchen Sie es erneut.", vi: "Không xóa được: tệp đang mở trong chương trình khác. Hãy đóng nó rồi thử lại.",
+  },
   "files.conflict": {
     en: "{name} already exists here.", ko: "{name}이(가) 이미 여기에 있습니다.", ja: "{name} はすでにここにあります。",
     zh: "{name} 已存在于此处。", hi: "{name} यहाँ पहले से मौजूद है।", es: "{name} ya existe aquí.",

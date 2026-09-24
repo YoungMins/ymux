@@ -11,6 +11,9 @@ export interface ClipItem {
 
 export interface FilesClipboard {
   mode: "copy" | "cut";
+  /// Id of the pane that made it. Esc in that pane cancels a cut; Esc in
+  /// any other pane leaves it alone.
+  owner: string;
   /// The directory the items were taken from, as the pane held it. Used to
   /// spot a paste back into the same folder; the backend stays authoritative.
   dir: string;

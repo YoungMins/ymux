@@ -211,9 +211,11 @@ export function uniqueName(name: string, isDir: boolean, taken: Iterable<string>
 /// Only a file may replace a file. Replacing a directory would have to
 /// either merge (surprising) or delete the old tree first (destructive, and
 /// `fs_move` cannot do it atomically), so the pane refuses and offers "keep
-/// both" instead.
+/// both" instead. A symlink is never replaced either: a copy onto it writes
+/// through to the link's *target*, which is some other file entirely (the
+/// backend also removes a link before overwriting, as a second line).
 export function canReplace(srcIsDir: boolean, dest: FileEntry | undefined): boolean {
-  return !!dest && !srcIsDir && !dest.is_dir;
+  return !!dest && !srcIsDir && !dest.is_dir && !dest.is_symlink;
 }
 
 export function resolveOverwrite(
@@ -229,6 +231,39 @@ export function resolveOverwrite(
     return { action: "write", name, overwrite: true };
   }
   return { action: "write", name: uniqueName(name, srcIsDir, taken), overwrite: false };
+}
+
+// ── Trash failures ──────────────────────────────────────────────────────────
+
+export type TrashFailure = "offer-permanent" | "in-use" | "report";
+
+/// What to do when moving to the trash failed. A permanent delete is only
+/// offered when the *trash* was the problem (no trash on a network share or
+/// a WSL path). A file held open by another program, or one the user may not
+/// delete, would fail a permanent delete the same way — offering it would
+/// only turn a recoverable mistake into an unrecoverable one — so those are
+/// reported instead. The backend's trash error has no kind of its own, so
+/// the OS error text decides (Windows codes 32/33/5, POSIX 16/13/1).
+export function trashFailure(kind: string, message: string): TrashFailure {
+  if (kind === "permission_denied" || kind === "not_found") return "report";
+  const m = message.toLowerCase();
+  if (
+    /os error (32|33|16)\b/.test(m) ||
+    m.includes("used by another process") ||
+    m.includes("resource busy") ||
+    m.includes("locked")
+  ) {
+    return "in-use";
+  }
+  if (
+    /os error (5|13|1)\b/.test(m) ||
+    m.includes("access is denied") ||
+    m.includes("permission denied") ||
+    m.includes("operation not permitted")
+  ) {
+    return "report";
+  }
+  return "offer-permanent";
 }
 
 // ── Path strings ────────────────────────────────────────────────────────────

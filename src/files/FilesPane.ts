@@ -53,6 +53,7 @@ import {
   stemEnd,
   targetNames,
   toggleAt,
+  trashFailure,
   typeAhead,
   uniqueName,
   type FileEntry,
@@ -68,7 +69,22 @@ import {
   isProbablyBinary,
   type Preview,
 } from "./preview";
-import { getClipboard, onClipboardChange, setClipboard } from "./clipboard";
+import {
+  getClipboard,
+  onClipboardChange,
+  setClipboard,
+  type FilesClipboard,
+} from "./clipboard";
+import {
+  actionDir,
+  initialNav,
+  isSameDir,
+  listingFailed,
+  listingLanded,
+  navigateTo,
+  type NavState,
+} from "./navState";
+import { FollowGate } from "./followGate";
 
 export interface FilesPaneOptions {
   id: Uuid;
@@ -207,7 +223,21 @@ export class FilesPane implements Pane {
   private readonly hiddenBtn: HTMLButtonElement;
   private readonly previewBtn: HTMLButtonElement;
 
+  /// The folder the pane is going to (the breadcrumb). Actions do not use
+  /// it: see `nav` and src/files/navState.ts.
   private dir: string | null;
+  /// Requested vs. actually-listed folder; `actionDir(nav)` is where
+  /// create and paste may write, `null` while a navigation is pending.
+  private nav: NavState;
+  private readonly gate = new FollowGate({
+    now: () => performance.now(),
+    focused: () => document.activeElement === this.list,
+    apply: (dir) => this.go(dir),
+    setTimer: (fn, ms) => {
+      const id = window.setTimeout(fn, ms);
+      return () => clearTimeout(id);
+    },
+  });
   private title: string | null;
   private entries: FileEntry[] = [];
   private names: string[] = [];
@@ -221,6 +251,11 @@ export class FilesPane implements Pane {
   private previewTimer: number | null = null;
   private scrollTop = 0;
   private rowPool: RowEls[] = [];
+  private cutCache: {
+    clip: FilesClipboard | null;
+    dir: string | null;
+    names: ReadonlySet<string> | null;
+  } | null = null;
   private typed = "";
   private typedAt = 0;
   private busy = false;
@@ -231,6 +266,7 @@ export class FilesPane implements Pane {
   constructor(private readonly opts: FilesPaneOptions) {
     this.id = opts.id;
     this.dir = opts.dir;
+    this.nav = initialNav(opts.dir);
     this.title = opts.title ?? null;
 
     this.element = document.createElement("div");
@@ -353,6 +389,7 @@ export class FilesPane implements Pane {
     if (!this.dir) {
       try {
         this.dir = await fsApi.homeDir();
+        this.nav = navigateTo(this.nav, this.dir);
       } catch {
         this.dir = null;
       }
@@ -365,6 +402,7 @@ export class FilesPane implements Pane {
 
   dispose(): void {
     this.disposed = true;
+    this.gate.cancel();
     this.loadGen++;
     this.previewGen++;
     if (this.previewTimer !== null) clearTimeout(this.previewTimer);
@@ -375,15 +413,28 @@ export class FilesPane implements Pane {
 
   // ── Host API ──────────────────────────────────────────────────────────────
 
-  /// Show `dir`. The dock's cwd-follow calls this; so does every in-pane
-  /// navigation. Listed now if on screen, else when next shown.
+  /// Show `dir` because the user asked to. Drops any follow still held.
   navigate(dir: string, prefer?: string): void {
+    this.gate.cancel();
+    this.go(dir, prefer);
+  }
+
+  /// Show `dir` because the followed pane moved there (the dock's
+  /// cwd-follow). Held while the user is typing in the list — see
+  /// followGate.ts — so their next key cannot land on another folder's row.
+  follow(dir: string): void {
+    this.gate.offer(dir);
+  }
+
+  /// Listed now if on screen, else when next shown.
+  private go(dir: string, prefer?: string): void {
     this.dir = dir;
+    this.nav = navigateTo(this.nav, dir);
     this.stale = true;
     this.listError = null;
     this.renderCrumbs();
     this.updateTitle();
-    if (this.isShown()) void this.load({ prefer, changedDir: true });
+    if (this.isShown()) void this.load({ prefer });
   }
 
   currentDir(): string | null {
@@ -416,7 +467,7 @@ export class FilesPane implements Pane {
     if (this.disposed || !this.isShown()) return;
     this.onResize();
     if (this.stale) {
-      void this.load({ changedDir: true });
+      void this.load();
       return;
     }
     if (this.list.scrollTop !== this.scrollTop) this.list.scrollTop = this.scrollTop;
@@ -426,7 +477,12 @@ export class FilesPane implements Pane {
   /// List `this.dir`. A newer call wins: each one takes a generation number
   /// and a stale answer is dropped, so a slow network folder can never paint
   /// over the folder the user moved on to.
-  private async load(o: { prefer?: string; select?: string[]; changedDir?: boolean; quiet?: boolean } = {}): Promise<void> {
+  ///
+  /// Whether this is a *new* folder (cursor to row 0) or a reload of the one
+  /// on screen (selection kept by name) is decided when the listing lands,
+  /// against the folder actually listed — so a cwd-follow that re-sends the
+  /// folder already shown, or a re-show of a hidden pane, keeps the cursor.
+  private async load(o: { prefer?: string; select?: string[]; quiet?: boolean } = {}): Promise<void> {
     const dir = this.dir;
     if (!dir) return;
     const gen = ++this.loadGen;
@@ -436,7 +492,9 @@ export class FilesPane implements Pane {
       list = await fsApi.listDir(dir, this.prefs.showHidden);
     } catch (e) {
       if (gen !== this.loadGen || this.disposed) return;
-      if (o.quiet && !o.changedDir && errorKind(e) !== "not_found") return;
+      const changedDir = !isSameDir(this.nav.listed, dir);
+      if (o.quiet && !changedDir && errorKind(e) !== "not_found") return;
+      this.nav = listingFailed(this.nav, dir);
       this.entries = [];
       this.names = [];
       this.sel = selectOnly([], 0);
@@ -445,11 +503,13 @@ export class FilesPane implements Pane {
       return;
     }
     if (gen !== this.loadGen || this.disposed) return;
+    const changedDir = !isSameDir(this.nav.listed, dir);
+    this.nav = listingLanded(this.nav, dir);
     this.listError = null;
     const prevNames = this.names;
     this.entries = sortEntries(applyHidden(list, this.prefs.showHidden));
     this.names = this.entries.map((e) => e.name);
-    if (o.changedDir) {
+    if (changedDir) {
       this.sel = o.prefer
         ? reconcile(selectOnly([], 0), [], this.names, o.prefer)
         : selectOnly(this.names, 0);
@@ -467,7 +527,7 @@ export class FilesPane implements Pane {
     this.renderAll();
     // Only when the cursor was *placed*: a plain refresh (window focus)
     // must not yank a list the user scrolled with the wheel.
-    if (o.changedDir || o.prefer !== undefined || o.select?.length) {
+    if (changedDir || o.prefer !== undefined || o.select?.length) {
       this.ensureVisible(this.sel.cursor);
     }
   }
@@ -508,7 +568,7 @@ export class FilesPane implements Pane {
       retry.type = "button";
       retry.className = "files__overlay-btn";
       retry.textContent = t("files.retry");
-      retry.addEventListener("click", () => void this.load({ changedDir: true }));
+      retry.addEventListener("click", () => void this.load());
       row.append(up, retry);
       this.overlay.append(head, why, row);
       return;
@@ -535,11 +595,7 @@ export class FilesPane implements Pane {
     const last = Math.min(n, Math.ceil((this.list.scrollTop + h) / ROW_H) + OVERSCAN);
     const count = Math.max(0, last - first);
     while (this.rowPool.length < count) this.rowPool.push(this.makeRow());
-    const clip = getClipboard();
-    const cutHere =
-      clip?.mode === "cut" && this.dir !== null && clip.dir.normalize("NFC") === this.dir.normalize("NFC")
-        ? new Set(clip.items.map((i) => i.name))
-        : null;
+    const cutHere = this.cutNamesHere();
     const focusedList = document.activeElement === this.list;
     for (let k = 0; k < this.rowPool.length; k++) {
       const els = this.rowPool[k];
@@ -556,7 +612,13 @@ export class FilesPane implements Pane {
         els.name.textContent = e.name;
         els.row.title = e.name;
       }
-      els.icon.innerHTML = e.is_dir ? ICON.folder : ICON.file;
+      // Re-parse the SVG only when the row's kind actually changes: this
+      // runs for every pooled row on every scroll event.
+      const kind = e.is_dir ? "dir" : "file";
+      if (els.icon.dataset.kind !== kind) {
+        els.icon.dataset.kind = kind;
+        els.icon.innerHTML = e.is_dir ? ICON.folder : ICON.file;
+      }
       els.link.hidden = !e.is_symlink;
       els.size.textContent = e.is_dir ? "" : formatSize(e.size);
       els.date.textContent = formatModified(e.modified_ms);
@@ -570,6 +632,22 @@ export class FilesPane implements Pane {
       els.row.setAttribute("aria-selected", String(selected));
     }
     this.list.classList.toggle("files__list--focused", focusedList);
+  }
+
+  /// Names in the listed folder that are cut and waiting for a paste. Built
+  /// once per clipboard/folder change, not on every scroll.
+  private cutNamesHere(): ReadonlySet<string> | null {
+    const clip = getClipboard();
+    const listed = this.nav.listed;
+    if (this.cutCache && this.cutCache.clip === clip && this.cutCache.dir === listed) {
+      return this.cutCache.names;
+    }
+    const names =
+      clip?.mode === "cut" && isSameDir(clip.dir, listed)
+        ? new Set(clip.items.map((i) => i.name))
+        : null;
+    this.cutCache = { clip, dir: listed, names };
+    return names;
   }
 
   private makeRow(): RowEls {
@@ -670,7 +748,7 @@ export class FilesPane implements Pane {
     // Shown by a path that did not call scheduleFit (a workspace container
     // un-hidden, say): the size change is the signal, so list now.
     if (this.stale && this.dir && !this.disposed) {
-      void this.load({ changedDir: true });
+      void this.load();
       return;
     }
     this.renderRows();
@@ -787,8 +865,16 @@ export class FilesPane implements Pane {
       this.renderRows();
     });
     this.list.addEventListener("focus", () => this.renderRows());
-    this.list.addEventListener("blur", () => this.renderRows());
-    this.list.addEventListener("keydown", (ev) => this.onKey(ev));
+    this.list.addEventListener("blur", () => {
+      this.renderRows();
+      // A follow held for the typing user can land once they have left.
+      this.gate.recheck();
+    });
+    this.list.addEventListener("keydown", (ev) => {
+      // Any key, handled here or not: the user is at the keyboard.
+      this.gate.onKey();
+      this.onKey(ev);
+    });
     this.list.addEventListener("mousedown", (ev) => this.onMouseDown(ev));
     this.list.addEventListener("dblclick", (ev) => {
       const i = this.rowIndexAt(ev.target);
@@ -878,7 +964,9 @@ export class FilesPane implements Pane {
         return this.togglePreview();
       case "escape": {
         const clip = getClipboard();
-        if (clip?.mode === "cut") setClipboard(null);
+        // Only the pane that made a cut may cancel it: Esc in another pane
+        // (or the dock) is about *that* pane's selection.
+        if (clip?.mode === "cut" && clip.owner === this.id) setClipboard(null);
         else this.setSel(selectOnly(names, this.sel.cursor));
         return;
       }
@@ -957,8 +1045,12 @@ export class FilesPane implements Pane {
 
   private async rename(): Promise<void> {
     const e = this.entries[this.sel.cursor];
-    if (!e || !this.dir) return;
-    const dir = this.dir;
+    if (!e) return;
+    // The entry's own folder, never the pane's: a navigation may be pending
+    // (or land while the dialog is open), and joining the new name onto the
+    // pane's folder would *move* the file there.
+    const dir = parentPath(e.path);
+    if (dir === null) return;
     // The raw name, never a normalised one: on APFS an NFC rewrite of an NFD
     // name is a real rename the user did not ask for.
     const next = await askText(t("files.renamePrompt"), e.name, {
@@ -976,8 +1068,10 @@ export class FilesPane implements Pane {
   }
 
   private async create(kind: "dir" | "file"): Promise<void> {
-    if (!this.dir) return;
-    const dir = this.dir;
+    // The folder whose listing is on screen, captured now; refused while a
+    // navigation is pending (navState.ts).
+    const dir = actionDir(this.nav);
+    if (dir === null) return;
     const suggested = uniqueName(
       t(kind === "dir" ? "files.defaultFolderName" : "files.defaultFileName"),
       kind === "dir",
@@ -1038,6 +1132,15 @@ export class FilesPane implements Pane {
           return;
         }
         const reason = err instanceof Error ? err.message : String(err);
+        const what = trashFailure(errorKind(err), reason);
+        if (what === "in-use") {
+          this.say(t("files.inUse"), true);
+          return;
+        }
+        if (what === "report") {
+          this.say(describeFsError(err), true);
+          return;
+        }
         const again = await askConfirm(
           fill(t("files.trashFailed"), { reason }),
           t("files.deletePermanent"),
@@ -1060,10 +1163,13 @@ export class FilesPane implements Pane {
 
   private toClipboard(mode: "copy" | "cut"): void {
     const targets = this.targets();
-    if (!targets.length || !this.dir) return;
+    // The rows on screen belong to the listed folder, pending or not.
+    const listed = this.nav.listed;
+    if (!targets.length || listed === null) return;
     setClipboard({
       mode,
-      dir: this.dir,
+      owner: this.id,
+      dir: listed,
       items: targets.map((e) => ({ path: e.path, name: e.name, is_dir: e.is_dir })),
     });
     // The paths go on the OS clipboard as text too, so Ctrl+V in a terminal
@@ -1083,13 +1189,15 @@ export class FilesPane implements Pane {
 
   private async paste(): Promise<void> {
     const clip = getClipboard();
-    const dest = this.dir;
-    if (!clip || !dest || this.busy) return;
+    // Into the listed folder only — the conflicts below are checked against
+    // its entries — and not at all while a navigation is pending.
+    const dest = actionDir(this.nav);
+    if (!clip || dest === null || this.busy) return;
     // NFC-only, as rule 15 prescribes for the frontend: both strings came
     // from ymux's own listings. A respelling that slips through reaches the
     // backend, which refuses a same-path copy and treats a same-path move
     // as a no-op.
-    const sameDir = clip.dir.normalize("NFC") === dest.normalize("NFC");
+    const sameDir = isSameDir(clip.dir, dest);
     if (clip.mode === "cut" && sameDir) return;
 
     const pasted: string[] = [];
@@ -1247,7 +1355,8 @@ export class FilesPane implements Pane {
     const targets = onRow ? this.targets() : [];
     const one = targets.length === 1 ? targets[0] : null;
     const clip = getClipboard();
-    const dir = this.dir;
+    // The folder whose rows were right-clicked, not a pending one.
+    const dir = this.nav.listed;
     const entries: ContextMenuEntry[] = [];
     if (one) {
       entries.push({ label: t("files.open"), onSelect: () => void this.openAt(this.sel.cursor) });
