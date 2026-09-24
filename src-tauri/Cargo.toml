@@ -112,6 +112,11 @@ trash = { version = "5.2", optional = true }
 # (rename silently overwriting, a directory symlink needing `remove_dir`)
 # are per-platform, so these only build in the desktop configuration.
 tempfile = "3"
+# `ipc_guard`'s enforcement test parses `main.rs` and every command body, so
+# a comment cannot pass for a guard. Already in the lock via Tauri's macros.
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+quote = "1"
+proc-macro2 = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.56", features = [

@@ -13,6 +13,10 @@
 //! so there's no command-injection surface from the JS side.
 
 use anyhow::Context;
+use tauri::ipc::Request;
+use tauri::Webview;
+
+use crate::fspath::guard_local;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,17 +26,28 @@ pub enum ConfigPathKind {
 }
 
 #[tauri::command]
-pub fn load_syntax_theme() -> Result<ytheme::Theme, String> {
+pub fn load_syntax_theme(webview: Webview, request: Request<'_>) -> Result<ytheme::Theme, String> {
+    guard_local(&webview, &request, "load_syntax_theme").map_err(|e| e.to_string())?;
     Ok(ytheme::Theme::load())
 }
 
 #[tauri::command]
-pub fn save_syntax_theme(theme: ytheme::Theme) -> Result<(), String> {
+pub fn save_syntax_theme(
+    webview: Webview,
+    request: Request<'_>,
+    theme: ytheme::Theme,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "save_syntax_theme").map_err(|e| e.to_string())?;
     theme.save().map_err(|e| format!("save failed: {e}"))
 }
 
 #[tauri::command]
-pub fn open_config_path(kind: ConfigPathKind) -> Result<(), String> {
+pub fn open_config_path(
+    webview: Webview,
+    request: Request<'_>,
+    kind: ConfigPathKind,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "open_config_path").map_err(|e| e.to_string())?;
     let path = match kind {
         ConfigPathKind::Theme => {
             // Create the file with current defaults if it's never been saved,

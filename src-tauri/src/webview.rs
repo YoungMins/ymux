@@ -12,7 +12,12 @@
 //! operation to complete, blocking the message pump from processing the
 //! IPC reply.
 
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+use tauri::ipc::Request;
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Webview, WebviewUrl, WebviewWindowBuilder,
+};
+
+use crate::fspath::guard_local;
 
 // async so the IPC response is sent back to the frontend before
 // run_on_main_thread occupies the main thread with build(). When this
@@ -24,6 +29,8 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, Webv
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_webview(
+    webview: Webview,
+    request: Request<'_>,
     app: AppHandle,
     id: String,
     url: String,
@@ -33,6 +40,7 @@ pub async fn create_webview(
     height: f64,
     user_agent: Option<String>,
 ) -> Result<(), String> {
+    guard_local(&webview, &request, "create_webview").map_err(|e| e.to_string())?;
     let label = format!("browser-{}", id);
     eprintln!(
         "[webview] create {} url={} pos=({},{}) size=({}x{}) ua={}",
@@ -97,7 +105,13 @@ pub async fn create_webview(
 }
 
 #[tauri::command]
-pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
+pub fn destroy_webview(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "destroy_webview").map_err(|e| e.to_string())?;
     let label = format!("browser-{}", id);
     let app2 = app.clone();
     app.run_on_main_thread(move || {
@@ -110,7 +124,14 @@ pub fn destroy_webview(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn navigate_webview(app: AppHandle, id: String, url: String) -> Result<(), String> {
+pub fn navigate_webview(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+    id: String,
+    url: String,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "navigate_webview").map_err(|e| e.to_string())?;
     let label = format!("browser-{}", id);
     eprintln!("[webview] navigate {} -> {}", label, url);
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
@@ -139,7 +160,14 @@ pub fn navigate_webview(app: AppHandle, id: String, url: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn zoom_webview(app: AppHandle, id: String, factor: f64) -> Result<(), String> {
+pub fn zoom_webview(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+    id: String,
+    factor: f64,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "zoom_webview").map_err(|e| e.to_string())?;
     let label = format!("browser-{}", id);
     let factor = factor.clamp(0.1, 5.0);
     let app2 = app.clone();
@@ -153,8 +181,12 @@ pub fn zoom_webview(app: AppHandle, id: String, factor: f64) -> Result<(), Strin
     Ok(())
 }
 
+// Each argument is a field of the frontend `invoke` payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn resize_webview(
+    webview: Webview,
+    request: Request<'_>,
     app: AppHandle,
     id: String,
     x: f64,
@@ -162,6 +194,7 @@ pub fn resize_webview(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    guard_local(&webview, &request, "resize_webview").map_err(|e| e.to_string())?;
     let label = format!("browser-{}", id);
     let app2 = app.clone();
 
@@ -183,7 +216,14 @@ pub fn resize_webview(
 // open — the child window is OS-level and would otherwise paint over the
 // popup's HTML.
 #[tauri::command]
-pub fn set_webview_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
+pub fn set_webview_visible(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+    id: String,
+    visible: bool,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "set_webview_visible").map_err(|e| e.to_string())?;
     let label = format!("browser-{}", id);
     let app2 = app.clone();
     app.run_on_main_thread(move || {

@@ -12,10 +12,13 @@
 
 use std::sync::Mutex;
 
+use tauri::ipc::Request;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewBuilder, WebviewUrl,
-    Window,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, Webview, WebviewBuilder,
+    WebviewUrl, Window,
 };
+
+use crate::fspath::guard_local;
 
 /// Per-webview JS injected via `initialization_script` so every embedded
 /// child can:
@@ -24,9 +27,13 @@ use tauri::{
 ///   2. Forward ymux global shortcuts so they still trigger while the
 ///      child owns OS keyboard focus.
 ///
-/// `{id}` is substituted with the pane UUID. Requires the `browser-children`
-/// capability so `window.__TAURI_INTERNALS__.invoke` is exposed in this
-/// (remote-URL) webview.
+/// `{id}` is substituted with the pane UUID. Tauri injects
+/// `window.__TAURI_INTERNALS__.invoke` into every webview regardless of
+/// capabilities, and ymux's own commands are not ACL-checked (no
+/// `AppManifest`), so no capability is needed — and none is granted: the two
+/// commands this script calls are the whole of what the page can reach, and
+/// each checks the caller with [`guard_embedded_child`]. Keep the shortcut
+/// predicate below in sync with `ipc_guard::forwarded_shortcut_key`.
 fn child_init_script(id: &str) -> String {
     format!(
         r#"
@@ -63,9 +70,9 @@ fn child_init_script(id: &str) -> String {
   function isYmuxShortcut(e) {{
     if (e.ctrlKey && e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) return true;
     if (e.ctrlKey && e.altKey && !e.shiftKey && e.code === 'KeyN') return true;
-    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[HVWZPRET]$/.test(e.code)) return true;
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[ZPRE]$/.test(e.code)) return true;
     if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return true;
-    if (e.ctrlKey && e.code === 'Tab') return true;
+    if (e.ctrlKey && !e.altKey && e.code === 'Tab') return true;
     return false;
   }}
   window.addEventListener('keydown', function(e) {{
@@ -73,7 +80,7 @@ fn child_init_script(id: &str) -> String {
     e.preventDefault();
     e.stopPropagation();
     invoke('forward_keystroke', {{
-      key: e.key, code: e.code,
+      code: e.code,
       ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey
     }});
   }}, true);
@@ -110,6 +117,8 @@ fn eb_label(id: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_embedded_browser(
+    webview: Webview,
+    request: Request<'_>,
     app: AppHandle,
     state: State<'_, EmbeddedBrowserRegistry>,
     id: String,
@@ -119,6 +128,7 @@ pub async fn create_embedded_browser(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    guard_local(&webview, &request, "create_embedded_browser").map_err(|e| e.to_string())?;
     let label = eb_label(&id);
     let parsed_url: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
     let parsed_url2 = parsed_url.clone();
@@ -168,10 +178,13 @@ pub async fn create_embedded_browser(
 
 #[tauri::command]
 pub fn destroy_embedded_browser(
+    webview: Webview,
+    request: Request<'_>,
     app: AppHandle,
     state: State<'_, EmbeddedBrowserRegistry>,
     id: String,
 ) -> Result<(), String> {
+    guard_local(&webview, &request, "destroy_embedded_browser").map_err(|e| e.to_string())?;
     let label = eb_label(&id);
     let app2 = app.clone();
     let label2 = label.clone();
@@ -195,7 +208,14 @@ pub fn destroy_embedded_browser(
 }
 
 #[tauri::command]
-pub fn navigate_embedded_browser(app: AppHandle, id: String, url: String) -> Result<(), String> {
+pub fn navigate_embedded_browser(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+    id: String,
+    url: String,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "navigate_embedded_browser").map_err(|e| e.to_string())?;
     let label = eb_label(&id);
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid URL: {e}"))?;
     let app2 = app.clone();
@@ -214,8 +234,12 @@ pub fn navigate_embedded_browser(app: AppHandle, id: String, url: String) -> Res
     Ok(())
 }
 
+// Each argument is a field of the frontend `invoke` payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn set_embedded_browser_bounds(
+    webview: Webview,
+    request: Request<'_>,
     app: AppHandle,
     id: String,
     x: f64,
@@ -223,6 +247,7 @@ pub fn set_embedded_browser_bounds(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    guard_local(&webview, &request, "set_embedded_browser_bounds").map_err(|e| e.to_string())?;
     let label = eb_label(&id);
     let app2 = app.clone();
 
@@ -240,12 +265,57 @@ pub fn set_embedded_browser_bounds(
     Ok(())
 }
 
+/// The guard for the commands an `eb-*` child page calls (see
+/// [`crate::ipc_guard::EMBEDDED_CHILD_COMMANDS`] for the list and why).
+///
+/// Accepts only a webview whose label is `eb-<canonical uuid>` **and** is
+/// still in the registry — i.e. an embedded browser ymux created and has not
+/// destroyed. Returns that pane's id, which is the only pane id the command
+/// may act on: whatever the page claims in its arguments is not trusted.
+///
+/// It does not look at `Origin`: the page is a website by design, so its
+/// origin says nothing. The label, which Tauri takes from the webview that
+/// delivered the message and the page cannot choose, is the identity.
+pub fn guard_embedded_child(
+    webview: &Webview,
+    registry: &State<'_, EmbeddedBrowserRegistry>,
+    cmd: &str,
+) -> Result<uuid::Uuid, String> {
+    let label = webview.label();
+    let Some(pane) = crate::ipc_guard::embedded_child_pane_id(label) else {
+        return Err(format!(
+            "{cmd}: only an embedded browser pane may call this (label {label:?})"
+        ));
+    };
+    let live = registry
+        .labels
+        .lock()
+        .map(|l| l.iter().any(|x| x == label))
+        .unwrap_or(false);
+    if !live {
+        return Err(format!("{cmd}: no live embedded browser {label:?}"));
+    }
+    Ok(pane)
+}
+
 // Receive a click/focus signal from a child webview's init script. Emits
 // `ymux:child-focused` so the frontend can set `focusedPaneId` to this
 // pane reliably (replacing the cursor-mapping heuristic in window.blur).
+//
+// `id` must name the calling webview's own pane: a page may only report
+// itself as focused, never steer focus to another pane.
 #[tauri::command]
-pub fn child_webview_focused(app: AppHandle, id: String) -> Result<(), String> {
-    app.emit("ymux:child-focused", id)
+pub fn child_webview_focused(
+    webview: Webview,
+    registry: State<'_, EmbeddedBrowserRegistry>,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    let pane = guard_embedded_child(&webview, &registry, "child_webview_focused")?;
+    if id != pane.to_string() {
+        return Err("child_webview_focused: id does not match the calling pane".into());
+    }
+    app.emit("ymux:child-focused", pane.to_string())
         .map_err(|e| format!("emit failed: {e}"))?;
     Ok(())
 }
@@ -254,15 +324,26 @@ pub fn child_webview_focused(app: AppHandle, id: String) -> Result<(), String> {
 // forwarder. Focuses the main webview (so the popup that this shortcut
 // may open can take input focus), then emits an event the main webview
 // listens for and replays as a `KeyboardEvent`.
+//
+// Only the exact (code, modifiers) combinations in
+// `ipc_guard::forwarded_shortcut_key` are accepted, and the `key` the main
+// window sees is derived from that table — a page-supplied `key` is not even
+// read — so a page cannot synthesize arbitrary keystrokes or pass one
+// shortcut's code off as another's key.
 #[tauri::command]
 pub fn forward_keystroke(
+    webview: Webview,
+    registry: State<'_, EmbeddedBrowserRegistry>,
     app: AppHandle,
-    key: String,
     code: String,
     ctrl: bool,
     shift: bool,
     alt: bool,
 ) -> Result<(), String> {
+    guard_embedded_child(&webview, &registry, "forward_keystroke")?;
+    let Some(key) = crate::ipc_guard::forwarded_shortcut_key(&code, ctrl, shift, alt) else {
+        return Err("forward_keystroke: not a forwardable ymux shortcut".into());
+    };
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_focus();
     }
@@ -285,10 +366,13 @@ pub fn forward_keystroke(
 // bounds via `set_embedded_browser_bounds`.
 #[tauri::command]
 pub fn set_embedded_browser_visible(
+    webview: Webview,
+    request: Request<'_>,
     app: AppHandle,
     id: String,
     visible: bool,
 ) -> Result<(), String> {
+    guard_local(&webview, &request, "set_embedded_browser_visible").map_err(|e| e.to_string())?;
     if visible {
         // Frontend is expected to call set_embedded_browser_bounds()
         // immediately after this to restore the real placement.

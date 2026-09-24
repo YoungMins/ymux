@@ -17,7 +17,10 @@ pub mod error;
 // under `cargo test --no-default-features --lib -p ymux` on Linux CI.
 pub mod fspath;
 pub mod fsx;
+// Which pages may call which `#[tauri::command]`, and the test that every
+// registered command starts with its guard (CLAUDE.md rule 16).
 pub mod git;
+pub mod ipc_guard;
 pub mod paste_images;
 pub mod pty;
 pub mod scrollback;

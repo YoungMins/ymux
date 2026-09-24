@@ -5,10 +5,12 @@
 
 use std::io::Write;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::ipc::Request;
+use tauri::{AppHandle, Emitter, Manager, State, Webview};
 use yipc::{IpcMessage, IpcServer, MessageHandler, AGENT_HOOK_KIND};
 
 use crate::error::{YmuxError, YmuxResult};
+use crate::fspath::guard_local;
 
 /// Tauri event name emitted for every incoming IPC message.
 const IPC_EVENT: &str = "ymux://ipc-message";
@@ -93,7 +95,13 @@ pub fn start_ipc_server(app: AppHandle) -> String {
 /// runs on it, and a yDir that stopped reading could otherwise freeze the
 /// window for up to `yipc::WRITE_TIMEOUT` per call.
 #[tauri::command(async)]
-pub fn filedock_change_dir(ipc: State<'_, IpcServerState>, path: String) -> YmuxResult<()> {
+pub fn filedock_change_dir(
+    webview: Webview,
+    request: Request<'_>,
+    ipc: State<'_, IpcServerState>,
+    path: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "filedock_change_dir")?;
     ipc.0
         .send_to("ydir", &IpcMessage::ChangeDir { path })
         .map(|_| ())
