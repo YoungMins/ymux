@@ -12,10 +12,26 @@ use std::process::Command;
 use crate::error::{YmuxError, YmuxResult};
 
 /// A single entry from `git worktree list --porcelain`.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct WorktreeEntry {
     pub path: String,
+    /// Empty on a detached HEAD (and on a bare entry).
     pub branch: String,
+    /// The commit checked out there (`HEAD <sha>`); empty for a bare entry.
+    pub head: String,
+    pub detached: bool,
+    pub bare: bool,
+    /// `git worktree lock`ed: git refuses to remove it without a double
+    /// `--force`, which the git pane never passes.
+    pub locked: bool,
+    /// Its directory is gone; `git worktree prune` would drop the entry.
+    pub prunable: bool,
+    /// The main worktree — always the first entry git lists. It cannot be
+    /// removed, only the linked ones can.
+    pub main: bool,
+    /// The worktree containing the directory the list was asked from.
+    /// Decided here with `ypath::same_path` (rule 15), never in TypeScript.
+    pub current: bool,
 }
 
 /// A `git` invocation in `cwd`, and the only way this module builds one.
@@ -77,6 +93,9 @@ pub fn repo_root(cwd: &Path) -> YmuxResult<PathBuf> {
 /// Add a worktree at `path`. Attaches to `branch` if it already exists as a
 /// local branch, otherwise creates it (`git worktree add -b`).
 pub fn worktree_add(repo: &Path, branch: &str, path: &Path) -> YmuxResult<()> {
+    // The git pane types this name in; refuse one git would read as an
+    // option before it reaches `-b`.
+    validate_ref_name(branch)?;
     let path_s = path.to_string_lossy();
     // Probe the local-branch namespace specifically. `git rev-parse --verify`
     // on an unqualified name also resolves tags, remote-tracking refs, and
@@ -141,10 +160,22 @@ pub fn worktree_remove(path: &Path, force: bool) -> YmuxResult<()> {
     Ok(())
 }
 
-/// List all worktrees registered against `repo`.
+/// List all worktrees registered against `repo`, with `current` set on the
+/// one whose path is `repo` itself.
 pub fn worktree_list(repo: &Path) -> YmuxResult<Vec<WorktreeEntry>> {
     let out = run_git(repo, &["worktree", "list", "--porcelain"])?;
-    Ok(parse_worktree_porcelain(&out))
+    let mut list = parse_worktree_porcelain(&out);
+    mark_current(&mut list, &repo.to_string_lossy());
+    Ok(list)
+}
+
+/// Flag the entry that is `root` — git's own `--show-toplevel` answer for
+/// the pane's directory. The two are both git's spelling in practice, but
+/// "in practice" is exactly what rule 15 forbids relying on.
+pub fn mark_current(list: &mut [WorktreeEntry], root: &str) {
+    for e in list.iter_mut() {
+        e.current = ypath::same_path(&e.path, root);
+    }
 }
 
 /// Parse `git worktree list --porcelain` output into entries. Entries with
@@ -165,27 +196,51 @@ pub fn worktree_list(repo: &Path) -> YmuxResult<Vec<WorktreeEntry>> {
 /// forward slashes and git's own idea of the drive-letter case -- which is
 /// not the spelling [`suggested_worktree_path`] produces. Compare the two
 /// with [`ypath::same_path`], never with `==`.
+///
+/// The flag lines (`detached`, `bare`, `locked [reason]`,
+/// `prunable [reason]`) are matched as a word, so a reason after it does not
+/// matter. The first entry is the main worktree.
 pub fn parse_worktree_porcelain(out: &str) -> Vec<WorktreeEntry> {
     let mut entries = Vec::new();
-    let mut path: Option<String> = None;
-    let mut branch = String::new();
+    let mut cur: Option<WorktreeEntry> = None;
+    let flag = |line: &str, word: &str| {
+        line == word || line.strip_prefix(word).is_some_and(|r| r.starts_with(' '))
+    };
     for line in out.lines() {
         if let Some(p) = line.strip_prefix("worktree ") {
-            path = Some(p.to_string());
-            branch = String::new();
-        } else if let Some(b) = line.strip_prefix("branch ") {
-            branch = b.strip_prefix("refs/heads/").unwrap_or(b).to_string();
+            if let Some(done) = cur.take() {
+                entries.push(done);
+            }
+            cur = Some(WorktreeEntry {
+                path: p.to_string(),
+                ..WorktreeEntry::default()
+            });
+            continue;
+        }
+        let Some(e) = cur.as_mut() else { continue };
+        if let Some(b) = line.strip_prefix("branch ") {
+            e.branch = b.strip_prefix("refs/heads/").unwrap_or(b).to_string();
+        } else if let Some(h) = line.strip_prefix("HEAD ") {
+            e.head = h.to_string();
+        } else if flag(line, "detached") {
+            e.detached = true;
+        } else if flag(line, "bare") {
+            e.bare = true;
+        } else if flag(line, "locked") {
+            e.locked = true;
+        } else if flag(line, "prunable") {
+            e.prunable = true;
         } else if line.is_empty() {
-            if let Some(p) = path.take() {
-                entries.push(WorktreeEntry {
-                    path: p,
-                    branch: std::mem::take(&mut branch),
-                });
+            if let Some(done) = cur.take() {
+                entries.push(done);
             }
         }
     }
-    if let Some(p) = path.take() {
-        entries.push(WorktreeEntry { path: p, branch });
+    if let Some(done) = cur.take() {
+        entries.push(done);
+    }
+    if let Some(first) = entries.first_mut() {
+        first.main = true;
     }
     entries
 }
@@ -237,6 +292,10 @@ pub struct BranchList {
     pub current: String,
     pub local: Vec<String>,
     pub remote: Vec<String>,
+    /// Local branches checked out in *another* worktree, → that worktree's
+    /// path (git's spelling). `git checkout` of one of these fails ("already
+    /// used by worktree at …"); this is what plain `git branch` marks `+ `.
+    pub held: std::collections::BTreeMap<String, String>,
 }
 
 /// Unit separator: between the fields of one commit.
@@ -342,15 +401,21 @@ pub fn branch_name(raw: &str) -> Option<&str> {
 /// whether a branch is local: `refname:short` renders
 /// `refs/remotes/origin/main` as `origin/main`, which is indistinguishable
 /// from a local branch literally called `origin/main`.
-pub const BRANCH_FORMAT: &str = "%(HEAD)%(refname)";
+///
+/// `%(worktreepath)` (git 2.23+) follows a unit separator (`%1f`): the path
+/// of the worktree a local branch is checked out in, empty otherwise. It is
+/// the `--format` spelling of plain `git branch`'s `+ ` marker.
+pub const BRANCH_FORMAT: &str = "%(HEAD)%(refname)%1f%(worktreepath)";
 
 /// Parse `git branch --list --all --format=`[`BRANCH_FORMAT`].
 ///
 /// An `origin/HEAD -> origin/main` symbolic entry is dropped: it is an
-/// alias, not a branch to check out.
+/// alias, not a branch to check out. A line without the worktree field (an
+/// older format) parses as a branch checked out nowhere.
 pub fn parse_branch_list(out: &str) -> BranchList {
     let mut list = BranchList::default();
     for line in out.lines() {
+        let (line, worktree) = line.split_once(US).unwrap_or((line, ""));
         // `%(HEAD)` occupies exactly one column: `*` or a space. Strip it
         // before `branch_name`, which handles the plain `git branch`
         // spellings (`* `, `+ `, two spaces) rather than this one.
@@ -373,6 +438,10 @@ pub fn parse_branch_list(out: &str) -> BranchList {
         } else if let Some(local) = name.strip_prefix("refs/heads/") {
             if is_head {
                 list.current = local.to_string();
+            } else if !worktree.is_empty() {
+                // `%(HEAD)` is this worktree's HEAD, so a branch with a
+                // worktree path that is not HEAD is held by another one.
+                list.held.insert(local.to_string(), worktree.to_string());
             }
             list.local.push(local.to_string());
         }
@@ -438,7 +507,155 @@ pub fn checkout(cwd: &Path, branch: &str) -> YmuxResult<()> {
     if !is_git_repo(cwd) {
         return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
     }
-    run_git(cwd, &["checkout", branch]).map(|_| ())
+    // The trailing `--` is ygit's (`tools/ygit/src/app.rs`): it ends the
+    // revision list, so a branch whose name is also a file in the tree is
+    // still read as the branch, never as "restore this file".
+    run_git(cwd, &["checkout", branch, "--"]).map(|_| ())
+}
+
+/// Create a local branch tracking the remote-tracking `remote_branch`
+/// (`origin/feature`) and check it out — `git checkout --track`.
+///
+/// Plain `git checkout origin/feature` would leave HEAD *detached*, and
+/// anything committed there is reachable from no branch. The pane only calls
+/// this when no local branch of that name exists; git refuses otherwise.
+pub fn checkout_track(cwd: &Path, remote_branch: &str) -> YmuxResult<()> {
+    validate_ref_name(remote_branch)?;
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    run_git(cwd, &["checkout", "--track", remote_branch, "--"]).map(|_| ())
+}
+
+/// One changed path from `git status`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct StatusEntry {
+    /// git's two-column `XY` code: `" M"`, `"A "`, `"??"`, `"R "`, …
+    pub code: String,
+    pub path: String,
+    /// The old path of a rename or copy; empty otherwise.
+    pub orig: String,
+}
+
+/// What a checkout or a worktree removal would touch — asked for just
+/// before the confirmation, never on a plain refresh.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct WorkStatus {
+    /// HEAD is not on a branch.
+    pub detached: bool,
+    /// Modified, staged, deleted, renamed and untracked paths (every
+    /// untracked file, not collapsed to its directory).
+    pub changes: Vec<StatusEntry>,
+    /// Ignored files and directories (collapsed: `target/`, not its
+    /// contents). Only filled when asked for: `git worktree remove` deletes
+    /// these without `--force` and without a word.
+    pub ignored: Vec<String>,
+    /// On a detached HEAD: commits reachable from HEAD and from no branch,
+    /// tag or remote-tracking ref — what leaving HEAD would strand (they
+    /// survive only in the reflog). At most [`MAX_ORPHANS`].
+    pub orphans: Vec<CommitInfo>,
+    /// More than [`MAX_ORPHANS`] exist.
+    pub more_orphans: bool,
+}
+
+/// Most stranded commits a [`WorkStatus`] lists.
+pub const MAX_ORPHANS: usize = 50;
+
+/// Parse `git status --porcelain=v1 -z`.
+///
+/// `-z` is not optional: without it git C-quotes any path with non-ASCII
+/// bytes (`"\355\225\234\352\270\200.txt"`), and the confirmation would name
+/// files nobody can recognise. In `-z` form a rename or copy is
+/// `XY new\0old\0` — two fields, the second of which must be consumed or it
+/// would be misread as the next record. `!!` (ignored) records are kept, with
+/// their code, for the caller to split off.
+pub fn parse_status_z(out: &str) -> Vec<StatusEntry> {
+    let mut entries = Vec::new();
+    let mut fields = out.split('\0');
+    while let Some(rec) = fields.next() {
+        // `XY PATH`: two code columns, a space, then the path.
+        if rec.len() < 4 || !rec.is_char_boundary(2) || rec.as_bytes()[2] != b' ' {
+            continue;
+        }
+        let code = &rec[..2];
+        let path = &rec[3..];
+        let orig = if code.contains(['R', 'C']) {
+            fields.next().unwrap_or("")
+        } else {
+            ""
+        };
+        entries.push(StatusEntry {
+            code: code.to_string(),
+            path: path.to_string(),
+            orig: orig.to_string(),
+        });
+    }
+    entries
+}
+
+/// Is HEAD detached? An unborn branch (fresh `git init`) is not.
+fn head_detached(cwd: &Path) -> bool {
+    git_command(cwd)
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(false)
+}
+
+/// See [`WorkStatus`]. `include_ignored` adds one more `git status` call.
+pub fn work_status(cwd: &Path, include_ignored: bool) -> YmuxResult<WorkStatus> {
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    let out = run_git(
+        cwd,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    let mut status = WorkStatus {
+        changes: parse_status_z(&out),
+        ..WorkStatus::default()
+    };
+    if include_ignored {
+        let out = run_git(
+            cwd,
+            &[
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=normal",
+                "--ignored=matching",
+            ],
+        )?;
+        status.ignored = parse_status_z(&out)
+            .into_iter()
+            .filter(|e| e.code == "!!")
+            .map(|e| e.path)
+            .collect();
+    }
+    if has_commits(cwd) && head_detached(cwd) {
+        status.detached = true;
+        let max = format!("--max-count={}", MAX_ORPHANS + 1);
+        let fmt = format!("--format={LOG_FORMAT}");
+        let out = run_git(
+            cwd,
+            &[
+                "log",
+                &max,
+                &fmt,
+                "HEAD",
+                "--not",
+                "--branches",
+                "--tags",
+                "--remotes",
+                "--",
+            ],
+        )?;
+        let mut orphans = parse_log_porcelain(&out);
+        status.more_orphans = orphans.len() > MAX_ORPHANS;
+        orphans.truncate(MAX_ORPHANS);
+        status.orphans = orphans;
+    }
+    Ok(status)
 }
 
 /// [`repo_root`], but reporting a non-repository as [`YmuxError::NotARepo`]
@@ -752,6 +969,112 @@ detached
         assert_eq!(list.len(), 2);
         assert_eq!(list[1].path, "/home/u/.ymux-worktrees/detached");
         assert_eq!(list[1].branch, "", "detached HEAD entries have no branch");
+        assert!(list[1].detached);
+        assert_eq!(list[1].head, "def");
+    }
+
+    /// Every flag line git 2.52 writes, with and without a reason, and the
+    /// first entry marked as the main worktree.
+    #[test]
+    fn porcelain_flags_and_the_main_worktree() {
+        let out = "\
+worktree /r
+HEAD 1111
+branch refs/heads/main
+
+worktree /wt/locked
+HEAD 2222
+branch refs/heads/a
+locked
+
+worktree /wt/locked-why
+HEAD 3333
+detached
+locked moved to a USB disk
+
+worktree /wt/gone
+HEAD 4444
+branch refs/heads/b
+prunable gitdir file points to non-existent location
+
+worktree /wt/branch-named-lockedish
+HEAD 5555
+branch refs/heads/lockedish
+";
+        let list = parse_worktree_porcelain(out);
+        assert_eq!(list.len(), 5);
+        assert!(list[0].main && !list[1].main && !list[4].main);
+        assert_eq!(list[0].head, "1111");
+        assert!(list[1].locked && !list[1].detached);
+        assert!(
+            list[2].locked && list[2].detached,
+            "a reason after the flag"
+        );
+        assert!(list[3].prunable && !list[3].locked);
+        // Flags are words: `branch refs/heads/lockedish` is not `locked`.
+        assert!(!list[4].locked && !list[4].prunable);
+        assert_eq!(list[4].branch, "lockedish");
+    }
+
+    /// `current` crosses the spellings rule 15 is about: git's forward
+    /// slashes and drive case against a backslashed path.
+    #[test]
+    fn mark_current_compares_paths_by_key_not_bytes() {
+        let mut list = parse_worktree_porcelain(
+            "worktree C:/Repo\nHEAD 1\nbranch refs/heads/main\n\nworktree C:/wt/한글 트리\nHEAD 2\nbranch refs/heads/x\n",
+        );
+        mark_current(&mut list, r"c:\wt\한글 트리");
+        assert!(!list[0].current);
+        assert!(list[1].current);
+    }
+
+    /// The `-z` status format: a rename is two NUL fields (new, then old),
+    /// Hangul and spaces arrive unquoted, and ignored records keep `!!`.
+    #[test]
+    fn status_z_parses_renames_hangul_and_ignored() {
+        let out = concat!(
+            " M src/main.rs\0",
+            "R  새 이름.txt\0old name.txt\0",
+            "?? 한글 폴더/메모.md\0",
+            "A  added.rs\0",
+            "!! target/\0",
+        );
+        let got = parse_status_z(out);
+        assert_eq!(got.len(), 5, "{got:?}");
+        assert_eq!(got[0].code, " M");
+        assert_eq!(got[0].path, "src/main.rs");
+        assert_eq!(got[1].code, "R ");
+        assert_eq!(got[1].path, "새 이름.txt");
+        assert_eq!(got[1].orig, "old name.txt");
+        // The old name was consumed, not misread as a record.
+        assert_eq!(got[2].path, "한글 폴더/메모.md");
+        assert_eq!(got[3].code, "A ");
+        assert_eq!(got[4].code, "!!");
+        assert_eq!(got[4].path, "target/");
+        // Total: nothing, and junk.
+        assert!(parse_status_z("").is_empty());
+        assert!(parse_status_z("\0\0x\0").is_empty());
+    }
+
+    /// `%(worktreepath)` marks a branch another worktree holds; the current
+    /// branch's own worktree path does not count as "held".
+    #[test]
+    fn branch_list_records_branches_held_by_other_worktrees() {
+        let out = "\
+*refs/heads/main\u{1f}C:/repo
+ refs/heads/워크트리브랜치\u{1f}C:/tmp/한글 워크트리
+ refs/heads/free\u{1f}
+ refs/remotes/origin/main\u{1f}
+";
+        let list = parse_branch_list(out);
+        assert_eq!(list.current, "main");
+        assert_eq!(list.local, vec!["main", "워크트리브랜치", "free"]);
+        assert_eq!(list.held.len(), 1);
+        assert_eq!(
+            list.held.get("워크트리브랜치").map(String::as_str),
+            Some("C:/tmp/한글 워크트리")
+        );
+        assert_eq!(list.remote, vec!["origin/main"]);
     }
 
     // --- Real-git integration tests below. These shell out to an actual
@@ -1123,5 +1446,186 @@ detached
         if let Some(parent) = repo.parent() {
             let _ = std::fs::remove_dir(parent.join(".ymux-worktrees"));
         }
+    }
+
+    /// Run git in `dir` for a test's setup, asserting it succeeds.
+    fn git_ok(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// A sibling of `repo` for a worktree or clone, removed by the test.
+    fn sibling(repo: &Path, suffix: &str) -> PathBuf {
+        repo.with_file_name(format!(
+            "{}_{suffix}",
+            repo.file_name().unwrap().to_string_lossy()
+        ))
+    }
+
+    /// ygit's `+ ` bug, against real git: a Korean branch checked out in a
+    /// linked worktree at a Korean path with a space, while the main worktree
+    /// sits on a detached HEAD. The branch list names it cleanly (no `+ `,
+    /// no `(HEAD detached …)` pseudo-branch), records who holds it, and a
+    /// checkout of it fails as a git error instead of doing anything odd.
+    #[test]
+    fn held_branch_and_detached_head_against_real_git() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("held");
+        let wt = sibling(&repo, "wt");
+        let wt_path = wt.join("한글 워크트리");
+        worktree_add(&repo, "워크트리브랜치", &wt_path).expect("worktree add");
+        git_ok(&repo, &["checkout", "-q", "--detach"]);
+
+        let list = branches(&repo).unwrap();
+        assert_eq!(list.current, "", "detached: no current branch");
+        assert!(
+            list.local
+                .iter()
+                .all(|b| !b.starts_with('(') && !b.starts_with('+')),
+            "{list:?}"
+        );
+        assert!(list.local.contains(&"워크트리브랜치".to_string()));
+        let held = list
+            .held
+            .get("워크트리브랜치")
+            .expect("held by the linked worktree");
+        assert!(worktree_leaf_is(held, &wt_path), "{held}");
+        assert_eq!(list.held.len(), 1, "{list:?}");
+
+        let wts = worktree_list(&repo).unwrap();
+        assert_eq!(wts.len(), 2);
+        assert!(wts[0].main && wts[0].current && wts[0].detached);
+        assert!(!wts[1].main && !wts[1].current && !wts[1].detached);
+        assert_eq!(wts[1].branch, "워크트리브랜치");
+        assert!(worktree_leaf_is(&wts[1].path, &wt_path));
+        // Asked from inside the linked worktree, *it* is the current one.
+        let from_wt = worktree_list(&repo_root(&wt_path).unwrap()).unwrap();
+        assert!(!from_wt[0].current && from_wt[1].current, "{from_wt:?}");
+
+        let err = checkout(&repo, "워크트리브랜치").unwrap_err();
+        assert_eq!(err.kind(), "git", "{err}");
+
+        worktree_remove(&wt_path, false).expect("cleanup");
+        cleanup_dir(&repo);
+        cleanup_dir(&wt);
+    }
+
+    /// What the confirmations are built from: the changes a checkout carries
+    /// (Hangul unquoted, a rename with its old name), and on a detached HEAD
+    /// the commits no ref reaches.
+    #[test]
+    fn work_status_lists_changes_and_stranded_commits() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("status");
+        let clean = work_status(&repo, false).unwrap();
+        assert!(clean.changes.is_empty() && !clean.detached && clean.orphans.is_empty());
+
+        git_ok(&repo, &["checkout", "-q", "--detach"]);
+        std::fs::write(repo.join("h.txt"), "x\n").unwrap();
+        git_ok(&repo, &["add", "h.txt"]);
+        git_ok(&repo, &["commit", "-q", "-m", "떠돌이 커밋"]);
+        std::fs::write(repo.join("메모 파일.txt"), "x\n").unwrap();
+        git_ok(&repo, &["mv", "f.txt", "새 f.txt"]);
+
+        let s = work_status(&repo, false).unwrap();
+        assert!(s.detached);
+        assert_eq!(s.orphans.len(), 1);
+        assert_eq!(s.orphans[0].subject, "떠돌이 커밋");
+        assert!(!s.more_orphans);
+        let untracked = s
+            .changes
+            .iter()
+            .find(|e| e.code == "??")
+            .expect("untracked");
+        assert_eq!(untracked.path, "메모 파일.txt");
+        let renamed = s
+            .changes
+            .iter()
+            .find(|e| e.code.starts_with('R'))
+            .expect("rename");
+        assert_eq!(
+            (renamed.path.as_str(), renamed.orig.as_str()),
+            ("새 f.txt", "f.txt")
+        );
+
+        cleanup_dir(&repo);
+    }
+
+    /// Why the removal confirmation lists ignored files: a *non-forced*
+    /// `git worktree remove` of a worktree with no changes still deletes its
+    /// ignored build output, without asking.
+    #[test]
+    fn worktree_remove_deletes_ignored_files_without_force() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("ignored");
+        let wt = sibling(&repo, "wt");
+        let wt_path = wt.join("w");
+        worktree_add(&repo, "agent/ign", &wt_path).expect("worktree add");
+        // `info/exclude` lives in the common dir, so it applies to both.
+        std::fs::write(repo.join(".git").join("info").join("exclude"), "target/\n").unwrap();
+        std::fs::create_dir_all(wt_path.join("target")).unwrap();
+        std::fs::write(wt_path.join("target").join("out.bin"), "build\n").unwrap();
+
+        let s = work_status(&wt_path, true).unwrap();
+        assert!(s.changes.is_empty(), "{s:?}");
+        assert_eq!(s.ignored, vec!["target/"]);
+
+        worktree_remove(&wt_path, false).expect("git removes it without --force");
+        assert!(!wt_path.join("target").join("out.bin").exists());
+
+        cleanup_dir(&repo);
+        cleanup_dir(&wt);
+    }
+
+    /// `checkout_track` makes a local branch from a remote one instead of
+    /// detaching HEAD on `origin/<name>`.
+    #[test]
+    fn checkout_track_creates_a_local_tracking_branch() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("track");
+        git_ok(&repo, &["branch", "기능/원격"]);
+        let clone = sibling(&repo, "clone");
+        git_ok(
+            repo.parent().unwrap(),
+            &[
+                "clone",
+                "-q",
+                &repo.to_string_lossy(),
+                &clone.to_string_lossy(),
+            ],
+        );
+        let before = branches(&clone).unwrap();
+        assert!(
+            before.remote.contains(&"origin/기능/원격".to_string()),
+            "{before:?}"
+        );
+        assert!(!before.local.contains(&"기능/원격".to_string()));
+
+        checkout_track(&clone, "origin/기능/원격").unwrap();
+        let after = branches(&clone).unwrap();
+        assert_eq!(after.current, "기능/원격");
+        assert!(!work_status(&clone, false).unwrap().detached);
+        assert!(checkout_track(&clone, "--orphan").is_err());
+
+        cleanup_dir(&clone);
+        cleanup_dir(&repo);
     }
 }

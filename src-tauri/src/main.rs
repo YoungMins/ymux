@@ -101,6 +101,8 @@ fn main() {
             ymux_lib::commands::git_log,
             ymux_lib::commands::git_branches,
             ymux_lib::commands::git_checkout,
+            ymux_lib::commands::git_checkout_track,
+            ymux_lib::commands::git_work_status,
             ymux_lib::commands::git_repo_root,
             ymux_lib::commands::git_is_repo,
             ymux_lib::commands::git_worktree_add,

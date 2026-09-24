@@ -664,9 +664,10 @@ pub fn paste_clipboard_image(
 // Git pane commands. Like every other command, each starts with
 // `guard_local` (CLAUDE.md rule 16).
 //
-// These four are `#[tauri::command(async)]`: `tools/ygit` blocks its render thread on
-// every git call, and a slow repository must not be able to do that to the
-// window.
+// All of them are `#[tauri::command(async)]`: `tools/ygit` blocks its render
+// thread on every git call, and a slow repository must not be able to do that
+// to the window. That includes the worktree ones — `worktree remove` deletes
+// a whole checkout, `node_modules/` and all.
 // ---------------------------------------------------------------------------
 
 /// Commits reachable from any ref, newest first, in the repository
@@ -706,6 +707,32 @@ pub fn git_checkout(
     git::checkout(Path::new(&cwd), &branch)
 }
 
+/// Make a local branch tracking the remote-tracking `remote_branch`
+/// (`origin/x`) and check it out. See [`crate::git::checkout_track`].
+#[tauri::command(async)]
+pub fn git_checkout_track(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    remote_branch: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "git_checkout_track")?;
+    git::checkout_track(Path::new(&cwd), &remote_branch)
+}
+
+/// The changes, ignored files (when asked) and stranded detached commits a
+/// checkout or worktree removal would touch. See [`crate::git::WorkStatus`].
+#[tauri::command(async)]
+pub fn git_work_status(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    include_ignored: bool,
+) -> YmuxResult<git::WorkStatus> {
+    guard_local(&webview, &request, "git_work_status")?;
+    git::work_status(Path::new(&cwd), include_ignored)
+}
+
 /// Top-level directory of the repository containing `cwd`.
 #[tauri::command(async)]
 pub fn git_repo_root(webview: Webview, request: Request<'_>, cwd: String) -> YmuxResult<String> {
@@ -724,7 +751,7 @@ pub fn git_is_repo(webview: Webview, request: Request<'_>, cwd: String) -> YmuxR
 /// Create a new git worktree for `branch`, rooted at the repo containing
 /// `cwd`, under a suggested sibling path derived from `base`. Returns the
 /// created worktree's path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_worktree_add(
     webview: Webview,
     request: Request<'_>,
@@ -741,7 +768,7 @@ pub fn git_worktree_add(
 
 /// Remove the worktree at `path`. `force` is passed through to `git worktree
 /// remove --force` for worktrees with uncommitted changes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_worktree_remove(
     webview: Webview,
     request: Request<'_>,
@@ -752,16 +779,17 @@ pub fn git_worktree_remove(
     git::worktree_remove(Path::new(&path), force)
 }
 
-/// List all worktrees (main + linked) for the repository containing `cwd`.
-#[tauri::command]
+/// List all worktrees (main + linked) for the repository containing `cwd`,
+/// the one `cwd` is in flagged `current`. Outside a repository: `NotARepo`.
+#[tauri::command(async)]
 pub fn git_worktree_list(
     webview: Webview,
     request: Request<'_>,
     cwd: String,
 ) -> YmuxResult<Vec<git::WorktreeEntry>> {
     guard_local(&webview, &request, "git_worktree_list")?;
-    let repo = git::repo_root(Path::new(&cwd))?;
-    git::worktree_list(&repo)
+    let repo = git::repo_root_checked(Path::new(&cwd))?;
+    git::worktree_list(Path::new(&repo))
 }
 
 /// Start the reader thread that drains PTY output and forwards it to the

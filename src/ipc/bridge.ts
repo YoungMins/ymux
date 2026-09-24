@@ -42,8 +42,61 @@ export interface ResizeArgs {
 /// A single entry from `git worktree list --porcelain` (mirrors
 /// `src-tauri/src/git/mod.rs::WorktreeEntry`).
 export interface WorktreeEntry {
+  /// git's spelling (forward slashes on Windows). Open it, never compare it:
+  /// `current` is the comparison, done in Rust (rule 15).
   path: string;
+  /// Empty on a detached HEAD.
   branch: string;
+  head: string;
+  detached: boolean;
+  bare: boolean;
+  locked: boolean;
+  prunable: boolean;
+  /// The main worktree (git lists it first). Never removable.
+  main: boolean;
+  /// The worktree the list was asked from.
+  current: boolean;
+}
+
+/// `git::CommitInfo`.
+export interface CommitInfo {
+  hash: string;
+  short: string;
+  subject: string;
+  author: string;
+  date_ms: number;
+  parents: string[];
+  /// `%D` decorations, split: `HEAD -> main`, `tag: v1`, `origin/main`, …
+  refs: string[];
+}
+
+/// `git::BranchList`.
+export interface BranchList {
+  /// Empty on a detached HEAD.
+  current: string;
+  local: string[];
+  /// `origin/main`, … (no `origin/HEAD` alias).
+  remote: string[];
+  /// Local branch → path of the *other* worktree it is checked out in.
+  held: Record<string, string>;
+}
+
+/// `git::StatusEntry`: one path of `git status --porcelain=v1 -z`.
+export interface StatusEntry {
+  code: string;
+  path: string;
+  /// A rename's or copy's old path; empty otherwise.
+  orig: string;
+}
+
+/// `git::WorkStatus`: what a checkout or worktree removal would touch.
+export interface WorkStatus {
+  detached: boolean;
+  changes: StatusEntry[];
+  ignored: string[];
+  /// Detached-HEAD commits no branch, tag or remote reaches.
+  orphans: CommitInfo[];
+  more_orphans: boolean;
 }
 
 /// Best-effort conversion of any thrown / rejected value into a human
@@ -181,6 +234,31 @@ export const fsApi = {
   reveal: (path: string): Promise<void> => callKind("fs_reveal", { path }),
   /// Open with the OS default app; executables are revealed, never run.
   openDefault: (path: string): Promise<void> => callKind("fs_open_default", { path }),
+};
+
+/// The guarded git surface (src-tauri/src/git/mod.rs via commands.rs), for
+/// the git pane. Every call rejects with a `YmuxCallError`, so the pane can
+/// tell `not_a_repo` (its empty state) from a real git failure (`git`).
+/// Every argument reaches git as one argv entry; nothing is a shell string.
+export const gitApi = {
+  repoRoot: (cwd: string): Promise<string> => callKind("git_repo_root", { cwd }),
+  log: (cwd: string, limit: number, skip: number): Promise<CommitInfo[]> =>
+    callKind("git_log", { cwd, limit, skip }),
+  branches: (cwd: string): Promise<BranchList> => callKind("git_branches", { cwd }),
+  worktrees: (cwd: string): Promise<WorktreeEntry[]> => callKind("git_worktree_list", { cwd }),
+  checkout: (cwd: string, branch: string): Promise<void> =>
+    callKind("git_checkout", { cwd, branch }),
+  /// `git checkout --track <remote>`: a local branch from `origin/x`.
+  checkoutTrack: (cwd: string, remoteBranch: string): Promise<void> =>
+    callKind("git_checkout_track", { cwd, remoteBranch }),
+  workStatus: (cwd: string, includeIgnored: boolean): Promise<WorkStatus> =>
+    callKind("git_work_status", { cwd, includeIgnored }),
+  /// Returns the new worktree's path. An empty `base` puts it in a sibling
+  /// `.ymux-worktrees` folder.
+  worktreeAdd: (cwd: string, branch: string, base: string): Promise<string> =>
+    callKind("git_worktree_add", { cwd, branch, base }),
+  worktreeRemove: (path: string, force: boolean): Promise<void> =>
+    callKind("git_worktree_remove", { path, force }),
 };
 
 /// Wrap a `tauriListen` call so that listen failures (typically capability /
