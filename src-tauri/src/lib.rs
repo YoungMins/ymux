@@ -10,6 +10,8 @@ pub mod agent_scan_disk;
 pub mod agent_sessions;
 pub mod agents;
 pub mod config;
+// Local drafts of unsaved editor content (the editor pane's safety net).
+pub mod drafts;
 pub mod error;
 // Resolving and opening filesystem paths the frontend lifted out of terminal
 // output (the path linkifier). Not behind `desktop`: the validation, UNC

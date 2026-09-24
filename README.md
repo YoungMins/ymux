@@ -240,7 +240,9 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Alt+N`                | `Cmd+Opt+N`        | Toggle notes for active workspace    |
 | `Ctrl+Shift+E`              | `Cmd+Shift+E`      | Toggle file dock (yDir)              |
 | `Ctrl+V`                    | `Cmd+V`            | Paste clipboard text (image → temp-file path) |
-| `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback           |
+| `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback (find / replace in an editor pane) |
+| `Ctrl+S`                    | `Cmd+S`            | Save the file (editor pane)          |
+| `Ctrl+G`                    | `Cmd+G`            | Go to line (editor pane)             |
 | `Ctrl++` / `Ctrl+-`         | `Cmd++` / `Cmd+-`  | Increase / decrease terminal font size |
 | `Ctrl+0`                    | `Cmd+0`            | Reset terminal font size             |
 | `Ctrl+Tab`                  | `Ctrl+Tab`         | Focus next pane                      |

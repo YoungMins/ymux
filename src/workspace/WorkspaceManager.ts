@@ -22,8 +22,12 @@ import { BrowserPane } from "../browser/BrowserPane";
 import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
 import { FilesPane } from "../files/FilesPane";
 import { baseName } from "../files/fileModel";
+import { EditorPane } from "../editor/EditorPane";
+import { fileName } from "../editor/editorModel";
+import { closePlan, closeResult, type CloseChoice } from "../editor/closeGuard";
 import type { Pane } from "../layout/Pane";
 import {
+  findAndMutatePane,
   findPane,
   newPane,
   paneNode,
@@ -54,7 +58,7 @@ import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
 import { promptWorktreeBranch } from "./WorktreeModal";
-import { askConfirm, askText } from "../ui/Dialog";
+import { askChoice, askConfirm, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
@@ -84,11 +88,14 @@ export class WorkspaceManager {
   /// mutation, and a `PaneGroup` owns a HotKeyBar with a language
   /// subscription, so it must survive those rebuilds.
   private groupCaches = new Map<number, Map<Uuid, PaneGroup>>();
-  /// Group id → the pane id of its viewer tab, the one the file dock's
-  /// `open-file` reuses (spec §4). Runtime-only and deliberately not
-  /// persisted: after a restart that tab reloads as an ordinary `ycode` tab
-  /// and the next dock Enter registers a new one.
+  /// Group id → the pane id of its viewer tab, the editor pane a files
+  /// pane's Enter reuses (spec §3.7). Runtime-only and deliberately not
+  /// persisted: after a restart that tab reloads as an ordinary editor pane
+  /// on its `file_path`, and the next Enter registers a new viewer.
   private viewerTabs = new Map<Uuid, Uuid>();
+  /// Panes whose close is waiting on the unsaved-changes prompt, so a second
+  /// Ctrl+Shift+W during the dialog cannot dispose the pane twice.
+  private closing = new Set<Uuid>();
   /// Workspace id → the pane zoomed in it (`Ctrl+Shift+Z`); absent when that
   /// workspace is not zoomed. Zoom is CSS plus one re-parenting, both of
   /// which `renderWorkspace` throws away, so it is re-applied after every
@@ -400,6 +407,15 @@ export class WorkspaceManager {
   /// active, switches to the first remaining one.
   async deleteWorkspace(id: number): Promise<void> {
     if (this.config.workspaces.length <= 1) return;
+    if (this.config.workspaces.findIndex((w) => w.id === id) < 0) return;
+    // The close guard (spec §3.5): one prompt listing every unsaved editor
+    // in the workspace. Asked before anything is torn down.
+    const editors = [...(this.paneCaches.get(id)?.values() ?? [])].filter(
+      (p): p is EditorPane => p instanceof EditorPane,
+    );
+    if (!(await this.confirmCloseEditors(editors))) return;
+    // Re-resolved after the await: the list may have changed meanwhile.
+    if (this.config.workspaces.length <= 1) return;
     const idx = this.config.workspaces.findIndex((w) => w.id === id);
     if (idx < 0) return;
 
@@ -467,9 +483,9 @@ export class WorkspaceManager {
   /// Build either a terminal or browser pane based on `spec.pane_kind`. All
   /// focus / hotkey / url change callbacks are wired so the manager can react
   /// to state changes without needing to know the pane subclass.
-  /// `argv` runs a program directly instead of the spec's shell — the viewer
-  /// tab uses it for `ycode <path>`, the same mechanism the file dock uses
-  /// for `ydir`.
+  /// `argv` runs a program directly instead of the spec's shell. Its last
+  /// callers (the viewer tab's `ycode`, the dock's `ydir`) are GUI panes
+  /// now; the parameter goes in the cut-over step (spec §5 step 6).
   private createPane(spec: PaneSpec, argv?: string[]): Pane {
     if (spec.pane_kind === "browser") {
       return new BrowserPane({
@@ -520,6 +536,28 @@ export class WorkspaceManager {
         // viewer tab opens in its own group — beside the file list (§3.7).
         openFile: (path) => this.openFileInViewerTab(path),
         openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
+      });
+    }
+    if (spec.pane_kind === "editor") {
+      return new EditorPane({
+        id: spec.id,
+        filePath: spec.file_path ?? "",
+        title: spec.title ?? null,
+        ownChrome: groupOfPane(this.active.root, spec.id) === null,
+        fontSize: this.fontSize,
+        onFocus: () => {
+          this.focusedPaneId = spec.id;
+        },
+        onPathChange: (path) => {
+          this.updatePaneSpec(spec.id, (p) => {
+            p.file_path = path;
+          });
+          this.refreshTabChrome();
+        },
+        onDirtyChange: () => {
+          this.refreshTabChrome();
+          this.notifyTree();
+        },
       });
     }
     const resolvedShell = this.resolveShell(spec.shell);
@@ -605,7 +643,7 @@ export class WorkspaceManager {
       // render invisible. Only a group's `update()` ever sets the class, so
       // clearing it for every ungrouped pane is safe and idempotent.
       if (!grouped) pane.element.classList.remove("pane--tab-hidden");
-      if (pane instanceof TerminalPane || pane instanceof FilesPane) {
+      if (pane instanceof TerminalPane || pane instanceof FilesPane || pane instanceof EditorPane) {
         pane.setOwnChrome(!grouped);
       }
     }
@@ -874,7 +912,9 @@ export class WorkspaceManager {
     const group = groupOfPane(this.active.root, paneId);
     if (!group) return;
     for (const id of tabIds(group).filter((x) => x !== paneId)) {
-      await this.closePane(id);
+      // A Cancel at an unsaved-changes prompt stops the whole sweep: the
+      // user just said "not that one", not "skip it and carry on".
+      if (!(await this.closePane(id))) return;
     }
     this.selectTab(paneId);
   }
@@ -896,12 +936,16 @@ export class WorkspaceManager {
     this.refreshTabChrome();
   }
 
-  /// The file dock's yDir pressed Enter on a file. It goes into the viewer
-  /// tab of the pane the dock follows — `activePaneId()`, which is the pane
-  /// that was active before the dock took focus, because the dock's own pane
-  /// lives outside every layout tree and so never becomes the active one.
-  /// One viewer tab per pane: the second Enter kills and respawns
-  /// `ycode <path>` in the same tab rather than opening another (spec §4).
+  /// A files pane pressed Enter on a text file (spec §3.7). It goes into the
+  /// viewer tab of `activePaneId()`'s group: for a files pane in the layout
+  /// that is its own group (the editor opens beside the list); for the dock,
+  /// whose pane is outside every layout tree and never becomes the active
+  /// one, it is the pane that was active before the dock took focus.
+  ///
+  /// One viewer tab per group: the second Enter re-points the same editor
+  /// pane (`EditorPane.openFile`) rather than opening another tab. No PTY is
+  /// killed or respawned any more — the editor asks before replacing an
+  /// unsaved buffer, and keeps it if the user cancels.
   async openFileInViewerTab(path: string): Promise<void> {
     if (!path) return;
     const ws = this.active;
@@ -913,16 +957,27 @@ export class WorkspaceManager {
       group = groupOfPane(ws.root, targetId);
       if (!group) return;
     }
+    const cache = this.paneCaches.get(ws.id)!;
     const action = viewerTabAction(this.viewerTabs.get(group.id), tabIds(group));
-    if (action.kind === "reuse") {
-      await this.respawnViewer(ws, action.paneId, path);
+    const viewer = action.kind === "reuse" ? cache.get(action.paneId) : undefined;
+    if (action.kind === "reuse" && viewer instanceof EditorPane) {
+      // Show the tab first, so the unsaved-changes prompt (if any) is asked
+      // over the buffer it is about.
+      const next = activateTabFor(ws.root, action.paneId);
+      if (next !== ws.root) {
+        ws.root = next;
+        this.renderWorkspace(ws);
+        this.persistDebounced();
+      }
+      await viewer.openFile(path);
       return;
     }
-    const spec = newPane(this.resolveShell(this.shells[0]?.name ?? ""), null);
+    const spec = newPane("", null);
+    spec.pane_kind = "editor";
+    spec.file_path = path;
     ws.root = addTab(ws.root, group.id, spec);
     this.viewerTabs.set(group.id, spec.id);
-    const cache = this.paneCaches.get(ws.id)!;
-    const pane = this.createPane(spec, ["ycode", path]);
+    const pane = this.createPane(spec);
     cache.set(spec.id, pane);
     this.renderWorkspace(ws);
     try {
@@ -934,40 +989,6 @@ export class WorkspaceManager {
     this.persistDebounced();
   }
 
-  /// Replace the file shown by an existing viewer tab. The pane id is kept,
-  /// so the tab stays where it is in the strip and nothing else in the layout
-  /// moves; only the PTY behind it is swapped.
-  private async respawnViewer(ws: Workspace, paneId: Uuid, path: string): Promise<void> {
-    const spec = findPane(ws.root, paneId);
-    if (!spec) return;
-    const cache = this.paneCaches.get(ws.id)!;
-    // Not permanent: this tab is not being closed, only re-pointed. The
-    // saved scrollback is dropped explicitly below instead, *after* the kill,
-    // so nothing can race the delete.
-    cache.get(paneId)?.dispose(false);
-    cache.delete(paneId);
-    // `dispose` fires `killPane` without awaiting and Tauri commands run on a
-    // worker pool, so serialize it — otherwise a late kill can land on the
-    // pane we are about to spawn under the same id. Same hazard the file
-    // dock's own restart path handles this way.
-    await api.killPane(paneId).catch(() => {});
-    // The pane id is reused, so `spawn()`'s `loadScrollback` would replay the
-    // *previous* file's ycode screen above the new one. Awaited for the same
-    // reason the kill above is: Tauri commands run on a worker pool, and a
-    // fire-and-forget delete could land after the new pane's load.
-    await api.deleteScrollback(paneId).catch(() => {});
-    const pane = this.createPane(spec, ["ycode", path]);
-    cache.set(paneId, pane);
-    ws.root = activateTabFor(ws.root, paneId);
-    this.renderWorkspace(ws);
-    try {
-      await pane.spawn();
-      pane.focus();
-    } catch (e) {
-      console.error("viewer tab respawn failed", e);
-    }
-  }
-
   /// The label a tab shows: the user's title, else the running program from
   /// the process scan, else the shell name (`src/terminal/tabLabel.ts`).
   tabLabelFor(paneId: Uuid): string {
@@ -975,6 +996,12 @@ export class WorkspaceManager {
     // A files pane has no shell or process: its label is the folder it shows.
     if (spec?.pane_kind === "files") {
       return spec.title || (spec.cwd ? baseName(spec.cwd) : t("files.title"));
+    }
+    // An editor pane: its file's name, marked while it has unsaved edits.
+    if (spec?.pane_kind === "editor") {
+      const base = spec.title || (spec.file_path ? fileName(spec.file_path) : t("editor.untitled"));
+      const pane = this.findPaneById(paneId);
+      return pane instanceof EditorPane && pane.isDirty() ? `${base} ●` : base;
     }
     return tabLabel({
       title: spec?.title ?? null,
@@ -1108,6 +1135,19 @@ export class WorkspaceManager {
     await this.insertSplit(ws, focusId, direction, spec, "files split failed");
   }
 
+  /// Split the focused pane and open an empty editor pane in the new slot
+  /// (its empty state offers "Open file…"). Files reach an editor mostly
+  /// through a files pane's Enter (`openFileInViewerTab`).
+  async splitFocusedEditor(direction: SplitDir): Promise<void> {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const spec = newPane("", null);
+    spec.pane_kind = "editor";
+    spec.file_path = "";
+    await this.insertSplit(ws, focusId, direction, spec, "editor split failed");
+  }
+
   /// Split `anchorId` (or the active pane) with a terminal whose cwd is
   /// `dir` — a files pane's "Open terminal here".
   async splitTerminalAt(anchorId: Uuid | null, dir: string): Promise<void> {
@@ -1150,8 +1190,31 @@ export class WorkspaceManager {
   /// drops the group entirely when its last tab goes, so `Ctrl+Shift+W` keeps
   /// exactly today's meaning: close the active tab, and on the last one close
   /// the pane (spec §4). There is deliberately no tab-specific branch here.
-  private async closePane(id: Uuid): Promise<void> {
-    const ws = this.active;
+  ///
+  /// Resolves `false` when the pane stayed open — the unsaved-changes guard
+  /// (spec §3.5) said no, or a close of it is already waiting on that guard.
+  private async closePane(id: Uuid): Promise<boolean> {
+    // The guard runs first, before anything about the tree is captured: the
+    // prompt is async, and the layout (even the active workspace) can change
+    // while it is open.
+    if (this.closing.has(id)) return false;
+    const guarded = this.findPaneById(id);
+    if (guarded?.canClose) {
+      this.closing.add(id);
+      let ok = false;
+      try {
+        ok = await guarded.canClose();
+      } catch (e) {
+        console.error("close guard failed; keeping the pane", e);
+      } finally {
+        this.closing.delete(id);
+      }
+      if (!ok) return false;
+    }
+    const wsId = this.workspaceOfPane(id);
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    if (!ws) return false;
+    const isActive = ws.id === this.activeId;
     // Captured before the tree is mutated: once the pane is gone so is its
     // spec, and once the group may have unwrapped there is no other way to
     // know which tab should take focus.
@@ -1177,10 +1240,10 @@ export class WorkspaceManager {
       cache.set(spec.id, replacement);
       this.renderWorkspace(ws);
       await replacement.spawn();
-      replacement.focus();
+      if (isActive) replacement.focus();
     } else {
       ws.root = newRoot;
-      this.focusedPaneId = null;
+      if (isActive) this.focusedPaneId = null;
       // Stay inside the group when one of its tabs was closed; otherwise fall
       // back to the first pane on screen, in depth-first order, so the new
       // focus is predictable rather than Map-insertion dependent.
@@ -1188,7 +1251,7 @@ export class WorkspaceManager {
         siblings.find((s) => findPane(ws.root, s)) ?? visiblePanes(ws.root)[0]?.id;
       if (nextId) ws.root = activateTabFor(ws.root, nextId);
       this.renderWorkspace(ws);
-      if (nextId) cache.get(nextId)?.focus();
+      if (nextId && isActive) cache.get(nextId)?.focus();
     }
     this.persistDebounced();
 
@@ -1200,6 +1263,69 @@ export class WorkspaceManager {
     if (wtPath) {
       await this.offerWorktreeRemoval(wtPath);
     }
+    return true;
+  }
+
+  /// Every live editor pane, in every workspace — hidden workspaces keep
+  /// their panes alive, and their unsaved edits with them.
+  private allEditors(): EditorPane[] {
+    const out: EditorPane[] = [];
+    for (const cache of this.paneCaches.values()) {
+      for (const pane of cache.values()) if (pane instanceof EditorPane) out.push(pane);
+    }
+    return out;
+  }
+
+  /// Any unsaved editor anywhere (the `beforeunload` check).
+  hasUnsavedEditors(): boolean {
+    return this.allEditors().some((e) => e.isDirty());
+  }
+
+  /// The close guard for several editors at once (a workspace, the window):
+  /// one prompt listing every unsaved file (closeGuard.closePlan). A single
+  /// dirty editor asks with its own prompt. Resolves true to go ahead.
+  private async confirmCloseEditors(editors: EditorPane[]): Promise<boolean> {
+    const plan = closePlan(
+      // `hasPath` here means "Save can protect it" (a pending recovered
+      // draft cannot be saved from a close prompt).
+      editors.map((e) => ({ name: e.displayName(), dirty: e.isDirty(), hasPath: e.canSaveOnClose() })),
+    );
+    if (plan.kind === "close") return true;
+    const dirty = editors.filter((e) => e.isDirty());
+    if (dirty.length === 1) return dirty[0].canClose();
+    const labels: Record<CloseChoice, string> = {
+      save: t("editor.saveAll"),
+      discard: t("editor.dontSave"),
+      cancel: t("dialog.cancel"),
+    };
+    const ans = await askChoice(
+      t("editor.closePromptMany").replace("{n}", String(plan.names.length)),
+      plan.names.join("\n"),
+      plan.choices.map((id) => ({ id, label: labels[id], primary: id === "save" })),
+    );
+    const answer = (ans?.id as CloseChoice | undefined) ?? null;
+    if (answer !== "save") return closeResult(answer);
+    const saved: boolean[] = [];
+    for (const e of dirty) {
+      const ok = await e.save();
+      saved.push(ok);
+      // Stop at the first save that did not land (a conflict the user
+      // cancelled, a permission error): nothing closes, so asking about the
+      // rest would only be noise.
+      if (!ok) break;
+    }
+    return closeResult(answer, saved);
+  }
+
+  /// The window is closing (main.ts's `onCloseRequested`). Every editor in
+  /// every workspace is asked about, once. On a go-ahead, the drafts of
+  /// buffers the user chose not to save are dropped, so the next launch does
+  /// not offer back edits that were explicitly discarded.
+  async confirmCloseAll(): Promise<boolean> {
+    const editors = this.allEditors();
+    if (!(await this.confirmCloseEditors(editors))) return false;
+    await Promise.all(editors.filter((e) => e.isDirty()).map((e) => e.discardDraft()));
+    return true;
   }
 
   /// Ask the user whether to remove the git worktree at `wtPath`, and do so
@@ -1703,7 +1829,8 @@ export class WorkspaceManager {
     this.config.font_size = next;
     for (const cache of this.paneCaches.values()) {
       for (const pane of cache.values()) {
-        if (pane instanceof TerminalPane) pane.setFontSize(next);
+        // The editor follows the same Ctrl +/-/0 (spec §0.6).
+        if (pane instanceof TerminalPane || pane instanceof EditorPane) pane.setFontSize(next);
       }
     }
     this.persistDebounced();
@@ -1741,52 +1868,3 @@ export { clampFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE, DEFAULT_FONT_SIZE } from "
 // Needed to satisfy `import type { LayoutNode }` at the top-level in other
 // files that import from this module.
 export type { LayoutNode };
-
-/// Walk `root` in place, apply `patch` to the pane whose id matches `id`, and
-/// return true on success. The tree's shape is not altered. Mirrors Rust's
-/// `LayoutNode::find_pane_mut`.
-function findAndMutatePane(
-  root: LayoutNode,
-  id: Uuid,
-  patch: (spec: PaneSpec) => void,
-): boolean {
-  if (root.kind === "pane") {
-    if (root.id === id) {
-      const snapshot: PaneSpec = {
-        id: root.id,
-        title: root.title,
-        shell: root.shell,
-        cwd: root.cwd,
-        startup_cmd: root.startup_cmd,
-        env: root.env,
-        pane_kind: root.pane_kind ?? "terminal",
-        url: root.url ?? null,
-        hotkeys: root.hotkeys ?? [],
-        bg_color: root.bg_color ?? "",
-        worktree_path: root.worktree_path ?? "",
-      };
-      patch(snapshot);
-      root.title = snapshot.title;
-      root.shell = snapshot.shell;
-      root.cwd = snapshot.cwd;
-      root.startup_cmd = snapshot.startup_cmd;
-      root.env = snapshot.env;
-      root.pane_kind = snapshot.pane_kind;
-      root.url = snapshot.url;
-      root.hotkeys = snapshot.hotkeys;
-      root.bg_color = snapshot.bg_color;
-      root.worktree_path = snapshot.worktree_path;
-      return true;
-    }
-    return false;
-  }
-  if (root.kind === "split") {
-    return findAndMutatePane(root.a, id, patch) || findAndMutatePane(root.b, id, patch);
-  }
-  if (root.kind === "tabs") {
-    for (const c of root.children) {
-      if (findAndMutatePane(c, id, patch)) return true;
-    }
-  }
-  return false;
-}

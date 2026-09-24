@@ -92,6 +92,12 @@ describe("paneLabel", () => {
     expect(paneLabel({ ...newBrowserPane(""), title: null }, labels)).toBe("Browser");
     expect(paneLabel({ ...c, title: "Docs" }, labels)).toBe("Docs");
   });
+
+  it("names an editor pane by its file", () => {
+    const ed: PaneSpec = { ...newPane(""), pane_kind: "editor", file_path: "C:\\w\\main.rs" };
+    expect(paneLabel(ed, labels)).toBe("main.rs");
+    expect(paneLabel({ ...ed, title: "Notes" }, labels)).toBe("Notes");
+  });
 });
 
 describe("workspaceIdOfPane", () => {

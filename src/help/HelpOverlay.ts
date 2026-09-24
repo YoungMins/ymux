@@ -26,6 +26,8 @@ const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+Shift+←/→", tKey: "shortcut.swapPane" },
   { keys: "Ctrl+Shift+Z",   tKey: "shortcut.zoom" },
   { keys: "Ctrl+F",         tKey: "shortcut.search" },
+  { keys: "Ctrl+S",         tKey: "shortcut.save" },
+  { keys: "Ctrl+G",         tKey: "shortcut.gotoLine" },
   { keys: "Ctrl++ / Ctrl+-", tKey: "shortcut.fontSize" },
   { keys: "Ctrl+0",         tKey: "shortcut.fontReset" },
   { keys: "Ctrl+Shift+R",   tKey: "shortcut.rename" },

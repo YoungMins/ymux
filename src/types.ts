@@ -17,7 +17,14 @@ export interface ShellProfile {
 }
 
 /// `files` is a GUI file manager with no PTY; its directory is `cwd`.
-export type PaneKind = "terminal" | "browser" | "native_browser" | "embedded_browser" | "files";
+/// `editor` is a GUI text editor with no PTY; its file is `file_path`.
+export type PaneKind =
+  | "terminal"
+  | "browser"
+  | "native_browser"
+  | "embedded_browser"
+  | "files"
+  | "editor";
 
 export interface HotKeyDef {
   label: string;
@@ -39,6 +46,9 @@ export interface PaneSpec {
   hotkeys?: HotKeyDef[];
   bg_color?: string;
   worktree_path?: string;
+  /// The file an `editor` pane has open. Empty = untitled. A plain string,
+  /// not `Option`, for the TOML reason rule 3 gives (see model.rs).
+  file_path?: string;
 }
 
 export type SplitDir = "horizontal" | "vertical";

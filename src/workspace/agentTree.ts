@@ -13,6 +13,7 @@ import type { PaneStatus } from "../terminal/paneStatus";
 import { findPane } from "../layout/LayoutTree";
 import { paneGroups } from "../layout/tabs";
 import { tabLabel } from "../terminal/tabLabel";
+import { fileName } from "../editor/editorModel";
 
 /// localStorage key for per-workspace expansion (spec §1).
 export const EXPANDED_KEY = "ymux.workspaceTree.expanded";
@@ -84,6 +85,10 @@ export function paneStatusToAgentStatus(s: PaneStatus): AgentStatus {
 export function paneLabel(spec: PaneSpec, labels: TreeLabels): string {
   if ((spec.pane_kind ?? "terminal") === "terminal") {
     return spec.title || spec.shell || labels.terminal;
+  }
+  // An editor pane is named by its file, like its tab.
+  if (spec.pane_kind === "editor" && spec.file_path) {
+    return spec.title || fileName(spec.file_path);
   }
   return spec.title || spec.url || labels.browser;
 }

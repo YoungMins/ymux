@@ -2529,6 +2529,11 @@ body,
   color: var(--fg-muted);
   font-size: 12px;
   line-height: 1.5;
+  /* The close guard lists one unsaved file per line. */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .dialog__check {
@@ -2538,4 +2543,240 @@ body,
   color: var(--fg-muted);
   font-size: 12px;
   cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------
+   Editor pane (src/editor/EditorPane.ts)
+
+   The files pane's parts, reused: the same 22px bordered icon buttons and
+   separators in the toolbar, the same bordered --bg box around the content,
+   the same 11px status line. CodeMirror is themed from these tokens too
+   (src/editor/theme.ts), so the editor reads as the surface beside it rather
+   than an embedded widget.
+
+   The one thing that is the editor's own: the unsaved-changes dot before
+   the file name. Hollow when the buffer matches the disk, filled amber
+   (--status-warn) the moment it does not — the state the close guard exists
+   for, visible before anyone reaches for Ctrl+Shift+W.
+--------------------------------------------------------------------------- */
+.editor-pane {
+  min-width: 0;
+}
+
+.editor__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.editor__file {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 6px;
+  line-height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.editor__dot {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-muted);
+  opacity: 0.7;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.editor-pane--dirty .editor__dot {
+  background: var(--status-warn);
+  border-color: var(--status-warn);
+  opacity: 1;
+}
+
+.editor__name {
+  flex: 0 0 auto;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.editor__dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.editor__bar .files__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.editor__bar .files__btn:disabled:hover {
+  color: var(--fg-muted);
+  border-color: var(--border);
+}
+
+.editor__banners {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.editor__banners[hidden] {
+  display: none;
+}
+
+.editor__banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.editor__banner--warn {
+  border-left-color: var(--status-warn);
+}
+
+.editor__banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.editor__banner-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.editor__banner-btn {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.editor__banner-btn:hover {
+  border-color: var(--accent);
+}
+
+.editor__banner-btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editor__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.editor__host {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.editor__host[hidden] {
+  display: none;
+}
+
+.editor__host > .cm-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.editor__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.editor__overlay[hidden] {
+  display: none;
+}
+
+.editor__overlay p {
+  margin: 0;
+  max-width: 52ch;
+  overflow-wrap: anywhere;
+}
+
+.editor__overlay-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.editor__status {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 3px 4px 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.editor__status-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor__status-msg--error {
+  color: var(--status-critical);
+}
+
+.editor__status-facts {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor__dot {
+    transition: none;
+  }
 }

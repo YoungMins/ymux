@@ -7,6 +7,13 @@ describe("i18n completeness (rule 7)", () => {
     expect(translationGaps("files.")).toEqual([]);
   });
 
+  it("has every editor pane string in all 13 languages", () => {
+    expect(t("editor.save")).toBe("Save");
+    expect(translationGaps("editor.")).toEqual([]);
+    expect(translationGaps("shortcut.save")).toEqual([]);
+    expect(translationGaps("shortcut.gotoLine")).toEqual([]);
+  });
+
   it("has every backend error kind in all 13 languages", () => {
     expect(translationGaps("fsError.")).toEqual([]);
   });
