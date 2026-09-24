@@ -52,6 +52,13 @@ opener = { version = "0.7", features = ["reveal"] }
 # nothing in build time.
 png = "0.17"
 
+# Content hashing for `textfile::ContentStamp`, the guard that stops the
+# editor pane silently overwriting a file an agent rewrote underneath it.
+# Pure Rust and already in the dependency graph via Tauri, and deliberately
+# NOT behind `desktop` for the same reason as `png`: the stamp logic is what
+# is worth unit-testing and those tests run on Linux CI.
+sha2 = "0.10"
+
 # Tauri runtime is gated behind the `desktop` feature, which is on by default
 # so that `pnpm tauri dev` / `pnpm tauri build` work out of the box on the
 # Windows target machines this app is built for. Linux dev hosts that only
@@ -67,9 +74,14 @@ tauri = { version = "=2.10.3", optional = true, features = ["unstable", "devtool
 # need it, and rustls keeps the binary footprint minimal vs. openssl.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"], optional = true }
 
-# URL parsing for native webview navigation. Already in the dependency tree
-# via Tauri; listed explicitly so webview.rs can reference `url::Url`.
-url = { version = "2", optional = true }
+# URL parsing for native webview navigation, and for the IPC origin check
+# that gates the filesystem/git command surface. Already in the dependency
+# tree via Tauri, and pure Rust with no system deps, so deliberately NOT
+# behind `desktop`: `fspath::origin_is_local` is the security decision on
+# that surface and has to be unit-testable under
+# `cargo test --no-default-features --lib -p ymux` on Linux CI, for the same
+# reason `ypath` and `png` are unconditional.
+url = "2"
 
 # Pane-to-pane IPC. Desktop-only because the server requires the Tauri
 # AppHandle to emit events to the frontend.
@@ -88,6 +100,19 @@ tauri-plugin-notification = { version = "2", optional = true }
 # deliberately left off: ymux ships on Windows and macOS only.
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"], optional = true }
 
+# Move-to-trash for the files pane's delete. `ydir` today deletes with
+# `remove_dir_all` and no confirmation; the GUI default is trash + a confirm
+# dialog, with permanent delete on Shift+Delete. Desktop-only: on Linux it
+# would pull the freedesktop/DBus stack that `--no-default-features` exists
+# to avoid, and ymux ships on Windows and macOS.
+trash = { version = "5.2", optional = true }
+
+[dev-dependencies]
+# Real-filesystem round-trips for `fsops`. The semantics worth pinning
+# (rename silently overwriting, a directory symlink needing `remove_dir`)
+# are per-platform, so these only build in the desktop configuration.
+tempfile = "3"
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.56", features = [
     "Win32_System_Registry",
@@ -97,7 +122,7 @@ windows = { version = "0.56", features = [
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:url", "dep:tauri-plugin-notification", "dep:arboard"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:tauri-plugin-notification", "dep:arboard", "dep:trash"]
 
 [profile.release]
 lto = true

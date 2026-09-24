@@ -1339,6 +1339,58 @@ const strings: Translations = {
     fr: "Impossible de déterminer le répertoire du volet", ar: "تعذّر تحديد دليل اللوحة", pt: "Não foi possível determinar o diretório do painel",
     ru: "Не удалось определить каталог панели", tr: "Bölmenin dizini belirlenemedi", de: "Verzeichnis des Bereichs konnte nicht ermittelt werden", vi: "Không xác định được thư mục của ô",
   },
+  // Backend error kinds (`YmuxError::kind()` in src-tauri/src/error.rs).
+  // The wire format is `{ kind, message }`; the frontend branches on `kind`
+  // and shows one of these instead of the English `message`. Adding a
+  // variant there means adding a key here (rule 7).
+  "fsError.not_found": {
+    en: "Not found.", ko: "찾을 수 없습니다.", ja: "見つかりません。",
+    zh: "未找到。", hi: "नहीं मिला।", es: "No encontrado.",
+    fr: "Introuvable.", ar: "غير موجود.", pt: "Não encontrado.",
+    ru: "Не найдено.", tr: "Bulunamadı.", de: "Nicht gefunden.", vi: "Không tìm thấy.",
+  },
+  "fsError.permission_denied": {
+    en: "Permission denied.", ko: "권한이 없습니다.", ja: "アクセス権がありません。",
+    zh: "权限不足。", hi: "अनुमति नहीं है।", es: "Permiso denegado.",
+    fr: "Permission refusée.", ar: "تم رفض الإذن.", pt: "Permissão negada.",
+    ru: "Доступ запрещён.", tr: "İzin reddedildi.", de: "Zugriff verweigert.", vi: "Không có quyền.",
+  },
+  "fsError.already_exists": {
+    en: "Already exists.", ko: "이미 있습니다.", ja: "すでに存在します。",
+    zh: "已存在。", hi: "पहले से मौजूद है।", es: "Ya existe.",
+    fr: "Existe déjà.", ar: "موجود بالفعل.", pt: "Já existe.",
+    ru: "Уже существует.", tr: "Zaten var.", de: "Existiert bereits.", vi: "Đã tồn tại.",
+  },
+  "fsError.not_utf8": {
+    en: "Not a UTF-8 text file.", ko: "UTF-8 텍스트 파일이 아닙니다.", ja: "UTF-8 のテキストファイルではありません。",
+    zh: "不是 UTF-8 文本文件。", hi: "यह UTF-8 टेक्स्ट फ़ाइल नहीं है।", es: "No es un archivo de texto UTF-8.",
+    fr: "Ce n'est pas un fichier texte UTF-8.", ar: "ليس ملفًا نصيًا بترميز UTF-8.", pt: "Não é um arquivo de texto UTF-8.",
+    ru: "Это не текстовый файл в UTF-8.", tr: "UTF-8 metin dosyası değil.", de: "Keine UTF-8-Textdatei.", vi: "Không phải tệp văn bản UTF-8.",
+  },
+  "fsError.too_large": {
+    en: "File is too large to edit.", ko: "파일이 너무 커서 편집할 수 없습니다.", ja: "ファイルが大きすぎて編集できません。",
+    zh: "文件太大，无法编辑。", hi: "फ़ाइल संपादित करने के लिए बहुत बड़ी है।", es: "El archivo es demasiado grande para editarlo.",
+    fr: "Fichier trop volumineux pour être modifié.", ar: "الملف أكبر من أن يُحرَّر.", pt: "O arquivo é grande demais para editar.",
+    ru: "Файл слишком большой для редактирования.", tr: "Dosya düzenlenemeyecek kadar büyük.", de: "Datei ist zu groß zum Bearbeiten.", vi: "Tệp quá lớn để chỉnh sửa.",
+  },
+  "fsError.conflict": {
+    en: "The file changed on disk since it was opened.", ko: "파일을 연 뒤 디스크에서 변경되었습니다.", ja: "開いた後にディスク上でファイルが変更されました。",
+    zh: "打开后文件在磁盘上已被更改。", hi: "खोलने के बाद डिस्क पर फ़ाइल बदल गई है।", es: "El archivo cambió en el disco desde que se abrió.",
+    fr: "Le fichier a changé sur le disque depuis son ouverture.", ar: "تغيّر الملف على القرص منذ فتحه.", pt: "O arquivo mudou no disco desde que foi aberto.",
+    ru: "Файл на диске изменился после открытия.", tr: "Dosya açıldığından beri diskte değişti.", de: "Die Datei wurde seit dem Öffnen auf der Festplatte geändert.", vi: "Tệp đã thay đổi trên đĩa kể từ khi mở.",
+  },
+  "fsError.not_a_repo": {
+    en: "Not a git repository.", ko: "git 저장소가 아닙니다.", ja: "git リポジトリではありません。",
+    zh: "不是 git 仓库。", hi: "यह git रिपॉज़िटरी नहीं है।", es: "No es un repositorio git.",
+    fr: "Ce n'est pas un dépôt git.", ar: "ليس مستودع git.", pt: "Não é um repositório git.",
+    ru: "Это не репозиторий git.", tr: "Bir git deposu değil.", de: "Kein Git-Repository.", vi: "Không phải kho git.",
+  },
+  "fsError.forbidden": {
+    en: "Blocked: only ymux itself may do this, not embedded web content.", ko: "차단됨: 내장 웹 콘텐츠가 아니라 ymux 자신만 수행할 수 있습니다.", ja: "ブロックしました: 埋め込みウェブコンテンツではなく ymux 自身のみが実行できます。",
+    zh: "已阻止：只有 ymux 自身可以执行此操作，嵌入的网页内容不可以。", hi: "अवरुद्ध: यह केवल ymux स्वयं कर सकता है, एम्बेड की गई वेब सामग्री नहीं।", es: "Bloqueado: solo ymux puede hacer esto, no el contenido web incrustado.",
+    fr: "Bloqué : seul ymux peut faire cela, pas le contenu web intégré.", ar: "محظور: يمكن لـ ymux وحده فعل ذلك، وليس محتوى الويب المضمّن.", pt: "Bloqueado: apenas o ymux pode fazer isso, não o conteúdo web incorporado.",
+    ru: "Заблокировано: это может делать только сам ymux, но не встроенное веб-содержимое.", tr: "Engellendi: bunu yalnızca ymux yapabilir, gömülü web içeriği yapamaz.", de: "Blockiert: Nur ymux selbst darf das, nicht eingebetteter Webinhalt.", vi: "Đã chặn: chỉ ymux mới được làm điều này, không phải nội dung web nhúng.",
+  },
   "worktree.addFailed": {
     en: "Failed to create worktree:", ko: "worktree 생성 실패:", ja: "worktree の作成に失敗しました:",
     zh: "创建 worktree 失败：", hi: "worktree बनाने में विफल:", es: "No se pudo crear el worktree:",

@@ -532,6 +532,66 @@ pub fn paste_clipboard_image(state: State<'_, AppState>) -> YmuxResult<Option<St
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
+// ---------------------------------------------------------------------------
+// Git pane commands. Unlike the `git_worktree_*` commands below — which
+// predate the guard and are reached only from ymux's own worktree modal —
+// these carry `guard_local`, because they are part of the new surface
+// spec §1.5 rule 1 covers: they read repository contents and, in
+// `git_checkout`'s case, change the working tree.
+//
+// All `#[tauri::command(async)]`: `tools/ygit` blocks its render thread on
+// every git call, and a slow repository must not be able to do that to the
+// window.
+// ---------------------------------------------------------------------------
+
+/// Commits reachable from any ref, newest first, in the repository
+/// containing `cwd`. An empty repository returns an empty list.
+#[tauri::command(async)]
+pub fn git_log(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    cwd: String,
+    limit: u32,
+    skip: u32,
+) -> YmuxResult<Vec<git::CommitInfo>> {
+    crate::fspath::guard_local(&webview, &request, "git_log")?;
+    git::log(Path::new(&cwd), limit, skip)
+}
+
+/// Local and remote branches, with the current one named.
+#[tauri::command(async)]
+pub fn git_branches(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    cwd: String,
+) -> YmuxResult<git::BranchList> {
+    crate::fspath::guard_local(&webview, &request, "git_branches")?;
+    git::branches(Path::new(&cwd))
+}
+
+/// Check out `branch`. See [`crate::git::checkout`] for what that runs.
+#[tauri::command(async)]
+pub fn git_checkout(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    cwd: String,
+    branch: String,
+) -> YmuxResult<()> {
+    crate::fspath::guard_local(&webview, &request, "git_checkout")?;
+    git::checkout(Path::new(&cwd), &branch)
+}
+
+/// Top-level directory of the repository containing `cwd`.
+#[tauri::command(async)]
+pub fn git_repo_root(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    cwd: String,
+) -> YmuxResult<String> {
+    crate::fspath::guard_local(&webview, &request, "git_repo_root")?;
+    git::repo_root_checked(Path::new(&cwd))
+}
+
 /// Check whether `cwd` sits inside a git repository (main worktree or a
 /// linked worktree). Thin wrapper over [`crate::git::is_git_repo`].
 #[tauri::command]

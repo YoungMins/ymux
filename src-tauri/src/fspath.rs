@@ -46,6 +46,153 @@ pub fn caller_allowed(label: &str) -> bool {
     label == "main"
 }
 
+/// Does an IPC request's `Origin` header name ymux's own document?
+///
+/// The label half ([`caller_allowed`]) is **not sufficient** on its own, and
+/// this is the evidence, read out of the pinned dependency sources rather
+/// than assumed:
+///
+///  - A `PaneKind::Browser` pane is an `<iframe>` *inside* the `main`
+///    webview (`frame-src http: https:` in `tauri.conf.json`), so anything
+///    running in it sees `webview.label() == "main"`.
+///  - wry hands every initialization script to WebView2's
+///    `AddScriptToExecuteOnDocumentCreated` and drops the
+///    `for_main_frame_only` flag on the floor (`wry-0.54.4`
+///    `src/webview2/mod.rs:494`; the flag is documented as ignored on
+///    Windows at `src/lib.rs:1007`). Tauri asks for main-frame-only
+///    (`tauri-2.10.3` `src/manager/webview.rs:156`) and does not get it, so
+///    an iframe is handed `window.__TAURI_INTERNALS__` *including the
+///    invoke key* — which is the only pre-dispatch check Tauri performs
+///    (`src/webview/mod.rs:1729`).
+///
+/// The origin, unlike the label, does distinguish them. Tauri's own JS
+/// reaches the IPC with `fetch()` (`scripts/ipc-protocol.js`), and on that
+/// path the `Origin` header is read from the real HTTP request
+/// (`src/ipc/protocol.rs:491`, stored at `:549`) and forwarded to the
+/// command through `tauri::ipc::Request::headers()`. `Origin` is a
+/// forbidden header name, so a page cannot set it — the browser does, from
+/// the frame's own origin.
+///
+/// Compared component-wise on purpose: `Url::origin()` returns an *opaque*
+/// origin for a non-special scheme, and two opaque origins never compare
+/// equal, so `a.origin() == b.origin()` would reject macOS's own
+/// `tauri://localhost`.
+///
+/// `allowed` is built from the **configuration** ([`allowed_origins`]), not
+/// from whatever the webview currently shows. That distinction is
+/// load-bearing: comparing against `webview.url()` would mean that if the
+/// `main` webview were ever navigated to a remote page, that page's origin
+/// would trivially equal the app origin and the guard would pass. Tauri's
+/// own `is_local_url` compares against the configured app URL for the same
+/// reason. (Today `BrowserPane`'s iframe carries a `sandbox` without
+/// `allow-top-navigation` and no navigation handler exists, so the
+/// navigation is not reachable — the guard simply does not depend on that
+/// staying true.)
+///
+/// Fails closed. A missing header, `null` (a sandboxed or `data:` frame), an
+/// unparseable value or a host-only near-miss such as
+/// `http://tauri.localhost.evil.com` all return `false`.
+pub fn origin_is_local<S: AsRef<str>>(origin: Option<&str>, allowed: &[S]) -> bool {
+    let Some(origin) = origin else {
+        return false;
+    };
+    allowed.iter().any(|a| same_origin(origin, a.as_ref()))
+}
+
+/// Component-wise origin equality for one candidate.
+fn same_origin(origin: &str, app_url: &str) -> bool {
+    if origin.trim().eq_ignore_ascii_case("null") {
+        return false;
+    }
+    let (Ok(got), Ok(want)) = (url::Url::parse(origin), url::Url::parse(app_url)) else {
+        return false;
+    };
+    let (Some(got_host), Some(want_host)) = (got.host_str(), want.host_str()) else {
+        // An origin with no authority (`data:`, `file:`) is never ymux's
+        // document, and an app URL without one is a configuration we do not
+        // ship — either way, refuse.
+        return false;
+    };
+    got.scheme().eq_ignore_ascii_case(want.scheme())
+        && got_host.eq_ignore_ascii_case(want_host)
+        && got.port_or_known_default() == want.port_or_known_default()
+}
+
+/// The `Origin` header of the IPC request now being served, if any.
+///
+/// Split out from [`guard_local`] so the header-name lookup is in one place
+/// and the decision itself stays in the pure [`origin_is_local`].
+#[cfg(feature = "desktop")]
+fn request_origin<'a>(request: &'a tauri::ipc::Request<'_>) -> Option<&'a str> {
+    request.headers().get("Origin")?.to_str().ok()
+}
+
+/// The single gate on the filesystem / text-file / git command surface.
+///
+/// Called on the first line of every one of those commands. It is not
+/// defence in depth — it is the *only* defence, because `src-tauri/build.rs`
+/// is a bare `tauri_build::build()` with no `AppManifest`, so
+/// `RuntimeAuthority::has_app_manifest()` is false and Tauri skips the ACL
+/// check entirely for ymux's own commands (`tauri-2.10.3`
+/// `src/webview/mod.rs:1802`). The capability files govern `core:` and
+/// plugin permissions only; adding ymux's commands to one would require an
+/// `AppManifest`, which would switch ACL enforcement on for all ~50
+/// existing commands at once. See the spec's §1.5.
+///
+/// `cmd` only names the caller in the error message.
+#[cfg(feature = "desktop")]
+pub fn guard_local(
+    webview: &tauri::Webview,
+    request: &tauri::ipc::Request<'_>,
+    cmd: &str,
+) -> crate::YmuxResult<()> {
+    if !caller_allowed(webview.label()) {
+        return Err(crate::YmuxError::Forbidden(format!(
+            "{cmd}: only ymux's own webview may call this (label {:?})",
+            webview.label()
+        )));
+    }
+    if !origin_is_local(request_origin(request), &allowed_origins(webview)) {
+        return Err(crate::YmuxError::Forbidden(format!(
+            "{cmd}: only ymux's own document may call this, not embedded web content"
+        )));
+    }
+    Ok(())
+}
+
+/// The origins ymux's own document can legitimately have, derived from the
+/// running configuration rather than from the webview's current URL.
+///
+/// Mirrors `AppManager::tauri_protocol_url` (`tauri-2.10.3`
+/// `src/manager/mod.rs:331`): Windows and Android serve the app over
+/// `http(s)://tauri.localhost`, everything else over `tauri://localhost`.
+/// The dev-server origin is added only in a dev build, so a release binary
+/// never accepts `http://localhost:1420`.
+#[cfg(feature = "desktop")]
+fn allowed_origins(webview: &tauri::Webview) -> Vec<String> {
+    use tauri::Manager;
+    let cfg = webview.config();
+
+    let https = cfg.app.windows.iter().any(|w| w.use_https_scheme);
+    let mut out = Vec::with_capacity(2);
+    if cfg!(windows) || cfg!(target_os = "android") {
+        out.push(if https {
+            "https://tauri.localhost".to_string()
+        } else {
+            "http://tauri.localhost".to_string()
+        });
+    } else {
+        out.push("tauri://localhost".to_string());
+    }
+
+    #[cfg(dev)]
+    if let Some(dev_url) = &cfg.build.dev_url {
+        out.push(dev_url.to_string());
+    }
+
+    out
+}
+
 /// Longest raw candidate worth looking at. Comfortably past any real path
 /// (`MAX_PATH` is 260, and even the extended limit is 32767) while keeping a
 /// pathological line from turning into a long syscall.
@@ -297,16 +444,30 @@ const RUNNABLE_EXTENSIONS: &[&str] = &[
     "pkg",
     "mpkg",
     "term",
+    // ClickOnce application reference: opening one downloads and runs.
+    "appref-ms",
 ];
 
 /// Should this path be revealed in the file manager instead of opened?
 ///
-/// Directories are opened (that *is* "show it in the file manager"); files
-/// whose extension would execute are revealed.
-pub fn should_reveal(path: &Path, is_dir: bool) -> bool {
-    if is_dir {
-        return false;
-    }
+/// Files whose extension would execute are revealed; plain directories are
+/// opened, because that *is* "show it in the file manager".
+///
+/// The extension is checked **before** `is_dir`, and that order is
+/// load-bearing: a macOS `.app` (and `.pkg`, `.workflow`, `.mpkg`) is a
+/// *directory*, so an `is_dir` early return would send it to `opener::open`
+/// — which is `open Foo.app`, i.e. launch the application. A directory that
+/// merely happens to be named `foo.exe` gets revealed instead of opened,
+/// which is harmless.
+///
+/// This is a denylist and so cannot be complete: a new script host with a
+/// new extension, or a file type the user has associated with an
+/// interpreter, is not covered. It is the reason nothing on the filesystem
+/// command surface calls `opener::open` without going through here.
+pub fn should_reveal(path: &Path, _is_dir: bool) -> bool {
+    // `_is_dir` is no longer consulted, but stays in the signature so the
+    // caller keeps paying for the `metadata` call it needs anyway and so
+    // this is a drop-in for the previous behaviour.
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| {
@@ -403,6 +564,110 @@ mod tests {
         assert!(!caller_allowed("eb-main"));
         assert!(!caller_allowed(""));
         assert!(!caller_allowed("Main"));
+    }
+
+    /// The app origins ymux actually runs under: `tauri://localhost` on
+    /// macOS, `http://tauri.localhost` in a Windows release build, and the
+    /// Vite dev server under `pnpm tauri dev`.
+    const APP_URLS: &[&str] = &[
+        "tauri://localhost/",
+        "http://tauri.localhost/",
+        "http://localhost:1420/",
+    ];
+
+    #[test]
+    fn origin_accepts_ymuxs_own_document() {
+        assert!(origin_is_local(Some("tauri://localhost"), &[APP_URLS[0]]));
+        assert!(origin_is_local(
+            Some("http://tauri.localhost"),
+            &[APP_URLS[1]]
+        ));
+        assert!(origin_is_local(
+            Some("http://localhost:1420"),
+            &[APP_URLS[2]]
+        ));
+        // A scheme is case-insensitive per RFC 3986, and so is a host.
+        assert!(origin_is_local(Some("TAURI://LocalHost"), &[APP_URLS[0]]));
+        // A dev build allows the app origin *and* the dev server; any one
+        // match is enough.
+        assert!(origin_is_local(
+            Some("http://localhost:1420"),
+            &[APP_URLS[1], APP_URLS[2]]
+        ));
+    }
+
+    /// The list is built from configuration, never from the page currently
+    /// loaded. If it were the current URL, a `main` webview that had been
+    /// navigated to a remote page would hand that page an origin equal to
+    /// the app's and the guard would pass.
+    #[test]
+    fn a_remote_page_is_refused_even_if_it_is_what_main_is_showing() {
+        // "main is showing https://evil.example" is simply not expressible:
+        // the allow-list never contains a remote origin.
+        let allowed = [APP_URLS[1]];
+        assert!(!origin_is_local(Some("https://evil.example"), &allowed));
+        // An empty allow-list refuses everything rather than allowing it.
+        let none: [&str; 0] = [];
+        assert!(!origin_is_local(Some("http://tauri.localhost"), &none));
+    }
+
+    /// The case the label check cannot see: a page in a `browser` pane is an
+    /// iframe inside the `main` webview, so only its origin gives it away.
+    #[test]
+    fn origin_rejects_remote_web_content() {
+        for app in APP_URLS {
+            assert!(!origin_is_local(Some("https://evil.example"), &[*app]));
+            assert!(!origin_is_local(Some("http://evil.example"), &[*app]));
+        }
+        // Not even when every app origin is on the list at once.
+        assert!(!origin_is_local(Some("https://evil.example"), APP_URLS));
+    }
+
+    /// Fail-closed cases. A missing header is the important one: Tauri's
+    /// `postMessage` fallback carries no real headers, and accepting it
+    /// would also accept a forged `Origin` on that path.
+    #[test]
+    fn origin_fails_closed() {
+        let app = [APP_URLS[1]];
+        assert!(!origin_is_local(None, &app));
+        // A sandboxed iframe or a `data:`/`blob:` document.
+        assert!(!origin_is_local(Some("null"), &app));
+        assert!(!origin_is_local(Some(" NULL "), &app));
+        assert!(!origin_is_local(Some(""), &app));
+        assert!(!origin_is_local(Some("not a url"), &app));
+        // No authority at all.
+        assert!(!origin_is_local(Some("data:text/html,x"), &app));
+        // An unparseable entry on the allow-list must not degrade into
+        // "allow".
+        assert!(!origin_is_local(
+            Some("http://tauri.localhost"),
+            &["nonsense"]
+        ));
+    }
+
+    /// The near-misses a naive `starts_with` or `contains` would wave
+    /// through.
+    #[test]
+    fn origin_rejects_host_and_port_near_misses() {
+        let app = ["http://tauri.localhost/"];
+        assert!(!origin_is_local(
+            Some("http://tauri.localhost.evil.example"),
+            &app
+        ));
+        assert!(!origin_is_local(Some("http://eviltauri.localhost"), &app));
+        // Scheme must match: an https page is not the app.
+        assert!(!origin_is_local(Some("https://tauri.localhost"), &app));
+
+        // Port must match, and the default must not be confused with a
+        // different explicit one.
+        let dev = ["http://localhost:1420/"];
+        assert!(!origin_is_local(Some("http://localhost:1421"), &dev));
+        assert!(!origin_is_local(Some("http://localhost"), &dev));
+        // ...but an explicit default port is the same origin.
+        assert!(origin_is_local(
+            Some("http://localhost:80"),
+            &["http://localhost/"]
+        ));
     }
 
     #[test]
@@ -606,9 +871,27 @@ mod tests {
             "a.app",
             "a.command",
             "a.msi",
+            "a.appref-ms",
         ] {
             assert!(should_reveal(Path::new(name), false), "{name}");
         }
+    }
+
+    /// A macOS `.app` (and `.pkg`, `.workflow`, `.mpkg`) is a **directory**.
+    /// An `is_dir` early return therefore sent it to `opener::open`, which
+    /// is `open Foo.app` — launching the application. The extension has to
+    /// be consulted before `is_dir`, so this pins the order.
+    #[test]
+    fn a_bundle_is_a_directory_and_must_still_be_revealed() {
+        for name in ["Foo.app", "Installer.pkg", "x.mpkg", "y.workflow"] {
+            assert!(
+                should_reveal(Path::new(name), true),
+                "{name} is a directory that would otherwise be launched"
+            );
+        }
+        // An ordinary directory still opens in the file manager.
+        assert!(!should_reveal(Path::new("/srv/project"), true));
+        assert!(!should_reveal(Path::new("notes.txt"), false));
     }
 
     #[test]
@@ -623,9 +906,11 @@ mod tests {
         ] {
             assert!(!should_reveal(Path::new(name), false), "{name}");
         }
-        // A directory *is* the file-manager case, so it opens.
+        // A plain directory *is* the file-manager case, so it opens.
         assert!(!should_reveal(Path::new("scripts"), true));
-        assert!(!should_reveal(Path::new("bundle.app"), true));
+        // `bundle.app` used to be asserted here as "opens", which was the
+        // bug: on macOS a `.app` is a directory and `open Foo.app` launches
+        // it. See `a_bundle_is_a_directory_and_must_still_be_revealed`.
     }
 
     #[test]

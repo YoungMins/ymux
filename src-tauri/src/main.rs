@@ -69,6 +69,32 @@ fn main() {
             ymux_lib::commands::get_agent_session,
             ymux_lib::commands::clear_agent_session,
             ymux_lib::commands::paste_clipboard_image,
+            // The filesystem / text-file / git surface for the files,
+            // editor and git panes. Every one of these carries
+            // `fspath::guard_local` on its first line; see that function
+            // for why an in-command check is the only gate available.
+            // Deliberately NOT added to any capability file: declaring
+            // app-command permissions requires an `AppManifest`, and
+            // introducing one would switch Tauri's ACL enforcement on for
+            // every command below at once.
+            ymux_lib::fsops::fs_list_dir,
+            ymux_lib::fsops::fs_roots,
+            ymux_lib::fsops::fs_home_dir,
+            ymux_lib::fsops::fs_stat,
+            ymux_lib::fsops::fs_create_dir,
+            ymux_lib::fsops::fs_create_file,
+            ymux_lib::fsops::fs_rename,
+            ymux_lib::fsops::fs_copy,
+            ymux_lib::fsops::fs_move,
+            ymux_lib::fsops::fs_delete,
+            ymux_lib::fsops::fs_read_text,
+            ymux_lib::fsops::fs_write_text,
+            ymux_lib::fsops::fs_reveal,
+            ymux_lib::fsops::fs_open_default,
+            ymux_lib::commands::git_log,
+            ymux_lib::commands::git_branches,
+            ymux_lib::commands::git_checkout,
+            ymux_lib::commands::git_repo_root,
             ymux_lib::commands::git_is_repo,
             ymux_lib::commands::git_worktree_add,
             ymux_lib::commands::git_worktree_remove,

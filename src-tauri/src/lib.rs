@@ -16,11 +16,13 @@ pub mod error;
 // policy and reveal-vs-open rules are the parts worth testing, and they run
 // under `cargo test --no-default-features --lib -p ymux` on Linux CI.
 pub mod fspath;
+pub mod fsx;
 pub mod git;
 pub mod paste_images;
 pub mod pty;
 pub mod scrollback;
 pub mod shell;
+pub mod textfile;
 
 // Reading an image off the OS clipboard. Desktop-only because `arboard` pulls
 // X11/Wayland system deps on Linux; the PNG encoding it needs is in the
@@ -35,6 +37,13 @@ pub mod clipboard_image;
 // correctly without having to reach across crate boundaries.
 #[cfg(feature = "desktop")]
 pub mod commands;
+
+// Filesystem command surface for the files and editor panes. Desktop-only
+// because every command takes a `Webview` + `ipc::Request` (the `guard_local`
+// gate) and returns through the Tauri IPC. The decisions it makes live in
+// the ungated `fsx`/`textfile`.
+#[cfg(feature = "desktop")]
+pub mod fsops;
 
 // Update checker. Feature-gated the same way as `commands` because it emits
 // Tauri events and pulls `reqwest` — both only relevant in the desktop build.
