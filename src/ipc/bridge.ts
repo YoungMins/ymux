@@ -15,6 +15,7 @@ import type {
   Uuid,
 } from "../types";
 import type { YTheme, ConfigPathKind } from "../settings/types";
+import type { ResumePlan } from "../terminal/resumePlan";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -209,6 +210,19 @@ export const api = {
   /// frontend must re-emit real bounds via setEmbeddedBrowserBounds).
   setEmbeddedBrowserVisible: (id: string, visible: boolean): Promise<void> =>
     call("set_embedded_browser_visible", { id, visible }),
+
+  /// The resume plan for a pane, or null when it should start normally.
+  /// Asked before `spawn()` decides whether to replay scrollback: a pane that
+  /// resumes its agent skips the replay entirely (spec §4/§5). `startupCmd` is
+  /// the pane's own saved startup command, so a selector it already carries
+  /// can be stripped instead of fighting ours.
+  getAgentSession: (id: Uuid, startupCmd?: string): Promise<ResumePlan | null> =>
+    call("get_agent_session", { paneId: id, startupCmd: startupCmd ?? null }),
+
+  /// Forget a pane's agent session. Called when the user closes a pane for
+  /// good, mirroring `deleteScrollback`.
+  clearAgentSession: (id: Uuid): Promise<void> =>
+    call("clear_agent_session", { paneId: id }),
 
   /// Load the shared ymux/yCode color palette from `<config_dir>/theme.toml`.
   /// Returns the default Night Owl-inspired palette if no file exists yet.

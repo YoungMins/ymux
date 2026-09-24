@@ -26,6 +26,12 @@ import {
 import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
+import {
+  spawnAction,
+  shouldPersistScrollback,
+  describeAge,
+  type ResumePlan,
+} from "./resumePlan";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
 import { decideImagePaste, preparePaste } from "./paste";
@@ -102,6 +108,10 @@ export class TerminalPane implements Pane {
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
+  /// The plan this pane came up with, once `spawn()` has asked for one.
+  /// Non-null means the agent was resumed, so this pane neither restored
+  /// nor saves scrollback for the rest of its life (spec §5).
+  private resumePlan: ResumePlan | null = null;
   private spec: PaneSpec;
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
@@ -485,11 +495,26 @@ export class TerminalPane implements Pane {
     }
     const { cols, rows } = this.currentDims();
 
+    // Ask the backend whether this pane held an agent mid-conversation. A
+    // failure here must never block spawn — the pane then behaves exactly as
+    // it always did.
+    try {
+      this.resumePlan =
+        (await api.getAgentSession(this.id, this.spec.startup_cmd ?? undefined)) ??
+        null;
+    } catch {
+      this.resumePlan = null;
+    }
+    const action = spawnAction({
+      plan: this.resumePlan,
+      persistEnabled: this.opts.persistScrollback?.() ?? false,
+    });
+
     // Restore prior scrollback (if persistence is enabled and a save exists)
     // BEFORE the live PTY listener is registered below, so replayed history
     // always renders above anything the shell writes this session. A load
     // failure must never block spawn, hence the try/catch swallow.
-    if (this.opts.persistScrollback?.()) {
+    if (action.kind === "restore") {
       try {
         const prior = await api.loadScrollback(this.id);
         if (prior) {
@@ -555,7 +580,11 @@ export class TerminalPane implements Pane {
       await api.spawnPane({
         id: this.id,
         shell: this.spec.shell,
-        cwd: this.spec.cwd ?? null,
+        // A resumed session is spawned in the directory its *transcript*
+        // belongs to, not the pane's saved `cwd`. Claude sessions are
+        // project-scoped, so resuming one from anywhere else finds nothing,
+        // and the saved cwd may have drifted since the session was recorded.
+        cwd: this.resumePlan?.cwd ?? this.spec.cwd ?? null,
         rows,
         cols,
         argv: this.opts.argv,
@@ -582,16 +611,19 @@ export class TerminalPane implements Pane {
       // this itself; the frontend knows when the terminal is actually ready
       // to accept input, which avoids races with the shell's own init
       // output.
-      if (this.spec.startup_cmd) {
+      // A resumed agent's command replaces the pane's own startup command.
+      // The backend has already merged the two, stripping any selector the
+      // saved one carried, so `claude -c` and our `--resume <id>` are not
+      // two selectors fighting (spec §3).
+      const startup = this.resumePlan?.command ?? this.spec.startup_cmd;
+      if (startup) {
+        if (this.resumePlan) this.writeResumeBanner(this.resumePlan);
         setTimeout(() => {
           // Same reason as the HotKeyBar's onSubmit: this write bypasses
           // xterm's onData, so tell the status machine a command started or
           // the pane would sit at `idle` while the command runs.
           this.statusMachine.onSubmit(Date.now());
-          void api.writePane(
-            this.id,
-            ENCODER.encode(`${this.spec.startup_cmd}\r`),
-          );
+          void api.writePane(this.id, ENCODER.encode(`${startup}\r`));
         }, 200);
       }
     } catch (e) {
@@ -1000,6 +1032,28 @@ export class TerminalPane implements Pane {
     }
   }
 
+  /// One dim line above the resumed conversation, e.g.
+  /// `── 세션 복원 (claude · 3시간 전) ──`. No prompt and no modal: the pane
+  /// is a terminal, and if the resume is wrong Ctrl-C is cheaper than a
+  /// dialog on every launch (spec §4).
+  ///
+  /// Every part goes through i18n (rule 7). The age suffix is appended
+  /// straight after the number, so each translation carries whatever
+  /// separator its own language wants.
+  private writeResumeBanner(plan: ResumePlan): void {
+    const { unit, count } = describeAge(plan.age_secs);
+    const age =
+      unit === "now"
+        ? t("terminal.agentAgeNow")
+        : unit === "minutes"
+          ? `${count}${t("terminal.agentAgeMinutes")}`
+          : `${count}${t("terminal.agentAgeHours")}`;
+    const label = t("terminal.agentResumed");
+    this.term.write(
+      `\x1b[2m── ${label} (${plan.agent} · ${age}) ──\x1b[0m\r\n`,
+    );
+  }
+
   private currentDims(): { cols: number; rows: number } {
     const cols = this.term.cols || 80;
     const rows = this.term.rows || 24;
@@ -1012,7 +1066,14 @@ export class TerminalPane implements Pane {
   private scheduleScrollbackSave(): void {
     if (
       !shouldSaveScrollback({
-        persistEnabled: this.opts.persistScrollback?.() ?? false,
+        persistEnabled: shouldPersistScrollback({
+          persistEnabled: this.opts.persistScrollback?.() ?? false,
+          // A resumed pane neither restored nor saves: the blob would be a
+          // picture of a conversation that is being continued for real, and
+          // keeping it only gives the next launch something to replay above
+          // the resumed session (spec §5).
+          resuming: this.resumePlan !== null,
+        }),
         hadUserActivity: this.hadUserActivity,
       })
     ) {
@@ -1058,6 +1119,9 @@ export class TerminalPane implements Pane {
       // no-op if there's nothing to remove, so this can't leave an orphaned
       // scrollback file behind after the user permanently closes the pane.
       void api.deleteScrollback(this.id);
+      // Same reasoning, for the agent session: the pane is gone for good,
+      // so nothing should ever resume into it again.
+      void api.clearAgentSession(this.id).catch(() => {});
     }
     this.term.dispose();
     this.element.remove();
