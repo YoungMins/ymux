@@ -30,9 +30,10 @@ use uuid::Uuid;
 ///    The pane id is taken from the caller's own label, so a page can only
 ///    ever report *itself* as focused.
 ///  - `forward_keystroke` — replays a ymux global shortcut while the child
-///    owns OS keyboard focus. Only the fixed shortcut set in
-///    [`is_forwardable_shortcut`] is accepted, so it cannot be used to type
-///    into the main window (let alone into a terminal).
+///    owns OS keyboard focus. Only the fixed table in
+///    [`forwarded_shortcut_key`] is accepted and the key is derived from it,
+///    so it cannot be used to type into the main window (let alone into a
+///    terminal) or to trigger a destructive shortcut such as close-pane.
 ///
 /// Adding to this list means a website can call the command. Don't.
 pub const EMBEDDED_CHILD_COMMANDS: &[&str] = &["child_webview_focused", "forward_keystroke"];
@@ -54,43 +55,60 @@ pub fn embedded_child_pane_id(label: &str) -> Option<Uuid> {
     (id.hyphenated().to_string() == raw).then_some(id)
 }
 
-/// Is this keystroke one of ymux's global shortcuts that a child page may
-/// forward? Mirrors `isYmuxShortcut` in `child_init_script` exactly — the JS
-/// is only a convenience filter; this is the check that holds, because a
-/// hostile page can call `forward_keystroke` with anything.
-pub fn is_forwardable_shortcut(code: &str, ctrl: bool, shift: bool, alt: bool) -> bool {
+/// The exact shortcuts an embedded browser may forward, as
+/// `(code, ctrl, shift, alt) -> key`. The `key` is **derived here**, never
+/// taken from the page: `main.ts`'s keydown handler dispatches on `ev.key`
+/// for most bindings, so trusting a page-supplied `key` would let
+/// `{code: "Tab", key: "W"}` pass validation and act as a different
+/// shortcut.
+///
+/// Deliberately absent: Ctrl+Shift+W (close pane). Closing a pane kills its
+/// shell or agent and deletes its scrollback with no confirmation; a website
+/// must not be able to do that. The user presses it after clicking back into
+/// ymux. Keep `isYmuxShortcut` in `embedded_browser::child_init_script` and
+/// `src/browser/forwardedKeys.ts` in step with this table.
+pub fn forwarded_shortcut_key(
+    code: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<&'static str> {
     if !ctrl {
-        return false;
+        return None;
     }
-    if code == "Tab" {
-        return true;
+    match (shift, alt) {
+        // Ctrl+Alt+1..9 switch workspace, Ctrl+Alt+N notes.
+        (false, true) => match code {
+            "Digit1" => Some("1"),
+            "Digit2" => Some("2"),
+            "Digit3" => Some("3"),
+            "Digit4" => Some("4"),
+            "Digit5" => Some("5"),
+            "Digit6" => Some("6"),
+            "Digit7" => Some("7"),
+            "Digit8" => Some("8"),
+            "Digit9" => Some("9"),
+            "KeyN" => Some("n"),
+            _ => None,
+        },
+        // Ctrl+Shift+H/V/Z/P/R/E/T, Ctrl+Shift+[ / ], Ctrl+Shift+Tab.
+        (true, false) => match code {
+            "KeyH" => Some("H"),
+            "KeyV" => Some("V"),
+            "KeyZ" => Some("Z"),
+            "KeyP" => Some("P"),
+            "KeyR" => Some("R"),
+            "KeyE" => Some("E"),
+            "KeyT" => Some("T"),
+            "BracketLeft" => Some("{"),
+            "BracketRight" => Some("}"),
+            "Tab" => Some("Tab"),
+            _ => None,
+        },
+        // Ctrl+Tab.
+        (false, false) => (code == "Tab").then_some("Tab"),
+        (true, true) => None,
     }
-    if alt && !shift {
-        if code == "KeyN" {
-            return true;
-        }
-        return matches!(code.strip_prefix("Digit"), Some(d) if d.len() == 1 && ('1'..='9').contains(&d.chars().next().unwrap_or('0')));
-    }
-    if shift && !alt {
-        if code == "BracketLeft" || code == "BracketRight" {
-            return true;
-        }
-        return matches!(
-            code,
-            "KeyH" | "KeyV" | "KeyW" | "KeyZ" | "KeyP" | "KeyR" | "KeyE" | "KeyT"
-        );
-    }
-    false
-}
-
-/// Longest `KeyboardEvent.key` value forwarded. Real values for the shortcut
-/// set are one or three characters (`"W"`, `"Tab"`, `"{"`); the cap only keeps
-/// a hostile page from pushing an arbitrary blob through the event bus.
-pub const MAX_FORWARDED_KEY_LEN: usize = 16;
-
-/// Is `key` a plausible `KeyboardEvent.key` for a forwarded shortcut?
-pub fn is_plausible_key(key: &str) -> bool {
-    !key.is_empty() && key.len() <= MAX_FORWARDED_KEY_LEN && !key.chars().any(char::is_control)
 }
 
 #[cfg(test)]
@@ -126,62 +144,72 @@ mod tests {
     }
 
     #[test]
-    fn only_ymux_shortcuts_are_forwardable() {
-        // Every shape `isYmuxShortcut` in `child_init_script` accepts.
+    fn forwarded_shortcuts_derive_their_key_from_the_table() {
         for d in 1..=9 {
-            assert!(is_forwardable_shortcut(
-                &format!("Digit{d}"),
-                true,
-                false,
-                true
-            ));
+            let key = forwarded_shortcut_key(&format!("Digit{d}"), true, false, true);
+            assert_eq!(key, Some(d.to_string()).as_deref());
         }
-        assert!(is_forwardable_shortcut("KeyN", true, false, true));
-        for k in ["H", "V", "W", "Z", "P", "R", "E", "T"] {
-            assert!(is_forwardable_shortcut(
-                &format!("Key{k}"),
-                true,
-                true,
-                false
-            ));
-        }
-        assert!(is_forwardable_shortcut("BracketLeft", true, true, false));
-        assert!(is_forwardable_shortcut("BracketRight", true, true, false));
-        assert!(is_forwardable_shortcut("Tab", true, false, false));
-        assert!(is_forwardable_shortcut("Tab", true, true, false));
-
-        // Anything that would amount to typing, or a modifier mismatch.
-        for (code, ctrl, shift, alt) in [
-            ("KeyA", false, false, false),
-            ("KeyW", false, true, false),
-            ("KeyW", true, false, false),
-            ("KeyW", true, true, true),
-            ("KeyA", true, true, false),
-            ("KeyC", true, true, false),
-            ("Enter", true, false, false),
-            ("Digit0", true, false, true),
-            ("Digit1", true, true, true),
-            ("Digit10", true, false, true),
-            ("Digit", true, false, true),
-            ("KeyN", true, true, true),
-            ("Tab", false, false, false),
-            ("", true, true, false),
+        assert_eq!(forwarded_shortcut_key("KeyN", true, false, true), Some("n"));
+        for (code, key) in [
+            ("KeyH", "H"),
+            ("KeyV", "V"),
+            ("KeyZ", "Z"),
+            ("KeyP", "P"),
+            ("KeyR", "R"),
+            ("KeyE", "E"),
+            ("KeyT", "T"),
+            ("BracketLeft", "{"),
+            ("BracketRight", "}"),
+            ("Tab", "Tab"),
         ] {
-            assert!(
-                !is_forwardable_shortcut(code, ctrl, shift, alt),
-                "{code} ctrl={ctrl} shift={shift} alt={alt}"
-            );
+            assert_eq!(forwarded_shortcut_key(code, true, true, false), Some(key));
+        }
+        assert_eq!(
+            forwarded_shortcut_key("Tab", true, false, false),
+            Some("Tab")
+        );
+    }
+
+    /// Close-pane is destructive (kills the shell, deletes scrollback) and
+    /// must not be reachable by a website at all.
+    #[test]
+    fn close_pane_is_not_forwardable() {
+        for (shift, alt) in [(true, false), (false, false), (false, true), (true, true)] {
+            assert_eq!(forwarded_shortcut_key("KeyW", true, shift, alt), None);
         }
     }
 
     #[test]
-    fn forwarded_key_must_be_short_and_printable() {
-        assert!(is_plausible_key("W"));
-        assert!(is_plausible_key("Tab"));
-        assert!(is_plausible_key("{"));
-        assert!(!is_plausible_key(""));
-        assert!(!is_plausible_key("a\r"));
-        assert!(!is_plausible_key(&"x".repeat(MAX_FORWARDED_KEY_LEN + 1)));
+    fn modifier_mismatches_and_other_keys_are_refused() {
+        for (code, ctrl, shift, alt) in [
+            ("KeyA", false, false, false),
+            ("KeyH", false, true, false),
+            ("KeyH", true, false, false),
+            ("KeyH", true, true, true),
+            ("KeyH", true, false, true),
+            ("KeyA", true, true, false),
+            ("KeyC", true, true, false),
+            ("KeyF", true, false, false),
+            ("Enter", true, false, false),
+            ("Digit0", true, false, true),
+            ("Digit1", true, true, true),
+            ("Digit1", true, true, false),
+            ("Digit1", true, false, false),
+            ("Digit10", true, false, true),
+            ("Digit", true, false, true),
+            ("KeyN", true, true, true),
+            ("Tab", false, false, false),
+            ("Tab", true, false, true),
+            ("Tab", true, true, true),
+            ("", true, true, false),
+            ("keyh", true, true, false),
+        ] {
+            assert_eq!(
+                forwarded_shortcut_key(code, ctrl, shift, alt),
+                None,
+                "{code} ctrl={ctrl} shift={shift} alt={alt}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------

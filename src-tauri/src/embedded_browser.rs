@@ -33,7 +33,7 @@ use crate::fspath::guard_local;
 /// `AppManifest`), so no capability is needed — and none is granted: the two
 /// commands this script calls are the whole of what the page can reach, and
 /// each checks the caller with [`guard_embedded_child`]. Keep the shortcut
-/// predicate below in sync with `ipc_guard::is_forwardable_shortcut`.
+/// predicate below in sync with `ipc_guard::forwarded_shortcut_key`.
 fn child_init_script(id: &str) -> String {
     format!(
         r#"
@@ -70,9 +70,9 @@ fn child_init_script(id: &str) -> String {
   function isYmuxShortcut(e) {{
     if (e.ctrlKey && e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) return true;
     if (e.ctrlKey && e.altKey && !e.shiftKey && e.code === 'KeyN') return true;
-    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[HVWZPRET]$/.test(e.code)) return true;
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[HVZPRET]$/.test(e.code)) return true;
     if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return true;
-    if (e.ctrlKey && e.code === 'Tab') return true;
+    if (e.ctrlKey && !e.altKey && e.code === 'Tab') return true;
     return false;
   }}
   window.addEventListener('keydown', function(e) {{
@@ -80,7 +80,7 @@ fn child_init_script(id: &str) -> String {
     e.preventDefault();
     e.stopPropagation();
     invoke('forward_keystroke', {{
-      key: e.key, code: e.code,
+      code: e.code,
       ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey
     }});
   }}, true);
@@ -325,27 +325,25 @@ pub fn child_webview_focused(
 // may open can take input focus), then emits an event the main webview
 // listens for and replays as a `KeyboardEvent`.
 //
-// Only ymux's own global shortcuts are accepted (`is_forwardable_shortcut`),
-// so a page cannot use this to synthesize arbitrary keystrokes in the main
-// window.
-#[allow(clippy::too_many_arguments)]
+// Only the exact (code, modifiers) combinations in
+// `ipc_guard::forwarded_shortcut_key` are accepted, and the `key` the main
+// window sees is derived from that table — a page-supplied `key` is not even
+// read — so a page cannot synthesize arbitrary keystrokes or pass one
+// shortcut's code off as another's key.
 #[tauri::command]
 pub fn forward_keystroke(
     webview: Webview,
     registry: State<'_, EmbeddedBrowserRegistry>,
     app: AppHandle,
-    key: String,
     code: String,
     ctrl: bool,
     shift: bool,
     alt: bool,
 ) -> Result<(), String> {
     guard_embedded_child(&webview, &registry, "forward_keystroke")?;
-    if !crate::ipc_guard::is_forwardable_shortcut(&code, ctrl, shift, alt)
-        || !crate::ipc_guard::is_plausible_key(&key)
-    {
-        return Err("forward_keystroke: not a ymux shortcut".into());
-    }
+    let Some(key) = crate::ipc_guard::forwarded_shortcut_key(&code, ctrl, shift, alt) else {
+        return Err("forward_keystroke: not a forwardable ymux shortcut".into());
+    };
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_focus();
     }
