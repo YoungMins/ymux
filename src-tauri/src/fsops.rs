@@ -727,6 +727,20 @@ pub fn fs_home_dir(
     imp::home_dir()
 }
 
+/// For each of `paths`, whether it is `dir` or inside it — compared with
+/// `ypath` keys (rule 15), so git's `C:/wt/x` and a shell's `c:\WT\x\src`
+/// agree. Lexical only; see [`crate::fsx::is_within`].
+#[tauri::command(async)]
+pub fn fs_paths_within(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    dir: String,
+    paths: Vec<String>,
+) -> YmuxResult<Vec<bool>> {
+    guarded!(webview, request, "fs_paths_within");
+    Ok(crate::fsx::within_each(&dir, &paths))
+}
+
 #[tauri::command(async)]
 pub fn fs_stat(
     webview: tauri::Webview,

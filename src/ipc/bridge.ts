@@ -208,6 +208,10 @@ export const fsApi = {
   roots: (): Promise<string[]> => callKind("fs_roots"),
   homeDir: (): Promise<string> => callKind("fs_home_dir"),
   stat: (path: string): Promise<FileEntry> => callKind("fs_stat", { path }),
+  /// For each of `paths`, whether it is `dir` or inside it — decided in Rust
+  /// with `ypath` (rule 15), never by comparing strings here.
+  pathsWithin: (dir: string, paths: string[]): Promise<boolean[]> =>
+    callKind("fs_paths_within", { dir, paths }),
   createDir: (path: string): Promise<void> => callKind("fs_create_dir", { path }),
   createFile: (path: string): Promise<void> => callKind("fs_create_file", { path }),
   rename: (from: string, to: string): Promise<void> => callKind("fs_rename", { from, to }),

@@ -106,6 +106,8 @@ export type RemoveBlock = "main" | "locked" | "current" | "missing";
 
 export type RemovePlan =
   | { kind: "blocked"; reason: RemoveBlock }
+  /// Panes (by label) whose directory or file is inside the worktree.
+  | { kind: "blocked"; reason: "inUse"; panes: string[] }
   /// The worktree may go; fetch its `WorkStatus` (with ignored files) to
   /// say what goes with it.
   | { kind: "needStatus" }
@@ -133,11 +135,22 @@ export type RemovePlan =
 /// The worktree the pane is showing is refused: the pane (and any terminal
 /// whose cwd is in there — on Windows a process's cwd cannot be deleted, so
 /// git would fail half-way) should move off it first.
-export function removePlan(entry: WorktreeEntry, status: WorkStatus | null): RemovePlan {
+///
+/// `inUse` names the other panes working inside the worktree (their
+/// containment decided in Rust, rule 15). Any of them refuses the removal:
+/// on Windows a shell whose cwd is in there makes `git worktree remove` fail
+/// half-way — files gone, the worktree still registered — and an editor or
+/// files pane would be left showing a folder that no longer exists.
+export function removePlan(
+  entry: WorktreeEntry,
+  status: WorkStatus | null,
+  inUse: readonly string[] = [],
+): RemovePlan {
   if (entry.main) return { kind: "blocked", reason: "main" };
   if (entry.locked) return { kind: "blocked", reason: "locked" };
   if (entry.current) return { kind: "blocked", reason: "current" };
   if (entry.prunable) return { kind: "blocked", reason: "missing" };
+  if (inUse.length > 0) return { kind: "blocked", reason: "inUse", panes: [...inUse] };
   if (status === null) return { kind: "needStatus" };
   const stranded = status.detached ? status.orphans : [];
   return {

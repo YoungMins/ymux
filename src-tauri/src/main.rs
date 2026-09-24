@@ -87,6 +87,7 @@ fn main() {
             ymux_lib::fsops::fs_roots,
             ymux_lib::fsops::fs_home_dir,
             ymux_lib::fsops::fs_stat,
+            ymux_lib::fsops::fs_paths_within,
             ymux_lib::fsops::fs_create_dir,
             ymux_lib::fsops::fs_create_file,
             ymux_lib::fsops::fs_rename,

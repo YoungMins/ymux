@@ -156,6 +156,15 @@ describe("removePlan", () => {
     expect(removePlan(wt({ prunable: true }), null)).toEqual({ kind: "blocked", reason: "missing" });
   });
 
+  it("refuses while another pane is working inside the worktree, naming it", () => {
+    const panes = ["ws1: pwsh", "ws2: notes.md"];
+    expect(removePlan(wt(), null, panes)).toEqual({ kind: "blocked", reason: "inUse", panes });
+    expect(removePlan(wt(), status(), panes)).toEqual({ kind: "blocked", reason: "inUse", panes });
+    // The stronger reasons still win.
+    expect(removePlan(wt({ main: true }), null, panes)).toEqual({ kind: "blocked", reason: "main" });
+    expect(removePlan(wt(), null, [])).toEqual({ kind: "needStatus" });
+  });
+
   it("needs the status before deciding anything else", () => {
     expect(removePlan(wt(), null)).toEqual({ kind: "needStatus" });
   });

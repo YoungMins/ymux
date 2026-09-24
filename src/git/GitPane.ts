@@ -49,6 +49,7 @@ import {
   gitErrorText,
   promptWorktreeBranch,
   removeWorktreeFlow,
+  type LivePane,
   showGitError,
 } from "./worktreeFlow";
 
@@ -70,6 +71,9 @@ export interface GitPaneOptions {
   followTarget: () => Uuid | null;
   /// `Config.worktree_base_dir` ("" = sibling `.ymux-worktrees`).
   worktreeBaseDir: () => string;
+  /// Every live pane's directory or file, for the "is anything working in
+  /// this worktree?" check before a removal.
+  livePanes: () => Promise<LivePane[]>;
   openTerminal: (dir: string) => void | Promise<void>;
 }
 
@@ -1072,7 +1076,7 @@ export class GitPane implements Pane {
     if (!w || this.busy) return;
     this.busy = true;
     try {
-      const outcome = await removeWorktreeFlow(w);
+      const outcome = await removeWorktreeFlow(w, this.opts.livePanes);
       if (outcome === "removed") this.say(fill(t("git.removed"), { path: w.path }));
     } finally {
       this.busy = false;

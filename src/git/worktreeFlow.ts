@@ -6,7 +6,7 @@
 // Every decision is `gitModel.ts`'s; this file turns a plan into a dialog
 // and, on a yes, into exactly one argv-built git call through `gitApi`.
 
-import { gitApi, type CommitInfo, type StatusEntry, type WorktreeEntry } from "../ipc/bridge";
+import { fsApi, gitApi, type CommitInfo, type StatusEntry, type WorktreeEntry } from "../ipc/bridge";
 import { askChoice, askText } from "../ui/Dialog";
 import { t } from "../i18n/i18n";
 import {
@@ -87,25 +87,25 @@ export type RemoveOutcome = "removed" | "cancelled" | "blocked" | "failed";
 /// The status is read again after the user confirms, and git only runs if it
 /// still matches what the dialog listed (`confirmationStillHolds`); if not,
 /// the new list is shown and the question asked again.
-export async function removeWorktreeFlow(entry: WorktreeEntry): Promise<RemoveOutcome> {
-  const first = removePlan(entry, null);
-  if (first.kind === "blocked") {
-    await askChoice(t(`git.blocked.${first.reason}`), entry.path, [
-      { id: "ok", label: t("dialog.ok"), primary: true },
-    ]);
-    return "blocked";
-  }
-  let plan = await readPlan(entry);
+export async function removeWorktreeFlow(
+  entry: WorktreeEntry,
+  livePanes: () => Promise<LivePane[]>,
+): Promise<RemoveOutcome> {
+  const first = removePlan(entry, null, await panesInside(entry, livePanes));
+  if (first.kind === "blocked") return showBlocked(entry, first);
+  let plan = await readPlan(entry, livePanes);
   let changed = false;
   for (;;) {
     if (plan === null) return "failed";
+    if (plan.kind === "blocked") return showBlocked(entry, plan);
     if (plan.kind !== "remove") return "blocked";
     const answer = await askRemoval(entry, plan, changed);
     if (!answer) return "cancelled";
-    // The dialog may have sat open while an agent kept writing in there:
-    // re-read, and only act on a confirmation that still describes what
-    // will be deleted. Otherwise show the new list and ask again.
-    const fresh = await readPlan(entry);
+    // The dialog may have sat open while an agent kept writing in there (or
+    // the user cd'd a terminal into it): re-read, and only act on a
+    // confirmation that still describes what will be deleted. Otherwise
+    // show the new list and ask again.
+    const fresh = await readPlan(entry, livePanes);
     if (fresh !== null && confirmationStillHolds(plan, fresh)) break;
     plan = fresh;
     changed = true;
@@ -119,10 +119,57 @@ export async function removeWorktreeFlow(entry: WorktreeEntry): Promise<RemoveOu
   }
 }
 
-/// The worktree's current removal plan, or null (error already shown).
-async function readPlan(entry: WorktreeEntry): Promise<RemovePlan | null> {
+/// A pane, as the removal check needs it: its label for the message, and
+/// the directory (terminal cwd, files/git folder) or file (editor) it uses.
+export interface LivePane {
+  label: string;
+  path: string;
+}
+
+/// Labels of the panes working inside `entry`. The containment test is the
+/// backend's (`fs_paths_within`, `ypath` keys). If it cannot answer, the
+/// removal is refused rather than guessed at.
+async function panesInside(
+  entry: WorktreeEntry,
+  livePanes: () => Promise<LivePane[]>,
+): Promise<string[]> {
+  const panes = (await livePanes()).filter((p) => p.path);
+  if (panes.length === 0) return [];
   try {
-    return removePlan(entry, await gitApi.workStatus(entry.path, true));
+    const inside = await fsApi.pathsWithin(
+      entry.path,
+      panes.map((p) => p.path),
+    );
+    return panes.filter((_, i) => inside[i]).map((p) => p.label);
+  } catch {
+    return [t("git.inUseUnknown")];
+  }
+}
+
+async function showBlocked(
+  entry: WorktreeEntry,
+  plan: Extract<RemovePlan, { kind: "blocked" }>,
+): Promise<RemoveOutcome> {
+  const detail =
+    plan.reason === "inUse"
+      ? `${entry.path}\n\n${clip(plan.panes, LIST_MAX).shown.join("\n")}`
+      : entry.path;
+  const title =
+    plan.reason === "inUse"
+      ? fill(t("git.blocked.inUse"), { n: plan.panes.length })
+      : t(`git.blocked.${plan.reason}`);
+  await askChoice(title, detail, [{ id: "ok", label: t("dialog.ok"), primary: true }]);
+  return "blocked";
+}
+
+/// The worktree's current removal plan, or null (error already shown).
+async function readPlan(
+  entry: WorktreeEntry,
+  livePanes: () => Promise<LivePane[]>,
+): Promise<RemovePlan | null> {
+  try {
+    const inUse = await panesInside(entry, livePanes);
+    return removePlan(entry, await gitApi.workStatus(entry.path, true), inUse);
   } catch (e) {
     await showGitError(t("git.removeFailed"), e);
     return null;

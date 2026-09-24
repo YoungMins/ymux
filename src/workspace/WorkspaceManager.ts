@@ -59,7 +59,7 @@ import {
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
-import { promptWorktreeBranch, removeWorktreeFlow } from "../git/worktreeFlow";
+import { promptWorktreeBranch, removeWorktreeFlow, type LivePane } from "../git/worktreeFlow";
 import { askChoice, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
@@ -571,6 +571,7 @@ export class WorkspaceManager {
           return this.workspaceOfPane(id) === this.workspaceOfPane(spec.id) ? id : null;
         },
         worktreeBaseDir: () => this.worktreeBaseDir,
+        livePanes: () => this.livePanes(),
         openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
       });
     }
@@ -1444,10 +1445,35 @@ export class WorkspaceManager {
     if (!entry) return;
     try {
       // The pane that showed it is closing, so it is not "shown" any more.
-      await removeWorktreeFlow({ ...entry, current: false });
+      await removeWorktreeFlow({ ...entry, current: false }, () => this.livePanes());
     } catch (e) {
       console.error("worktree remove failed", e);
     }
+  }
+
+  /// Every live pane in every workspace (the ones with a pane object — a
+  /// workspace never opened this session has nothing running), with the
+  /// directory or file it works in: a terminal's live OSC 7 cwd (else its
+  /// stored one), a files or git pane's folder, an editor's file. Browser
+  /// panes have none. Paths are raw — the worktree check compares them in
+  /// Rust (rule 15).
+  private async livePanes(): Promise<LivePane[]> {
+    const out: LivePane[] = [];
+    for (const [wsId, cache] of this.paneCaches) {
+      const ws = this.config.workspaces.find((w) => w.id === wsId);
+      if (!ws) continue;
+      for (const id of cache.keys()) {
+        const spec = findPane(ws.root, id);
+        if (!spec) continue;
+        const kind = spec.pane_kind ?? "terminal";
+        let path: string | null = null;
+        if (kind === "terminal") path = (await api.getPaneCwd(id).catch(() => null)) ?? spec.cwd ?? null;
+        else if (kind === "files" || kind === "git") path = spec.cwd ?? null;
+        else if (kind === "editor") path = spec.file_path || null;
+        if (path) out.push({ label: `${ws.name}: ${this.tabLabelFor(id)}`, path });
+      }
+    }
+    return out;
   }
 
   /// Toggle "zoom" on the focused pane: hide every other pane in the workspace
