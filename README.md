@@ -187,10 +187,13 @@ that pane and inherits its working directory) or from the command palette.
 | **Editor** | Right-click → *Split: editor pane*, Enter on a file | Syntax-highlighted text editor with save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard, crash-safety drafts, external-change detection |
 | **Git** | Right-click → *Git here* | Commit graph, branch list and checkout, worktree add/remove (with confirmation) |
 
-The standalone `ydir` / `ycode` / `ygit` / `ymon` commands and the `y` launcher
-no longer exist. The install directory still holds a small `y` binary: it is
-the relay Claude Code hooks call to feed the agent tree, not a command to run
-by hand.
+The standalone `ydir` / `ycode` / `ygit` / `ymon` commands, the `y` launcher and
+the `y` hook relay no longer exist; ymux ships no helper binary. Agent tracking
+uses Claude Code's HTTP hooks, which post to ymux on `127.0.0.1` — an upgrade
+rewrites the old `y` hook entries automatically on first launch. While tracking
+is on and ymux is not running, Claude Code sessions report those hooks as failed
+(for example "Stop hook error occurred"), so turn tracking off under
+**Settings → General** before you uninstall ymux.
 
 ## Development
 

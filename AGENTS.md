@@ -22,7 +22,7 @@ ymux/
 │       ├── sysmonitor.rs   # System monitor (desktop)
 │       ├── updater.rs      # Update checker (desktop)
 │       ├── webview.rs      # Native browser (desktop, experimental)
-│       └── ipc_server.rs   # IPC server (desktop)
+│       └── hook_http.rs    # Loopback receiver for Claude Code http hooks (pure std)
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
 │   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction
@@ -41,12 +41,9 @@ ymux/
 │   └── update/             # Update banner
 ├── crates/
 │   ├── ytheme/             # Shared theme library
-│   ├── yipc/               # Host <-> `y` IPC (server, Hello/Event/Ack, client)
 │   └── ypath/              # Path comparison keys
-├── tools/
-│   └── ylauncher/          # `y` — the Claude Code hook relay (the only sidecar)
 ├── scripts/
-│   └── build-tools.mjs     # Build + stage the `y` sidecar
+│   └── test.sh             # fmt + tsc + vitest + clippy + tests (Linux-safe)
 └── .github/workflows/
     └── release.yml          # CI: test + build + release
 ```
@@ -58,7 +55,7 @@ pnpm install                 # Install frontend deps
 pnpm tauri dev               # Run in dev mode (hot reload)
 pnpm tauri build             # MSI on Windows, .app + .dmg on macOS
 cargo test --workspace       # ⚠ Don't use on Linux — pulls GTK
-cargo test -p ytheme -p yipc -p ypath -p ylauncher
+cargo test -p ytheme -p ypath
 cargo test --no-default-features --lib -p ymux
 cargo check --no-default-features --lib --tests -p ymux  # Linux safe
 cargo fmt --all              # Format entire workspace
@@ -71,7 +68,7 @@ npx tsc --noEmit             # TypeScript type check
 ### 1. Feature Gate: `desktop`
 
 The `ymux` crate uses `#[cfg(feature = "desktop")]` for Tauri-dependent modules:
-- `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`, `ipc_server.rs`
+- `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`
 
 **Always verify:** `cargo check --no-default-features --lib --tests -p ymux` must pass on Linux.
 
@@ -92,12 +89,17 @@ Missing any of these causes the field to silently disappear during save/load.
 
 **Workaround:** Use `String` with `#[serde(default)]` instead of `Option<String>`. Empty string = no value.
 
-### 4. CI Sidecar Files
+### 4. No sidecar binaries
 
-Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. Today there is exactly one sidecar, `y` (the Claude Code hook relay). If you add or remove one, update:
-- `src-tauri/tauri.conf.json` → `bundle.externalBin`
-- `.github/workflows/release.yml` → dummy file creation loop
-- `scripts/build-tools.mjs` → TOOLS array
+ymux bundles no `externalBin`: the last sidecar, the `y` hook relay, was
+replaced by Claude Code http hooks (see CLAUDE.md rule 13), and `scripts/build-tools.mjs`,
+the CI dummy-sidecar step and `YMUX_TARGET_TRIPLE` went with it. If you ever
+add one back, remember that Tauri's build script validates `externalBin` paths
+even during `cargo check`/`cargo test` (CI then needs dummy files before the
+desktop check), that the bundler looks for `<name>-<target-triple>[.exe]`
+(so a `--target` build needs a matching staging triple), and that anything
+written into another tool's config by absolute path is stranded by a rename.
+Prefer an in-process listener or a GUI pane.
 
 ### 5. Version Bump Checklist
 
@@ -203,11 +205,6 @@ rustup target add x86_64-pc-windows-msvc
 cargo check --target x86_64-pc-windows-msvc --no-default-features --lib -p ymux
 ```
 
-**Sidecar triples.** `scripts/build-tools.mjs` stages the sidecars under a
-target-triple suffix. If you pass `--target` to `tauri build`, set
-`YMUX_TARGET_TRIPLE` to the same value or the bundler fails with a confusing
-"sidecar not found".
-
 ## TDD / Testing
 
 ### Quick run
@@ -224,8 +221,6 @@ bash scripts/test.sh
 |-------|-------|-----------------|
 | ymux_lib | 68 | Config model + TOML round-trip, PTY, OSC 7, shell detect, macOS shell integration, updater, sysmonitor |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
-| yipc | 10 | Protocol serialization, server/client, multi-client, broken pipe |
-| ylauncher (`y`) | 11 | `agent-hook` payload packing, the silent no-env no-op, usage errors |
 | _frontend_ | 63 | vitest: layout tree, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
 
 Counts drift — re-derive with
@@ -269,7 +264,7 @@ git push origin v0.8.4
 
 CI automatically:
 1. Runs tests on Linux (fast fail)
-2. Builds the MSI on Windows (with the `y` sidecar) **and creates the release** —
+2. Builds the MSI on Windows **and creates the release** —
    it goes first precisely so exactly one job ever creates it
 3. Builds the arm64 `.dmg` on macOS and uploads it onto that release
 4. Rewrites the release body with install info + auto-generated notes

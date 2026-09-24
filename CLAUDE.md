@@ -20,7 +20,8 @@ ymux/
 │       ├── agent_scan.rs       # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
 │       ├── agent_scan_disk.rs  # Disk-scan fallback for session resume: finds an agent's transcript by cwd match (pure)
 │       ├── agent_sessions.rs   # Resumable agent sessions: resume argv/command, freshness window (pure)
-│       ├── agent_hooks.rs      # Install/uninstall Claude Code hooks in ~/.claude/settings.json (merge fns pure; file IO desktop)
+│       ├── agent_hooks.rs      # Install/uninstall Claude Code http hooks in ~/.claude/settings.json (merge fns pure; file IO desktop)
+│       ├── hook_http.rs        # Loopback receiver for those hooks: auth, parsing, port choice, listener (pure std)
 │       ├── config/             # Config model + store
 │       ├── drafts.rs           # Editor pane crash-safety drafts, debounced by pane id (pure)
 │       ├── error.rs            # Crate-wide YmuxError / YmuxResult
@@ -39,8 +40,7 @@ ymux/
 │       ├── updater.rs          # Update checker (desktop)
 │       ├── webview.rs          # Native browser (desktop, experimental)
 │       ├── embedded_browser.rs # Child-webview browser panes via Window::add_child (desktop)
-│       ├── settings.rs         # Settings panel commands: theme load/save, open config dir (desktop)
-│       └── ipc_server.rs       # IPC server (desktop); routes agent-hook events
+│       └── settings.rs         # Settings panel commands: theme load/save, open config dir (desktop)
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
 │   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction
@@ -67,12 +67,9 @@ ymux/
 │   └── update/             # Update banner
 ├── crates/
 │   ├── ytheme/             # Shared theme library
-│   ├── yipc/               # Host <-> `y` IPC (server, Hello/Event/Ack, client)
 │   └── ypath/              # Path comparison keys (NFC + syntax-based case folding)
-├── tools/
-│   └── ylauncher/          # `y` — the Claude Code hook relay (the only sidecar)
 ├── scripts/
-│   └── build-tools.mjs     # Build + stage the `y` sidecar
+│   └── test.sh             # fmt + tsc + vitest + clippy + tests (Linux-safe)
 └── .github/workflows/
     └── release.yml          # CI: test + build + release
 ```
@@ -84,7 +81,7 @@ pnpm install                 # Install frontend deps
 pnpm tauri dev               # Run in dev mode (hot reload)
 pnpm tauri build             # MSI on Windows, .app + .dmg on macOS
 cargo test --workspace       # ⚠ Don't use on Linux — pulls GTK
-cargo test -p ytheme -p yipc -p ypath -p ylauncher
+cargo test -p ytheme -p ypath
 cargo test --no-default-features --lib -p ymux
 cargo check --no-default-features --lib --tests -p ymux  # Linux safe
 cargo fmt --all              # Format entire workspace
@@ -97,8 +94,11 @@ npx tsc --noEmit             # TypeScript type check
 ### 1. Feature Gate: `desktop`
 
 The `ymux` crate uses `#[cfg(feature = "desktop")]` for Tauri-dependent modules:
-- `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`, `ipc_server.rs`,
+- `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`,
   `fsops.rs`, `clipboard_image.rs`, `embedded_browser.rs`, `settings.rs`
+
+`hook_http.rs` is deliberately *not* gated: it is pure `std`, so its auth
+decision and a real-socket round trip run on Linux CI.
 
 **Always verify:** `cargo check --no-default-features --lib --tests -p ymux` must pass on Linux.
 
@@ -121,12 +121,17 @@ TS copies for `file_path`; extend it (or clone it) for a new field.
 
 **Workaround:** Use `String` with `#[serde(default)]` instead of `Option<String>`. Empty string = no value.
 
-### 4. CI Sidecar Files
+### 4. No sidecar binaries
 
-Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. Today there is exactly one sidecar, `y` (package `ylauncher`, see rule 13). If you add or remove one, update:
-- `src-tauri/tauri.conf.json` → `bundle.externalBin`
-- `.github/workflows/release.yml` → dummy file creation loop
-- `scripts/build-tools.mjs` → TOOLS array
+ymux bundles no `externalBin`: the last sidecar, the `y` hook relay, was
+replaced by Claude Code http hooks (rule 13), and `scripts/build-tools.mjs`,
+the CI dummy-sidecar step and `YMUX_TARGET_TRIPLE` went with it. If you ever
+add one back, remember that Tauri's build script validates `externalBin` paths
+even during `cargo check`/`cargo test` (CI then needs dummy files before the
+desktop check), that the bundler looks for `<name>-<target-triple>[.exe]`
+(so a `--target` build needs a matching staging triple), and that anything
+written into another tool's config by absolute path is stranded by a rename.
+Prefer an in-process listener or a GUI pane.
 
 ### 5. Version Bump Checklist
 
@@ -239,12 +244,7 @@ rustup target add x86_64-pc-windows-msvc
 cargo check --target x86_64-pc-windows-msvc --no-default-features --lib -p ymux
 ```
 
-**Sidecar triples.** `scripts/build-tools.mjs` stages the sidecars under a
-target-triple suffix. If you pass `--target` to `tauri build`, set
-`YMUX_TARGET_TRIPLE` to the same value or the bundler fails with a confusing
-"sidecar not found".
-
-### 11. `agent_tracking` is backend-authoritative — don't add it to `merge_layouts_from`
+### 11. `agent_tracking` / `agent_hook_port` are backend-authoritative — don't add them to `merge_layouts_from`
 
 Every other `Config` setting added since rule 8's `CONFIG_VERSION` note must be
 copied in `Config::merge_layouts_from` (see the memory note: a setting missing
@@ -252,46 +252,88 @@ there silently reverts to its default on every restart). `agent_tracking` is
 the deliberate exception: it is flipped only by `set_agent_tracking`, which
 also installs/uninstalls the Claude Code hooks as a side effect, so a stale
 frontend save overwriting it out-of-band would desync the config from the
-actual hook state on disk. If you add a new bool/enum setting, copy it in
+actual hook state on disk. `agent_hook_port` is the same kind of exception:
+it is the literal port in the installed hooks' URL (rule 13), chosen and
+persisted only by `commands::start_hook_receiver`. If you add a new bool/enum setting, copy it in
 `merge_layouts_from` like the rest — only mirror this exception if the setting
 is similarly owned by a backend side effect, not just because it's convenient.
 
 ### 12. The Claude Code hook settings merge is marker-based — never reorder or drop foreign hooks
 
 `agent_hooks::install_hooks` / `uninstall_hooks` rewrite the user's
-`~/.claude/settings.json` in place. Every hook ymux owns carries the
-`--ymux-agent-hook` marker in its command string; install only touches entries
-carrying it (refreshing the `y` path) or appends a new group, and uninstall
-only removes entries carrying it, via `retain`/`retain_mut` — never `remove`,
+`~/.claude/settings.json` in place. Every hook ymux owns is an `http` entry
+whose URL is a loopback host with the `/ymux-agent-hook` path (any port); the
+retired `y` command entries are recognised by their `--ymux-agent-hook`
+marker. Install only touches ymux entries (refreshing the port, dropping the
+retired ones) or appends a new group, and uninstall only removes ymux entries
+of either shape, via `retain`/`retain_mut` — never `remove`,
 which under `serde_json`'s `preserve_order` is a `swap_remove` and would
 reorder the user's own keys and hooks. Any hook or settings key without the
-marker must come back byte-for-byte. If you touch this file, run the
+marker must come back byte-for-byte — including a foreign `http` hook on
+loopback, and the user's own `allowedHttpHookUrls`/`httpHookAllowedEnvVars`
+items. If you touch this file, run the
 `install_preserves_foreign_hooks_and_key_order` / `uninstall_restores_foreign_settings_exactly`
 tests before anything else — they exist specifically to catch an edit that
 silently reorders or eats someone else's hook.
 
-### 13. `y` is the Claude Code hook relay — its name and path are load-bearing
+### 13. Claude Code hooks arrive over loopback HTTP — token-gated, empty-bodied, fixed port
 
-The `y*` TUI tools are gone (they are GUI panes now), but the `y` binary
-stays, shrunk to one job: `y agent-hook <agent>` reads a hook payload on stdin
-and forwards it to ymux over yipc (`tools/ylauncher/src/agent_hook.rs`).
-`agent_hooks::install_hooks` writes its **absolute path** into every tracking
-user's `~/.claude/settings.json`, and Claude Code runs it on every hook event.
-So:
+Agent tracking has no helper binary. `agent_hooks::install_hooks` writes a
+`type: "http"` handler under every event in `HOOK_EVENTS`:
 
-- **Don't rename or move it.** A new name or location leaves every tracking
-  user's hooks calling a missing executable until the upgraded ymux first
-  launches and `install_hooks` refreshes the path (the marker-based refresh
-  from rule 12). Keeping the path fixed is why the TUI cut-over could ship in
-  one release (spec `docs/superpowers/specs/2026-09-24-gui-tool-panes.md`,
-  Step 5 amendment).
-- **It must stay invisible to Claude Code**: print nothing on stdout, always
-  exit 0, return at once without `YMUX_PANE_ID`/`YMUX_IPC`, wait at most
-  300 ms for the host's `Ack`. The `CARGO_BIN_EXE_y` tests in
-  `tools/ylauncher/tests/` pin this. Anything other than `agent-hook` is a
-  usage error (stderr, exit 2) — there are no launcher subcommands any more.
-- yipc is reduced to what this needs: the server, `Hello`/`Event`/`Ack`,
-  `AGENT_HOOK_KIND`, `IpcClient`. Traffic is tool → host only.
+```json
+{ "type": "http", "url": "http://127.0.0.1:<port>/ymux-agent-hook", "timeout": 2,
+  "headers": { "X-Ymux-Pane": "${YMUX_PANE_ID}", "X-Ymux-Token": "${YMUX_HOOK_TOKEN}" },
+  "allowedEnvVars": ["YMUX_PANE_ID", "YMUX_HOOK_TOKEN"] }
+```
+
+and `hook_http` (pure std, not desktop-gated, tested with a real listener)
+receives it. `commands::start_hook_receiver` wires accepted events into
+`apply_agent_hook` — the same `HookEvent` the old `y` relay produced, so
+`agents.rs`, the tree and the resume binding are unchanged. The rules:
+
+- **Loopback only.** Bind `127.0.0.1`, never `0.0.0.0`, and write `127.0.0.1`
+  (not `localhost`, which may resolve to `::1` first) into the URL.
+- **Token + pane.** ymux mints a fresh token per run (244 CSPRNG bits)
+  (`hook_http::new_token`) and injects `YMUX_HOOK_TOKEN` into every PTY next to
+  `YMUX_PANE_ID`; Claude Code interpolates both into the headers. Wrong token
+  (constant-time compare) or a pane this ymux doesn't own → 403. An `Origin`
+  header → 403: browsers attach one to every cross-origin POST and can't set
+  the custom headers without a preflight, so a web page in a browser pane
+  can't forge events; Claude Code's client never sends one (verified against a
+  live 2.1 run). Both headers empty → **204, ignored** — that is a Claude
+  session started outside ymux while ymux runs, and a non-2xx would put a
+  hook error into it. See `hook_http::authorize` for the full order.
+- **2xx means an empty body.** Answer 204 with no body on success. A 2xx JSON
+  body is parsed by Claude Code as hook output (decisions, context) and any
+  other 2xx body is an error. The response goes out before the registry is
+  touched, so Claude never waits on ymux's locks; an oversized authenticated
+  body is also a quiet 204 (dropped), never an error.
+- **The port is fixed.** Claude Code interpolates env vars into header values
+  only, never into the URL, so the port is a literal in the user's
+  `settings.json`. It is chosen once, kept in `Config::agent_hook_port`
+  (backend-owned, not in `merge_layouts_from` — rule 11) and reused every
+  launch. If it is taken, `choose_port` takes an OS-assigned one; release
+  builds persist it and the startup refresh rewrites the hooks' URL. Debug
+  builds (`tauri dev`, sharing the live config) neither persist nor refresh
+  unless `YMUX_DEV_AGENT_HOOKS=1`.
+- **No `SessionStart`.** Claude Code runs only `command`/`mcp_tool` handlers
+  for it (and `Setup`), so the lead and the hook session id first arrive with
+  `UserPromptSubmit`; the process scan and transcript fallback cover the gap.
+- **Restriction knobs.** `allowedHttpHookUrls` / `httpHookAllowedEnvVars`
+  default to unset (nothing blocked). If the user-level settings already
+  define either, install appends `http://127.0.0.1:*/ymux-agent-hook` /
+  the two env names and uninstall removes exactly those; neither key is ever
+  created (defining `allowedHttpHookUrls` would block every other http hook).
+  Managed or project-level lists are out of ymux's reach.
+- **ymux not running.** The hooks then fail with a connection error, which
+  Claude Code treats as non-blocking but *reports* (e.g. "Stop hook error
+  occurred · ctrl+o to see" per turn). That is the cost of having no relay
+  binary; the answer is turning tracking off before uninstalling.
+- **Migration.** Install removes every retired `y … --ymux-agent-hook` command
+  entry (`agent_hooks::LEGACY_MARKER`), `SessionStart` included; uninstall
+  removes both shapes. Keep that until no supported upgrade path can still
+  carry `y` entries.
 
 ### 14. A tab shown after being hidden needs a refit *and* a viewport resync
 
@@ -383,22 +425,17 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 384, 8 failing on Windows + frontend 618)
+### Test count (Rust 453, 8 failing on Windows + frontend 616)
 
 Measured 2026-09-24 on Windows with `cargo test -p ymux --lib`,
-`cargo test -p ytheme -p yipc -p ypath -p ylauncher` and `npx vitest run`.
-(`cargo test -p ymux --lib` needs a dummy `src-tauri/binaries/y-<triple>.exe`
-first — rule 4 — since it builds with the `desktop` feature and Tauri's build
-script validates `externalBin` paths even for `cargo test`.)
+`cargo test -p ytheme -p ypath` and `npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 351 (340 pass, 8 fail on Windows, 3 ignored; 316 without `desktop`: 307 pass, 8 fail, 1 ignored) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
+| ymux_lib | 438 (427 pass, 8 fail on Windows, 3 ignored; 403 without `desktop`: 394 pass, 8 fail, 1 ignored) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
 | ytheme | 6 | Theme TOML round-trip, hex parsing, defaults |
-| yipc | 7 on Windows (more on Unix) | Protocol serialization, retired message types rejected, server/client, broken pipe |
 | ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
-| ylauncher (`y`) | 11 (5 unit + 6 integration) | `agent-hook` payload packing, the silent no-env no-op, relay to a live server, usage errors (exit 2) for anything else |
-| _frontend_ | 618 (44 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
+| _frontend_ | 616 (44 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
 
 **The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
 `pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,
@@ -449,7 +486,7 @@ git push origin v0.8.4
 
 CI automatically:
 1. Runs tests on Linux (fast fail)
-2. Builds the MSI on Windows (with the `y` sidecar) **and creates the release** —
+2. Builds the MSI on Windows **and creates the release** —
    it goes first precisely so exactly one job ever creates it
 3. Builds the arm64 `.dmg` on macOS and uploads it onto that release
 4. Rewrites the release body with install info + auto-generated notes
