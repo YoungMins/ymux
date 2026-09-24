@@ -8,7 +8,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { FilesPane } from "../files/FilesPane";
-import { api, onOpenFile, onPaneCwd } from "../ipc/bridge";
+import { api, onPaneCwd } from "../ipc/bridge";
 import { CwdFollow } from "./cwdFollow";
 import {
   clampDockWidth,
@@ -73,11 +73,6 @@ class FileDock {
     this.element.appendChild(this.pane.element);
 
     manager.onActivePaneChange(() => void this.followActivePane());
-    // A `ydir --dock` still on PATH (and run by hand) can ask for a file to
-    // be opened over yipc; that route goes in step 3 with the viewer tab.
-    void onOpenFile((path) => {
-      void this.manager.openFileInViewerTab(path);
-    }).catch((e) => console.warn("open-file listen failed:", e));
   }
 
   /// Apply the persisted state. Call once the element is in the DOM.

@@ -26,7 +26,8 @@ export interface SpawnArgs {
   rows: number;
   cols: number;
   /// Run this program directly instead of `shell` (see `SpawnArgs.argv` in
-  /// commands.rs). Used by the viewer tab for `ycode <path>`.
+  /// commands.rs). No caller since the viewer tab became an editor pane;
+  /// removed with the sidecars (spec §5 step 6).
   argv?: string[];
 }
 
@@ -440,11 +441,6 @@ export function onAgentsChanged(
   handler: (snapshot: AgentSnapshot) => void,
 ): Promise<UnlistenFn> {
   return safeListen<AgentSnapshot>("agents:changed", handler);
-}
-
-/// Subscribe to "open this file" requests from the file dock's yDir.
-export function onOpenFile(handler: (path: string) => void): Promise<UnlistenFn> {
-  return safeListen<string>("ymux:open-file", handler);
 }
 
 /// Subscribe to tab-label snapshots pushed by the 2 s process scan.

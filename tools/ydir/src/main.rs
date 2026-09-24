@@ -18,8 +18,6 @@ use app::App;
 
 fn main() -> Result<()> {
     let args = dock::parse_args(std::env::args().skip(1));
-    let pane_id = std::env::var("YMUX_PANE_ID").unwrap_or_default();
-    let open_link = dock::open_file_link(args.dock, std::env::var("YMUX_IPC").ok(), pane_id);
     let start_dir = args
         .dir
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
@@ -30,7 +28,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(&mut terminal, start_dir, args.dock, open_link.as_ref());
+    let result = run(&mut terminal, start_dir, args.dock);
 
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
@@ -43,7 +41,6 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     start_dir: std::path::PathBuf,
     dock_mode: bool,
-    open_link: Option<&std::sync::mpsc::Sender<std::path::PathBuf>>,
 ) -> Result<()> {
     let mut app = App::new(start_dir)?.with_dock(dock_mode);
 
@@ -111,38 +108,22 @@ fn run(
                             KeyCode::Enter => {
                                 app.enter_dir()?;
                                 if let Some(path) = app.open_in_ycode.take() {
-                                    match open_link {
-                                        // Dock mode: ymux owns the viewer tab,
-                                        // so hand it the path and stay put —
-                                        // suspending the TUI here would blank
-                                        // the dock (spec §4).
-                                        Some(tx) => {
-                                            if tx.send(path).is_err() {
-                                                app.status_msg =
-                                                    Some("ymux is not listening".into());
-                                            }
-                                        }
-                                        None => {
-                                            disable_raw_mode()?;
-                                            terminal.backend_mut().execute(LeaveAlternateScreen)?;
-                                            terminal.show_cursor()?;
+                                    disable_raw_mode()?;
+                                    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+                                    terminal.show_cursor()?;
 
-                                            let status = std::process::Command::new("ycode")
-                                                .arg(&path)
-                                                .status();
-                                            if let Err(e) = status {
-                                                eprintln!("\nFailed to launch ycode: {}", e);
-                                                eprintln!("Press Enter to return to yDir...");
-                                                let _ =
-                                                    std::io::stdin().read_line(&mut String::new());
-                                            }
-
-                                            enable_raw_mode()?;
-                                            terminal.backend_mut().execute(EnterAlternateScreen)?;
-                                            terminal.clear()?;
-                                            let _ = app.refresh();
-                                        }
+                                    let status =
+                                        std::process::Command::new("ycode").arg(&path).status();
+                                    if let Err(e) = status {
+                                        eprintln!("\nFailed to launch ycode: {}", e);
+                                        eprintln!("Press Enter to return to yDir...");
+                                        let _ = std::io::stdin().read_line(&mut String::new());
                                     }
+
+                                    enable_raw_mode()?;
+                                    terminal.backend_mut().execute(EnterAlternateScreen)?;
+                                    terminal.clear()?;
+                                    let _ = app.refresh();
                                 }
                             }
                             KeyCode::Backspace => app.go_parent()?,

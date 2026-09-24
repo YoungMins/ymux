@@ -11,7 +11,6 @@ path = "src/main.rs"
 [dependencies]
 ytheme = { path = "../../crates/ytheme" }
 yversion = { path = "../../crates/yversion" }
-yipc = { path = "../../crates/yipc" }
 # The dock sends a cwd the shell spelled; the panel holds one this process
 # built. `same_dir` needs them comparable without a disk round-trip.
 ypath = { path = "../../crates/ypath" }

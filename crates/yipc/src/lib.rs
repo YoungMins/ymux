@@ -22,9 +22,7 @@ mod protocol;
 mod server;
 
 pub use client::IpcClient;
-pub use protocol::{
-    open_file_event, open_file_path, CommandDef, IpcMessage, AGENT_HOOK_KIND, OPEN_FILE_KIND,
-};
+pub use protocol::{IpcMessage, AGENT_HOOK_KIND};
 pub use server::{IpcServer, MessageHandler};
 
 /// Errors produced by the IPC layer.

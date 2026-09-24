@@ -25,7 +25,7 @@ ymux/
 │       ├── sysmonitor.rs   # System monitor (desktop)
 │       ├── updater.rs      # Update checker (desktop)
 │       ├── webview.rs      # Native browser (desktop, experimental)
-│       └── ipc_server.rs   # IPC server (desktop); routes agent-hook/open-file events, filedock_change_dir
+│       └── ipc_server.rs   # IPC server (desktop); routes agent-hook events
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
 │   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction

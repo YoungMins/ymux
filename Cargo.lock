@@ -6623,7 +6623,6 @@ dependencies = [
  "ratatui",
  "tempfile",
  "unicode-width 0.2.0",
- "yipc",
  "ypath",
  "ytheme",
  "yversion",

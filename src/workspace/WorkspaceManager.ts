@@ -483,9 +483,9 @@ export class WorkspaceManager {
   /// Build either a terminal or browser pane based on `spec.pane_kind`. All
   /// focus / hotkey / url change callbacks are wired so the manager can react
   /// to state changes without needing to know the pane subclass.
-  /// `argv` runs a program directly instead of the spec's shell — the viewer
-  /// tab uses it for `ycode <path>`, the same mechanism the file dock uses
-  /// for `ydir`.
+  /// `argv` runs a program directly instead of the spec's shell. Its last
+  /// callers (the viewer tab's `ycode`, the dock's `ydir`) are GUI panes
+  /// now; the parameter goes in the cut-over step (spec §5 step 6).
   private createPane(spec: PaneSpec, argv?: string[]): Pane {
     if (spec.pane_kind === "browser") {
       return new BrowserPane({
