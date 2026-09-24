@@ -359,14 +359,17 @@ impl AgentSessionStore {
     ///   holds is refused — unless it comes from a hook, which is the agent
     ///   itself saying "this id is mine", and then the other pane's record
     ///   loses the id.
-    /// * **A disk-scanned id never overwrites a hook-borne one** for the same
-    ///   pane, because the hook id is exact and the scan is a guess.
+    /// * **A disk-scanned id never overwrites a live hook-borne one** for the
+    ///   same pane, because the hook id is exact and the scan is a guess. An
+    ///   inactive hook record belongs to an agent that has exited, and the
+    ///   pane's next agent is free to replace it.
     pub fn put(&mut self, session: AgentSession) -> bool {
         if !is_valid_session_id(&session.session_id) {
             return false;
         }
         if let Some(existing) = self.sessions.get(&session.pane_id) {
-            if existing.source == IdSource::Hook
+            if existing.active
+                && existing.source == IdSource::Hook
                 && session.source == IdSource::Disk
                 && existing.session_id != session.session_id
             {
@@ -531,13 +534,15 @@ impl SessionTracker {
     /// Whether `pane_id`'s transcripts should be read on this tick.
     ///
     /// Yes when nothing is known about the pane yet, and after that only once
-    /// every [`DISK_RESCAN_INTERVAL`]. A pane whose id came from a hook is
-    /// never re-scanned: the agent already told us, exactly.
+    /// every [`DISK_RESCAN_INTERVAL`]. A pane whose *live* agent's id came
+    /// from a hook is not re-scanned: the agent already told us, exactly.
+    /// Once that agent has exited (the record is inactive) the pane is
+    /// scanned again, so the next agent in it gets a binding of its own.
     pub fn wants_disk_scan(&self, pane_id: Uuid, now: u64) -> bool {
         if self
             .store
             .get(pane_id)
-            .is_some_and(|s| s.source == IdSource::Hook)
+            .is_some_and(|s| s.source == IdSource::Hook && s.active)
         {
             return false;
         }
@@ -576,8 +581,14 @@ impl SessionTracker {
         }
         // Refresh an existing record in place: `updated_at` means "when ymux
         // last saw this agent alive", which is what the 24 h window measures.
+        //
+        // Only an *active* record. An inactive one belongs to an agent that
+        // has exited; that another agent of the same kind is running in the
+        // pane now says nothing about which conversation it holds, and
+        // flipping the old record back to active would resume a conversation
+        // the user ended. The new agent gets its own binding below.
         if let Some(existing) = self.store.get(obs.pane_id) {
-            if existing.agent == agent {
+            if existing.agent == agent && existing.active {
                 let (id, cwd, source) = (
                     existing.session_id.clone(),
                     existing.cwd.clone(),
@@ -1304,6 +1315,57 @@ mod tests {
         );
         assert_eq!(t.get(pane).map(|s| s.session_id.as_str()), Some(ID_B));
         assert!(t.get(pane).is_some_and(|s| s.active));
+    }
+
+    #[test]
+    fn an_exited_session_is_not_revived_by_the_next_agent_in_the_pane() {
+        // The user quit Claude (the scan saw it go), then started a new one in
+        // the same pane. Seeing *an* agent of the same kind again says nothing
+        // about which conversation it is running; the old record must stay
+        // declined, or the next launch resumes a conversation the user ended.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_000,
+            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+        );
+        t.note_agent_exit(pane);
+        // The new agent has not written a transcript yet.
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_010,
+            |_, _, _| None,
+        );
+        let rec = t.get(pane).expect("record kept");
+        assert!(!rec.active, "an ended conversation must not come back");
+        assert_eq!(
+            outcome_for(Some(rec), "", 1_010, |_| true),
+            ResumeOutcome::None
+        );
+    }
+
+    #[test]
+    fn a_hook_sourced_pane_gets_a_fresh_binding_after_its_agent_exits() {
+        // A hook-borne id stops the disk scan while that agent lives. Once it
+        // has exited, the next agent in the pane (tracking since turned off,
+        // say) must be looked up afresh rather than never again.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
+        o.hook_session_id = Some(ID_A.to_string());
+        t.observe(&o, 1_000, |_, _, _| panic!("a hook id needs no disk scan"));
+        t.note_agent_exit(pane);
+        assert!(t.wants_disk_scan(pane, 1_002));
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_002,
+            |_, _, _| Some(disk(ID_B, "D:\\Git\\ymux")),
+        );
+        let rec = t.get(pane).expect("recorded");
+        assert_eq!(rec.session_id, ID_B);
+        assert!(rec.active);
+        assert_eq!(rec.source, IdSource::Disk);
     }
 
     #[test]
