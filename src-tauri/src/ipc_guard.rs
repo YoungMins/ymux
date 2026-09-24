@@ -214,7 +214,12 @@ mod tests {
 
     // -----------------------------------------------------------------
     // Enforcement: every registered command starts with a guard.
+    //
+    // Command bodies are parsed with `syn`, so comments are not tokens and
+    // cannot impersonate a guard (`/* guard_local(..) */ evil()?;`).
     // -----------------------------------------------------------------
+
+    use quote::ToTokens;
 
     fn src_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -231,62 +236,176 @@ mod tests {
         }
     }
 
-    /// Command names listed in `main.rs`'s `generate_handler![...]`.
+    /// Command names listed in `main.rs`'s `generate_handler![...]`, read
+    /// from the macro's tokens (so a commented-out entry does not count).
     fn registered_commands() -> Vec<String> {
         let main = std::fs::read_to_string(src_dir().join("main.rs")).expect("read main.rs");
-        let start = main
-            .find("generate_handler![")
-            .expect("main.rs has generate_handler!");
-        let body = &main[start + "generate_handler![".len()..];
-        let body = &body[..body.find(']').expect("generate_handler! is closed")];
-        body.lines()
-            .map(|l| l.split("//").next().unwrap_or("").trim())
-            .filter(|l| !l.is_empty())
-            .map(|l| {
-                let path = l.trim_end_matches(',').trim();
-                path.rsplit("::").next().unwrap_or(path).to_string()
-            })
-            .collect()
+        let tokens: proc_macro2::TokenStream = main.parse().expect("main.rs tokenizes");
+        let mut out = Vec::new();
+        find_handler_list(tokens, &mut out);
+        out
     }
 
-    /// Every `#[tauri::command]` fn in `src/`, with the first statement of
-    /// its body (comments and blank lines skipped, up to the first `;`).
-    fn defined_commands() -> Vec<(String, PathBuf, String)> {
+    fn find_handler_list(tokens: proc_macro2::TokenStream, out: &mut Vec<String>) {
+        use proc_macro2::TokenTree;
+        let mut prev_was_handler_bang = 0u8; // 1 after `generate_handler`, 2 after `!`
+        for tt in tokens {
+            match &tt {
+                TokenTree::Ident(i) if i == "generate_handler" => prev_was_handler_bang = 1,
+                TokenTree::Punct(p) if p.as_char() == '!' && prev_was_handler_bang == 1 => {
+                    prev_was_handler_bang = 2
+                }
+                TokenTree::Group(g) if prev_was_handler_bang == 2 => {
+                    let list: syn::punctuated::Punctuated<syn::Path, syn::Token![,]> =
+                        syn::parse::Parser::parse2(
+                            syn::punctuated::Punctuated::parse_terminated,
+                            g.stream(),
+                        )
+                        .expect("generate_handler! holds a path list");
+                    for p in list {
+                        out.push(p.segments.last().expect("non-empty path").ident.to_string());
+                    }
+                    prev_was_handler_bang = 0;
+                }
+                TokenTree::Group(g) => {
+                    prev_was_handler_bang = 0;
+                    find_handler_list(g.stream(), out);
+                }
+                _ => prev_was_handler_bang = 0,
+            }
+        }
+    }
+
+    fn is_tauri_command(attr: &syn::Attribute) -> bool {
+        let segs: Vec<String> = attr
+            .path()
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        segs == ["tauri", "command"]
+    }
+
+    /// Every `#[tauri::command]` fn in `src`, with its first statement as
+    /// whitespace-free tokens (`None` for an empty body).
+    fn commands_in(src: &str) -> Vec<(String, Option<String>)> {
+        fn walk(items: &[syn::Item], out: &mut Vec<(String, Option<String>)>) {
+            for item in items {
+                match item {
+                    syn::Item::Fn(f) if f.attrs.iter().any(is_tauri_command) => {
+                        let first = f.block.stmts.first().map(|s| {
+                            s.to_token_stream()
+                                .to_string()
+                                .chars()
+                                .filter(|c| !c.is_whitespace())
+                                .collect()
+                        });
+                        out.push((f.sig.ident.to_string(), first));
+                    }
+                    syn::Item::Mod(m) => {
+                        if let Some((_, items)) = &m.content {
+                            walk(items, out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let file = syn::parse_file(src).expect("source parses");
+        let mut out = Vec::new();
+        walk(&file.items, &mut out);
+        out
+    }
+
+    /// Is `stmt` (whitespace-free tokens) exactly an accepted guard call for
+    /// command `name`? Exact forms only, so `guard_local(..).ok();` or a
+    /// guard buried in a larger expression does not count.
+    fn is_guard_statement(name: &str, stmt: &str, embedded_child: bool) -> bool {
+        let q = format!("\"{name}\"");
+        let accepted: Vec<String> = if embedded_child {
+            vec![
+                format!("guard_embedded_child(&webview,&registry,{q})?;"),
+                format!("letpane=guard_embedded_child(&webview,&registry,{q})?;"),
+            ]
+        } else {
+            vec![
+                format!("guard_local(&webview,&request,{q})?;"),
+                format!("guard_local(&webview,&request,{q}).map_err(|e|e.to_string())?;"),
+                format!("guarded!(webview,request,{q});"),
+            ]
+        };
+        accepted.iter().any(|a| a == stmt)
+    }
+
+    fn defined_commands() -> Vec<(String, PathBuf, Option<String>)> {
         let mut files = Vec::new();
         rust_files(&src_dir(), &mut files);
         let mut out = Vec::new();
         for file in files {
             let text = std::fs::read_to_string(&file).expect("read source");
-            // Only a line that *is* the attribute counts — doc comments and
-            // this test's own strings mention it too.
-            let mut offset = 0;
-            let mut attrs = Vec::new();
-            for line in text.split_inclusive('\n') {
-                if line.trim_start().starts_with("#[tauri::command") {
-                    attrs.push(offset + line.len());
-                }
-                offset += line.len();
-            }
-            for at in attrs {
-                let rest = &text[at..];
-                let fn_at = rest.find("fn ").expect("attribute is followed by a fn");
-                let after = &rest[fn_at + 3..];
-                let name: String = after
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                let body = &after[after.find('{').expect("fn has a body") + 1..];
-                let code: String = body
-                    .lines()
-                    .map(str::trim)
-                    .filter(|l| !l.is_empty() && !l.starts_with("//"))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let first = code[..code.find(';').unwrap_or(code.len())].to_string();
+            for (name, first) in commands_in(&text) {
                 out.push((name, file.clone(), first));
             }
         }
         out
+    }
+
+    /// A guard that is only in a comment — block, line or trailing — is not
+    /// a guard.
+    #[test]
+    fn a_commented_out_guard_does_not_count() {
+        let src = r#"
+            #[tauri::command]
+            pub fn block(webview: W, request: R) -> Res<()> {
+                /* guard_local(&webview, &request, "block")?; */
+                spawn()?;
+                Ok(())
+            }
+            #[tauri::command]
+            pub fn line(webview: W, request: R) -> Res<()> {
+                // guard_local(&webview, &request, "line")?;
+                spawn()?;
+                Ok(())
+            }
+            #[tauri::command]
+            pub fn trailing(webview: W, request: R) -> Res<()> {
+                spawn() /* guard_local(&webview, &request, "trailing") */ ?;
+                Ok(())
+            }
+            #[tauri::command]
+            pub fn swallowed(webview: W, request: R) -> Res<()> {
+                guard_local(&webview, &request, "swallowed").ok();
+                Ok(())
+            }
+            #[tauri::command]
+            pub fn empty() {}
+            #[tauri::command(async)]
+            pub fn good(webview: W, request: R) -> Res<()> {
+                // A comment before the guard is fine.
+                guard_local(
+                    &webview, &request, "good"
+                )?;
+                Ok(())
+            }
+        "#;
+        let found = commands_in(src);
+        let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["block", "line", "trailing", "swallowed", "empty", "good"]
+        );
+        for (name, first) in &found {
+            let ok = first
+                .as_deref()
+                .is_some_and(|s| is_guard_statement(name, s, false));
+            assert_eq!(ok, name == "good", "{name}: {first:?}");
+        }
+        // The name inside the guard must be this command's own.
+        assert!(!is_guard_statement(
+            "other",
+            "guard_local(&webview,&request,\"good\")?;",
+            false
+        ));
     }
 
     /// The test that keeps the hole closed. A new command fails CI until it
@@ -316,19 +435,12 @@ mod tests {
 
         let mut failures = Vec::new();
         for (name, file, first) in &defined {
-            let ok = if EMBEDDED_CHILD_COMMANDS.contains(&name.as_str()) {
-                first.contains(&format!(
-                    "guard_embedded_child(&webview, &registry, \"{name}\")"
-                ))
-            } else {
-                first.contains(&format!("guard_local(&webview, &request, \"{name}\")"))
-                    || first.contains(&format!("guarded!(webview, request, \"{name}\")"))
-            };
-            // `guarded!` expands to `...?`; every other form must propagate
-            // the rejection itself rather than compute and drop it.
-            let propagates = first.ends_with('?') || first.starts_with("guarded!");
-            if !(ok && propagates) {
-                failures.push(format!("{name} ({}): {first}", file.display()));
+            let eb = EMBEDDED_CHILD_COMMANDS.contains(&name.as_str());
+            let ok = first
+                .as_deref()
+                .is_some_and(|s| is_guard_statement(name, s, eb));
+            if !ok {
+                failures.push(format!("{name} ({}): {first:?}", file.display()));
             }
         }
         assert!(
