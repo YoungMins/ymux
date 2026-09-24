@@ -69,7 +69,12 @@ import {
   isProbablyBinary,
   type Preview,
 } from "./preview";
-import { getClipboard, onClipboardChange, setClipboard } from "./clipboard";
+import {
+  getClipboard,
+  onClipboardChange,
+  setClipboard,
+  type FilesClipboard,
+} from "./clipboard";
 import {
   actionDir,
   initialNav,
@@ -246,6 +251,11 @@ export class FilesPane implements Pane {
   private previewTimer: number | null = null;
   private scrollTop = 0;
   private rowPool: RowEls[] = [];
+  private cutCache: {
+    clip: FilesClipboard | null;
+    dir: string | null;
+    names: ReadonlySet<string> | null;
+  } | null = null;
   private typed = "";
   private typedAt = 0;
   private busy = false;
@@ -585,11 +595,7 @@ export class FilesPane implements Pane {
     const last = Math.min(n, Math.ceil((this.list.scrollTop + h) / ROW_H) + OVERSCAN);
     const count = Math.max(0, last - first);
     while (this.rowPool.length < count) this.rowPool.push(this.makeRow());
-    const clip = getClipboard();
-    const cutHere =
-      clip?.mode === "cut" && isSameDir(clip.dir, this.nav.listed)
-        ? new Set(clip.items.map((i) => i.name))
-        : null;
+    const cutHere = this.cutNamesHere();
     const focusedList = document.activeElement === this.list;
     for (let k = 0; k < this.rowPool.length; k++) {
       const els = this.rowPool[k];
@@ -606,7 +612,13 @@ export class FilesPane implements Pane {
         els.name.textContent = e.name;
         els.row.title = e.name;
       }
-      els.icon.innerHTML = e.is_dir ? ICON.folder : ICON.file;
+      // Re-parse the SVG only when the row's kind actually changes: this
+      // runs for every pooled row on every scroll event.
+      const kind = e.is_dir ? "dir" : "file";
+      if (els.icon.dataset.kind !== kind) {
+        els.icon.dataset.kind = kind;
+        els.icon.innerHTML = e.is_dir ? ICON.folder : ICON.file;
+      }
       els.link.hidden = !e.is_symlink;
       els.size.textContent = e.is_dir ? "" : formatSize(e.size);
       els.date.textContent = formatModified(e.modified_ms);
@@ -620,6 +632,22 @@ export class FilesPane implements Pane {
       els.row.setAttribute("aria-selected", String(selected));
     }
     this.list.classList.toggle("files__list--focused", focusedList);
+  }
+
+  /// Names in the listed folder that are cut and waiting for a paste. Built
+  /// once per clipboard/folder change, not on every scroll.
+  private cutNamesHere(): ReadonlySet<string> | null {
+    const clip = getClipboard();
+    const listed = this.nav.listed;
+    if (this.cutCache && this.cutCache.clip === clip && this.cutCache.dir === listed) {
+      return this.cutCache.names;
+    }
+    const names =
+      clip?.mode === "cut" && isSameDir(clip.dir, listed)
+        ? new Set(clip.items.map((i) => i.name))
+        : null;
+    this.cutCache = { clip, dir: listed, names };
+    return names;
   }
 
   private makeRow(): RowEls {
