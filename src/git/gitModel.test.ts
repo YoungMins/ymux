@@ -169,7 +169,18 @@ describe("removePlan", () => {
       ignored: ["target/", "node_modules/"],
       stranded: [],
       moreStranded: false,
+      loses: true,
     });
+  });
+
+  it("counts ignored files as a loss: git deletes them without --force", () => {
+    // `.env`, a local database: gone with the folder, so Cancel is the default.
+    const withIgnored = removePlan(wt(), status({ ignored: [".env"] }));
+    expect(withIgnored.kind === "remove" && withIgnored.loses).toBe(true);
+    const clean = removePlan(wt(), status());
+    expect(clean.kind === "remove" && clean.loses).toBe(false);
+    const dirty = removePlan(wt(), status({ changes: [entry(" M", "a.rs")] }));
+    expect(dirty.kind === "remove" && dirty.loses).toBe(true);
   });
 
   it("forces only with the changes it destroys listed", () => {

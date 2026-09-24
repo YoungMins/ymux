@@ -109,9 +109,10 @@ export async function removeWorktreeFlow(entry: WorktreeEntry): Promise<RemoveOu
     const names = shown.join("\n") + (more ? `\n${fill(t("git.more"), { n: more })}` : "");
     parts.push(`${t("git.removeIgnored")}\n${names}`);
   }
-  const loses = plan.lost.length > 0 || plan.stranded.length > 0;
+  const loses = plan.loses;
   const answer = await askChoice(t("git.removeTitle"), parts.join("\n\n"), [
-    // Something is destroyed: the focused default is to keep it.
+    // Something is destroyed — ignored files included: the focused default
+    // is to keep it.
     { id: "cancel", label: t("dialog.cancel"), primary: loses },
     {
       id: "remove",

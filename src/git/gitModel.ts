@@ -121,6 +121,10 @@ export type RemovePlan =
       /// A detached worktree's commits no ref reaches.
       stranded: CommitInfo[];
       moreStranded: boolean;
+      /// Anything at all is destroyed — changes, stranded commits *or*
+      /// ignored files (`.env`, a local database, which git deletes even
+      /// without `--force`). Then Cancel is the dialog's default.
+      loses: boolean;
     };
 
 /// Decide a removal. Called twice: without a status to find out whether the
@@ -144,6 +148,7 @@ export function removePlan(entry: WorktreeEntry, status: WorkStatus | null): Rem
     ignored: status.ignored,
     stranded,
     moreStranded: status.detached && status.more_orphans,
+    loses: status.changes.length > 0 || stranded.length > 0 || status.ignored.length > 0,
   };
 }
 
