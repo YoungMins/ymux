@@ -110,6 +110,18 @@ pub fn caller_allowed(label: &str) -> bool {
 /// ([`caller_allowed`]) is not optional. If a wry/Tauri upgrade ever starts
 /// handling frame web messages, this reasoning must be revisited.
 ///
+/// **macOS rests on a different fact.** There wry accepts `postMessage`
+/// from *any* frame (`wry-0.54.4` `src/wkwebview/class/wry_web_view_delegate.rs:50`
+/// reads the sending frame's URL but does not filter on it), and
+/// [`request_is_local`] checks the webview's *top-level* URL, not the
+/// sending frame's — so the transport alone would let a framed page through.
+/// What keeps a macOS iframe out is that it never gets the invoke key:
+/// WKWebView honours main-frame-only injection
+/// (`src/wkwebview/mod.rs:644`, `:781`, `forMainFrameOnly`), so Tauri's IPC
+/// scripts never run in a subframe and every message it could send is
+/// rejected by `on_message`'s invoke-key check. Re-check this too on any
+/// wry/Tauri upgrade.
+///
 /// ## What this cannot see: ymux's own document inside a frame
 ///
 /// If a `browser` pane framed `http://tauri.localhost/` itself, that frame's
