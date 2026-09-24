@@ -32,10 +32,18 @@ pub const LEGACY_MARKER: &str = "--ymux-agent-hook";
 /// Env var carrying the pane id into every PTY (set in `pty::session`).
 pub const PANE_ENV: &str = "YMUX_PANE_ID";
 
-/// Pattern ymux adds to a user-level `allowedHttpHookUrls` that already
-/// exists (never creates one: defining the key blocks every http hook not on
-/// it). Port-independent, so a port change never needs a second entry.
-pub const ALLOWED_URL_PATTERN: &str = "http://127.0.0.1:*/ymux-agent-hook";
+/// Whether an `allowedHttpHookUrls` item is the one ymux adds: exactly
+/// `http://127.0.0.1:<port>/ymux-agent-hook` (see [`hook_url`]). Only that
+/// spelling — a user's own wildcard for the same path is theirs to keep.
+pub fn is_our_allowed_url(item: &str) -> bool {
+    item.strip_prefix("http://127.0.0.1:")
+        .and_then(|rest| rest.strip_suffix(HOOK_PATH))
+        .is_some_and(|port| {
+            !port.is_empty()
+                && port.parse::<u16>().is_ok()
+                && port.bytes().all(|b| b.is_ascii_digit())
+        })
+}
 
 /// Seconds Claude Code waits for the receiver. Its default for http hooks is
 /// 600 s: a stalled ymux must not stall every tool call. `SessionEnd`'s
@@ -152,6 +160,22 @@ fn extend_existing_list(root: &mut Map<String, Value>, key: &str, items: &[&str]
     }
 }
 
+/// In a user-level `allowedHttpHookUrls` that already exists (never created:
+/// defining the key blocks every http hook not on it), allow exactly
+/// `url`, dropping ymux's entry for any other port. The exact URL rather than
+/// a port wildcard, so ymux never loosens the user's own restriction.
+fn allow_exact_url(root: &mut Map<String, Value>, url: &str) {
+    if let Some(list) = root.get_mut(ALLOW_URLS_KEY).and_then(Value::as_array_mut) {
+        list.retain(|v| {
+            !v.as_str()
+                .is_some_and(|s| s != url && is_our_allowed_url(s))
+        });
+        if !list.iter().any(|v| v.as_str() == Some(url)) {
+            list.push(Value::String(url.to_string()));
+        }
+    }
+}
+
 /// Remove `items` from the array at `root[key]`, keeping the key (an
 /// emptied `allowedHttpHookUrls` means what the user's empty list meant
 /// before install). Returns whether anything was removed.
@@ -225,7 +249,7 @@ pub fn install_hooks(settings: &mut Value, port: u16) -> Result<(), String> {
             groups.push(Value::Object(group));
         }
     }
-    extend_existing_list(root, ALLOW_URLS_KEY, &[ALLOWED_URL_PATTERN]);
+    allow_exact_url(root, &hook_url(port));
     extend_existing_list(root, ALLOW_ENV_KEY, OUR_ENV_VARS);
     Ok(())
 }
@@ -238,7 +262,12 @@ pub fn uninstall_hooks(settings: &mut Value) -> bool {
     let Some(root) = settings.as_object_mut() else {
         return false;
     };
-    let mut changed = prune_list(root, ALLOW_URLS_KEY, &[ALLOWED_URL_PATTERN]);
+    let mut changed = false;
+    if let Some(list) = root.get_mut(ALLOW_URLS_KEY).and_then(Value::as_array_mut) {
+        let before = list.len();
+        list.retain(|v| !v.as_str().is_some_and(is_our_allowed_url));
+        changed |= list.len() != before;
+    }
     changed |= prune_list(root, ALLOW_ENV_KEY, OUR_ENV_VARS);
     let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
         return changed;
@@ -529,8 +558,9 @@ mod tests {
             v["allowedHttpHookUrls"],
             json!([
                 "https://audit.example/*",
-                "http://127.0.0.1:*/ymux-agent-hook"
-            ])
+                "http://127.0.0.1:41234/ymux-agent-hook"
+            ]),
+            "the exact URL, never a port wildcard that loosens the user's list"
         );
         assert_eq!(
             v["httpHookAllowedEnvVars"],
@@ -540,9 +570,49 @@ mod tests {
         // uninstall puts it back to empty, not absent.
         let mut empty = json!({ "allowedHttpHookUrls": [] });
         install_hooks(&mut empty, PORT).unwrap();
-        assert_eq!(empty["allowedHttpHookUrls"], json!([ALLOWED_URL_PATTERN]));
+        assert_eq!(empty["allowedHttpHookUrls"], json!([hook_url(PORT)]));
         assert!(uninstall_hooks(&mut empty));
         assert_eq!(empty, json!({ "allowedHttpHookUrls": [] }));
+    }
+
+    #[test]
+    fn the_allowlisted_url_follows_the_port() {
+        let mut v = foreign();
+        install_hooks(&mut v, 1111).unwrap();
+        install_hooks(&mut v, PORT).unwrap();
+        assert_eq!(
+            v["allowedHttpHookUrls"],
+            json!(["https://audit.example/*", hook_url(PORT)]),
+            "the old port's entry is replaced, not kept beside the new one"
+        );
+        assert!(uninstall_hooks(&mut v));
+        assert_eq!(
+            serde_json::to_string(&v).unwrap(),
+            serde_json::to_string(&foreign()).unwrap()
+        );
+    }
+
+    #[test]
+    fn only_our_exact_url_counts_as_ours_in_the_allowlist() {
+        for foreign_url in [
+            "http://127.0.0.1:*/ymux-agent-hook",
+            "http://127.0.0.1:9999/audit",
+            "http://127.0.0.1:/ymux-agent-hook",
+            "http://127.0.0.1:12ab/ymux-agent-hook",
+            "https://127.0.0.1:1/ymux-agent-hook",
+            "http://localhost:1/ymux-agent-hook",
+        ] {
+            assert!(!is_our_allowed_url(foreign_url), "{foreign_url}");
+        }
+        assert!(is_our_allowed_url("http://127.0.0.1:41234/ymux-agent-hook"));
+        let mut v = json!({ "allowedHttpHookUrls": ["http://127.0.0.1:*/ymux-agent-hook"] });
+        install_hooks(&mut v, PORT).unwrap();
+        assert!(uninstall_hooks(&mut v));
+        assert_eq!(
+            v,
+            json!({ "allowedHttpHookUrls": ["http://127.0.0.1:*/ymux-agent-hook"] }),
+            "a user's own wildcard survives"
+        );
     }
 
     #[test]

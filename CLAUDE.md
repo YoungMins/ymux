@@ -355,9 +355,11 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   `UserPromptSubmit`; the process scan and transcript fallback cover the gap.
 - **Restriction knobs.** `allowedHttpHookUrls` / `httpHookAllowedEnvVars`
   default to unset (nothing blocked). If the user-level settings already
-  define either, install appends `http://127.0.0.1:*/ymux-agent-hook` /
-  the two env names and uninstall removes exactly those; neither key is ever
-  created (defining `allowedHttpHookUrls` would block every other http hook).
+  define either, install adds the exact `http://127.0.0.1:<port>/ymux-agent-hook`
+  (replaced when the port changes — never a `:*` wildcard, which would loosen
+  the user's own restriction) / the two env names, and uninstall removes
+  exactly those; neither key is ever created (defining `allowedHttpHookUrls`
+  would block every other http hook).
   Managed or project-level lists are out of ymux's reach.
 - **ymux not running.** The hooks then fail with a connection error, which
   Claude Code treats as non-blocking but *reports* (e.g. "Stop hook error
