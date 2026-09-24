@@ -107,6 +107,16 @@ describe("openFileDecision (viewer-tab reuse)", () => {
     expect(openFileDecision("/w/a.rs", true, "/w/b.rs")).toBe("ask");
     expect(openFileDecision(null, false, "/w/b.rs")).toBe("open");
   });
+
+  it("the same file in a pane whose load failed is a retry, even with a draft pending", () => {
+    expect(openFileDecision("/w/a.rs", true, "/w/a.rs", false)).toBe("retry");
+    expect(openFileDecision("/w/a.rs", false, "/w/a.rs", false)).toBe("retry");
+  });
+
+  it("another file over a failed pane holding a draft asks first", () => {
+    // isDirty() is true for a pending draft even with nothing loaded.
+    expect(openFileDecision("/w/a.rs", true, "/w/b.rs", false)).toBe("ask");
+  });
 });
 
 describe("closeState", () => {
@@ -136,6 +146,14 @@ describe("closeState", () => {
     expect(closeState({ ...base, pendingDraft: true, dirty: true }).savable).toBe(false);
   });
 
+  it("a pending draft in a pane whose file could not be read still blocks the close", () => {
+    expect(closeState({ ...base, loaded: false, pendingDraft: true })).toEqual({
+      unsaved: true,
+      savable: false,
+    });
+    expect(closeState({ ...base, readOnly: true, pendingDraft: true }).unsaved).toBe(true);
+  });
+
   it("read-only and not-loaded panes never block a close", () => {
     expect(closeState({ ...base, readOnly: true, dirty: true }).unsaved).toBe(false);
     expect(closeState({ ...base, loaded: false, dirty: true }).unsaved).toBe(false);
@@ -143,7 +161,7 @@ describe("closeState", () => {
 });
 
 describe("draftFileAction", () => {
-  it("never touches a pending recovered draft", () => {
+  it("never touches a draft that has not been checked or answered yet", () => {
     expect(draftFileAction(true, true)).toBe("keep");
     expect(draftFileAction(true, false)).toBe("keep");
   });

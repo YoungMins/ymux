@@ -122,12 +122,18 @@ export function conflictDecision(
 /// "Same" is NFC-equal only — rule 15 keeps case and separator folding on
 /// the Rust side. A respelling that slips through is treated as another
 /// file, which costs at most a needless save prompt, never an edit.
+///
+/// The same file in a pane whose load failed is `retry`: read it again (and
+/// re-offer any draft) — never treated as "replace", which would discard.
 export function openFileDecision(
   current: string | null,
   dirty: boolean,
   next: string,
-): "focus" | "open" | "ask" {
-  if (current !== null && current.normalize("NFC") === next.normalize("NFC")) return "focus";
+  loaded = true,
+): "focus" | "retry" | "open" | "ask" {
+  if (current !== null && current.normalize("NFC") === next.normalize("NFC")) {
+    return loaded ? "focus" : "retry";
+  }
   return dirty ? "ask" : "open";
 }
 
@@ -162,8 +168,12 @@ export function closeState(s: BufferState): { unsaved: boolean; savable: boolean
 /// typing, undoing to clean, saving, or an agent's rewrite reloading the
 /// buffer must not overwrite or delete the only copy of those edits before
 /// the user has answered Restore / Discard.
-export function draftFileAction(pendingDraft: boolean, dirty: boolean): "keep" | "write" | "delete" {
-  if (pendingDraft) return "keep";
+///
+/// `unanswered` is true both while a recovered draft is offered and before
+/// the pane has even looked for one: a draft nobody has been offered is
+/// never overwritten or deleted.
+export function draftFileAction(unanswered: boolean, dirty: boolean): "keep" | "write" | "delete" {
+  if (unanswered) return "keep";
   return dirty ? "write" : "delete";
 }
 
