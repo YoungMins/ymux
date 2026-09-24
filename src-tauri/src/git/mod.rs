@@ -360,6 +360,75 @@ pub fn parse_branch_list(out: &str) -> BranchList {
     list
 }
 
+/// Most commits one `git_log` call will fetch, however many the caller asks
+/// for. The pane paginates; an unbounded request is a mistake, not a
+/// feature.
+pub const MAX_LOG_LIMIT: u32 = 2000;
+
+/// Does this repository have any commits yet?
+///
+/// `git log` fails outright in a fresh `git init`, which is a normal state
+/// and not an error the pane should show.
+fn has_commits(cwd: &Path) -> bool {
+    Command::new("git")
+        .current_dir(cwd)
+        .args(["rev-parse", "--quiet", "--verify", "HEAD"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Commits reachable from any ref, newest first.
+///
+/// An empty repository is `Ok(vec![])`, not an error.
+pub fn log(cwd: &Path, limit: u32, skip: u32) -> YmuxResult<Vec<CommitInfo>> {
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    if !has_commits(cwd) {
+        return Ok(Vec::new());
+    }
+    let max = format!("--max-count={}", limit.clamp(1, MAX_LOG_LIMIT));
+    let skip = format!("--skip={skip}");
+    let fmt = format!("--format={LOG_FORMAT}");
+    let out = run_git(cwd, &["log", "--all", "--date-order", &max, &skip, &fmt])?;
+    Ok(parse_log_porcelain(&out))
+}
+
+/// Local and remote branches, with the current one named.
+pub fn branches(cwd: &Path) -> YmuxResult<BranchList> {
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    let fmt = format!("--format={BRANCH_FORMAT}");
+    let out = run_git(cwd, &["branch", "--list", "--all", &fmt])?;
+    Ok(parse_branch_list(&out))
+}
+
+/// Check out `branch` in the worktree containing `cwd`.
+///
+/// This runs the repository's `post-checkout` hook and any smudge filters
+/// it configures — exactly as typing `git checkout` in a terminal pane
+/// would, and for the same reason: it is the user's own repository. The
+/// name is validated ([`validate_ref_name`]) so it cannot be read as a git
+/// option, and `Command` passes argv directly, so no shell parses it.
+pub fn checkout(cwd: &Path, branch: &str) -> YmuxResult<()> {
+    validate_ref_name(branch)?;
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    run_git(cwd, &["checkout", branch]).map(|_| ())
+}
+
+/// [`repo_root`], but reporting a non-repository as [`YmuxError::NotARepo`]
+/// so the pane can show its empty state rather than a git error string.
+pub fn repo_root_checked(cwd: &Path) -> YmuxResult<String> {
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    Ok(repo_root(cwd)?.to_string_lossy().into_owned())
+}
+
 /// Reject a branch name that `git` would read as an option or that carries
 /// control characters.
 ///
@@ -761,6 +830,125 @@ detached
 
     fn cleanup_dir(dir: &Path) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Against a real `git`, because the point is that [`LOG_FORMAT`] and
+    /// [`BRANCH_FORMAT`] are what the installed git actually accepts — a
+    /// fixture cannot catch a format string git rejects.
+    #[test]
+    fn log_branches_and_checkout_against_real_git() {
+        let repo = init_test_repo("log_round_trip");
+
+        let run = |args: &[&str]| {
+            let out = Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .expect("run git");
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        // A branch with a Korean name and a subject containing a pipe and a
+        // unit-separator-adjacent character.
+        run(&["checkout", "-q", "-b", "기능/한글브랜치"]);
+        std::fs::write(repo.join("g.txt"), "x\n").unwrap();
+        run(&["add", "g.txt"]);
+        run(&["commit", "-q", "-m", "두 번째 | pipe in subject"]);
+
+        let commits = log(&repo, 10, 0).unwrap();
+        assert_eq!(commits.len(), 2, "both commits come back");
+        assert_eq!(commits[0].subject, "두 번째 | pipe in subject");
+        assert_eq!(commits[0].author, "Test");
+        assert_eq!(commits[0].parents.len(), 1);
+        assert_eq!(commits[0].parents[0], commits[1].hash);
+        assert!(commits[0].date_ms > 0);
+        assert!(commits[0].hash.starts_with(&commits[0].short));
+
+        // `skip` and `limit` are honoured.
+        assert_eq!(log(&repo, 1, 0).unwrap().len(), 1);
+        let skipped = log(&repo, 10, 1).unwrap();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].hash, commits[1].hash);
+
+        let list = branches(&repo).unwrap();
+        assert_eq!(list.current, "기능/한글브랜치");
+        assert!(list.local.contains(&"기능/한글브랜치".to_string()));
+        assert!(list.remote.is_empty(), "no remotes in a fresh init");
+
+        // Checkout round-trips, including back to a Korean branch name.
+        let other = list
+            .local
+            .iter()
+            .find(|b| *b != "기능/한글브랜치")
+            .expect("init_test_repo leaves a default branch")
+            .clone();
+        checkout(&repo, &other).unwrap();
+        assert_eq!(branches(&repo).unwrap().current, other);
+        checkout(&repo, "기능/한글브랜치").unwrap();
+        assert_eq!(branches(&repo).unwrap().current, "기능/한글브랜치");
+
+        // A name git would read as an option never reaches git.
+        assert!(checkout(&repo, "--help").is_err());
+
+        cleanup_dir(&repo);
+    }
+
+    /// A fresh `git init` has no commits, which `git log` treats as a fatal
+    /// error. The pane's empty state is not an error.
+    #[test]
+    fn an_empty_repository_logs_as_empty_not_as_an_error() {
+        let dir = std::env::temp_dir().join(format!(
+            "ymux_git_test_empty_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(Command::new("git")
+            .current_dir(&dir)
+            .args(["init", "-q"])
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        assert_eq!(log(&dir, 10, 0).unwrap(), Vec::new());
+        assert_eq!(branches(&dir).unwrap(), BranchList::default());
+        assert!(repo_root_checked(&dir).is_ok());
+
+        cleanup_dir(&dir);
+    }
+
+    /// Outside a repository every one of these is `NotARepo`, so the pane
+    /// can branch on it instead of matching a git error string.
+    #[test]
+    fn outside_a_repository_everything_is_not_a_repo() {
+        let dir = std::env::temp_dir().join(format!(
+            "ymux_git_test_norepo_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A temp dir can itself sit inside a repository on some machines;
+        // only assert when git agrees it does not.
+        if !is_git_repo(&dir) {
+            assert_eq!(log(&dir, 10, 0).unwrap_err().kind(), "not_a_repo");
+            assert_eq!(branches(&dir).unwrap_err().kind(), "not_a_repo");
+            assert_eq!(checkout(&dir, "main").unwrap_err().kind(), "not_a_repo");
+            assert_eq!(repo_root_checked(&dir).unwrap_err().kind(), "not_a_repo");
+        }
+
+        cleanup_dir(&dir);
     }
 
     #[test]
