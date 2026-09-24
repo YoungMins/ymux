@@ -145,10 +145,71 @@ fn same_origin(origin: &str, app_url: &str) -> bool {
         && got.port_or_known_default() == want.port_or_known_default()
 }
 
+/// Which of Tauri's two IPC transports delivered a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpcTransport {
+    /// `fetch()` to the IPC custom protocol. Headers are the real HTTP
+    /// request's, so `Origin` is set by the browser and cannot be forged.
+    Fetch,
+    /// `window.ipc.postMessage`, Tauri's fallback once a `fetch` has failed.
+    /// Headers are a JSON field the *page* supplies (`handle_ipc_message`,
+    /// `tauri-2.10.3` `src/ipc/protocol.rs:185`), normally empty.
+    PostMessage,
+}
+
+impl IpcTransport {
+    /// Tauri's `ipc-protocol.js` always sends the invoke key as the
+    /// `Tauri-Invoke-Key` header on the `fetch` path — the protocol handler
+    /// refuses a request without it (`src/ipc/protocol.rs:482`) — while on
+    /// the `postMessage` path the key is a body field. A page on the
+    /// `postMessage` path *can* add the header to pose as `Fetch`; that only
+    /// moves it onto the stricter branch of [`request_is_local`].
+    pub fn from_invoke_key_header(present: bool) -> Self {
+        if present {
+            Self::Fetch
+        } else {
+            Self::PostMessage
+        }
+    }
+}
+
+/// Did this IPC request come from ymux's own document?
+///
+/// - A **present** `Origin` must be local ([`origin_is_local`]), on either
+///   transport.
+/// - A **missing** `Origin` is accepted only on the `postMessage` path, and
+///   only when the webview's current top-level URL is ymux's own. Tauri's JS
+///   switches to `postMessage` *permanently* after any failed IPC `fetch`
+///   (`scripts/ipc-protocol.js`), and that path sends no `Origin`, so
+///   refusing it would brick the app until restart. It is safe because only
+///   a webview's top-level document reaches that path on WebView2 (see
+///   "What this relies on" at [`origin_is_local`]); a framed page is on
+///   `fetch`, where its real Origin is always present.
+/// - `postMessage` additionally requires the current URL to be local even
+///   when an Origin is present, since there the Origin is page-supplied.
+///
+/// The label is checked separately ([`caller_allowed`]).
+pub fn request_is_local<S: AsRef<str>>(
+    origin: Option<&str>,
+    transport: IpcTransport,
+    current_url: Option<&str>,
+    allowed: &[S],
+) -> bool {
+    let page_is_local = || origin_is_local(current_url, allowed);
+    match (origin, transport) {
+        (Some(o), IpcTransport::Fetch) => origin_is_local(Some(o), allowed),
+        (Some(o), IpcTransport::PostMessage) => {
+            origin_is_local(Some(o), allowed) && page_is_local()
+        }
+        (None, IpcTransport::PostMessage) => page_is_local(),
+        (None, IpcTransport::Fetch) => false,
+    }
+}
+
 /// The `Origin` header of the IPC request now being served, if any.
 ///
 /// Split out from [`guard_local`] so the header-name lookup is in one place
-/// and the decision itself stays in the pure [`origin_is_local`].
+/// and the decision itself stays in the pure [`request_is_local`].
 #[cfg(feature = "desktop")]
 fn request_origin<'a>(request: &'a tauri::ipc::Request<'_>) -> Option<&'a str> {
     request.headers().get("Origin")?.to_str().ok()
@@ -183,7 +244,15 @@ pub fn guard_local(
             webview.label()
         )));
     }
-    if !origin_is_local(request_origin(request), &allowed_origins(webview)) {
+    let transport =
+        IpcTransport::from_invoke_key_header(request.headers().contains_key("Tauri-Invoke-Key"));
+    let current_url = webview.url().ok();
+    if !request_is_local(
+        request_origin(request),
+        transport,
+        current_url.as_ref().map(url::Url::as_str),
+        &allowed_origins(webview),
+    ) {
         return Err(crate::YmuxError::Forbidden(format!(
             "{cmd}: only ymux's own document may call this, not embedded web content"
         )));
@@ -657,6 +726,101 @@ mod tests {
     /// Fail-closed cases. A missing header is the important one: Tauri's
     /// `postMessage` fallback carries no real headers, and accepting it
     /// would also accept a forged `Origin` on that path.
+    /// Tauri's JS switches to `postMessage` for good after one failed IPC
+    /// `fetch`, and that path carries no `Origin`. The top-level ymux
+    /// document must keep working then, or one hiccup bricks the app.
+    #[test]
+    fn post_message_without_origin_is_accepted_from_ymuxs_own_page() {
+        let app = [APP_URLS[1]];
+        assert!(request_is_local(
+            None,
+            IpcTransport::PostMessage,
+            Some("http://tauri.localhost/index.html"),
+            &app
+        ));
+        assert!(request_is_local(
+            None,
+            IpcTransport::PostMessage,
+            Some("tauri://localhost/"),
+            &[APP_URLS[0]]
+        ));
+    }
+
+    #[test]
+    fn post_message_without_origin_needs_a_local_current_url() {
+        let app = [APP_URLS[1]];
+        for url in [
+            None,
+            Some("https://evil.example/"),
+            Some("http://tauri.localhost.evil.example/"),
+            Some("about:blank"),
+            Some("not a url"),
+        ] {
+            assert!(
+                !request_is_local(None, IpcTransport::PostMessage, url, &app),
+                "{url:?}"
+            );
+        }
+    }
+
+    /// A missing Origin on the `fetch` path is impossible from a browser (a
+    /// POST always carries one), so it stays a refusal.
+    #[test]
+    fn fetch_without_origin_is_still_refused() {
+        assert!(!request_is_local(
+            None,
+            IpcTransport::Fetch,
+            Some("http://tauri.localhost/"),
+            &[APP_URLS[1]]
+        ));
+    }
+
+    /// A present Origin is judged on its own, on either path: a non-local one
+    /// is refused even when the webview's current URL is ymux's.
+    #[test]
+    fn a_present_non_local_origin_is_refused_on_either_path() {
+        let app = [APP_URLS[1]];
+        for transport in [IpcTransport::Fetch, IpcTransport::PostMessage] {
+            for origin in ["https://evil.example", "null", ""] {
+                assert!(
+                    !request_is_local(
+                        Some(origin),
+                        transport,
+                        Some("http://tauri.localhost/"),
+                        &app
+                    ),
+                    "{origin:?} via {transport:?}"
+                );
+            }
+        }
+        assert!(request_is_local(
+            Some("http://tauri.localhost"),
+            IpcTransport::Fetch,
+            Some("http://tauri.localhost/"),
+            &app
+        ));
+        // postMessage also requires the current page to be ymux's, even
+        // with a local-looking (and there forgeable) Origin.
+        assert!(!request_is_local(
+            Some("http://tauri.localhost"),
+            IpcTransport::PostMessage,
+            Some("https://evil.example/"),
+            &app
+        ));
+    }
+
+    #[test]
+    fn transport_is_read_from_the_invoke_key_header() {
+        assert_eq!(
+            IpcTransport::from_invoke_key_header(true),
+            IpcTransport::Fetch
+        );
+        assert_eq!(
+            IpcTransport::from_invoke_key_header(false),
+            IpcTransport::PostMessage
+        );
+    }
+
     #[test]
     fn origin_fails_closed() {
         let app = [APP_URLS[1]];
