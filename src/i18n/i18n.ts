@@ -1977,6 +1977,24 @@ const strings: Translations = {
     fr: "Supprimer les modifications et le worktree", ar: "حذف التغييرات والإزالة", pt: "Excluir as alterações e remover",
     ru: "Удалить изменения и worktree", tr: "Değişiklikleri sil ve kaldır", de: "Änderungen löschen und entfernen", vi: "Xóa thay đổi và gỡ bỏ",
   },
+  "git.blocked.inUse": {
+    en: "{n} panes are working inside this worktree. Close them or move them out of it first:", ko: "패널 {n}개가 이 worktree 안에서 작업 중입니다. 먼저 닫거나 밖으로 옮기세요:", ja: "{n} 個のペインがこの worktree の中で作業中です。先に閉じるか外へ移動してください:",
+    zh: "有 {n} 个窗格正在此 worktree 内工作。请先关闭它们或移出：", hi: "{n} पेन इस worktree के अंदर काम कर रहे हैं। पहले उन्हें बंद करें या बाहर ले जाएँ:", es: "{n} paneles están trabajando dentro de este worktree. Ciérralos o sácalos de él primero:",
+    fr: "{n} volets travaillent dans ce worktree. Fermez-les ou sortez-les-en d'abord :", ar: "هناك {n} لوحات تعمل داخل هذا الـ worktree. أغلقها أو انقلها خارجه أولًا:", pt: "{n} painéis estão trabalhando dentro deste worktree. Feche-os ou mova-os para fora primeiro:",
+    ru: "Внутри этого worktree работают панели ({n}). Сначала закройте их или выведите из него:", tr: "Bu worktree içinde çalışan {n} bölme var. Önce kapatın ya da dışarı taşıyın:", de: "{n} Bereiche arbeiten in diesem Worktree. Schließen Sie sie zuerst oder verlassen Sie es:", vi: "Có {n} ô đang làm việc bên trong worktree này. Hãy đóng hoặc chuyển chúng ra ngoài trước:",
+  },
+  "git.inUseUnknown": {
+    en: "(could not check which panes are inside it)", ko: "(어떤 패널이 안에 있는지 확인하지 못했습니다)", ja: "(中にあるペインを確認できませんでした)",
+    zh: "（无法检查哪些窗格在其中）", hi: "(जाँच नहीं हो सकी कि कौन से पेन अंदर हैं)", es: "(no se pudo comprobar qué paneles están dentro)",
+    fr: "(impossible de vérifier quels volets s'y trouvent)", ar: "(تعذّر التحقق من اللوحات الموجودة داخله)", pt: "(não foi possível verificar quais painéis estão dentro)",
+    ru: "(не удалось проверить, какие панели внутри)", tr: "(içindeki bölmeler denetlenemedi)", de: "(konnte nicht prüfen, welche Bereiche darin sind)", vi: "(không kiểm tra được ô nào ở bên trong)",
+  },
+  "git.removeChanged": {
+    en: "The worktree changed while you were deciding. Nothing was removed; this is what removing it deletes now:", ko: "결정하는 동안 worktree가 바뀌었습니다. 아무것도 삭제하지 않았습니다. 지금 삭제하면 다음이 사라집니다:", ja: "確認中に worktree が変わりました。何も削除していません。今削除すると次のものが消えます:",
+    zh: "在你决定期间 worktree 发生了变化。尚未删除任何内容；现在删除将删掉以下内容：", hi: "आपके निर्णय लेते समय worktree बदल गया। कुछ भी नहीं हटाया गया; अब हटाने पर यह हटेगा:", es: "El worktree cambió mientras decidías. No se eliminó nada; esto es lo que borraría eliminarlo ahora:",
+    fr: "Le worktree a changé pendant votre décision. Rien n'a été supprimé ; voici ce que sa suppression efface maintenant :", ar: "تغيّر الـ worktree أثناء اتخاذك القرار. لم يُحذف شيء؛ هذا ما ستحذفه إزالته الآن:", pt: "O worktree mudou enquanto você decidia. Nada foi removido; isto é o que removê-lo apaga agora:",
+    ru: "Пока вы решали, worktree изменился. Ничего не удалено; вот что удалит его удаление сейчас:", tr: "Siz karar verirken worktree değişti. Hiçbir şey kaldırılmadı; şimdi kaldırmak şunları siler:", de: "Das Worktree hat sich geändert, während Sie entschieden haben. Nichts wurde entfernt; Folgendes löscht das Entfernen jetzt:", vi: "Worktree đã thay đổi trong lúc bạn quyết định. Chưa xóa gì; nếu xóa bây giờ sẽ mất những thứ sau:",
+  },
   "git.removeFailed": {
     en: "The worktree was not removed", ko: "worktree를 삭제하지 못했습니다", ja: "worktree を削除できませんでした",
     zh: "未能删除 worktree", hi: "worktree हटाया नहीं गया", es: "No se eliminó el worktree",

@@ -65,6 +65,8 @@ export interface TreeLabels {
   terminal: string;
   browser: string;
   subagent: string;
+  /// A git pane with no repository yet (`git.title`).
+  git: string;
 }
 
 /// The backend can't know a process-only agent's status; the pane's own
@@ -92,7 +94,7 @@ export function paneLabel(spec: PaneSpec, labels: TreeLabels): string {
   }
   // A git pane keeps its repository root in `cwd`: named by that folder.
   if (spec.pane_kind === "git") {
-    return spec.title || (spec.cwd ? fileName(spec.cwd) : "Git");
+    return spec.title || (spec.cwd ? fileName(spec.cwd) : labels.git);
   }
   return spec.title || spec.url || labels.browser;
 }

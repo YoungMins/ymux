@@ -139,6 +139,13 @@ pub fn is_within(dir: &str, path: &str) -> bool {
     p.len() > prefix.len() && p.starts_with(prefix) && p.as_bytes()[prefix.len()] == b'/'
 }
 
+/// [`is_within`]`(dir, p)` for each of `paths`, in order. The git pane asks
+/// this before removing a worktree: a pane working inside it (on Windows a
+/// shell's cwd cannot even be deleted) must move out first.
+pub fn within_each(dir: &str, paths: &[String]) -> Vec<bool> {
+    paths.iter().map(|p| is_within(dir, p)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +303,26 @@ mod tests {
         // Outside, and the other way round.
         assert!(!is_within(r"C:\foo", r"C:\bar"));
         assert!(!is_within(r"C:\foo\bar", r"C:\foo"));
+    }
+
+    /// The git pane's "is any pane working in this worktree?": git's
+    /// spelling of the worktree against a shell's OSC 7 cwd, a files pane's
+    /// dir and an editor's file, across rule 15's respellings.
+    #[test]
+    fn within_each_answers_per_path_across_producers() {
+        let nfd = "C:\\wt\\\u{1112}\u{1161}\u{11ab}\\src"; // 한 decomposed
+        let got = within_each(
+            "C:/wt/한",
+            &[
+                r"c:\WT\한".to_string(),
+                nfd.to_string(),
+                r"C:\wt\한\notes.md".to_string(),
+                r"C:\wt\한글".to_string(),
+                r"C:\repo".to_string(),
+            ],
+        );
+        assert_eq!(got, vec![true, true, true, false, false]);
+        assert!(within_each("/srv/wt", &[]).is_empty());
     }
 
     #[test]

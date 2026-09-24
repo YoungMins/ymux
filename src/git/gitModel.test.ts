@@ -6,7 +6,10 @@ import {
   checkoutPlan,
   checkoutRisk,
   clip,
+  confirmationStillHolds,
+  focusRefreshDue,
   formatCommitDate,
+  localNameOf,
   refChips,
   removePlan,
   validateBranchName,
@@ -17,6 +20,7 @@ const list = (over: Partial<BranchList> = {}): BranchList => ({
   local: ["main", "기능/한글브랜치", "held"],
   remote: ["origin/main", "origin/기능/원격", "origin/held"],
   held: { held: "C:/wt/held" },
+  remotes: ["origin"],
   ...over,
 });
 
@@ -103,6 +107,26 @@ describe("checkoutPlan", () => {
     });
   });
 
+  it("strips the remote's real name, even one containing a slash", () => {
+    const forks = list({
+      local: ["main"],
+      remote: ["team/fork/feature/x", "origin/feature/x"],
+      remotes: ["origin", "team/fork"],
+      held: {},
+    });
+    const items = branchItems(forks);
+    expect(checkoutPlan(items.find((i) => i.name === "team/fork/feature/x")!, forks)).toEqual({
+      kind: "track",
+      remote: "team/fork/feature/x",
+      branch: "feature/x",
+    });
+    expect(localNameOf("origin/feature/x", ["origin", "team/fork"])).toBe("feature/x");
+    // The longest matching remote wins over a shorter prefix of it.
+    expect(localNameOf("team/fork/a", ["team", "team/fork"])).toBe("a");
+    // No known remote (list not loaded): first segment, as before.
+    expect(localNameOf("up/x", [])).toBe("x");
+  });
+
   it("uses the existing local branch for a remote one, with its own rules", () => {
     expect(checkoutPlan(find("origin/main"), list())).toEqual({ kind: "noop", branch: "main" });
     expect(checkoutPlan(find("origin/held"), list())).toEqual({
@@ -155,6 +179,15 @@ describe("removePlan", () => {
     expect(removePlan(wt({ prunable: true }), null)).toEqual({ kind: "blocked", reason: "missing" });
   });
 
+  it("refuses while another pane is working inside the worktree, naming it", () => {
+    const panes = ["ws1: pwsh", "ws2: notes.md"];
+    expect(removePlan(wt(), null, panes)).toEqual({ kind: "blocked", reason: "inUse", panes });
+    expect(removePlan(wt(), status(), panes)).toEqual({ kind: "blocked", reason: "inUse", panes });
+    // The stronger reasons still win.
+    expect(removePlan(wt({ main: true }), null, panes)).toEqual({ kind: "blocked", reason: "main" });
+    expect(removePlan(wt(), null, [])).toEqual({ kind: "needStatus" });
+  });
+
   it("needs the status before deciding anything else", () => {
     expect(removePlan(wt(), null)).toEqual({ kind: "needStatus" });
   });
@@ -169,7 +202,18 @@ describe("removePlan", () => {
       ignored: ["target/", "node_modules/"],
       stranded: [],
       moreStranded: false,
+      loses: true,
     });
+  });
+
+  it("counts ignored files as a loss: git deletes them without --force", () => {
+    // `.env`, a local database: gone with the folder, so Cancel is the default.
+    const withIgnored = removePlan(wt(), status({ ignored: [".env"] }));
+    expect(withIgnored.kind === "remove" && withIgnored.loses).toBe(true);
+    const clean = removePlan(wt(), status());
+    expect(clean.kind === "remove" && clean.loses).toBe(false);
+    const dirty = removePlan(wt(), status({ changes: [entry(" M", "a.rs")] }));
+    expect(dirty.kind === "remove" && dirty.loses).toBe(true);
   });
 
   it("forces only with the changes it destroys listed", () => {
@@ -187,6 +231,55 @@ describe("removePlan", () => {
     );
     expect(p.kind === "remove" && p.stranded.map((c) => c.subject)).toEqual(["wip"]);
     expect(p.kind === "remove" && p.force).toBe(false);
+  });
+});
+
+describe("confirmationStillHolds", () => {
+  const shown = removePlan(wt(), status({ changes: [entry("??", "a.txt")], ignored: ["target/"] }));
+
+  it("holds when a fresh status would show exactly the same list", () => {
+    const fresh = removePlan(wt(), status({ changes: [entry("??", "a.txt")], ignored: ["target/"] }));
+    expect(confirmationStillHolds(shown, fresh)).toBe(true);
+  });
+
+  it("breaks when a file appeared, changed state or vanished since the dialog", () => {
+    const more = removePlan(
+      wt(),
+      status({ changes: [entry("??", "a.txt"), entry("??", "agent-wrote.rs")], ignored: ["target/"] }),
+    );
+    expect(confirmationStillHolds(shown, more)).toBe(false);
+    const restaged = removePlan(wt(), status({ changes: [entry("A ", "a.txt")], ignored: ["target/"] }));
+    expect(confirmationStillHolds(shown, restaged)).toBe(false);
+    const gone = removePlan(wt(), status({ ignored: ["target/"] }));
+    expect(confirmationStillHolds(shown, gone)).toBe(false);
+  });
+
+  it("breaks when new ignored files or stranded commits appeared", () => {
+    const ignored = removePlan(
+      wt(),
+      status({ changes: [entry("??", "a.txt")], ignored: ["target/", ".env"] }),
+    );
+    expect(confirmationStillHolds(shown, ignored)).toBe(false);
+    const clean = removePlan(wt({ detached: true, branch: "" }), status({ detached: true }));
+    const committed = removePlan(
+      wt({ detached: true, branch: "" }),
+      status({ detached: true, orphans: [commit("agent commit")] }),
+    );
+    expect(confirmationStillHolds(clean, committed)).toBe(false);
+  });
+
+  it("breaks when the worktree can no longer be removed at all", () => {
+    expect(confirmationStillHolds(shown, { kind: "blocked", reason: "locked" })).toBe(false);
+  });
+});
+
+describe("focusRefreshDue", () => {
+  it("refreshes on focus at most once per interval, never over a running load", () => {
+    expect(focusRefreshDue(10_000, null, false)).toBe(true);
+    expect(focusRefreshDue(10_000, 9_500, false)).toBe(false);
+    expect(focusRefreshDue(10_000, 9_000, false)).toBe(true);
+    expect(focusRefreshDue(10_000, null, true)).toBe(false);
+    expect(focusRefreshDue(10_000, 9_900, false, 50)).toBe(true);
   });
 });
 

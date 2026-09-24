@@ -48,8 +48,15 @@ export function branchItems(list: BranchList): BranchItem[] {
 }
 
 /// `origin/feature/x` → `feature/x`: the local branch `git checkout --track`
-/// would create. The remote's name is the first path segment.
-export function localNameOf(remote: string): string {
+/// would create. Remote names may themselves contain `/` (`team/fork`), so
+/// the prefix is the longest of the repository's actual `remotes` that
+/// matches; with none known, the first path segment.
+export function localNameOf(remote: string, remotes: readonly string[]): string {
+  let best = "";
+  for (const r of remotes) {
+    if (r.length > best.length && remote.startsWith(`${r}/`)) best = r;
+  }
+  if (best) return remote.slice(best.length + 1);
   const slash = remote.indexOf("/");
   return slash === -1 ? remote : remote.slice(slash + 1);
 }
@@ -72,7 +79,7 @@ export function checkoutPlan(item: BranchItem, list: BranchList): CheckoutPlan {
     if (held !== undefined) return { kind: "held", branch: item.name, path: held };
     return { kind: "local", branch: item.name };
   }
-  const local = localNameOf(item.name);
+  const local = localNameOf(item.name, list.remotes);
   if (!list.local.includes(local)) return { kind: "track", remote: item.name, branch: local };
   if (local === list.current) return { kind: "noop", branch: local };
   const held = list.held[local];
@@ -106,6 +113,8 @@ export type RemoveBlock = "main" | "locked" | "current" | "missing";
 
 export type RemovePlan =
   | { kind: "blocked"; reason: RemoveBlock }
+  /// Panes (by label) whose directory or file is inside the worktree.
+  | { kind: "blocked"; reason: "inUse"; panes: string[] }
   /// The worktree may go; fetch its `WorkStatus` (with ignored files) to
   /// say what goes with it.
   | { kind: "needStatus" }
@@ -121,6 +130,10 @@ export type RemovePlan =
       /// A detached worktree's commits no ref reaches.
       stranded: CommitInfo[];
       moreStranded: boolean;
+      /// Anything at all is destroyed — changes, stranded commits *or*
+      /// ignored files (`.env`, a local database, which git deletes even
+      /// without `--force`). Then Cancel is the dialog's default.
+      loses: boolean;
     };
 
 /// Decide a removal. Called twice: without a status to find out whether the
@@ -129,11 +142,22 @@ export type RemovePlan =
 /// The worktree the pane is showing is refused: the pane (and any terminal
 /// whose cwd is in there — on Windows a process's cwd cannot be deleted, so
 /// git would fail half-way) should move off it first.
-export function removePlan(entry: WorktreeEntry, status: WorkStatus | null): RemovePlan {
+///
+/// `inUse` names the other panes working inside the worktree (their
+/// containment decided in Rust, rule 15). Any of them refuses the removal:
+/// on Windows a shell whose cwd is in there makes `git worktree remove` fail
+/// half-way — files gone, the worktree still registered — and an editor or
+/// files pane would be left showing a folder that no longer exists.
+export function removePlan(
+  entry: WorktreeEntry,
+  status: WorkStatus | null,
+  inUse: readonly string[] = [],
+): RemovePlan {
   if (entry.main) return { kind: "blocked", reason: "main" };
   if (entry.locked) return { kind: "blocked", reason: "locked" };
   if (entry.current) return { kind: "blocked", reason: "current" };
   if (entry.prunable) return { kind: "blocked", reason: "missing" };
+  if (inUse.length > 0) return { kind: "blocked", reason: "inUse", panes: [...inUse] };
   if (status === null) return { kind: "needStatus" };
   const stranded = status.detached ? status.orphans : [];
   return {
@@ -144,7 +168,51 @@ export function removePlan(entry: WorktreeEntry, status: WorkStatus | null): Rem
     ignored: status.ignored,
     stranded,
     moreStranded: status.detached && status.more_orphans,
+    loses: status.changes.length > 0 || stranded.length > 0 || status.ignored.length > 0,
   };
+}
+
+/// Does a confirmation given for `shown` still cover `fresh` — the plan from
+/// a status re-read after the user said yes?
+///
+/// The dialog can stay open indefinitely while an agent keeps writing in the
+/// worktree. Proceeding on the old answer would delete files the user never
+/// saw listed (with `--force`) or strand commits made in the meantime, so
+/// the removal only runs when the lists are identical: same changes (path,
+/// old path and code), same ignored entries, same stranded commits, same
+/// `force`. Anything else — including the worktree becoming unremovable —
+/// means ask again.
+export function confirmationStillHolds(shown: RemovePlan, fresh: RemovePlan): boolean {
+  if (shown.kind !== "remove" || fresh.kind !== "remove") return false;
+  const changes = (p: typeof shown) => p.lost.map((e) => `${e.code}\0${e.path}\0${e.orig}`);
+  const same = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length && a.every((x, i) => x === b[i]);
+  return (
+    shown.force === fresh.force &&
+    shown.moreStranded === fresh.moreStranded &&
+    same(changes(shown), changes(fresh)) &&
+    same(shown.ignored, fresh.ignored) &&
+    same(
+      shown.stranded.map((c) => c.hash),
+      fresh.stranded.map((c) => c.hash),
+    )
+  );
+}
+
+/// Shortest gap between two refreshes triggered by window focus.
+export const FOCUS_REFRESH_MS = 1000;
+
+/// Should a window-focus event reload the pane? Not while a load is still
+/// running (each one is several git spawns), and at most once per
+/// `minMs` — alt-tabbing back and forth must not queue a git storm.
+export function focusRefreshDue(
+  now: number,
+  last: number | null,
+  inFlight: boolean,
+  minMs = FOCUS_REFRESH_MS,
+): boolean {
+  if (inFlight) return false;
+  return last === null || now - last >= minMs;
 }
 
 // ── Status codes ──────────────────────────────────────────────────────────

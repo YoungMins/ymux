@@ -296,6 +296,10 @@ pub struct BranchList {
     /// path (git's spelling). `git checkout` of one of these fails ("already
     /// used by worktree at …"); this is what plain `git branch` marks `+ `.
     pub held: std::collections::BTreeMap<String, String>,
+    /// The repository's remote names (`git remote`). A remote name may
+    /// contain `/` (`team/fork`), so `team/fork/x` cannot be split into
+    /// remote and branch without this list.
+    pub remotes: Vec<String>,
 }
 
 /// Unit separator: between the fields of one commit.
@@ -492,7 +496,29 @@ pub fn branches(cwd: &Path) -> YmuxResult<BranchList> {
     }
     let fmt = format!("--format={BRANCH_FORMAT}");
     let out = run_git(cwd, &["branch", "--list", "--all", &fmt])?;
-    Ok(parse_branch_list(&out))
+    let mut list = parse_branch_list(&out);
+    list.remotes = run_git(cwd, &["remote"])?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    if !list.held.is_empty() {
+        let root = repo_root(cwd)?;
+        drop_held_at(&mut list, &root.to_string_lossy());
+    }
+    Ok(list)
+}
+
+/// Forget "held" entries whose worktree is `root` itself.
+///
+/// [`parse_branch_list`] calls a branch held when it has a worktree path but
+/// is not `%(HEAD)`. Mid-rebase or mid-bisect HEAD is detached, so the branch
+/// being worked on has this worktree's own path and no `*` — it is not held
+/// by *another* worktree, and offering "show that worktree" would point the
+/// pane at itself.
+pub fn drop_held_at(list: &mut BranchList, root: &str) {
+    list.held.retain(|_, path| !ypath::same_path(path, root));
 }
 
 /// Check out `branch` in the worktree containing `cwd`.
@@ -1054,6 +1080,24 @@ branch refs/heads/lockedish
         // Total: nothing, and junk.
         assert!(parse_status_z("").is_empty());
         assert!(parse_status_z("\0\0x\0").is_empty());
+    }
+
+    /// Mid-rebase or mid-bisect HEAD is detached, so `%(HEAD)` marks nothing,
+    /// yet git still reports the branch being rebased at *this* worktree's
+    /// path. That is not "held by another worktree" — dropped by comparing
+    /// with the root through `ypath` (git's `C:/` spelling vs ours).
+    #[test]
+    fn a_branch_at_this_worktrees_own_path_is_not_held() {
+        let out = "\
+ refs/heads/rebasing\u{1f}C:/Repo/한
+ refs/heads/elsewhere\u{1f}C:/wt/other
+";
+        let mut list = parse_branch_list(out);
+        assert_eq!(list.held.len(), 2);
+        drop_held_at(&mut list, r"c:\repo\한");
+        assert_eq!(list.held.len(), 1);
+        assert!(list.held.contains_key("elsewhere"));
+        assert_eq!(list.current, "", "still detached: no current branch");
     }
 
     /// `%(worktreepath)` marks a branch another worktree holds; the current
@@ -1661,6 +1705,18 @@ branch refs/heads/lockedish
             "{before:?}"
         );
         assert!(!before.local.contains(&"기능/원격".to_string()));
+        assert_eq!(before.remotes, vec!["origin"]);
+
+        // A remote whose own name has a slash: the pane can only split
+        // `team/fork/기능/원격` correctly if it knows the remote names.
+        git_ok(
+            &clone,
+            &["remote", "add", "team/fork", &repo.to_string_lossy()],
+        );
+        git_ok(&clone, &["fetch", "-q", "team/fork"]);
+        let forked = branches(&clone).unwrap();
+        assert_eq!(forked.remotes, vec!["origin", "team/fork"]);
+        assert!(forked.remote.contains(&"team/fork/기능/원격".to_string()));
 
         checkout_track(&clone, "origin/기능/원격").unwrap();
         let after = branches(&clone).unwrap();

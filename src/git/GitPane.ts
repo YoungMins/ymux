@@ -37,6 +37,7 @@ import {
   branchItems,
   checkoutPlan,
   checkoutRisk,
+  focusRefreshDue,
   formatCommitDate,
   refChips,
   type BranchItem,
@@ -49,6 +50,7 @@ import {
   gitErrorText,
   promptWorktreeBranch,
   removeWorktreeFlow,
+  type LivePane,
   showGitError,
 } from "./worktreeFlow";
 
@@ -70,6 +72,9 @@ export interface GitPaneOptions {
   followTarget: () => Uuid | null;
   /// `Config.worktree_base_dir` ("" = sibling `.ymux-worktrees`).
   worktreeBaseDir: () => string;
+  /// Every live pane's directory or file, for the "is anything working in
+  /// this worktree?" check before a removal.
+  livePanes: () => Promise<LivePane[]>;
   openTerminal: (dir: string) => void | Promise<void>;
 }
 
@@ -160,7 +165,7 @@ export class GitPane implements Pane {
   private layout: LaneLayout = { rows: [], width: 0 };
   private hasMore = false;
   private loadingMore = false;
-  private branches: BranchList = { current: "", local: [], remote: [], held: {} };
+  private branches: BranchList = { current: "", local: [], remote: [], held: {}, remotes: [] };
   private items: BranchItem[] = [];
   private remotes = new Set<string>();
   private worktrees: WorktreeEntry[] = [];
@@ -172,6 +177,9 @@ export class GitPane implements Pane {
   private scrollTop = 0;
   private rowPool: RowEls[] = [];
   private busy = false;
+  /// Loads started and not yet finished (window-focus refreshes skip then).
+  private loadsInFlight = 0;
+  private lastFocusRefresh: number | null = null;
   private statusTimer: number | null = null;
   private disposed = false;
   private readonly cleanups: (() => void)[] = [];
@@ -257,7 +265,11 @@ export class GitPane implements Pane {
     this.follow.reset(this.dir);
 
     const onWinFocus = () => {
-      if (this.isShown() && !this.busy && this.root) void this.load({ quiet: true });
+      if (!this.isShown() || this.busy || !this.root) return;
+      const now = performance.now();
+      if (!focusRefreshDue(now, this.lastFocusRefresh, this.loadsInFlight > 0)) return;
+      this.lastFocusRefresh = now;
+      void this.load({ quiet: true });
     };
     window.addEventListener("focus", onWinFocus);
     this.cleanups.push(() => window.removeEventListener("focus", onWinFocus));
@@ -401,6 +413,15 @@ export class GitPane implements Pane {
   /// takes a generation), so a slow repository can never paint over the one
   /// the user moved on to.
   private async load(opts: { quiet?: boolean } = {}): Promise<void> {
+    this.loadsInFlight++;
+    try {
+      await this.loadNow(opts);
+    } finally {
+      this.loadsInFlight--;
+    }
+  }
+
+  private async loadNow(opts: { quiet?: boolean }): Promise<void> {
     const dir = this.dir;
     if (!dir || this.disposed) {
       this.state = { kind: "idle" };
@@ -1072,7 +1093,7 @@ export class GitPane implements Pane {
     if (!w || this.busy) return;
     this.busy = true;
     try {
-      const outcome = await removeWorktreeFlow(w);
+      const outcome = await removeWorktreeFlow(w, this.opts.livePanes);
       if (outcome === "removed") this.say(fill(t("git.removed"), { path: w.path }));
     } finally {
       this.busy = false;

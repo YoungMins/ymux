@@ -13,7 +13,7 @@ import { newBrowserPane, newPane, paneNode } from "../layout/LayoutTree";
 import type { AgentSnapshot, PaneSpec, Workspace } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
 
-const labels: TreeLabels = { terminal: "pane", browser: "Browser", subagent: "subagent" };
+const labels: TreeLabels = { terminal: "pane", browser: "Browser", subagent: "subagent", git: "깃" };
 
 const a: PaneSpec = { ...newPane("pwsh"), title: "build" };
 const b: PaneSpec = newPane("Git Bash");
@@ -103,7 +103,7 @@ describe("paneLabel", () => {
     const git: PaneSpec = { ...newPane("", "C:/src/ymux"), pane_kind: "git" };
     expect(paneLabel(git, labels)).toBe("ymux");
     expect(paneLabel({ ...git, cwd: "D:\\작업\\저장소" }, labels)).toBe("저장소");
-    expect(paneLabel({ ...git, cwd: null }, labels)).toBe("Git");
+    expect(paneLabel({ ...git, cwd: null }, labels)).toBe("깃");
   });
 });
 
@@ -148,6 +148,7 @@ describe("buildAgentTree with tabs", () => {
     terminal: "Terminal",
     browser: "Browser",
     subagent: "subagent",
+    git: "Git",
   };
 
   const ws: Workspace = {
