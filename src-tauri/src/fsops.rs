@@ -369,9 +369,7 @@ pub(crate) mod imp {
         use std::io::Read;
 
         let md = fs::metadata(path).map_err(|e| YmuxError::from_io(&e, path))?;
-        if md.is_dir() {
-            return Err(YmuxError::Other(format!("{path} is a directory")));
-        }
+        require_regular(&md, path)?;
         let mut f = fs::File::open(path).map_err(|e| YmuxError::from_io(&e, path))?;
         // Read at most the cap plus a few bytes, so a file that is exactly
         // at the cap is not reported truncated and a cut multi-byte
@@ -398,6 +396,11 @@ pub(crate) mod imp {
     pub fn write_text(args: &WriteTextArgs) -> YmuxResult<ContentStamp> {
         let path = args.path.as_str();
         let bytes = textfile::encode(&args.text, args.eol, args.bom, path)?;
+        // An existing non-file (a FIFO, a device) would block or misbehave
+        // on write exactly as it would on read.
+        if let Ok(md) = fs::metadata(path) {
+            require_regular(&md, path)?;
+        }
 
         if let Some(expect) = &args.expect {
             // Compared on the **hash only**, not on the mtime. A formatter
@@ -425,9 +428,7 @@ pub(crate) mod imp {
         use std::io::Read;
 
         let md = fs::metadata(path).map_err(|e| YmuxError::from_io(&e, path))?;
-        if md.is_dir() {
-            return Err(YmuxError::Other(format!("{path} is a directory")));
-        }
+        require_regular(&md, path)?;
         let f = fs::File::open(path).map_err(|e| YmuxError::from_io(&e, path))?;
         let mut buf = Vec::new();
         f.take(max.min(MAX_HEAD_BYTES) as u64)
@@ -471,6 +472,20 @@ pub(crate) mod imp {
         Ok(DirPeek { entries, more })
     }
 
+    /// Refuse anything that is not a regular file before it is opened. A
+    /// FIFO blocks `open` until a writer appears — forever, for a preview —
+    /// and a device or socket is never something to read as text.
+    /// `metadata` follows symlinks, so a link to a regular file still passes.
+    fn require_regular(md: &fs::Metadata, path: &str) -> YmuxResult<()> {
+        if md.is_file() {
+            Ok(())
+        } else if md.is_dir() {
+            Err(YmuxError::Other(format!("{path} is a directory")))
+        } else {
+            Err(YmuxError::Other(format!("{path} is not a regular file")))
+        }
+    }
+
     /// The stamp of the file as it is right now, or `None` if it is gone.
     fn current_stamp(path: &str) -> YmuxResult<Option<ContentStamp>> {
         let md = match fs::metadata(path) {
@@ -478,6 +493,7 @@ pub(crate) mod imp {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(YmuxError::from_io(&e, path)),
         };
+        require_regular(&md, path)?;
         let bytes = fs::read(path).map_err(|e| YmuxError::from_io(&e, path))?;
         Ok(Some(textfile::stamp_of(&bytes, mtime_ms(&md))))
     }
@@ -1138,6 +1154,43 @@ mod tests {
         match imp::delete(std::slice::from_ref(&p), true) {
             Ok(()) => assert!(!Path::new(&p).exists()),
             Err(e) => eprintln!("skipped: no trash available here ({e})"),
+        }
+    }
+
+    /// Opening a FIFO for reading blocks until a writer appears — forever,
+    /// on a worker thread, for a cursor resting on it. Anything that is not
+    /// a regular file is refused before it is opened.
+    #[test]
+    fn reads_refuse_anything_that_is_not_a_regular_file() {
+        let d = tmp();
+        let dir = s(d.path().to_path_buf());
+        assert!(imp::read_head(&dir, 16).is_err());
+        assert!(imp::read_text(&dir).is_err());
+
+        #[cfg(unix)]
+        {
+            let fifo = d.path().join("pipe");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .map(|st| st.success())
+                .unwrap_or(false);
+            if !made {
+                eprintln!("skipped FIFO half: mkfifo unavailable");
+                return;
+            }
+            let fifo = s(fifo);
+            // Each of these would hang the test if it opened the FIFO.
+            assert!(imp::read_head(&fifo, 16).is_err());
+            assert!(imp::read_text(&fifo).is_err());
+            let args = WriteTextArgs {
+                path: fifo.clone(),
+                text: "x".into(),
+                eol: Eol::Lf,
+                bom: false,
+                expect: Some(textfile::stamp_of(b"", 0)),
+            };
+            assert!(imp::write_text(&args).is_err());
         }
     }
 
