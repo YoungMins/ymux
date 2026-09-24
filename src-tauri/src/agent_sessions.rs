@@ -1,0 +1,718 @@
+//! Resumable agent sessions: which coding agent was mid-conversation in which
+//! pane, and the agent's own session id, so ymux can *resume* the agent on the
+//! next launch instead of replaying a screenshot of it.
+//!
+//! Deliberately Tauri-free — every function here is covered by
+//! `cargo test --no-default-features --lib -p ymux` on Linux CI (rule 1).
+//!
+//! **Why this is not a `PaneSpec` field.** Three of the project's rules point
+//! the same way. Rule 2: a `PaneSpec` field has to be mirrored in four places
+//! or it silently vanishes. Rule 3: an `Option<T>` inside the `#[serde(tag =
+//! "kind")]` layout enum does not round-trip through TOML at all. Rule 11: the
+//! frontend rewrites the whole config on every layout save, so a
+//! backend-owned value living there gets clobbered by a stale snapshot — the
+//! same reason `agent_tracking` is excluded from `merge_layouts_from`. A
+//! session id is written by the hook listener and the process scan, never by
+//! the frontend, so it belongs in a backend-owned store beside
+//! [`crate::scrollback`].
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::agents::AgentStatus;
+
+/// A coding-agent CLI ymux knows how to resume.
+///
+/// Serialized lowercase so it matches the `kind` strings the agent registry
+/// and the process scan already use (`"claude"`, `"codex"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentKind {
+    Claude,
+    Codex,
+}
+
+impl AgentKind {
+    /// Parse the `kind` string the registry/scan use. `None` for an agent
+    /// ymux has no resume story for yet (Gemini, Aider, …) — spec §8.
+    pub fn from_kind(kind: &str) -> Option<Self> {
+        match kind.to_ascii_lowercase().as_str() {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    /// The `kind` string, as the registry spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
+
+/// Where the session id came from. A hook-borne id is the agent telling us its
+/// own id, so it outranks anything inferred from a transcript on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IdSource {
+    Hook,
+    Disk,
+}
+
+/// How long a record stays eligible for an automatic resume (spec §4).
+pub const FRESH_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// One pane's resumable session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSession {
+    pub pane_id: Uuid,
+    pub agent: AgentKind,
+    /// The agent's own session id, exactly as it must be typed back to the
+    /// CLI. Always passes [`is_valid_session_id`] before it is stored.
+    pub session_id: String,
+    /// The cwd the session belongs to, in the raw spelling its producer used.
+    /// Compared with `ypath` (rule 15), never `==`; kept raw because it is
+    /// also the directory the resumed pane must be spawned in.
+    pub cwd: String,
+    /// Last known agent status.
+    pub state: AgentStatus,
+    /// The last known state was not `done` — the conversation was cut off
+    /// mid-turn rather than finished.
+    pub interrupted: bool,
+    /// The agent is still (as far as ymux knows) the thing running in that
+    /// pane. Cleared when the process scan sees the agent exit while the pane
+    /// lives on, so quitting Claude and then closing ymux an hour later does
+    /// not silently resurrect the conversation.
+    pub active: bool,
+    pub source: IdSource,
+    /// Seconds since the Unix epoch. Stored as a plain integer rather than a
+    /// `SystemTime` so the JSON stays readable and version-stable.
+    pub updated_at: u64,
+}
+
+impl AgentSession {
+    /// Whether this record is still eligible for an automatic resume, ignoring
+    /// whether the transcript file still exists (the caller checks that).
+    ///
+    /// Requires `active`, and an `updated_at` inside [`FRESH_WINDOW`] of
+    /// `now`. A record stamped in the future (clock skew, a restored backup)
+    /// counts as fresh rather than being thrown away.
+    pub fn is_fresh_at(&self, now: u64) -> bool {
+        self.active && now.saturating_sub(self.updated_at) <= FRESH_WINDOW.as_secs()
+    }
+}
+
+/// Seconds since the Unix epoch, saturating at 0 for a pre-epoch clock.
+pub fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Whether `id` is safe to splice into a shell command line.
+///
+/// The id reaches us from a filename and from JSON written by another program,
+/// and it is *typed into the user's shell* (spec §3), so it gets the same
+/// paranoia `scrollback::scrollback_file_under` applies to a pane id. Both
+/// CLIs use UUID-shaped ids, and `codex resume` additionally accepts free-form
+/// session *names* — which is exactly why this is an allowlist: hex digits and
+/// `-` only, bounded length, no empty string.
+pub fn is_valid_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+        && id.chars().any(|c| c.is_ascii_hexdigit())
+}
+
+/// The argv that resumes `agent` at `session_id`, as a user would type it.
+///
+/// Verified against the CLIs installed on the development machine:
+/// `claude --help` lists `-r, --resume [value]  Resume a conversation by
+/// session ID`, and `codex resume --help` lists
+/// `Usage: codex resume [OPTIONS] [SESSION_ID] [PROMPT]`.
+///
+/// Never the "most recent" forms (`claude -c`, `codex resume --last`): an
+/// explicit id is the only selector that cannot resume the wrong conversation
+/// (spec §3).
+pub fn resume_argv(agent: AgentKind, session_id: &str) -> Option<Vec<String>> {
+    if !is_valid_session_id(session_id) {
+        return None;
+    }
+    Some(match agent {
+        AgentKind::Claude => vec!["claude".into(), "--resume".into(), session_id.to_string()],
+        AgentKind::Codex => {
+            vec!["codex".into(), "resume".into(), session_id.to_string()]
+        }
+    })
+}
+
+/// Strip any conversation selector already present in a saved `startup_cmd`,
+/// returning the command with only its non-selector arguments left.
+///
+/// A pane whose startup command is `claude -c --model opus` plus our
+/// `--resume <id>` is two selectors fighting (spec §3). Returns `None` when
+/// `startup_cmd` does not start the agent at all — then the caller uses the
+/// bare [`resume_argv`] and leaves the unrelated command alone.
+///
+/// Token-aware rather than a regex over the raw string, so `claude --resume
+/// "my session"` loses both tokens and `echo --resume` is left untouched.
+pub fn strip_selector(startup_cmd: &str, agent: AgentKind) -> Option<Vec<String>> {
+    let tokens = shell_split(startup_cmd);
+    let first = tokens.first()?;
+    if !program_is(first, agent.as_str()) {
+        return None;
+    }
+    // Codex's selector is a subcommand plus an optional positional id, so the
+    // whole `resume …` tail goes; Claude's is a flag.
+    let (mut out, rest) = match agent {
+        AgentKind::Codex => {
+            let mut out = vec![tokens[0].clone()];
+            let mut rest = &tokens[1..];
+            if rest.first().map(String::as_str) == Some("resume") {
+                rest = &rest[1..];
+                // `resume` may be followed by a bare positional session id.
+                if rest
+                    .first()
+                    .is_some_and(|t| !t.starts_with('-') && is_valid_session_id(t))
+                {
+                    rest = &rest[1..];
+                }
+            }
+            (std::mem::take(&mut out), rest.to_vec())
+        }
+        AgentKind::Claude => (vec![tokens[0].clone()], tokens[1..].to_vec()),
+    };
+
+    let mut i = 0;
+    while i < rest.len() {
+        let t = rest[i].as_str();
+        let drop_with_value = matches!(t, "--resume" | "-r" | "--teleport" | "--from-pr");
+        let drop_alone = matches!(t, "-c" | "--continue" | "--last" | "--fork");
+        if drop_with_value {
+            i += 1;
+            // Its value is optional for every one of these flags, so only eat
+            // a following token when it is not itself a flag.
+            if rest.get(i).is_some_and(|v| !v.starts_with('-')) {
+                i += 1;
+            }
+            continue;
+        }
+        if drop_alone {
+            i += 1;
+            continue;
+        }
+        // `--resume=<id>` / `-r=<id>` spellings.
+        if t.starts_with("--resume=") || t.starts_with("-r=") {
+            i += 1;
+            continue;
+        }
+        out.push(rest[i].clone());
+        i += 1;
+    }
+    Some(out)
+}
+
+/// The full command to type into the pane's shell: the saved `startup_cmd`'s
+/// surviving arguments (if it started this agent) plus our explicit selector.
+///
+/// Quoting stays the shell's problem because the string is *typed*, not
+/// spawned (spec §3); every token we add is either a literal flag or an id
+/// that passed [`is_valid_session_id`], so neither can carry a space.
+pub fn resume_command(agent: AgentKind, session_id: &str, startup_cmd: &str) -> Option<String> {
+    let argv = resume_argv(agent, session_id)?;
+    let Some(kept) = strip_selector(startup_cmd, agent) else {
+        return Some(argv.join(" "));
+    };
+    // `kept[0]` is the program as the user spelled it (possibly a full path);
+    // keep that spelling and append our selector plus their other flags.
+    let mut out: Vec<String> = vec![kept[0].clone()];
+    out.extend(argv[1..].iter().cloned());
+    out.extend(kept[1..].iter().cloned());
+    Some(out.join(" "))
+}
+
+/// Whether `token` invokes the program `name`, allowing for a path prefix and
+/// a Windows `.exe`/`.cmd`/`.bat` suffix, and for the token being quoted.
+fn program_is(token: &str, name: &str) -> bool {
+    let t = token.trim_matches(['"', '\'']);
+    let stem = t
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(t)
+        .to_ascii_lowercase();
+    let stem = stem
+        .strip_suffix(".exe")
+        .or_else(|| stem.strip_suffix(".cmd"))
+        .or_else(|| stem.strip_suffix(".bat"))
+        .unwrap_or(&stem);
+    stem == name
+}
+
+/// Minimal POSIX-ish tokenizer: splits on unquoted whitespace and keeps
+/// quoted runs together (dropping the quotes). Enough to recognize the
+/// selector flags in a saved startup command; it is never used to *build* a
+/// command line, only to decide which tokens survive.
+fn shell_split(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut has = false;
+    for c in s.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                has = true;
+            }
+            None if c.is_whitespace() => {
+                if has || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                    has = false;
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if has || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
+
+/// Pane id → session, as persisted. A `BTreeMap` so the JSON has a stable key
+/// order and a save that changed nothing produces an identical file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentSessionStore {
+    pub sessions: BTreeMap<Uuid, AgentSession>,
+}
+
+impl AgentSessionStore {
+    pub fn get(&self, pane_id: Uuid) -> Option<&AgentSession> {
+        self.sessions.get(&pane_id)
+    }
+
+    pub fn remove(&mut self, pane_id: Uuid) -> bool {
+        self.sessions.remove(&pane_id).is_some()
+    }
+
+    /// Record (or refresh) the session for one pane. Returns whether anything
+    /// changed, so the caller can skip a disk write.
+    ///
+    /// Two invariants, both about not resuming the same conversation twice:
+    ///
+    /// * **A session id belongs to at most one pane.** Two panes opened in the
+    ///   same directory scan up the same newest transcript; resuming one id in
+    ///   both forks the conversation. A later claim on an id another pane
+    ///   holds is refused — unless it comes from a hook, which is the agent
+    ///   itself saying "this id is mine", and then the other pane's record
+    ///   loses the id.
+    /// * **A disk-scanned id never overwrites a hook-borne one** for the same
+    ///   pane, because the hook id is exact and the scan is a guess.
+    pub fn put(&mut self, session: AgentSession) -> bool {
+        if !is_valid_session_id(&session.session_id) {
+            return false;
+        }
+        if let Some(existing) = self.sessions.get(&session.pane_id) {
+            if existing.source == IdSource::Hook
+                && session.source == IdSource::Disk
+                && existing.session_id != session.session_id
+            {
+                return false;
+            }
+        }
+        let clash: Vec<Uuid> = self
+            .sessions
+            .iter()
+            .filter(|(id, s)| **id != session.pane_id && s.session_id == session.session_id)
+            .map(|(id, _)| *id)
+            .collect();
+        if !clash.is_empty() {
+            if session.source == IdSource::Disk {
+                return false;
+            }
+            for id in clash {
+                self.sessions.remove(&id);
+            }
+        }
+        if self.sessions.get(&session.pane_id) == Some(&session) {
+            return false;
+        }
+        self.sessions.insert(session.pane_id, session);
+        true
+    }
+
+    /// Mark a pane's session as no longer running, keeping the record.
+    ///
+    /// "Decline, don't delete" (spec §4): the id is still the best thing we
+    /// know about that pane, so a later fix — or a `get` that only wants to
+    /// display it — can still see it. It simply stops being eligible for an
+    /// automatic resume.
+    pub fn deactivate(&mut self, pane_id: Uuid) -> bool {
+        match self.sessions.get_mut(&pane_id) {
+            Some(s) if s.active => {
+                s.active = false;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// `<config_dir>/ymux/agent-sessions.json`, with the same relative-directory
+/// fallback `scrollback::scrollback_dir` uses.
+pub fn store_path() -> PathBuf {
+    dirs::config_dir()
+        .map(|p| p.join("ymux"))
+        .unwrap_or_else(|| PathBuf::from("./ymux-config"))
+        .join("agent-sessions.json")
+}
+
+/// Load the store from `path`. A missing or unparseable file is an empty
+/// store, never an error: a corrupt sessions file must not stop ymux starting,
+/// and the worst case is that panes fall back to their normal startup command.
+pub fn load_from(path: &Path) -> AgentSessionStore {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Write the store to `path` via temp file + rename, mirroring
+/// `scrollback::save_blob_under` and `config::store::write_atomic` so a crash
+/// mid-write cannot leave a half-written JSON file behind.
+pub fn save_to(path: &Path, store: &AgentSessionStore) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(store)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json.as_bytes())?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Load the store from the real, OS-resolved location.
+pub fn load() -> AgentSessionStore {
+    load_from(&store_path())
+}
+
+/// Save the store to the real, OS-resolved location.
+pub fn save(store: &AgentSessionStore) -> std::io::Result<()> {
+    save_to(&store_path(), store)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(pane: Uuid, id: &str, source: IdSource) -> AgentSession {
+        AgentSession {
+            pane_id: pane,
+            agent: AgentKind::Claude,
+            session_id: id.to_string(),
+            cwd: "D:\\Git\\ymux".to_string(),
+            state: AgentStatus::Working,
+            interrupted: true,
+            active: true,
+            source,
+            updated_at: 1_000_000,
+        }
+    }
+
+    #[test]
+    fn resume_argv_per_agent() {
+        // Both spellings checked against the installed CLIs' own `--help`:
+        // `claude --help` -> `-r, --resume [value]`;
+        // `codex resume --help` -> `codex resume [OPTIONS] [SESSION_ID]`.
+        assert_eq!(
+            resume_argv(AgentKind::Claude, "20aebce7-f8e2-4582-b480-bf1ae90d7a0b"),
+            Some(vec![
+                "claude".to_string(),
+                "--resume".to_string(),
+                "20aebce7-f8e2-4582-b480-bf1ae90d7a0b".to_string(),
+            ])
+        );
+        assert_eq!(
+            resume_argv(AgentKind::Codex, "01a07644-42b3-7183-a7fd-70379b88af1f"),
+            Some(vec![
+                "codex".to_string(),
+                "resume".to_string(),
+                "01a07644-42b3-7183-a7fd-70379b88af1f".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn resume_argv_rejects_unsafe_ids() {
+        for bad in [
+            "",
+            "abc; rm -rf /",
+            "$(whoami)",
+            "my session",
+            "../../etc/passwd",
+            "------",
+            &"a".repeat(65),
+        ] {
+            assert_eq!(
+                resume_argv(AgentKind::Claude, bad),
+                None,
+                "must refuse to type {bad:?} into a shell"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_selector_removes_continue_and_resume() {
+        let c = AgentKind::Claude;
+        assert_eq!(strip_selector("claude -c", c), Some(vec!["claude".into()]));
+        assert_eq!(
+            strip_selector("claude --continue", c),
+            Some(vec!["claude".into()])
+        );
+        assert_eq!(
+            strip_selector("claude --resume old-id-1234", c),
+            Some(vec!["claude".into()])
+        );
+        assert_eq!(
+            strip_selector("claude -r old-id-1234", c),
+            Some(vec!["claude".into()])
+        );
+        assert_eq!(
+            strip_selector("claude --resume=old-id-1234", c),
+            Some(vec!["claude".into()])
+        );
+    }
+
+    #[test]
+    fn strip_selector_keeps_unrelated_flags() {
+        assert_eq!(
+            strip_selector("claude -c --model opus --verbose", AgentKind::Claude),
+            Some(vec![
+                "claude".into(),
+                "--model".into(),
+                "opus".into(),
+                "--verbose".into()
+            ])
+        );
+    }
+
+    #[test]
+    fn strip_selector_handles_codex_subcommand_and_last() {
+        let k = AgentKind::Codex;
+        assert_eq!(
+            strip_selector("codex resume 01a07644-42b3-7183-a7fd-70379b88af1f", k),
+            Some(vec!["codex".into()])
+        );
+        assert_eq!(
+            strip_selector("codex resume --last", k),
+            Some(vec!["codex".into()])
+        );
+        assert_eq!(
+            strip_selector("codex resume --last --model gpt-5", k),
+            Some(vec!["codex".into(), "--model".into(), "gpt-5".into()])
+        );
+    }
+
+    #[test]
+    fn strip_selector_is_quote_aware() {
+        // A quoted value must be eaten with its flag, not left behind as a
+        // stray positional argument.
+        assert_eq!(
+            strip_selector("claude --resume \"old id\" --model opus", AgentKind::Claude),
+            Some(vec!["claude".into(), "--model".into(), "opus".into()])
+        );
+    }
+
+    #[test]
+    fn strip_selector_leaves_nothing_to_strip_alone() {
+        assert_eq!(
+            strip_selector("claude", AgentKind::Claude),
+            Some(vec!["claude".into()])
+        );
+        assert_eq!(
+            strip_selector("claude --model opus", AgentKind::Claude),
+            Some(vec!["claude".into(), "--model".into(), "opus".into()])
+        );
+    }
+
+    #[test]
+    fn strip_selector_ignores_a_different_program() {
+        // `echo --resume x` is not a Claude invocation; leave it be and let
+        // the caller fall back to the bare resume command.
+        assert_eq!(strip_selector("echo --resume x", AgentKind::Claude), None);
+        assert_eq!(strip_selector("", AgentKind::Claude), None);
+        assert_eq!(strip_selector("codex", AgentKind::Claude), None);
+    }
+
+    #[test]
+    fn strip_selector_matches_a_pathed_or_exe_program() {
+        assert_eq!(
+            strip_selector("C:\\bin\\claude.exe -c", AgentKind::Claude),
+            Some(vec!["C:\\bin\\claude.exe".into()])
+        );
+        assert_eq!(
+            strip_selector("/usr/local/bin/claude --continue", AgentKind::Claude),
+            Some(vec!["/usr/local/bin/claude".into()])
+        );
+    }
+
+    #[test]
+    fn resume_command_merges_with_startup_cmd() {
+        assert_eq!(
+            resume_command(AgentKind::Claude, "abc-123", "claude -c --model opus"),
+            Some("claude --resume abc-123 --model opus".to_string())
+        );
+        // Unrelated startup command: use the bare resume, don't mangle theirs.
+        assert_eq!(
+            resume_command(AgentKind::Claude, "abc-123", "npm run dev"),
+            Some("claude --resume abc-123".to_string())
+        );
+        assert_eq!(
+            resume_command(AgentKind::Codex, "abc-123", "codex resume --last"),
+            Some("codex resume abc-123".to_string())
+        );
+        // The user's own spelling of the program survives.
+        assert_eq!(
+            resume_command(AgentKind::Claude, "abc-123", "C:\\bin\\claude.exe -c"),
+            Some("C:\\bin\\claude.exe --resume abc-123".to_string())
+        );
+    }
+
+    #[test]
+    fn freshness_boundary_is_24h() {
+        let s = session(Uuid::nil(), "abc-123", IdSource::Disk);
+        let t = s.updated_at;
+        let day = FRESH_WINDOW.as_secs();
+        assert!(s.is_fresh_at(t), "same instant is fresh");
+        assert!(s.is_fresh_at(t + day - 1));
+        assert!(s.is_fresh_at(t + day), "exactly 24h still counts");
+        assert!(!s.is_fresh_at(t + day + 1), "one second past 24h is stale");
+        // Clock skew: a record stamped in the future is not thrown away.
+        assert!(s.is_fresh_at(t - 10_000));
+    }
+
+    #[test]
+    fn deactivated_record_is_never_fresh() {
+        let mut s = session(Uuid::nil(), "abc-123", IdSource::Disk);
+        s.active = false;
+        assert!(!s.is_fresh_at(s.updated_at));
+    }
+
+    #[test]
+    fn put_refuses_a_session_id_another_pane_already_holds() {
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let mut store = AgentSessionStore::default();
+        assert!(store.put(session(a, "aaaa-0001", IdSource::Disk)));
+        // Two panes in the same directory scan up the same newest transcript.
+        assert!(!store.put(session(b, "aaaa-0001", IdSource::Disk)));
+        assert!(store.get(b).is_none());
+        assert_eq!(
+            store.get(a).map(|s| s.session_id.as_str()),
+            Some("aaaa-0001")
+        );
+    }
+
+    #[test]
+    fn a_hook_id_takes_the_session_from_a_scanned_pane() {
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let mut store = AgentSessionStore::default();
+        assert!(store.put(session(a, "aaaa-0001", IdSource::Disk)));
+        assert!(store.put(session(b, "aaaa-0001", IdSource::Hook)));
+        assert!(
+            store.get(a).is_none(),
+            "the guess loses to the agent itself"
+        );
+        assert_eq!(store.get(b).map(|s| s.source), Some(IdSource::Hook));
+    }
+
+    #[test]
+    fn a_disk_scan_never_overwrites_a_hook_id_for_the_same_pane() {
+        let a = Uuid::from_u128(1);
+        let mut store = AgentSessionStore::default();
+        assert!(store.put(session(a, "bbbb-0001", IdSource::Hook)));
+        assert!(!store.put(session(a, "cccc-0002", IdSource::Disk)));
+        assert_eq!(
+            store.get(a).map(|s| s.session_id.as_str()),
+            Some("bbbb-0001")
+        );
+        // The same id from the scan is fine — it just refreshes the record.
+        let mut refresh = session(a, "bbbb-0001", IdSource::Disk);
+        refresh.updated_at += 60;
+        assert!(store.put(refresh));
+    }
+
+    #[test]
+    fn put_rejects_an_unsafe_session_id() {
+        let mut store = AgentSessionStore::default();
+        assert!(!store.put(session(Uuid::from_u128(1), "rm -rf /", IdSource::Hook)));
+        assert!(store.sessions.is_empty());
+    }
+
+    #[test]
+    fn deactivate_keeps_the_record() {
+        let a = Uuid::from_u128(1);
+        let mut store = AgentSessionStore::default();
+        store.put(session(a, "abc-123", IdSource::Disk));
+        assert!(store.deactivate(a));
+        assert!(!store.deactivate(a), "already inactive: no change");
+        let rec = store.get(a).expect("record must survive deactivation");
+        assert!(!rec.active);
+        assert_eq!(rec.session_id, "abc-123");
+    }
+
+    #[test]
+    fn store_json_round_trip() {
+        let mut store = AgentSessionStore::default();
+        store.put(session(Uuid::from_u128(7), "abc-123", IdSource::Hook));
+        let dir = std::env::temp_dir().join(format!(
+            "ymux-agent-sessions-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let path = dir.join("agent-sessions.json");
+        save_to(&path, &store).expect("save");
+        let loaded = load_from(&path);
+        assert_eq!(loaded, store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_store_loads_empty() {
+        let dir = std::env::temp_dir().join(format!(
+            "ymux-agent-sessions-bad-{}-{}",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let missing = dir.join("nope.json");
+        assert_eq!(load_from(&missing), AgentSessionStore::default());
+        let corrupt = dir.join("corrupt.json");
+        std::fs::write(&corrupt, b"{not json at all").expect("write");
+        assert_eq!(load_from(&corrupt), AgentSessionStore::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_kind_round_trips_the_registry_kind_strings() {
+        assert_eq!(AgentKind::from_kind("claude"), Some(AgentKind::Claude));
+        assert_eq!(AgentKind::from_kind("Codex"), Some(AgentKind::Codex));
+        assert_eq!(AgentKind::from_kind("gemini"), None);
+        assert_eq!(AgentKind::Claude.as_str(), "claude");
+        assert_eq!(AgentKind::Codex.as_str(), "codex");
+    }
+}

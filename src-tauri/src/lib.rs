@@ -6,6 +6,7 @@
 
 pub mod agent_hooks;
 pub mod agent_scan;
+pub mod agent_sessions;
 pub mod agents;
 pub mod config;
 pub mod error;
