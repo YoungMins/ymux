@@ -9,10 +9,10 @@ The biggest release this project has shipped: the `ydir` / `ycode` / `ygit` / `y
 What replaces them, as panes ymux itself renders alongside terminals and browsers:
 
 - **Files pane** — browse, preview, rename, create, multi-select, copy/move, delete to trash. Opens from a terminal's right-click menu ("Files here") or the command palette; the right-side file dock now hosts one instead of running `ydir --dock` in a PTY.
-- **Editor pane** — CodeMirror 6, syntax highlighting, find/replace, go to line, multi-cursor, CRLF/BOM-preserving saves, an unsaved-changes guard on every close path (including macOS Cmd+Q), crash-safety drafts, and external-change detection.
+- **Editor pane** — CodeMirror 6, syntax highlighting, find/replace, go to line, multi-cursor, CRLF/BOM-preserving saves, an unsaved-changes guard on every close path it can see, plus a debounced crash-safety draft as the net for the one path it can't (macOS Cmd+Q), and external-change detection.
 - **Git pane** — commit graph, branch list with checkout, worktree add/remove with confirmation.
 
-`ymon` has no in-app replacement: the status bar already streams the same CPU / RAM / GPU / disk / network numbers from the same backend, and the process list is better served by the OS task manager. The editor's Markdown preview and file-tree sidebar are also gone for now — deferred, not replaced.
+`ymon` has no in-app replacement: the status bar already streams the same CPU / RAM / GPU / disk / network numbers from the same backend, and the process list is better served by the OS task manager. The retired `ycode`'s Markdown preview is also gone for now — deferred, not replaced; its file-tree sidebar isn't missed, since the file dock and Files panes already cover that.
 
 One binary survives: `y`, shrunk to a single job — relaying Claude Code hook events into the agent tree. It keeps its name and its path, so existing agent-tracking hooks in `~/.claude/settings.json` keep working across the upgrade with no action from you.
 
@@ -24,7 +24,7 @@ One binary survives: `y`, shrunk to a single job — relaying Claude Code hook e
 
 ### Agent session resume
 
-Restart ymux while a pane is running Claude Code or Codex, and that pane picks the conversation back up — `claude --resume <id> --dangerously-skip-permissions` / `codex resume <id>` — instead of showing a static picture of the old scrollback. This works even if you've never turned on agent tracking: ymux finds the session id by reading the CLI's own transcript files from disk, matched to the pane's working directory. Shell panes are untouched and keep restoring scrollback exactly as before.
+Restart ymux while a pane is running Claude Code or Codex, and that pane picks the conversation back up instead of showing a static picture of the old scrollback: `claude --resume <id> --dangerously-skip-permissions` — the skip-permissions flag is always added, so you're not re-approving everything you'd already approved — or `codex resume <id>`. Eligible for up to 24 hours after the session was last active. This works even if you've never turned on agent tracking: ymux finds the session id by reading the CLI's own transcript files from disk, matched to the pane's working directory. Shell-only panes are untouched and keep restoring scrollback exactly as before.
 
 ### Clickable file paths
 
@@ -40,7 +40,7 @@ Every Tauri command ymux exposes now checks the caller's origin before doing any
 
 ## Under the hood
 
-- New backend modules: `fsx`/`fsops` (the Files pane's listing/sort/binary-sniff logic and its Tauri commands), `textfile` (EOL/BOM/encoding-safe reads and writes), `fspath` (resolving and opening a path lifted out of terminal text, with the reveal-vs-run policy), `ipc_guard` (the per-command origin guard), `agent_sessions`/`agent_scan_disk` (the resume feature's record store and disk-scan fallback), `drafts` and `scrollback` (crash-safety persistence, Tauri-free and unit-tested on Linux CI).
+- New backend modules: `fsx`/`fsops` (the Files pane's listing/sort/binary-sniff logic and its Tauri commands), `textfile` (EOL/BOM/encoding-safe reads and writes), `fspath` (resolving and opening a path lifted out of terminal text, with the reveal-vs-run policy), `ipc_guard` (the per-command origin guard), `agent_sessions`/`agent_scan_disk` (the resume feature's record store and disk-scan fallback), and `drafts` (the editor's crash-safety net) — all Tauri-free and unit-tested on Linux CI, next to the existing `scrollback`.
 - `crates/yipc` and `tools/ylauncher` shrank to exactly what the hook relay needs; `crates/yversion` is gone — its only consumers were the retired TUI footers.
 - `ipc_guard::tests::every_registered_command_starts_with_a_guard` parses `main.rs`'s command registration and every command body, so a new `#[tauri::command]` without a guard fails CI rather than shipping.
 
