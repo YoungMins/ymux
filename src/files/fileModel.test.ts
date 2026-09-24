@@ -47,6 +47,25 @@ describe("sortEntries", () => {
     expect(names(out)).toEqual(["\uFF41", "\u{1F600}"]);
   });
 
+  it("orders by code point across the surrogate/E000 boundary both ways", () => {
+    const out = sortEntries([f("\u{10000}"), f(""), f("퟿")]);
+    expect(names(out)).toEqual(["퟿", "", "\u{10000}"]);
+  });
+
+  it("sorts a 50,000-entry directory (the virtualised worst case)", () => {
+    const many = Array.from({ length: 50_000 }, (_, i) =>
+      f(`${i % 7 === 0 ? "가" : "file"}-${(i * 7919) % 50_000}.txt`, i % 50 === 0),
+    );
+    const start = performance.now();
+    const out = sortEntries(many);
+    const ms = performance.now() - start;
+    expect(out).toHaveLength(50_000);
+    expect(out[0].is_dir).toBe(true);
+    expect(out[out.length - 1].name.startsWith("가")).toBe(true);
+    // Generous: a regression to per-comparison allocation is ~10x slower.
+    expect(ms).toBeLessThan(2000);
+  });
+
   it("does not mutate its input", () => {
     const input = [f("b"), f("a")];
     sortEntries(input);

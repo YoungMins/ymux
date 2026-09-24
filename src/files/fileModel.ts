@@ -28,28 +28,36 @@ export interface FileEntry {
 /// astral character (a surrogate pair, 0xD800…) before U+E000–U+FFFF; Rust's
 /// `String` `Ord` is byte order, i.e. code point order. Matching Rust keeps
 /// the listing in exactly the order `fsx::sort_entries` produced.
+///
+/// Done on UTF-16 units without iterators (it runs ~800k times sorting a
+/// 50k-entry directory): code point order differs from unit order only
+/// between a surrogate (D800–DFFF) and a unit in E000–FFFF, so shifting
+/// those two ranges past each other makes unit order equal code point order.
 export function compareCodePoints(a: string, b: string): number {
-  const ia = a[Symbol.iterator]();
-  const ib = b[Symbol.iterator]();
-  for (;;) {
-    const x = ia.next();
-    const y = ib.next();
-    if (x.done) return y.done ? 0 : -1;
-    if (y.done) return 1;
-    const cx = x.value.codePointAt(0)!;
-    const cy = y.value.codePointAt(0)!;
-    if (cx !== cy) return cx < cy ? -1 : 1;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    let x = a.charCodeAt(i);
+    let y = b.charCodeAt(i);
+    if (x === y) continue;
+    if (x >= 0xd800) x = x >= 0xe000 ? x - 0x800 : x + 0x2000;
+    if (y >= 0xd800) y = y >= 0xe000 ? y - 0x800 : y + 0x2000;
+    return x < y ? -1 : 1;
   }
+  return a.length - b.length;
 }
 
 /// Directories first, then by lower-cased name — `fsx::sort_entries`'s rule,
 /// which is `tools/ydir`'s, so the pane lists in the order users already
-/// have. Returns a new array.
+/// have. Returns a new array. The lower-cased keys are computed once, not
+/// per comparison.
 export function sortEntries(entries: readonly FileEntry[]): FileEntry[] {
-  return [...entries].sort((a, b) => {
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return compareCodePoints(a.name.toLowerCase(), b.name.toLowerCase());
-  });
+  return entries
+    .map((e) => ({ e, key: e.name.toLowerCase() }))
+    .sort((a, b) => {
+      if (a.e.is_dir !== b.e.is_dir) return a.e.is_dir ? -1 : 1;
+      return compareCodePoints(a.key, b.key);
+    })
+    .map((x) => x.e);
 }
 
 export function isHiddenName(name: string): boolean {

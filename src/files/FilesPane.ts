@@ -100,6 +100,9 @@ const TYPEAHEAD_MS = 800;
 /// A cursor that rests this long gets a preview. Holding ↓ reads nothing.
 const PREVIEW_DELAY_MS = 90;
 
+/// Above this many entries the window-focus refresh is skipped.
+const FOCUS_REFRESH_MAX = 10_000;
+
 const PREFS_KEY = "ymux.files.prefs";
 
 interface Prefs {
@@ -313,8 +316,13 @@ export class FilesPane implements Pane {
 
     this.element.addEventListener("focusin", () => this.opts.onFocus?.());
 
+    // Refresh on window focus, as ydir's Ctrl+R but automatic. Not for a
+    // huge folder: re-listing 10k+ entries on every alt-tab costs more than
+    // it is worth, and F5 is one key away.
     const onWinFocus = () => {
-      if (this.isShown() && !this.busy) void this.load({ quiet: true });
+      if (this.isShown() && !this.busy && this.names.length <= FOCUS_REFRESH_MAX) {
+        void this.load({ quiet: true });
+      }
     };
     window.addEventListener("focus", onWinFocus);
     this.cleanups.push(() => window.removeEventListener("focus", onWinFocus));
@@ -457,7 +465,11 @@ export class FilesPane implements Pane {
       if (first >= 0) this.sel = { cursor: first, anchor: first, selected: want };
     }
     this.renderAll();
-    this.ensureVisible(this.sel.cursor);
+    // Only when the cursor was *placed*: a plain refresh (window focus)
+    // must not yank a list the user scrolled with the wheel.
+    if (o.changedDir || o.prefer !== undefined || o.select?.length) {
+      this.ensureVisible(this.sel.cursor);
+    }
   }
 
   private async refresh(): Promise<void> {
@@ -1032,10 +1044,14 @@ export class FilesPane implements Pane {
         );
         this.focus();
         if (!again) return;
-        try {
-          await fsApi.delete(paths, false);
-        } catch (err2) {
-          this.say(describeFsError(err2), true);
+        // One path at a time: a trash that failed part-way already removed
+        // some, and a batch delete would stop at the first missing one.
+        for (const p of paths) {
+          try {
+            await fsApi.delete([p], false);
+          } catch (err2) {
+            if (errorKind(err2) !== "not_found") this.say(describeFsError(err2), true);
+          }
         }
       }
     });
@@ -1080,39 +1096,62 @@ export class FilesPane implements Pane {
     const known: FileEntry[] = [...this.entries];
     let remembered: OverwriteChoice | null = null;
     await this.withBusy(async () => {
-      for (let k = 0; k < clip.items.length; k++) {
+      items: for (let k = 0; k < clip.items.length; k++) {
         const item = clip.items[k];
-        const conflict = findConflict(item.name, known);
-        let choice: OverwriteChoice = "skip";
-        if (conflict) {
-          if (clip.mode === "copy" && sameDir) choice = "keep-both";
-          else if (remembered) choice = remembered;
-          else {
-            const ans = await this.askOverwrite(item.is_dir, conflict, k < clip.items.length - 1);
-            if (!ans) break;
-            choice = ans.choice;
-            if (ans.all) remembered = choice;
+        // This item's answer, kept across a retry so the user is asked once.
+        let chosen: OverwriteChoice | null = null;
+        // Retried on `already_exists`: the listing can miss a conflict (a
+        // hidden file while hidden files are off, or one created since the
+        // last listing), and the backend is the authority that catches it.
+        // The file it found joins `known`, so the next try prompts or picks
+        // a free "(n)" name.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const conflict = findConflict(item.name, known);
+          let choice: OverwriteChoice = "skip";
+          if (conflict) {
+            if (clip.mode === "copy" && sameDir) choice = "keep-both";
+            else if (chosen) choice = chosen;
+            else if (remembered) choice = remembered;
+            else {
+              const ans = await this.askOverwrite(
+                item.is_dir,
+                conflict,
+                k < clip.items.length - 1,
+              );
+              if (!ans) break items;
+              choice = ans.choice;
+              if (ans.all) remembered = choice;
+            }
+            chosen = choice;
           }
-        }
-        const plan = resolveOverwrite(
-          item.name,
-          item.is_dir,
-          conflict,
-          choice,
-          known.map((e) => e.name),
-        );
-        if (plan.action === "skip") continue;
-        const to = joinPath(dest, plan.name);
-        try {
-          if (clip.mode === "copy") await fsApi.copy(item.path, to, plan.overwrite);
-          else await fsApi.move(item.path, to, plan.overwrite);
-        } catch (err) {
-          this.say(`${item.name}: ${describeFsError(err)}`, true);
-          continue;
-        }
-        pasted.push(plan.name);
-        if (!plan.overwrite) {
-          known.push({ ...item, name: plan.name, path: to, is_symlink: false, size: 0, modified_ms: 0 });
+          const plan = resolveOverwrite(
+            item.name,
+            item.is_dir,
+            conflict,
+            choice,
+            known.map((e) => e.name),
+          );
+          if (plan.action === "skip") continue items;
+          const to = joinPath(dest, plan.name);
+          try {
+            if (clip.mode === "copy") await fsApi.copy(item.path, to, plan.overwrite);
+            else await fsApi.move(item.path, to, plan.overwrite);
+          } catch (err) {
+            if (errorKind(err) === "already_exists" && !plan.overwrite) {
+              const hit = await fsApi.stat(to).catch(() => null);
+              if (hit && !findConflict(hit.name, known)) {
+                known.push(hit);
+                continue;
+              }
+            }
+            this.say(`${item.name}: ${describeFsError(err)}`, true);
+            continue items;
+          }
+          pasted.push(plan.name);
+          if (!plan.overwrite) {
+            known.push({ ...item, name: plan.name, path: to, is_symlink: false, size: 0, modified_ms: 0 });
+          }
+          continue items;
         }
       }
     });
@@ -1260,9 +1299,11 @@ export class FilesPane implements Pane {
     // Keep keyboard focus in the list: a toolbar click is not a place to
     // leave the caret.
     b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    // Focus first: an action that opens a dialog focuses its input
+    // synchronously, and refocusing the list after it would steal that.
     b.addEventListener("click", () => {
-      onClick();
       this.focus();
+      onClick();
     });
     this.buttons.push({ el: b, key });
     return b;
