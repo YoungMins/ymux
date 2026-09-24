@@ -8,35 +8,16 @@ import { getVersion } from "@tauri-apps/api/app";
 import { t, getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n/i18n";
 import { api, describeError } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
+import { shortcutLabel } from "../platform";
 import type { YTheme, SettingsSection } from "./types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
-
-interface ShortcutEntry {
-  keys: string;
-  tKey: string;
-}
+import { SHORTCUTS, splitShortcutKeys } from "./shortcutList";
 
 interface SyntaxField {
   key: keyof YTheme["syntax"];
   tKey: string;
 }
-
-const SHORTCUTS: ShortcutEntry[] = [
-  { keys: "Ctrl+Alt+1 … 9", tKey: "shortcut.switchWs" },
-  { keys: "Ctrl+Shift+H", tKey: "shortcut.splitH" },
-  { keys: "Ctrl+Shift+V", tKey: "shortcut.splitV" },
-  { keys: "Ctrl+Shift+W", tKey: "shortcut.close" },
-  { keys: "Ctrl+Tab", tKey: "shortcut.nextPane" },
-  { keys: "Ctrl+Shift+Tab", tKey: "shortcut.prevPane" },
-  { keys: "Ctrl+Click (URL)", tKey: "shortcut.openLink" },
-  { keys: "Ctrl+Shift+Z", tKey: "shortcut.zoom" },
-  { keys: "Ctrl+F", tKey: "shortcut.search" },
-  { keys: "Ctrl+Shift+R", tKey: "shortcut.rename" },
-  { keys: "Ctrl+Shift+P", tKey: "shortcut.palette" },
-  { keys: "Ctrl+Alt+N", tKey: "shortcut.notes" },
-  { keys: "Ctrl+V", tKey: "shortcut.paste" },
-];
 
 const SYNTAX_FIELDS: SyntaxField[] = [
   { key: "keyword", tKey: "settings.syntax.keyword" },
@@ -495,11 +476,13 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
       const tr = document.createElement("tr");
       const tdK = document.createElement("td");
       tdK.className = "keys";
-      const segs = s.keys.split("+");
+      // Render for the host platform (Cmd on macOS) — SHORTCUTS stores the
+      // canonical Windows form (CLAUDE.md rule 10).
+      const segs = splitShortcutKeys(shortcutLabel(s.keys));
       segs.forEach((seg, i) => {
         if (i > 0) tdK.appendChild(document.createTextNode(" + "));
         const kbd = document.createElement("kbd");
-        kbd.textContent = seg.trim();
+        kbd.textContent = seg;
         tdK.appendChild(kbd);
       });
       tr.appendChild(tdK);
