@@ -12,16 +12,10 @@
 // screenful of `cargo` output would fire hundreds of stat calls, several of
 // them on network drives.
 
+import type { ResolvedPath } from "../types";
 import type { PathCandidate } from "./pathMatch";
 
-/// What the backend says about one candidate.
-export interface ResolvedPath {
-  /// The absolute path the candidate resolved to — what the tooltip shows
-  /// and what the opener is handed.
-  absolute: string;
-  /// Directories open in the OS file manager rather than an editor.
-  isDir: boolean;
-}
+export type { ResolvedPath };
 
 /// `null` means "checked, and it is not a file or directory we will link".
 export type ProbeResult = ResolvedPath | null;

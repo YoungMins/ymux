@@ -52,6 +52,8 @@ fn main() {
             ymux_lib::commands::set_active_workspace,
             ymux_lib::commands::get_pane_cwd,
             ymux_lib::commands::open_url,
+            ymux_lib::commands::resolve_paths,
+            ymux_lib::commands::open_path,
             ymux_lib::commands::notify,
             ymux_lib::commands::save_scrollback,
             ymux_lib::commands::load_scrollback,

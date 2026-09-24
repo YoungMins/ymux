@@ -115,6 +115,16 @@ export interface PaneAgents {
 /// Pane id → agents. Panes with no agents are absent.
 export type AgentSnapshot = Record<Uuid, PaneAgents>;
 
+/// A path the backend resolved and confirmed exists (mirrors
+/// `src-tauri/src/fspath.rs::ResolvedPath`). Produced by `resolve_paths`
+/// for the terminal's path linkifier.
+export interface ResolvedPath {
+  /// Absolute, with Windows' verbatim `\?\` prefix stripped.
+  absolute: string;
+  /// Directories open in the OS file manager rather than an application.
+  is_dir: boolean;
+}
+
 /// UUID v4 generator that doesn't need a `crypto` subtle fallback polyfill.
 export function uuidv4(): Uuid {
   // Prefer `crypto.randomUUID` — available in WebView2 and all modern browsers.

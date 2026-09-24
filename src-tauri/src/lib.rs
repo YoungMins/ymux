@@ -11,6 +11,11 @@ pub mod agent_sessions;
 pub mod agents;
 pub mod config;
 pub mod error;
+// Resolving and opening filesystem paths the frontend lifted out of terminal
+// output (the path linkifier). Not behind `desktop`: the validation, UNC
+// policy and reveal-vs-open rules are the parts worth testing, and they run
+// under `cargo test --no-default-features --lib -p ymux` on Linux CI.
+pub mod fspath;
 pub mod git;
 pub mod paste_images;
 pub mod pty;

@@ -9,6 +9,7 @@ import type {
   AgentSnapshot,
   BootstrapPayload,
   Config,
+  ResolvedPath,
   ShellProfile,
   SpawnedPane,
   Uuid,
@@ -121,6 +122,21 @@ export const api = {
 
   /// Open a URL in the system default browser. Only http/https are allowed.
   openUrl: (url: string): Promise<void> => call("open_url", { url }),
+
+  /// Which of these terminal-output path candidates actually exist,
+  /// resolved against `cwd`. Answers align with `paths` by index; `null`
+  /// means "not a path we will link". One call per hovered row — see
+  /// `src/terminal/pathProbe.ts` for the cache in front of it.
+  resolvePaths: (
+    paths: readonly string[],
+    cwd: string | null,
+  ): Promise<Array<ResolvedPath | null>> =>
+    call("resolve_paths", { paths, cwd }),
+
+  /// Open an absolute local path with the OS default handler. Directories
+  /// open in the file manager; executables and scripts are revealed there
+  /// rather than run. Rejected unless the path is absolute and exists.
+  openPath: (path: string): Promise<void> => call("open_path", { path }),
 
   /// Create a native child webview window positioned over a layout placeholder.
   createWebview: (

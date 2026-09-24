@@ -295,6 +295,75 @@ pub fn open_url(url: String) -> YmuxResult<()> {
     Ok(())
 }
 
+/// Resolve terminal-output path candidates against a pane's live cwd,
+/// reporting which of them actually exist. Backs the terminal's path
+/// linkifier: a candidate only becomes a clickable link if this says it is
+/// real, and the answer is what the tooltip shows.
+///
+/// `async` on purpose. Tauri runs a non-async command on the main thread,
+/// and `metadata` on a mapped network drive that has gone away blocks for
+/// tens of seconds — long enough to freeze the whole UI on a mouse move.
+/// The work goes to a blocking pool and carries its own timeout
+/// ([`fspath::PROBE_TIMEOUT`]).
+///
+/// All the interesting logic — validation, tilde expansion, the UNC policy
+/// that stops a hover from leaking SMB credentials — lives in
+/// [`crate::fspath`], where it is unit-tested.
+#[tauri::command]
+pub async fn resolve_paths(
+    webview: tauri::Webview,
+    paths: Vec<String>,
+    cwd: Option<String>,
+) -> YmuxResult<Vec<Option<crate::fspath::ResolvedPath>>> {
+    // `capabilities/browser-children.json` hands `core:default` to every
+    // `eb-*` child webview on http(s) origins, so without this an arbitrary
+    // website open in an embedded browser pane could use this command as a
+    // filesystem oracle.
+    if !crate::fspath::caller_allowed(webview.label()) {
+        return Err(YmuxError::Other(
+            "resolve_paths: only the main webview may resolve local paths".into(),
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || crate::fspath::probe_batch(paths, cwd))
+        .await
+        .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))
+}
+
+/// Open an absolute path with the OS default handler — `ShellExecuteW` on
+/// Windows, `open` on macOS, both via `opener`. Neither builds a command
+/// line, so `&`, `^`, `%` and quotes in a filename are inert.
+///
+/// A directory opens in the file manager. An executable or script is
+/// *revealed* in the file manager rather than launched: clicking a path in
+/// terminal output means "show me this", and terminal output is
+/// attacker-influenced, so `ShellExecuteW` running `evil.bat` is not an
+/// acceptable reading of the click. See [`crate::fspath::should_reveal`].
+#[tauri::command]
+pub async fn open_path(webview: tauri::Webview, path: String) -> YmuxResult<()> {
+    if !crate::fspath::caller_allowed(webview.label()) {
+        return Err(YmuxError::Other(
+            "open_path: only the main webview may open local paths".into(),
+        ));
+    }
+    // The path was vetted by `resolve_paths`, but it made a round trip
+    // through the frontend to get here, so it is validated again from
+    // scratch rather than trusted.
+    crate::fspath::validate_open(&path).map_err(YmuxError::Other)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = Path::new(&path);
+        let meta = std::fs::metadata(p)
+            .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
+        let result = if crate::fspath::should_reveal(p, meta.is_dir()) {
+            opener::reveal(p)
+        } else {
+            opener::open(p)
+        };
+        result.map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))
+    })
+    .await
+    .map_err(|e| YmuxError::Other(format!("open_path: {e}")))?
+}
+
 /// Show an OS desktop notification with the given title and body.
 #[tauri::command]
 pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {

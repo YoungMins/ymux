@@ -22,7 +22,7 @@ function fakeProbe(present: readonly string[]) {
   ): Promise<ProbeResult[]> => {
     calls.push([...texts]);
     return texts.map((t) =>
-      present.includes(t) ? { absolute: `${cwd ?? ""}/${t}`, isDir: false } : null,
+      present.includes(t) ? { absolute: `${cwd ?? ""}/${t}`, is_dir: false } : null,
     );
   };
   return { fn, calls };
@@ -92,7 +92,7 @@ describe("PathProbeCache", () => {
     const cache = new PathProbeCache(fn);
     cache.setCwd("/repo");
     const got = await cache.resolve([cand("src/main.ts"), cand("and/or")]);
-    expect(got.get("src/main.ts")).toEqual({ absolute: "/repo/src/main.ts", isDir: false });
+    expect(got.get("src/main.ts")).toEqual({ absolute: "/repo/src/main.ts", is_dir: false });
     expect(got.has("and/or")).toBe(false);
   });
 
@@ -190,7 +190,7 @@ describe("PathProbeCache", () => {
     cache.setCwd("/a");
     const pending = cache.resolve([cand("a/1")]);
     cache.setCwd("/b");
-    release([{ absolute: "/a/a/1", isDir: false }]);
+    release([{ absolute: "/a/a/1", is_dir: false }]);
     await pending;
     expect(cache.peek("a/1")).toBeUndefined();
   });
