@@ -11,9 +11,9 @@ const p = (code: string, ctrl: boolean, shift: boolean, alt: boolean, key = "") 
 
 describe("forwardedKeyInit", () => {
   it("derives the key from the code, ignoring the payload's key", () => {
-    expect(forwardedKeyInit(p("KeyH", true, true, false, "W"))).toMatchObject({
-      key: "H",
-      code: "KeyH",
+    expect(forwardedKeyInit(p("KeyP", true, true, false, "W"))).toMatchObject({
+      key: "P",
+      code: "KeyP",
       ctrlKey: true,
       shiftKey: true,
       altKey: false,
@@ -27,6 +27,12 @@ describe("forwardedKeyInit", () => {
 
   it("never forwards close-pane", () => {
     expect(forwardedKeyInit(p("KeyW", true, true, false, "W"))).toBeNull();
+  });
+
+  it("never forwards shortcuts that spawn a shell (split, new tab)", () => {
+    for (const code of ["KeyH", "KeyV", "KeyT"]) {
+      expect(forwardedKeyInit(p(code, true, true, false))).toBeNull();
+    }
   });
 
   it("refuses anything outside the table", () => {

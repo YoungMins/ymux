@@ -62,10 +62,12 @@ pub fn embedded_child_pane_id(label: &str) -> Option<Uuid> {
 /// `{code: "Tab", key: "W"}` pass validation and act as a different
 /// shortcut.
 ///
-/// Deliberately absent: Ctrl+Shift+W (close pane). Closing a pane kills its
-/// shell or agent and deletes its scrollback with no confirmation; a website
-/// must not be able to do that. The user presses it after clicking back into
-/// ymux. Keep `isYmuxShortcut` in `embedded_browser::child_init_script` and
+/// Deliberately absent: Ctrl+Shift+W (close pane) — closing a pane kills its
+/// shell or agent and deletes its scrollback with no confirmation — and
+/// Ctrl+Shift+H / V (split) and Ctrl+Shift+T (new tab), which each start a
+/// new shell, so a page repeating them could spawn PTYs without limit.
+/// Nothing that destroys or creates a PTY may be triggerable from a web
+/// page; the user presses those after clicking back into ymux. Keep `isYmuxShortcut` in `embedded_browser::child_init_script` and
 /// `src/browser/forwardedKeys.ts` in step with this table.
 pub fn forwarded_shortcut_key(
     code: &str,
@@ -91,15 +93,12 @@ pub fn forwarded_shortcut_key(
             "KeyN" => Some("n"),
             _ => None,
         },
-        // Ctrl+Shift+H/V/Z/P/R/E/T, Ctrl+Shift+[ / ], Ctrl+Shift+Tab.
+        // Ctrl+Shift+Z/P/R/E, Ctrl+Shift+[ / ], Ctrl+Shift+Tab.
         (true, false) => match code {
-            "KeyH" => Some("H"),
-            "KeyV" => Some("V"),
             "KeyZ" => Some("Z"),
             "KeyP" => Some("P"),
             "KeyR" => Some("R"),
             "KeyE" => Some("E"),
-            "KeyT" => Some("T"),
             "BracketLeft" => Some("{"),
             "BracketRight" => Some("}"),
             "Tab" => Some("Tab"),
@@ -151,13 +150,10 @@ mod tests {
         }
         assert_eq!(forwarded_shortcut_key("KeyN", true, false, true), Some("n"));
         for (code, key) in [
-            ("KeyH", "H"),
-            ("KeyV", "V"),
             ("KeyZ", "Z"),
             ("KeyP", "P"),
             ("KeyR", "R"),
             ("KeyE", "E"),
-            ("KeyT", "T"),
             ("BracketLeft", "{"),
             ("BracketRight", "}"),
             ("Tab", "Tab"),
@@ -176,6 +172,21 @@ mod tests {
     fn close_pane_is_not_forwardable() {
         for (shift, alt) in [(true, false), (false, false), (false, true), (true, true)] {
             assert_eq!(forwarded_shortcut_key("KeyW", true, shift, alt), None);
+        }
+    }
+
+    /// Split (H/V) and new tab (T) each spawn a shell; a page repeating them
+    /// could create PTYs without limit.
+    #[test]
+    fn pty_spawning_shortcuts_are_not_forwardable() {
+        for code in ["KeyH", "KeyV", "KeyT"] {
+            for (shift, alt) in [(true, false), (false, false), (false, true), (true, true)] {
+                assert_eq!(
+                    forwarded_shortcut_key(code, true, shift, alt),
+                    None,
+                    "{code} shift={shift} alt={alt}"
+                );
+            }
         }
     }
 

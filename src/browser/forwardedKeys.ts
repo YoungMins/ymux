@@ -9,8 +9,9 @@
 // payload's own `key` could otherwise make one shortcut act as another.
 //
 // Mirrors `ipc_guard::forwarded_shortcut_key` in Rust; keep them in step.
-// Ctrl+Shift+W (close pane) is deliberately absent: a website must not be
-// able to kill a shell and delete its scrollback.
+// Deliberately absent: Ctrl+Shift+W (close pane) and Ctrl+Shift+H / V / T
+// (split, new tab). Nothing that destroys or creates a PTY may be triggerable
+// from a web page.
 
 type Mods = `${boolean},${boolean}`; // shift,alt (ctrl is always required)
 
@@ -29,13 +30,10 @@ const TABLE: Record<Mods, Record<string, string>> = {
     KeyN: "n",
   },
   "true,false": {
-    KeyH: "H",
-    KeyV: "V",
     KeyZ: "Z",
     KeyP: "P",
     KeyR: "R",
     KeyE: "E",
-    KeyT: "T",
     BracketLeft: "{",
     BracketRight: "}",
     Tab: "Tab",

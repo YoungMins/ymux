@@ -70,7 +70,7 @@ fn child_init_script(id: &str) -> String {
   function isYmuxShortcut(e) {{
     if (e.ctrlKey && e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) return true;
     if (e.ctrlKey && e.altKey && !e.shiftKey && e.code === 'KeyN') return true;
-    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[HVZPRET]$/.test(e.code)) return true;
+    if (e.ctrlKey && e.shiftKey && !e.altKey && /^Key[ZPRE]$/.test(e.code)) return true;
     if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return true;
     if (e.ctrlKey && !e.altKey && e.code === 'Tab') return true;
     return false;

@@ -334,7 +334,9 @@ framed inside a browser pane (refused by CSP `frame-ancestors 'none'` and
 `src/bootGuard.ts`, which must stay `main.ts`'s first import), and what a
 forwarded keystroke *means* (`ipc_guard::forwarded_shortcut_key` /
 `src/browser/forwardedKeys.ts` — an exact table, key derived from code,
-never close-pane).
+never close-pane). Anything that creates a PTY must not be triggerable from
+a web page either, so split (Ctrl+Shift+H/V) and new tab (Ctrl+Shift+T) are
+not forwardable.
 
 ## TDD / Testing
 
