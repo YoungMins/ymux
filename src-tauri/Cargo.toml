@@ -52,6 +52,13 @@ opener = { version = "0.7", features = ["reveal"] }
 # nothing in build time.
 png = "0.17"
 
+# Content hashing for `textfile::ContentStamp`, the guard that stops the
+# editor pane silently overwriting a file an agent rewrote underneath it.
+# Pure Rust and already in the dependency graph via Tauri, and deliberately
+# NOT behind `desktop` for the same reason as `png`: the stamp logic is what
+# is worth unit-testing and those tests run on Linux CI.
+sha2 = "0.10"
+
 # Tauri runtime is gated behind the `desktop` feature, which is on by default
 # so that `pnpm tauri dev` / `pnpm tauri build` work out of the box on the
 # Windows target machines this app is built for. Linux dev hosts that only

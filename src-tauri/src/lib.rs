@@ -22,6 +22,7 @@ pub mod paste_images;
 pub mod pty;
 pub mod scrollback;
 pub mod shell;
+pub mod textfile;
 
 // Reading an image off the OS clipboard. Desktop-only because `arboard` pulls
 // X11/Wayland system deps on Linux; the PNG encoding it needs is in the
