@@ -15,7 +15,7 @@ import type {
   Uuid,
 } from "../types";
 import type { YTheme, ConfigPathKind } from "../settings/types";
-import type { ResumePlan } from "../terminal/resumePlan";
+import type { ResumeOutcome } from "../terminal/resumePlan";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -211,12 +211,16 @@ export const api = {
   setEmbeddedBrowserVisible: (id: string, visible: boolean): Promise<void> =>
     call("set_embedded_browser_visible", { id, visible }),
 
-  /// The resume plan for a pane, or null when it should start normally.
+  /// What a pane should do as it comes up: resume its agent, say that a
+  /// recent session's transcript is gone, or nothing.
   /// Asked before `spawn()` decides whether to replay scrollback: a pane that
   /// resumes its agent skips the replay entirely (spec §4/§5). `startupCmd` is
   /// the pane's own saved startup command, so a selector it already carries
   /// can be stripped instead of fighting ours.
-  getAgentSession: (id: Uuid, startupCmd?: string): Promise<ResumePlan | null> =>
+  getAgentSession: (
+    id: Uuid,
+    startupCmd?: string,
+  ): Promise<ResumeOutcome | null> =>
     call("get_agent_session", { paneId: id, startupCmd: startupCmd ?? null }),
 
   /// Forget a pane's agent session. Called when the user closes a pane for

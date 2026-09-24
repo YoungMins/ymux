@@ -112,6 +112,9 @@ export class TerminalPane implements Pane {
   /// Non-null means the agent was resumed, so this pane neither restored
   /// nor saves scrollback for the rest of its life (spec §5).
   private resumePlan: ResumePlan | null = null;
+  /// Set when a recent session could not be resumed because its transcript is
+  /// gone: the pane starts normally but says so first (spec §4.3).
+  private missingAgent: string | null = null;
   private spec: PaneSpec;
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
@@ -498,17 +501,22 @@ export class TerminalPane implements Pane {
     // Ask the backend whether this pane held an agent mid-conversation. A
     // failure here must never block spawn — the pane then behaves exactly as
     // it always did.
+    let outcome = null;
     try {
-      this.resumePlan =
-        (await api.getAgentSession(this.id, this.spec.startup_cmd ?? undefined)) ??
-        null;
+      outcome =
+        (await api.getAgentSession(
+          this.id,
+          this.spec.startup_cmd ?? undefined,
+        )) ?? null;
     } catch {
-      this.resumePlan = null;
+      outcome = null;
     }
     const action = spawnAction({
-      plan: this.resumePlan,
+      outcome,
       persistEnabled: this.opts.persistScrollback?.() ?? false,
     });
+    this.resumePlan = action.kind === "resume" ? action.plan : null;
+    this.missingAgent = action.kind === "resume" ? null : action.missingAgent;
     if (action.kind === "resume") {
       // The blob this pane last wrote is a picture of the conversation we
       // are about to continue for real. Drop it now, or a later launch that
@@ -625,6 +633,9 @@ export class TerminalPane implements Pane {
       // The backend has already merged the two, stripping any selector the
       // saved one carried, so `claude -c` and our `--resume <id>` are not
       // two selectors fighting (spec §3).
+      // A recent session whose transcript is gone gets said out loud, even
+      // though the pane then starts exactly as it always would (spec §4.3).
+      if (this.missingAgent) this.writeMissingBanner();
       const startup = this.resumePlan?.command ?? this.spec.startup_cmd;
       if (startup) {
         if (this.resumePlan) this.writeResumeBanner(this.resumePlan);
@@ -1061,6 +1072,15 @@ export class TerminalPane implements Pane {
     const label = t("terminal.agentResumed");
     this.term.write(
       `\x1b[2m── ${label} (${plan.agent} · ${age}) ──\x1b[0m\r\n`,
+    );
+  }
+
+  /// The other half of spec §4.3: a session was recorded here and is recent,
+  /// but its transcript is gone — pruned by the agent itself or by a
+  /// `~/.claude` cleanup — so the pane starts fresh and says why.
+  private writeMissingBanner(): void {
+    this.term.write(
+      `\x1b[2m── ${t("terminal.agentResumeMissing")} ──\x1b[0m\r\n`,
     );
   }
 

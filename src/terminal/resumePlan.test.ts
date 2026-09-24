@@ -16,34 +16,51 @@ const plan: ResumePlan = {
 };
 
 describe("spawnAction", () => {
+  const resume = { kind: "resume" as const, plan };
+
   it("resumes instead of restoring when the backend offers a plan", () => {
     // The whole point of spec §4/§5: the replay is skipped, not layered under
     // the resumed conversation.
-    expect(spawnAction({ plan, persistEnabled: true })).toEqual({
+    expect(spawnAction({ outcome: resume, persistEnabled: true })).toEqual({
       kind: "resume",
       plan,
     });
   });
 
   it("resumes even with persistence off", () => {
-    expect(spawnAction({ plan, persistEnabled: false })).toEqual({
+    expect(spawnAction({ outcome: resume, persistEnabled: false })).toEqual({
       kind: "resume",
       plan,
     });
   });
 
   it("leaves a shell pane restoring its scrollback exactly as before", () => {
-    expect(spawnAction({ plan: null, persistEnabled: true })).toEqual({
-      kind: "restore",
-    });
-    expect(spawnAction({ plan: undefined, persistEnabled: true })).toEqual({
-      kind: "restore",
-    });
+    for (const outcome of [{ kind: "none" as const }, null, undefined]) {
+      expect(spawnAction({ outcome, persistEnabled: true })).toEqual({
+        kind: "restore",
+        missingAgent: null,
+      });
+    }
   });
 
   it("starts clean when there is neither a plan nor persistence", () => {
-    expect(spawnAction({ plan: null, persistEnabled: false })).toEqual({
+    expect(
+      spawnAction({ outcome: { kind: "none" }, persistEnabled: false }),
+    ).toEqual({ kind: "fresh", missingAgent: null });
+  });
+
+  it("carries the agent name through when the transcript is gone", () => {
+    // Spec §4.3: the pane starts normally, but the user is told why the
+    // conversation they expected back is not there. "No record at all" and
+    // "a recent record whose transcript is gone" must stay distinguishable.
+    const missing = { kind: "missing" as const, agent: "claude" };
+    expect(spawnAction({ outcome: missing, persistEnabled: true })).toEqual({
+      kind: "restore",
+      missingAgent: "claude",
+    });
+    expect(spawnAction({ outcome: missing, persistEnabled: false })).toEqual({
       kind: "fresh",
+      missingAgent: "claude",
     });
   });
 });

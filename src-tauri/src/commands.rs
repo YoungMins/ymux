@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use std::path::Path;
 
-use crate::agent_sessions::{ResumePlan, SharedSessions};
+use crate::agent_sessions::{ResumeOutcome, SharedSessions};
 use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
@@ -270,9 +270,9 @@ pub fn get_agent_session(
     sessions: State<'_, SharedSessions>,
     pane_id: Uuid,
     startup_cmd: Option<String>,
-) -> Option<ResumePlan> {
+) -> ResumeOutcome {
     let tracker = sessions.0.lock();
-    crate::agent_sessions::plan_for(
+    crate::agent_sessions::outcome_for(
         tracker.get(pane_id),
         startup_cmd.as_deref().unwrap_or_default(),
         crate::agent_sessions::now_secs(),

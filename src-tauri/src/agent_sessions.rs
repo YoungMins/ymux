@@ -691,37 +691,68 @@ pub struct ResumePlan {
     pub age_secs: u64,
 }
 
-/// Build the resume plan for one pane, or `None` when the pane should start
-/// normally with its own `startup_cmd` and its replayed scrollback.
+/// What a pane should do as it comes up.
 ///
-/// Three things must hold (spec §4): the record is fresh and still active, its
-/// session id is safe to type into a shell, and the transcript it names still
-/// exists — a conversation the agent itself has pruned cannot be resumed, and
+/// Three outcomes, not two, because spec §4.3 asks for a different line when
+/// the id was dropped: "이전 세션을 찾지 못해 새로 시작합니다". Without the
+/// `Missing` arm the frontend cannot tell "this pane never held an agent"
+/// from "it did, and the transcript is gone" — and the second is the one
+/// worth saying out loud, because the user is about to lose a conversation
+/// they expected back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ResumeOutcome {
+    /// Resume this session.
+    Resume { plan: ResumePlan },
+    /// A session was recorded here and is recent, but its transcript is gone
+    /// — pruned by the agent itself, or by a `~/.claude` cleanup. The pane
+    /// starts normally and says so.
+    Missing { agent: String },
+    /// Nothing to say: no record, or one too old to act on.
+    None,
+}
+
+/// Decide the outcome for one pane.
+///
+/// Resume needs all of: a fresh, active record, a cwd to resume in, a session
+/// id safe to type into a shell, and a transcript still on disk. A
+/// conversation the agent itself has pruned cannot be resumed, and
 /// `claude --resume <gone>` would only error into the user's face.
-pub fn plan_for(
+///
+/// A record that is merely *stale* gets no banner. It is not news that a pane
+/// the user has not touched in over a day starts as a plain shell.
+pub fn outcome_for(
     session: Option<&AgentSession>,
     startup_cmd: &str,
     now: u64,
     transcript_exists: impl FnOnce(&AgentSession) -> bool,
-) -> Option<ResumePlan> {
-    let s = session?;
+) -> ResumeOutcome {
+    let Some(s) = session else {
+        return ResumeOutcome::None;
+    };
     // An empty cwd means the record was written from a hook before OSC 7 had
     // reported one. Resuming somewhere arbitrary is worse than not resuming:
     // Claude sessions are project-scoped, so the wrong directory finds
     // nothing, and the user gets an error instead of their conversation.
     if !s.is_fresh_at(now) || s.cwd.is_empty() {
-        return None;
+        return ResumeOutcome::None;
     }
-    let command = resume_command(s.agent, &s.session_id, startup_cmd)?;
+    let Some(command) = resume_command(s.agent, &s.session_id, startup_cmd) else {
+        return ResumeOutcome::None;
+    };
     if !transcript_exists(s) {
-        return None;
+        return ResumeOutcome::Missing {
+            agent: s.agent.as_str().to_string(),
+        };
     }
-    Some(ResumePlan {
-        agent: s.agent.as_str().to_string(),
-        command,
-        cwd: s.cwd.clone(),
-        age_secs: now.saturating_sub(s.updated_at),
-    })
+    ResumeOutcome::Resume {
+        plan: ResumePlan {
+            agent: s.agent.as_str().to_string(),
+            command,
+            cwd: s.cwd.clone(),
+            age_secs: now.saturating_sub(s.updated_at),
+        },
+    }
 }
 
 /// Whether the transcript naming `session.session_id` is still on disk.
@@ -1260,7 +1291,10 @@ mod tests {
         t.note_agent_exit(pane);
         let rec = t.get(pane).expect("record survives");
         assert!(!rec.active);
-        assert_eq!(plan_for(Some(rec), "", 1_000, |_| true), None);
+        assert_eq!(
+            outcome_for(Some(rec), "", 1_000, |_| true),
+            ResumeOutcome::None
+        );
         // And the pane can start a fresh conversation afterwards.
         assert!(t.wants_disk_scan(pane, 1_000));
         t.observe(
@@ -1326,7 +1360,10 @@ mod tests {
         // conversation.
         let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Hook);
         s.cwd = String::new();
-        assert_eq!(plan_for(Some(&s), "", s.updated_at, |_| true), None);
+        assert_eq!(
+            outcome_for(Some(&s), "", s.updated_at, |_| true),
+            ResumeOutcome::None
+        );
     }
 
     #[test]
@@ -1376,11 +1413,13 @@ mod tests {
     }
 
     #[test]
-    fn plan_for_requires_fresh_active_and_present() {
+    fn outcome_is_resume_only_when_fresh_active_and_present() {
         let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Disk);
         s.agent = AgentKind::Claude;
         let now = s.updated_at + 3 * 3600;
-        let plan = plan_for(Some(&s), "", now, |_| true).expect("resumable");
+        let ResumeOutcome::Resume { plan } = outcome_for(Some(&s), "", now, |_| true) else {
+            panic!("a fresh record with a live transcript must resume");
+        };
         assert_eq!(plan.agent, "claude");
         assert_eq!(plan.age_secs, 3 * 3600);
         assert_eq!(plan.cwd, "D:\\Git\\ymux");
@@ -1389,33 +1428,42 @@ mod tests {
             format!("claude --resume {ID_A} --dangerously-skip-permissions")
         );
 
-        // Stale.
+        // Stale: no resume, and deliberately no banner either — a pane the
+        // user has not touched in over a day coming up as a plain shell is
+        // not news worth a line of screen.
         assert_eq!(
-            plan_for(
+            outcome_for(
                 Some(&s),
                 "",
                 s.updated_at + FRESH_WINDOW.as_secs() + 1,
                 |_| true
             ),
-            None
+            ResumeOutcome::None
         );
-        // Transcript pruned by the agent itself.
-        assert_eq!(plan_for(Some(&s), "", now, |_| false), None);
+        // Transcript pruned by the agent itself. This one the user does hear
+        // about (spec §4.3): they were expecting a conversation back.
+        assert_eq!(
+            outcome_for(Some(&s), "", now, |_| false),
+            ResumeOutcome::Missing {
+                agent: "claude".to_string()
+            }
+        );
         // No record at all.
-        assert_eq!(plan_for(None, "", now, |_| true), None);
+        assert_eq!(outcome_for(None, "", now, |_| true), ResumeOutcome::None);
     }
 
     #[test]
-    fn plan_for_merges_the_panes_own_startup_cmd() {
+    fn resume_command_merges_the_panes_own_startup_cmd() {
         let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Disk);
         s.agent = AgentKind::Codex;
-        let plan = plan_for(
+        let ResumeOutcome::Resume { plan } = outcome_for(
             Some(&s),
             "codex resume --last --model gpt-5",
             s.updated_at,
             |_| true,
-        )
-        .expect("resumable");
+        ) else {
+            panic!("a fresh record with a live transcript must resume");
+        };
         assert_eq!(plan.command, format!("codex resume {ID_A} --model gpt-5"));
     }
 }

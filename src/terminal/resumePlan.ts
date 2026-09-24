@@ -14,10 +14,20 @@ export interface ResumePlan {
   age_secs: number;
 }
 
+/// Mirrors `agent_sessions::ResumeOutcome`. Three cases, not two: "this pane
+/// never held an agent" and "it did, and the transcript is gone" need
+/// different lines on screen (spec §4.3).
+export type ResumeOutcome =
+  | { kind: "resume"; plan: ResumePlan }
+  | { kind: "missing"; agent: string }
+  | { kind: "none" };
+
+/// `missingAgent` is set when a recent session could not be resumed because
+/// its transcript is gone, so the pane can say so before starting normally.
 export type SpawnAction =
   | { kind: "resume"; plan: ResumePlan }
-  | { kind: "restore" }
-  | { kind: "fresh" };
+  | { kind: "restore"; missingAgent: string | null }
+  | { kind: "fresh"; missingAgent: string | null };
 
 /// What a pane should do as it comes up.
 ///
@@ -32,12 +42,14 @@ export type SpawnAction =
 /// Everything else is unchanged: a pane with persistence on and a saved blob
 /// restores, and anything else starts clean.
 export function spawnAction(params: {
-  plan: ResumePlan | null | undefined;
+  outcome: ResumeOutcome | null | undefined;
   persistEnabled: boolean;
 }): SpawnAction {
-  if (params.plan) return { kind: "resume", plan: params.plan };
-  if (params.persistEnabled) return { kind: "restore" };
-  return { kind: "fresh" };
+  const outcome = params.outcome ?? { kind: "none" as const };
+  if (outcome.kind === "resume") return { kind: "resume", plan: outcome.plan };
+  const missingAgent = outcome.kind === "missing" ? outcome.agent : null;
+  if (params.persistEnabled) return { kind: "restore", missingAgent };
+  return { kind: "fresh", missingAgent };
 }
 
 /// Whether this pane should save its scrollback at all.
