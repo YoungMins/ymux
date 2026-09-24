@@ -20,8 +20,18 @@
 //!     open a connection and offer NTLM credentials, which is a credential
 //!     leak triggered by moving a mouse; an unreachable host also hangs the
 //!     call for tens of seconds. So auto-probing a remote UNC host is
-//!     refused unless it is a known-local pseudo-host or the host the pane's
-//!     own cwd already lives on. See [`network_probe_allowed`].
+//!     refused unless it is a known-local pseudo-host. See
+//!     [`network_probe_allowed`] and [`resolve_local`].
+//!
+//!     The check is made on the path that would actually be stat'd — the
+//!     candidate *joined onto the cwd and normalised* — never on the raw
+//!     candidate, because the cwd is attacker-influenced too: it arrives by
+//!     OSC 7, which any printed output can emit. `src/a.rs` under a cwd of
+//!     `\\evil\share` is a network path. For the same reason there is no
+//!     "the pane already lives on that share" exception any more: that fact
+//!     came from the same forgeable OSC 7. Symlinks and junctions are read
+//!     with `symlink_metadata`/`read_link` and their targets classified
+//!     before anything follows them.
 //!  2. **"Open with the default program" runs executables.** `ShellExecuteW`
 //!     on `evil.bat` does not open it, it executes it — and the user's
 //!     mental model for clicking a link is "show me this", not "run this".
@@ -362,52 +372,121 @@ pub enum UncKind {
     Remote(String),
 }
 
-/// Classify `raw`'s UNC syntax.
+/// Classify `raw`'s UNC syntax, by **Win32's** rules rather than Rust's.
 ///
-/// A leading `\\` is Windows syntax wherever it appears, so it is always
-/// classified. A leading `//` is only treated as UNC when this build runs on
-/// Windows, because that is where Win32 normalises it into one — on macOS
-/// `//Users/me` is a perfectly ordinary path, and the hazard being guarded
-/// against (the local SMB client authenticating on a `stat`) is a property
-/// of the machine doing the syscall, not of the path's spelling.
+/// Rust's `Path` prefix parser is not a faithful model of what
+/// `CreateFileW` does, and it is wrong in both directions (measured on
+/// Windows 11 with Rust 1.97):
+///
+///  - `//?/UNC/host/share` parses as `UNC("?", "UNC")`, but Win32 turns it
+///    into the verbatim `\\?\UNC\host\share` — a real share.
+///  - `\??\UNC\host\share` is *not absolute* to Rust (`RootDir` first), yet
+///    `std::fs::metadata` on it reaches SMB: `\??\` is the NT object
+///    namespace, and Win32 hands a path starting with it to the kernel
+///    untouched.
+///
+/// So the rules here are:
+///
+///  - Two leading separators start UNC or device syntax. On Windows any mix
+///    of `\` and `/` counts (`\\`, `//`, `\/`, `/\` all reach the same
+///    share); elsewhere only `\\`, because on macOS `//Users/me` is an
+///    ordinary path, and the hazard (the local SMB client authenticating on
+///    a `stat`) belongs to the machine doing the syscall, not the spelling.
+///  - A leading `\??\` (and on Windows `/??/` and mixes) is the NT
+///    namespace, read like `\\?\`.
+///  - `\\?\` and `\??\` followed by `UNC` — matched ASCII case-insensitively,
+///    as the object manager does — are shares. A drive letter is local. Any
+///    other verbatim or `\\.\` form is the device namespace, which also
+///    covers `\\.\UNC\host\share` and `\\?\GLOBALROOT\Device\Mup\host\…`,
+///    both of which reach SMB and so must never be classified as local.
 pub fn classify_unc(raw: &str) -> UncKind {
-    let rest = match raw.strip_prefix(r"\\") {
-        Some(r) => r,
-        None => match raw.strip_prefix("//").filter(|_| cfg!(windows)) {
-            Some(r) => r,
-            None => return UncKind::Local,
-        },
+    let is_sep = |c: char| c == '\\' || (cfg!(windows) && c == '/');
+    let mut chars = raw.chars();
+    let lead: [Option<char>; 4] = [chars.next(), chars.next(), chars.next(), chars.next()];
+
+    // `\??\` — the NT object namespace, passed through to the kernel.
+    if let [Some(a), Some('?'), Some('?'), Some(d)] = lead {
+        if is_sep(a) && is_sep(d) {
+            return classify_verbatim_tail(&raw[4..]);
+        }
+    }
+
+    let two_seps = match lead {
+        [Some('\\'), Some('\\'), ..] => true,
+        [Some(a), Some(b), ..] => is_sep(a) && is_sep(b),
+        _ => false,
     };
+    if !two_seps {
+        return UncKind::Local;
+    }
+    let rest = &raw[2..];
     let head = rest.split(['\\', '/']).next().unwrap_or("");
     match head {
+        // `\\.\` — the Win32 device namespace, `\\.\UNC\host\share` included.
         "." => UncKind::Device,
-        "?" => {
-            let tail = &rest[head.len()..];
-            let tail = tail.trim_start_matches(['\\', '/']);
-            // `\\?\UNC\server\share` is a UNC path in verbatim clothing.
-            if let Some(unc) = tail
-                .strip_prefix("UNC\\")
-                .or_else(|| tail.strip_prefix("UNC/"))
-            {
-                return match unc.split(['\\', '/']).next().unwrap_or("") {
-                    "" => UncKind::Device,
-                    host => UncKind::Remote(host.to_string()),
-                };
-            }
-            // `\\?\C:\…` — a drive letter, colon, then a separator or end.
-            let mut chars = tail.chars();
-            match (chars.next(), chars.next(), chars.next()) {
-                (Some(d), Some(':'), sep)
-                    if d.is_ascii_alphabetic() && matches!(sep, None | Some('\\') | Some('/')) =>
-                {
-                    UncKind::VerbatimLocal
-                }
-                _ => UncKind::Device,
-            }
-        }
+        "?" => classify_verbatim_tail(&rest[1..]),
         "" => UncKind::Device,
         host => UncKind::Remote(host.to_string()),
     }
+}
+
+/// What follows `\\?\` or `\??\`: a share, a drive, or a device.
+fn classify_verbatim_tail(tail: &str) -> UncKind {
+    let tail = tail.trim_start_matches(['\\', '/']);
+    // `UNC\server\share` is a UNC path in verbatim clothing. Case-insensitive:
+    // `\\?\unc\host\share` reaches the share exactly as `UNC` does.
+    let unc = tail
+        .get(..3)
+        .filter(|p| p.eq_ignore_ascii_case("UNC"))
+        .and_then(|_| tail.get(3..))
+        .filter(|r| r.is_empty() || r.starts_with(['\\', '/']));
+    if let Some(unc) = unc {
+        return match unc
+            .trim_start_matches(['\\', '/'])
+            .split(['\\', '/'])
+            .next()
+            .unwrap_or("")
+        {
+            "" => UncKind::Device,
+            host => UncKind::Remote(host.to_string()),
+        };
+    }
+    // `\\?\C:\…` — a drive letter, colon, then a separator or end.
+    let mut chars = tail.chars();
+    match (chars.next(), chars.next(), chars.next()) {
+        (Some(d), Some(':'), sep)
+            if d.is_ascii_alphabetic() && matches!(sep, None | Some('\\') | Some('/')) =>
+        {
+            UncKind::VerbatimLocal
+        }
+        _ => UncKind::Device,
+    }
+}
+
+/// Is `name` one of the DOS device names Win32 maps to a device in any
+/// directory (`C:\x\COM1`, `C:\x\nul.txt`)? Such a path is the device
+/// namespace in disguise, so it is never probed or opened.
+fn is_dos_device_name(name: &str) -> bool {
+    // Win32 ignores everything from the first `.` or `:`, and trailing spaces.
+    let stem = name.split(['.', ':']).next().unwrap_or("").trim_end();
+    let upper = stem.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    // COM1-9 and LPT1-9, plus the superscript digits Win32 also accepts.
+    let Some(n) = upper
+        .strip_prefix("COM")
+        .or_else(|| upper.strip_prefix("LPT"))
+    else {
+        return false;
+    };
+    matches!(
+        n,
+        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+    )
 }
 
 /// Hosts whose "network" paths never leave the machine, so probing them
@@ -425,31 +504,188 @@ fn same_host(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
-/// May `raw` be stat'd automatically, on hover, with no click?
+/// May `path` be stat'd automatically, on hover, with no click?
 ///
-/// `cwd` is the pane's own working directory: if the user is already working
-/// on `\\nas\projects`, the connection is open and authenticated and there
-/// is nothing left to leak, so paths on that same host are fair game.
-pub fn network_probe_allowed(raw: &str, cwd: Option<&str>) -> Result<(), String> {
-    match classify_unc(raw) {
+/// `path` must be the path that will actually be touched — joined onto the
+/// cwd and normalised ([`resolve_local`] does that) — never a raw
+/// candidate: a relative `src/a.rs` is only as local as the cwd it lands in.
+///
+/// There is deliberately no exception for "the host the pane's cwd is on".
+/// The cwd comes from OSC 7, which any printed output can forge, so that
+/// exception let a planted escape sequence whitelist an attacker's host. A
+/// user who really works on a share simply gets no links there — the safe
+/// way to fail.
+///
+/// The pseudo-hosts in [`LOCAL_UNC_HOSTS`] stay allowed for an explicit
+/// absolute candidate such as `\\wsl$\Ubuntu\home\me\x`: those never leave
+/// the machine. (A *cwd* on one is still refused, by `pty::osc7`.)
+pub fn network_probe_allowed(path: &str) -> Result<(), String> {
+    if cfg!(windows) {
+        let last = path.rsplit(['\\', '/']).next().unwrap_or("");
+        if is_dos_device_name(last) {
+            return Err("DOS device names are not resolved".into());
+        }
+    }
+    match classify_unc(path) {
         UncKind::Local | UncKind::VerbatimLocal => Ok(()),
         UncKind::Device => Err("device-namespace paths are not resolved".into()),
         UncKind::Remote(host) => {
             if LOCAL_UNC_HOSTS.iter().any(|h| same_host(h, &host)) {
-                return Ok(());
-            }
-            let cwd_host = cwd.map(classify_unc).and_then(|k| match k {
-                UncKind::Remote(h) => Some(h),
-                _ => None,
-            });
-            match cwd_host {
-                Some(h) if same_host(&h, &host) => Ok(()),
-                _ => Err(format!(
+                Ok(())
+            } else {
+                Err(format!(
                     "network path on host {host:?} is not resolved automatically"
-                )),
+                ))
             }
         }
     }
+}
+
+/// Is `path` acceptable as a pane's working directory?
+///
+/// Stricter than [`network_probe_allowed`]: a cwd is a local directory, so
+/// every UNC, verbatim-UNC, NT-namespace and device form is refused,
+/// pseudo-local hosts included. Used by `pty::osc7` so a planted OSC 7 can
+/// never make `\\evil\share` the base that relative paths are resolved on.
+pub fn cwd_is_local(path: &str) -> bool {
+    matches!(classify_unc(path), UncKind::Local | UncKind::VerbatimLocal)
+}
+
+/// Most symlink/junction hops [`walk_links`] follows before giving up.
+/// Matches Linux's `MAXSYMLINKS` order of magnitude; a loop hits it fast.
+pub const MAX_LINK_HOPS: usize = 32;
+
+/// One step of a path still to be walked.
+enum Part {
+    /// Prefix and/or root: replaces everything walked so far.
+    Root(PathBuf),
+    Parent,
+    Name(std::ffi::OsString),
+}
+
+fn parts(p: &Path) -> Vec<Part> {
+    use std::path::Component;
+    let mut root = PathBuf::new();
+    let mut has_root = false;
+    let mut out = Vec::new();
+    for c in p.components() {
+        match c {
+            Component::Prefix(_) | Component::RootDir => {
+                root.push(c.as_os_str());
+                has_root = true;
+            }
+            Component::CurDir => {}
+            Component::ParentDir => out.push(Part::Parent),
+            Component::Normal(n) => out.push(Part::Name(n.to_owned())),
+        }
+    }
+    if has_root {
+        out.insert(0, Part::Root(root));
+    }
+    out
+}
+
+/// Fold `.` and `..` lexically, the way Win32 does before any syscall.
+///
+/// Windows only: there `C:\link\..\x` *is* `C:\x` whatever `link` points at,
+/// so this is exactly the path the OS will open. On POSIX `..` after a
+/// symlink means the link target's parent, so the path is left for
+/// [`walk_links`] to resolve in order.
+fn normalise(p: &Path) -> PathBuf {
+    if !cfg!(windows) {
+        return p.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for part in parts(p) {
+        match part {
+            Part::Root(r) => out = r,
+            Part::Parent => {
+                out.pop();
+            }
+            Part::Name(n) => out.push(n),
+        }
+    }
+    out
+}
+
+/// Resolve every symlink and junction in `path` **without following any
+/// of them blindly**: each link is detected with `is_link` (a
+/// `symlink_metadata` in production), its target read with `read_link` and
+/// passed through [`network_probe_allowed`] before the walk continues into
+/// it. A link — or a chain of links — that leads to a share is refused
+/// before anything ever opens the share.
+///
+/// Returns the fully resolved path, which contains no links (modulo a race
+/// with whoever is editing the tree) and so can be stat'd safely. A
+/// relative target resolves against the link's own directory.
+///
+/// The filesystem is injected so the chain logic can be tested without the
+/// privilege Windows demands for creating a symlink.
+pub fn walk_links<L, R>(path: &Path, is_link: L, read_link: R) -> Result<PathBuf, String>
+where
+    L: Fn(&Path) -> std::io::Result<bool>,
+    R: Fn(&Path) -> std::io::Result<PathBuf>,
+{
+    let mut todo = parts(path);
+    todo.reverse();
+    let mut out = PathBuf::new();
+    let mut hops = 0usize;
+    while let Some(part) = todo.pop() {
+        match part {
+            Part::Root(r) => out = r,
+            Part::Parent => {
+                out.pop();
+            }
+            Part::Name(n) => {
+                let next = out.join(&n);
+                if !is_link(&next).map_err(|e| e.to_string())? {
+                    out = next;
+                    continue;
+                }
+                hops += 1;
+                if hops > MAX_LINK_HOPS {
+                    return Err("too many levels of symbolic links".into());
+                }
+                let target = read_link(&next).map_err(|e| e.to_string())?;
+                let spelled = target.to_string_lossy();
+                network_probe_allowed(&spelled)
+                    .map_err(|why| format!("{} links elsewhere: {why}", next.display()))?;
+                let mut more = parts(&target);
+                more.reverse();
+                todo.extend(more);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The real-filesystem [`walk_links`] probes: `symlink_metadata`, which
+/// never follows, and `read_link`. On Windows `FileType::is_symlink` is
+/// true for junctions as well as symlinks (both are name-surrogate reparse
+/// points), which a test pins.
+fn is_link_on_disk(p: &Path) -> std::io::Result<bool> {
+    std::fs::symlink_metadata(p).map(|m| m.file_type().is_symlink())
+}
+
+/// The one gate every automatic filesystem touch goes through.
+///
+/// `path` is the candidate already joined onto the cwd ([`expand`]). It is
+/// normalised, required to be absolute (a relative result would be resolved
+/// against *ymux's own* working directory, which is meaningless here),
+/// classified, and its links walked and classified one by one. The result
+/// contains no links and is safe to `symlink_metadata`/open.
+pub fn resolve_local(path: &Path) -> Result<PathBuf, String> {
+    let norm = normalise(path);
+    let spelled = norm.to_string_lossy();
+    network_probe_allowed(&spelled)?;
+    // A share is absolute on Windows only; on other targets a `\\` path is
+    // a relative name and is refused here like any other.
+    if !norm.is_absolute() {
+        return Err("only absolute paths are resolved".into());
+    }
+    let walked = walk_links(&norm, is_link_on_disk, |p| std::fs::read_link(p))?;
+    network_probe_allowed(&walked.to_string_lossy())?;
+    Ok(walked)
 }
 
 /// Turn a raw candidate into the absolute path it names, or `None` when it
@@ -616,22 +852,27 @@ pub fn validate_open(raw: &str) -> Result<(), String> {
 }
 
 /// Resolve one raw candidate against `cwd`, or `None` if it is not a path
-/// worth linking. Touches the filesystem exactly once on the happy path
-/// (plus a `canonicalize` for the display form).
+/// worth linking.
+///
+/// Order is the security property: the candidate is joined onto the cwd
+/// and the *joined* path is classified and link-walked ([`resolve_local`])
+/// before anything stats it. Only the link-free result is ever passed to
+/// `symlink_metadata` and `canonicalize`, and the canonical form is
+/// classified once more as a backstop.
 pub fn probe_one(raw: &str, cwd: Option<&str>) -> Option<ResolvedPath> {
     if reject_reason(raw).is_some() {
         return None;
     }
-    if network_probe_allowed(raw, cwd).is_err() {
-        return None;
-    }
     let expanded = expand(raw, cwd.map(Path::new), dirs::home_dir().as_deref())?;
-    let meta = std::fs::metadata(&expanded).ok()?;
-    let absolute = std::fs::canonicalize(&expanded)
+    let resolved = resolve_local(&expanded).ok()?;
+    let meta = std::fs::symlink_metadata(&resolved).ok()?;
+    let absolute = std::fs::canonicalize(&resolved)
         .map(|p| strip_verbatim(&p))
-        .unwrap_or(expanded);
+        .unwrap_or(resolved);
+    let absolute = absolute.to_string_lossy().into_owned();
+    network_probe_allowed(&absolute).ok()?;
     Some(ResolvedPath {
-        absolute: absolute.to_string_lossy().into_owned(),
+        absolute,
         is_dir: meta.is_dir(),
     })
 }
@@ -970,6 +1211,8 @@ mod tests {
             classify_unc(r"\\?\UNC\server\share\x"),
             UncKind::Remote("server".into())
         );
+        // `\\?\UNCfoo` is not the UNC form; it is a device name.
+        assert_eq!(classify_unc(r"\\?\UNCfoo\x"), UncKind::Device);
     }
 
     #[test]
@@ -988,30 +1231,288 @@ mod tests {
     fn remote_hosts_are_not_probed_on_hover() {
         // Statting this on Windows opens SMB and offers NTLM credentials —
         // a credential leak triggered by a mouse move over terminal output.
-        assert!(network_probe_allowed(r"\\evil.example\x\y", None).is_err());
-        assert!(network_probe_allowed(r"\\10.0.0.9\share\x", Some(r"C:\repo")).is_err());
+        assert!(network_probe_allowed(r"\\evil.example\x\y").is_err());
+        assert!(network_probe_allowed(r"\\10.0.0.9\share\x").is_err());
+        // WebDAV-over-SSL spelling: still a remote host.
+        assert!(network_probe_allowed(r"\\evil@SSL@443\share\a").is_err());
     }
 
     #[test]
     fn local_pseudo_hosts_are_probed() {
-        assert!(network_probe_allowed(r"\\wsl$\Ubuntu\home\me", None).is_ok());
-        assert!(network_probe_allowed(r"\\WSL.localhost\Ubuntu\etc", None).is_ok());
-        assert!(network_probe_allowed(r"\\localhost\c$\Windows", None).is_ok());
+        assert!(network_probe_allowed(r"\\wsl$\Ubuntu\home\me").is_ok());
+        assert!(network_probe_allowed(r"\\WSL.localhost\Ubuntu\etc").is_ok());
+        assert!(network_probe_allowed(r"\\localhost\c$\Windows").is_ok());
     }
 
+    /// The exception used to be "paths on the host the pane's cwd is on are
+    /// fine". The cwd comes from OSC 7, which any printed output can forge,
+    /// so the exception let a planted escape sequence whitelist an attacker's
+    /// host. It is gone: the policy no longer even takes a cwd.
     #[test]
-    fn the_panes_own_share_is_probed() {
-        // Already connected and authenticated: nothing left to leak.
-        assert!(network_probe_allowed(r"\\nas\projects\a.txt", Some(r"\\nas\projects")).is_ok());
-        assert!(network_probe_allowed(r"\\NAS\projects\a.txt", Some(r"\\nas\other")).is_ok());
-        assert!(network_probe_allowed(r"\\other\projects\a.txt", Some(r"\\nas\projects")).is_err());
+    fn the_panes_own_share_is_no_longer_trusted() {
+        assert!(network_probe_allowed(r"\\nas\projects\a.txt").is_err());
+        let cwd = Path::new(r"\\nas\projects");
+        let joined = expand(r"a.txt", Some(cwd), None).unwrap();
+        assert!(resolve_local(&joined).is_err());
     }
 
     #[test]
     fn ordinary_paths_are_always_probed() {
-        assert!(network_probe_allowed(r"C:\repo\src\main.rs", None).is_ok());
-        assert!(network_probe_allowed("/usr/lib/x", None).is_ok());
-        assert!(network_probe_allowed("src/main.ts", Some("/repo")).is_ok());
+        assert!(network_probe_allowed(r"C:\repo\src\main.rs").is_ok());
+        assert!(network_probe_allowed("/usr/lib/x").is_ok());
+        assert!(network_probe_allowed("src/main.ts").is_ok());
+    }
+
+    /// HIGH 1 of the review. The raw candidate `src/a.rs` is as local as it
+    /// gets — the danger is the cwd it is joined onto, which a planted OSC 7
+    /// can set to a share. The classification has to see the joined path.
+    #[test]
+    fn a_relative_candidate_under_a_network_cwd_is_refused() {
+        for cwd in [
+            r"\\evil\share",
+            r"\\?\UNC\evil\share",
+            r"\??\UNC\evil\share",
+            r"\\.\UNC\evil\share",
+        ] {
+            let joined = expand("src/a.rs", Some(Path::new(cwd)), None).unwrap();
+            let err = resolve_local(&joined).expect_err(cwd);
+            assert!(
+                err.contains("network") || err.contains("device"),
+                "{cwd}: {err}"
+            );
+            // And the probe as a whole says "not a link" without touching it.
+            assert!(probe_one("src/a.rs", Some(cwd)).is_none(), "{cwd}");
+        }
+        if cfg!(windows) {
+            for cwd in [
+                "//evil/share",
+                r"\/evil\share",
+                r"/\evil\share",
+                "//?/UNC/evil/share",
+            ] {
+                let joined = expand("src/a.rs", Some(Path::new(cwd)), None).unwrap();
+                assert!(resolve_local(&joined).is_err(), "{cwd}");
+            }
+        }
+    }
+
+    /// Every spelling of "a share" and "a device" found for this fix,
+    /// classified by what Win32 does with it — not by what Rust's `Path`
+    /// parser says. Measured on Windows 11 / Rust 1.97:
+    ///
+    /// | spelling               | Rust `Path` says              | Win32 does                  |
+    /// |------------------------|-------------------------------|-----------------------------|
+    /// | `\\h\s`                | `UNC(h, s)`                   | share                       |
+    /// | `//h/s`, `\/h\s`, `/\h\s` | `UNC(h, s)`                | share                       |
+    /// | `\\?\UNC\h\s`          | `VerbatimUNC(h, s)`           | share                       |
+    /// | `\\?\unc\h\s`          | `Verbatim("unc")`             | share (case-insensitive)    |
+    /// | `//?/UNC/h/s`, `\\?/UNC/h/s` | `UNC("?", "UNC")`       | `\\?\UNC\h\s` — share       |
+    /// | `\\.\UNC\h\s`, `//./UNC/h/s` | `DeviceNS("UNC")`       | share via the device path   |
+    /// | `\??\UNC\h\s`          | `RootDir` — *not absolute*    | NT path, share (`metadata` reached SMB) |
+    /// | `\\?\GLOBALROOT\Device\Mup\h\s` | `Verbatim("GLOBALROOT")` | share via the MUP device |
+    /// | `\\.\PhysicalDrive0`   | `DeviceNS`                    | raw disk                    |
+    #[test]
+    fn every_network_and_device_spelling_is_refused() {
+        let remote = [
+            r"\\evil\share\a",
+            r"\\?\UNC\evil\share\a",
+            r"\\?\unc\evil\share\a",
+            r"\\?\Unc/evil/share/a",
+            r"\??\UNC\evil\share\a",
+            r"\??\unc\evil\share\a",
+        ];
+        for s in remote {
+            assert_eq!(classify_unc(s), UncKind::Remote("evil".into()), "{s}");
+            assert!(network_probe_allowed(s).is_err(), "{s}");
+            assert!(!cwd_is_local(s), "{s}");
+        }
+        let device = [
+            r"\\.\UNC\evil\share\a",
+            r"\\.\PhysicalDrive0",
+            r"\\?\GLOBALROOT\Device\Mup\evil\share",
+            r"\??\GLOBALROOT\Device\Mup\evil\share",
+            r"\\?\Volume{1234}\x",
+            r"\\?\UNC\",
+            r"\\",
+            r"\\\evil\share",
+        ];
+        for s in device {
+            assert_eq!(classify_unc(s), UncKind::Device, "{s}");
+            assert!(network_probe_allowed(s).is_err(), "{s}");
+            assert!(!cwd_is_local(s), "{s}");
+        }
+        // Forward-slash and mixed spellings are Windows syntax only.
+        let win_only_remote = [
+            "//evil/share/a",
+            r"\/evil\share\a",
+            r"/\evil\share\a",
+            "//?/UNC/evil/share/a",
+            r"\\?/UNC/evil/share/a",
+            "/??/UNC/evil/share/a",
+            r"\??/UNC/evil/share/a",
+        ];
+        for s in win_only_remote {
+            let k = classify_unc(s);
+            if cfg!(windows) {
+                assert_eq!(k, UncKind::Remote("evil".into()), "{s}");
+                assert!(network_probe_allowed(s).is_err(), "{s}");
+            } else if !s.starts_with('\\') {
+                assert_eq!(k, UncKind::Local, "{s}");
+            }
+        }
+        let win_only_device = ["//./UNC/evil/share/a", "//./PhysicalDrive0"];
+        for s in win_only_device {
+            let k = classify_unc(s);
+            if cfg!(windows) {
+                assert_eq!(k, UncKind::Device, "{s}");
+            } else {
+                assert_eq!(k, UncKind::Local, "{s}");
+            }
+        }
+        // The NT-namespace drive form is local, like `\\?\C:\`.
+        assert_eq!(classify_unc(r"\??\C:\x"), UncKind::VerbatimLocal);
+    }
+
+    /// Rust's own parser disagrees with Win32 on two of these, which is why
+    /// `classify_unc` is hand-rolled. Pinned so the next person tempted to
+    /// "simplify" it onto `Path::components()` sees why not.
+    #[test]
+    #[cfg(windows)]
+    fn rusts_path_parser_misreads_two_share_spellings() {
+        use std::path::{Component, Prefix};
+        let first = |s: &'static str| Path::new(s).components().next();
+        // Win32 turns this into `\\?\UNC\evil\share`; Rust thinks the host is `?`.
+        match first("//?/UNC/evil/share") {
+            Some(Component::Prefix(p)) => {
+                assert!(matches!(p.kind(), Prefix::UNC(h, _) if h == "?"))
+            }
+            other => panic!("{other:?}"),
+        }
+        // Not even absolute to Rust, yet `metadata` on it reaches the share.
+        assert!(!Path::new(r"\??\UNC\evil\share").is_absolute());
+        assert!(matches!(
+            first(r"\??\UNC\evil\share"),
+            Some(Component::RootDir)
+        ));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn dos_device_names_are_refused() {
+        for s in [
+            r"C:\x\COM1",
+            r"C:\x\nul.txt",
+            r"C:\x\CON",
+            r"C:\x\lpt9.log",
+            r"C:\x\conin$",
+            r"C:\x\AUX ",
+        ] {
+            assert!(network_probe_allowed(s).is_err(), "{s}");
+        }
+        for s in [r"C:\x\COM10", r"C:\x\console.log", r"C:\x\nullable.rs"] {
+            assert!(network_probe_allowed(s).is_ok(), "{s}");
+        }
+    }
+
+    /// A fake filesystem for `walk_links`: `links` maps a path to its target.
+    fn fake_walk(path: &str, links: &[(&str, &str)]) -> Result<PathBuf, String> {
+        let map: std::collections::HashMap<PathBuf, PathBuf> = links
+            .iter()
+            .map(|(a, b)| (PathBuf::from(a), PathBuf::from(b)))
+            .collect();
+        let touched = std::cell::RefCell::new(Vec::<PathBuf>::new());
+        let result = walk_links(
+            Path::new(path),
+            |p| {
+                touched.borrow_mut().push(p.to_path_buf());
+                Ok(map.contains_key(p))
+            },
+            |p| Ok(map[p].clone()),
+        );
+        // Whatever happened, nothing on a share was ever asked about.
+        for p in touched.borrow().iter() {
+            assert!(
+                network_probe_allowed(&p.to_string_lossy()).is_ok(),
+                "walk touched {}",
+                p.display()
+            );
+        }
+        result
+    }
+
+    #[test]
+    fn a_link_to_a_share_is_refused_without_being_followed() {
+        let root = if cfg!(windows) { r"C:\repo" } else { "/repo" };
+        let link = format!("{root}{}docs", std::path::MAIN_SEPARATOR);
+        let err = fake_walk(
+            &format!("{link}{}a.md", std::path::MAIN_SEPARATOR),
+            &[(&link, r"\\evil\share")],
+        )
+        .expect_err("link to a share");
+        assert!(err.contains("network"), "{err}");
+    }
+
+    #[test]
+    fn a_chain_of_local_links_ending_on_a_share_is_refused() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = if cfg!(windows) { r"C:\repo" } else { "/repo" };
+        let a = format!("{root}{sep}a");
+        let b = format!("{root}{sep}b");
+        // a -> b (relative, local), b -> \\?\UNC\evil\share
+        let err = fake_walk(
+            &format!("{a}{sep}x.md"),
+            &[(&a, "b"), (&b, r"\\?\UNC\evil\share")],
+        )
+        .expect_err("chain to a share");
+        assert!(err.contains("network"), "{err}");
+    }
+
+    #[test]
+    fn local_links_are_resolved_and_loops_are_bounded() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = if cfg!(windows) { r"C:\repo" } else { "/repo" };
+        let link = format!("{root}{sep}link");
+        let got = fake_walk(&format!("{link}{sep}f.md"), &[(&link, "real")]).unwrap();
+        assert_eq!(got, Path::new(root).join("real").join("f.md"));
+
+        let loop_ = format!("{root}{sep}loop");
+        let err = fake_walk(&format!("{loop_}{sep}f"), &[(&loop_, "loop")]).unwrap_err();
+        assert!(err.contains("too many"), "{err}");
+    }
+
+    /// A junction needs no privilege to create, unlike a symlink, so this
+    /// pins against the real filesystem that `symlink_metadata` reports one
+    /// as a link — the property `walk_links` rests on.
+    #[test]
+    #[cfg(windows)]
+    fn a_junction_is_seen_as_a_link() {
+        let dir = std::env::temp_dir().join(format!("ymux-junction-{}", std::process::id()));
+        let target = dir.join("target");
+        let junction = dir.join("j");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("f.md"), b"x").unwrap();
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{status:?}");
+
+        assert!(is_link_on_disk(&junction).unwrap());
+        let resolved = resolve_local(&junction.join("f.md")).unwrap();
+        assert!(!resolved.starts_with(&junction), "{}", resolved.display());
+        assert!(resolved.ends_with("f.md"));
+        assert!(probe_one("j/f.md", Some(&dir.to_string_lossy())).is_some());
+
+        std::fs::remove_dir(&junction).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_relative_join_result_is_refused() {
+        // A relative cwd would resolve against ymux's own working directory.
+        assert!(resolve_local(Path::new("repo/src/a.rs")).is_err());
     }
 
     #[test]

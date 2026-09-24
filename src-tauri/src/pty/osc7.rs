@@ -158,6 +158,16 @@ impl CwdChange {
 /// Decode an OSC 7 payload into a platform-native path. The payload is
 /// expected to be `file://<host>/<url-encoded-path>`. Any non-file URI or
 /// decode failure returns `None`.
+///
+/// A network or device path is refused outright: a cwd is local. OSC 7 is
+/// not trusted input — any output the pane prints (`cat` of a planted file,
+/// a remote host over SSH) can emit it, and nothing resets it afterwards.
+/// `file://x//evil/share/` decodes to `\\evil\share` on Windows, and with
+/// that as the cwd every relative path the terminal linkifier probed on
+/// hover would make Windows contact the attacker's server and offer NTLM
+/// credentials. The rule is [`crate::fspath::cwd_is_local`]; every UNC,
+/// `\\?\UNC\`, `\??\` and `\\.\` spelling is rejected, and the pane keeps
+/// its previous cwd.
 fn decode(buf: &[u8]) -> Option<String> {
     let s = std::str::from_utf8(buf).ok()?;
     let rest = s.strip_prefix("file://")?;
@@ -166,7 +176,8 @@ fn decode(buf: &[u8]) -> Option<String> {
     let slash = rest.find('/')?;
     let encoded_path = &rest[slash..];
     let decoded = url_decode(encoded_path)?;
-    Some(normalize_windows(&decoded))
+    let path = normalize_windows(&decoded);
+    crate::fspath::cwd_is_local(&path).then_some(path)
 }
 
 /// Minimal percent-decoder. Accepts `%HH` escapes and decodes them to raw
@@ -321,6 +332,51 @@ mod tests {
         let _ = p.feed(&input);
         let out = p.feed(b"\x1b]7;file://h/ok\x07");
         assert_eq!(out, vec!["/ok".to_string()]);
+    }
+
+    /// A planted OSC 7 must not be able to make a share the pane's cwd: the
+    /// terminal linkifier resolves relative paths against it on hover, and on
+    /// Windows that stat offers NTLM credentials to whoever owns the host.
+    #[test]
+    fn a_network_or_device_cwd_is_refused() {
+        // Refused on every platform: the backslash forms are never a cwd a
+        // real shell reports, and on Windows they are shares or devices.
+        for payload in [
+            "file://x/%5C%5Cevil%5Cshare",
+            "file://x/%5C%5C%3F%5CUNC%5Cevil%5Cshare",
+        ] {
+            let seq = format!("\x1b]7;{payload}\x07");
+            // `/\\evil\share` is a legal POSIX name, so only Windows refuses
+            // this one; everywhere the result must not *be* a share.
+            for cwd in parse_all(seq.as_bytes()) {
+                assert!(crate::fspath::cwd_is_local(&cwd), "{payload} -> {cwd}");
+            }
+        }
+        if cfg!(windows) {
+            for payload in [
+                // The review's example: host `x`, path `//evil/share/`.
+                "file://x//evil/share/",
+                "file:////evil/share",
+                "file:///%5C%5Cevil%5Cshare",
+                "file:///??/UNC/evil/share",
+                "file:///%3F%3F/UNC/evil/share",
+                "file:////?/UNC/evil/share",
+                "file:////./UNC/evil/share",
+                "file:////./PhysicalDrive0",
+                "file:////?/GLOBALROOT/Device/Mup/evil/share",
+                // A pseudo-local host is still not a local directory.
+                "file:////wsl$/Ubuntu/home",
+                "file:////localhost/c$/Windows",
+            ] {
+                let seq = format!("\x1b]7;{payload}\x07");
+                assert!(parse_all(seq.as_bytes()).is_empty(), "{payload}");
+            }
+            // A local drive still decodes.
+            assert_eq!(
+                parse_all(b"\x1b]7;file:///C:/Users/me\x07"),
+                vec![r"C:\Users\me".to_string()]
+            );
+        }
     }
 
     #[test]

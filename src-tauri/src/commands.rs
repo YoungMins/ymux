@@ -505,8 +505,15 @@ pub async fn open_path(webview: Webview, request: Request<'_>, path: String) -> 
     // scratch rather than trusted.
     crate::fspath::validate_open(&path).map_err(YmuxError::Other)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let p = Path::new(&path);
-        let meta = std::fs::metadata(p)
+        // Same gate as the hover probe: no share, no device, and every
+        // symlink/junction classified before it is followed. A terminal link
+        // never names a share (the probe refuses them), so this refuses
+        // nothing a link could produce — it keeps a replayed or stale path
+        // from reaching SMB through a `metadata` call here.
+        let resolved = crate::fspath::resolve_local(Path::new(&path))
+            .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
+        let p = resolved.as_path();
+        let meta = std::fs::symlink_metadata(p)
             .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
         let result = if crate::fspath::should_reveal(p, meta.is_dir()) {
             opener::reveal(p)
