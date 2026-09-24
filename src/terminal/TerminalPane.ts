@@ -14,7 +14,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import type { HotKeyDef, PaneSpec, Uuid } from "../types";
 import type { Pane } from "../layout/Pane";
-import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
+import { api, describeError, onPaneCwd, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
@@ -29,6 +29,7 @@ import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
 import { decideImagePaste, preparePaste } from "./paste";
+import { PathLinks } from "./pathLinks";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
@@ -141,6 +142,14 @@ export class TerminalPane implements Pane {
   /// revisions a Hangul IME is built out of. Created in `open()`, once the
   /// helper textarea exists. See `ime.ts`.
   private ime: ImeBridge | undefined;
+  /// Linkifies filesystem paths in the output, next to the URL links the
+  /// `WebLinksAddon` above provides. See `pathLinks.ts`.
+  private pathLinks: PathLinks | undefined;
+  /// This pane's working directory as the shell last reported it (OSC 7).
+  /// The path linkifier resolves relative candidates against it, so it is
+  /// tracked here rather than asked for per hover. Seeded from the spec,
+  /// corrected once the PTY is up, then kept live by `pty:cwd:{id}`.
+  private liveCwd: string | null = null;
   private flushScrollbackOnUnload = (): void => {
     if (
       shouldSaveScrollback({
@@ -156,6 +165,7 @@ export class TerminalPane implements Pane {
     this.id = opts.spec.id;
     this.spec = opts.spec;
     this.opts = opts;
+    this.liveCwd = opts.spec.cwd || null;
 
     this.element = document.createElement("div");
     this.element.className = "pane";
@@ -307,6 +317,21 @@ export class TerminalPane implements Pane {
         }
       }),
     );
+    // Path links, registered *after* the URL provider above: xterm queries
+    // providers in registration order and drops a link that intersects one
+    // from an earlier provider, which is what keeps the path half of
+    // `https://host/a/b` from being linkified twice.
+    this.pathLinks = new PathLinks(this.term, {
+      cwd: () => this.liveCwd,
+      probe: (paths, cwd) => api.resolvePaths(paths, cwd),
+      // Same treatment as a failed `openUrl` above: log it rather than
+      // writing into the buffer, which belongs to the shell.
+      open: (resolved) =>
+        void api
+          .openPath(resolved.absolute)
+          .catch((e) => console.warn("openPath failed:", describeError(e))),
+    });
+    this.pathLinks.install();
     this.term.open(this.termHost);
     // IME input is ours now — see `ime.ts` for why xterm cannot keep a Hangul
     // syllable intact on macOS. Installed here because the helper textarea and
@@ -517,7 +542,14 @@ export class TerminalPane implements Pane {
       this.term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`);
       this.opts.onExit?.(code);
     });
-    this.unlisteners.push(dataUnlisten, exitUnlisten);
+    // Keep the path linkifier's idea of the cwd current. Registered with
+    // the other listeners (and before the spawn) so a failed spawn tears it
+    // down along with them.
+    const noop = (): void => {};
+    const cwdUnlisten = await onPaneCwd(this.id, (cwd) => {
+      if (cwd) this.liveCwd = cwd;
+    }).catch(() => noop);
+    this.unlisteners.push(dataUnlisten, exitUnlisten, cwdUnlisten);
 
     try {
       await api.spawnPane({
@@ -529,6 +561,16 @@ export class TerminalPane implements Pane {
         argv: this.opts.argv,
       });
       this.spawned = true;
+
+      // The shell may already have emitted its OSC 7 before the listener
+      // above was attached (or may never emit one, on a shell without the
+      // integration), so ask for the backend's last known value once.
+      void api
+        .getPaneCwd(this.id)
+        .then((cwd) => {
+          if (cwd) this.liveCwd = cwd;
+        })
+        .catch(() => {});
 
       // Re-apply background color after spawn — xterm may reset its
       // internal theme when the terminal size changes during fit().
@@ -1006,6 +1048,7 @@ export class TerminalPane implements Pane {
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     this.ime?.dispose();
+    this.pathLinks?.dispose();
     if (this.spawned) {
       void api.killPane(this.id).catch(() => {});
     }
