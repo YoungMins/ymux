@@ -152,6 +152,33 @@ export function removePlan(entry: WorktreeEntry, status: WorkStatus | null): Rem
   };
 }
 
+/// Does a confirmation given for `shown` still cover `fresh` — the plan from
+/// a status re-read after the user said yes?
+///
+/// The dialog can stay open indefinitely while an agent keeps writing in the
+/// worktree. Proceeding on the old answer would delete files the user never
+/// saw listed (with `--force`) or strand commits made in the meantime, so
+/// the removal only runs when the lists are identical: same changes (path,
+/// old path and code), same ignored entries, same stranded commits, same
+/// `force`. Anything else — including the worktree becoming unremovable —
+/// means ask again.
+export function confirmationStillHolds(shown: RemovePlan, fresh: RemovePlan): boolean {
+  if (shown.kind !== "remove" || fresh.kind !== "remove") return false;
+  const changes = (p: typeof shown) => p.lost.map((e) => `${e.code}\0${e.path}\0${e.orig}`);
+  const same = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length && a.every((x, i) => x === b[i]);
+  return (
+    shown.force === fresh.force &&
+    shown.moreStranded === fresh.moreStranded &&
+    same(changes(shown), changes(fresh)) &&
+    same(shown.ignored, fresh.ignored) &&
+    same(
+      shown.stranded.map((c) => c.hash),
+      fresh.stranded.map((c) => c.hash),
+    )
+  );
+}
+
 // ── Status codes ──────────────────────────────────────────────────────────
 
 export type ChangeKind =

@@ -6,6 +6,7 @@ import {
   checkoutPlan,
   checkoutRisk,
   clip,
+  confirmationStillHolds,
   formatCommitDate,
   refChips,
   removePlan,
@@ -198,6 +199,45 @@ describe("removePlan", () => {
     );
     expect(p.kind === "remove" && p.stranded.map((c) => c.subject)).toEqual(["wip"]);
     expect(p.kind === "remove" && p.force).toBe(false);
+  });
+});
+
+describe("confirmationStillHolds", () => {
+  const shown = removePlan(wt(), status({ changes: [entry("??", "a.txt")], ignored: ["target/"] }));
+
+  it("holds when a fresh status would show exactly the same list", () => {
+    const fresh = removePlan(wt(), status({ changes: [entry("??", "a.txt")], ignored: ["target/"] }));
+    expect(confirmationStillHolds(shown, fresh)).toBe(true);
+  });
+
+  it("breaks when a file appeared, changed state or vanished since the dialog", () => {
+    const more = removePlan(
+      wt(),
+      status({ changes: [entry("??", "a.txt"), entry("??", "agent-wrote.rs")], ignored: ["target/"] }),
+    );
+    expect(confirmationStillHolds(shown, more)).toBe(false);
+    const restaged = removePlan(wt(), status({ changes: [entry("A ", "a.txt")], ignored: ["target/"] }));
+    expect(confirmationStillHolds(shown, restaged)).toBe(false);
+    const gone = removePlan(wt(), status({ ignored: ["target/"] }));
+    expect(confirmationStillHolds(shown, gone)).toBe(false);
+  });
+
+  it("breaks when new ignored files or stranded commits appeared", () => {
+    const ignored = removePlan(
+      wt(),
+      status({ changes: [entry("??", "a.txt")], ignored: ["target/", ".env"] }),
+    );
+    expect(confirmationStillHolds(shown, ignored)).toBe(false);
+    const clean = removePlan(wt({ detached: true, branch: "" }), status({ detached: true }));
+    const committed = removePlan(
+      wt({ detached: true, branch: "" }),
+      status({ detached: true, orphans: [commit("agent commit")] }),
+    );
+    expect(confirmationStillHolds(clean, committed)).toBe(false);
+  });
+
+  it("breaks when the worktree can no longer be removed at all", () => {
+    expect(confirmationStillHolds(shown, { kind: "blocked", reason: "locked" })).toBe(false);
   });
 });
 

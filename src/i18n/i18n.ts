@@ -1977,6 +1977,12 @@ const strings: Translations = {
     fr: "Supprimer les modifications et le worktree", ar: "حذف التغييرات والإزالة", pt: "Excluir as alterações e remover",
     ru: "Удалить изменения и worktree", tr: "Değişiklikleri sil ve kaldır", de: "Änderungen löschen und entfernen", vi: "Xóa thay đổi và gỡ bỏ",
   },
+  "git.removeChanged": {
+    en: "The worktree changed while you were deciding. Nothing was removed; this is what removing it deletes now:", ko: "결정하는 동안 worktree가 바뀌었습니다. 아무것도 삭제하지 않았습니다. 지금 삭제하면 다음이 사라집니다:", ja: "確認中に worktree が変わりました。何も削除していません。今削除すると次のものが消えます:",
+    zh: "在你决定期间 worktree 发生了变化。尚未删除任何内容；现在删除将删掉以下内容：", hi: "आपके निर्णय लेते समय worktree बदल गया। कुछ भी नहीं हटाया गया; अब हटाने पर यह हटेगा:", es: "El worktree cambió mientras decidías. No se eliminó nada; esto es lo que borraría eliminarlo ahora:",
+    fr: "Le worktree a changé pendant votre décision. Rien n'a été supprimé ; voici ce que sa suppression efface maintenant :", ar: "تغيّر الـ worktree أثناء اتخاذك القرار. لم يُحذف شيء؛ هذا ما ستحذفه إزالته الآن:", pt: "O worktree mudou enquanto você decidia. Nada foi removido; isto é o que removê-lo apaga agora:",
+    ru: "Пока вы решали, worktree изменился. Ничего не удалено; вот что удалит его удаление сейчас:", tr: "Siz karar verirken worktree değişti. Hiçbir şey kaldırılmadı; şimdi kaldırmak şunları siler:", de: "Das Worktree hat sich geändert, während Sie entschieden haben. Nichts wurde entfernt; Folgendes löscht das Entfernen jetzt:", vi: "Worktree đã thay đổi trong lúc bạn quyết định. Chưa xóa gì; nếu xóa bây giờ sẽ mất những thứ sau:",
+  },
   "git.removeFailed": {
     en: "The worktree was not removed", ko: "worktree를 삭제하지 못했습니다", ja: "worktree を削除できませんでした",
     zh: "未能删除 worktree", hi: "worktree हटाया नहीं गया", es: "No se eliminó el worktree",
