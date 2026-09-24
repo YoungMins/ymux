@@ -67,9 +67,14 @@ tauri = { version = "=2.10.3", optional = true, features = ["unstable", "devtool
 # need it, and rustls keeps the binary footprint minimal vs. openssl.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"], optional = true }
 
-# URL parsing for native webview navigation. Already in the dependency tree
-# via Tauri; listed explicitly so webview.rs can reference `url::Url`.
-url = { version = "2", optional = true }
+# URL parsing for native webview navigation, and for the IPC origin check
+# that gates the filesystem/git command surface. Already in the dependency
+# tree via Tauri, and pure Rust with no system deps, so deliberately NOT
+# behind `desktop`: `fspath::origin_is_local` is the security decision on
+# that surface and has to be unit-testable under
+# `cargo test --no-default-features --lib -p ymux` on Linux CI, for the same
+# reason `ypath` and `png` are unconditional.
+url = "2"
 
 # Pane-to-pane IPC. Desktop-only because the server requires the Tauri
 # AppHandle to emit events to the frontend.
@@ -97,7 +102,7 @@ windows = { version = "0.56", features = [
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:url", "dep:tauri-plugin-notification", "dep:arboard"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:tauri-plugin-notification", "dep:arboard"]
 
 [profile.release]
 lto = true

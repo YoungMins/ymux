@@ -46,6 +46,112 @@ pub fn caller_allowed(label: &str) -> bool {
     label == "main"
 }
 
+/// Does an IPC request's `Origin` header name ymux's own document?
+///
+/// The label half ([`caller_allowed`]) is **not sufficient** on its own, and
+/// this is the evidence, read out of the pinned dependency sources rather
+/// than assumed:
+///
+///  - A `PaneKind::Browser` pane is an `<iframe>` *inside* the `main`
+///    webview (`frame-src http: https:` in `tauri.conf.json`), so anything
+///    running in it sees `webview.label() == "main"`.
+///  - wry hands every initialization script to WebView2's
+///    `AddScriptToExecuteOnDocumentCreated` and drops the
+///    `for_main_frame_only` flag on the floor (`wry-0.54.4`
+///    `src/webview2/mod.rs:494`; the flag is documented as ignored on
+///    Windows at `src/lib.rs:1007`). Tauri asks for main-frame-only
+///    (`tauri-2.10.3` `src/manager/webview.rs:156`) and does not get it, so
+///    an iframe is handed `window.__TAURI_INTERNALS__` *including the
+///    invoke key* — which is the only pre-dispatch check Tauri performs
+///    (`src/webview/mod.rs:1729`).
+///
+/// The origin, unlike the label, does distinguish them. Tauri's own JS
+/// reaches the IPC with `fetch()` (`scripts/ipc-protocol.js`), and on that
+/// path the `Origin` header is read from the real HTTP request
+/// (`src/ipc/protocol.rs:491`, stored at `:549`) and forwarded to the
+/// command through `tauri::ipc::Request::headers()`. `Origin` is a
+/// forbidden header name, so a page cannot set it — the browser does, from
+/// the frame's own origin.
+///
+/// Compared component-wise on purpose: `Url::origin()` returns an *opaque*
+/// origin for a non-special scheme, and two opaque origins never compare
+/// equal, so `a.origin() == b.origin()` would reject macOS's own
+/// `tauri://localhost`.
+///
+/// Fails closed. A missing header, `null` (a sandboxed or `data:` frame), an
+/// unparseable value or a host-only near-miss such as
+/// `http://tauri.localhost.evil.com` all return `false`.
+pub fn origin_is_local(origin: Option<&str>, app_url: &str) -> bool {
+    let Some(origin) = origin else {
+        // No `Origin` at all. Tauri's `fetch` path always carries one; the
+        // `postMessage` fallback (taken only when the custom protocol is
+        // blocked) does not, and there the header map is deserialized from
+        // the caller's own JSON (`src/ipc/protocol.rs:304`) and so would be
+        // forgeable anyway. Refusing is the only safe answer in both cases.
+        return false;
+    };
+    if origin.trim().eq_ignore_ascii_case("null") {
+        return false;
+    }
+    let (Ok(got), Ok(want)) = (url::Url::parse(origin), url::Url::parse(app_url)) else {
+        return false;
+    };
+    let (Some(got_host), Some(want_host)) = (got.host_str(), want.host_str()) else {
+        // An origin with no authority (`data:`, `file:`) is never ymux's
+        // document, and an app URL without one is a configuration we do not
+        // ship — either way, refuse.
+        return false;
+    };
+    got.scheme().eq_ignore_ascii_case(want.scheme())
+        && got_host.eq_ignore_ascii_case(want_host)
+        && got.port_or_known_default() == want.port_or_known_default()
+}
+
+/// The `Origin` header of the IPC request now being served, if any.
+///
+/// Split out from [`guard_local`] so the header-name lookup is in one place
+/// and the decision itself stays in the pure [`origin_is_local`].
+#[cfg(feature = "desktop")]
+fn request_origin<'a>(request: &'a tauri::ipc::Request<'_>) -> Option<&'a str> {
+    request.headers().get("Origin")?.to_str().ok()
+}
+
+/// The single gate on the filesystem / text-file / git command surface.
+///
+/// Called on the first line of every one of those commands. It is not
+/// defence in depth — it is the *only* defence, because `src-tauri/build.rs`
+/// is a bare `tauri_build::build()` with no `AppManifest`, so
+/// `RuntimeAuthority::has_app_manifest()` is false and Tauri skips the ACL
+/// check entirely for ymux's own commands (`tauri-2.10.3`
+/// `src/webview/mod.rs:1802`). The capability files govern `core:` and
+/// plugin permissions only; adding ymux's commands to one would require an
+/// `AppManifest`, which would switch ACL enforcement on for all ~50
+/// existing commands at once. See the spec's §1.5.
+///
+/// `cmd` only names the caller in the error message.
+#[cfg(feature = "desktop")]
+pub fn guard_local(
+    webview: &tauri::Webview,
+    request: &tauri::ipc::Request<'_>,
+    cmd: &str,
+) -> crate::YmuxResult<()> {
+    if !caller_allowed(webview.label()) {
+        return Err(crate::YmuxError::Forbidden(format!(
+            "{cmd}: only ymux's own webview may call this (label {:?})",
+            webview.label()
+        )));
+    }
+    let app_url = webview
+        .url()
+        .map_err(|e| crate::YmuxError::Forbidden(format!("{cmd}: no app origin to check ({e})")))?;
+    if !origin_is_local(request_origin(request), app_url.as_str()) {
+        return Err(crate::YmuxError::Forbidden(format!(
+            "{cmd}: only ymux's own document may call this, not embedded web content"
+        )));
+    }
+    Ok(())
+}
+
 /// Longest raw candidate worth looking at. Comfortably past any real path
 /// (`MAX_PATH` is 260, and even the extended limit is 32767) while keeping a
 /// pathological line from turning into a long syscall.
@@ -403,6 +509,85 @@ mod tests {
         assert!(!caller_allowed("eb-main"));
         assert!(!caller_allowed(""));
         assert!(!caller_allowed("Main"));
+    }
+
+    /// The app origins ymux actually runs under: `tauri://localhost` on
+    /// macOS, `http://tauri.localhost` in a Windows release build, and the
+    /// Vite dev server under `pnpm tauri dev`.
+    const APP_URLS: &[&str] = &[
+        "tauri://localhost/",
+        "http://tauri.localhost/",
+        "http://localhost:1420/",
+    ];
+
+    #[test]
+    fn origin_accepts_ymuxs_own_document() {
+        assert!(origin_is_local(Some("tauri://localhost"), APP_URLS[0]));
+        assert!(origin_is_local(Some("http://tauri.localhost"), APP_URLS[1]));
+        assert!(origin_is_local(Some("http://localhost:1420"), APP_URLS[2]));
+        // A scheme is case-insensitive per RFC 3986, and so is a host.
+        assert!(origin_is_local(Some("TAURI://LocalHost"), APP_URLS[0]));
+    }
+
+    /// The case the label check cannot see: a page in a `browser` pane is an
+    /// iframe inside the `main` webview, so only its origin gives it away.
+    #[test]
+    fn origin_rejects_remote_web_content() {
+        for app in APP_URLS {
+            assert!(!origin_is_local(Some("https://evil.example"), app));
+            assert!(!origin_is_local(Some("http://evil.example"), app));
+        }
+    }
+
+    /// Fail-closed cases. A missing header is the important one: Tauri's
+    /// `postMessage` fallback carries no real headers, and accepting it
+    /// would also accept a forged `Origin` on that path.
+    #[test]
+    fn origin_fails_closed() {
+        assert!(!origin_is_local(None, APP_URLS[1]));
+        // A sandboxed iframe or a `data:`/`blob:` document.
+        assert!(!origin_is_local(Some("null"), APP_URLS[1]));
+        assert!(!origin_is_local(Some(" NULL "), APP_URLS[1]));
+        assert!(!origin_is_local(Some(""), APP_URLS[1]));
+        assert!(!origin_is_local(Some("not a url"), APP_URLS[1]));
+        // No authority at all.
+        assert!(!origin_is_local(Some("data:text/html,x"), APP_URLS[1]));
+        // An unparseable app URL must not degrade into "allow".
+        assert!(!origin_is_local(Some("http://tauri.localhost"), "nonsense"));
+    }
+
+    /// The near-misses a naive `starts_with` or `contains` would wave
+    /// through.
+    #[test]
+    fn origin_rejects_host_and_port_near_misses() {
+        assert!(!origin_is_local(
+            Some("http://tauri.localhost.evil.example"),
+            "http://tauri.localhost/"
+        ));
+        assert!(!origin_is_local(
+            Some("http://eviltauri.localhost"),
+            "http://tauri.localhost/"
+        ));
+        // Scheme must match: an https page is not the app.
+        assert!(!origin_is_local(
+            Some("https://tauri.localhost"),
+            "http://tauri.localhost/"
+        ));
+        // Port must match, and the default must not be confused with a
+        // different explicit one.
+        assert!(!origin_is_local(
+            Some("http://localhost:1421"),
+            "http://localhost:1420/"
+        ));
+        assert!(!origin_is_local(
+            Some("http://localhost"),
+            "http://localhost:1420/"
+        ));
+        // ...but an explicit default port is the same origin.
+        assert!(origin_is_local(
+            Some("http://localhost:80"),
+            "http://localhost/"
+        ));
     }
 
     #[test]
