@@ -38,9 +38,8 @@
 //!    why it is the single chokepoint.
 //!
 //! Every command is `#[tauri::command(async)]` so it runs off the main
-//! thread, following the `filedock_change_dir` precedent: a dead network
-//! drive blocks `metadata` for tens of seconds and must not freeze the
-//! window.
+//! thread: a dead network drive blocks `metadata` for tens of seconds and
+//! must not freeze the window.
 
 use std::fs;
 use std::io;

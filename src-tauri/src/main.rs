@@ -101,7 +101,6 @@ fn main() {
             ymux_lib::commands::git_worktree_add,
             ymux_lib::commands::git_worktree_remove,
             ymux_lib::commands::git_worktree_list,
-            ymux_lib::ipc_server::filedock_change_dir,
             ymux_lib::webview::create_webview,
             ymux_lib::webview::destroy_webview,
             ymux_lib::webview::navigate_webview,
