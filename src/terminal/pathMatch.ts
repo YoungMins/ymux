@@ -57,6 +57,12 @@ const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 /// still cutting grep's `src/main.ts:12:const x` down to the file.
 const LINE_COL_RE = /:(\d+)(?::(\d+))?(?=$|:)/;
 
+/// `(line)` or `(line,col)` glued to the end of a path — how tsc, MSVC and
+/// most .NET tooling report a position. Anchored at the end because a
+/// parenthesised segment anywhere else is far more likely to be part of the
+/// name (`src/foo(old)/a.ts`) than a position.
+const PAREN_LINE_COL_RE = /\((\d+)(?:,(\d+))?\)$/;
+
 /// Quote characters that can wrap a path containing spaces.
 const QUOTES = "\"'`";
 
@@ -82,23 +88,39 @@ function refineToken(token: string, offset: number): PathCandidate | null {
   let start = 0;
   let end = token.length;
   while (start < end && LEAD_STRIP.includes(token[start]!)) start++;
-  while (end > start && TRAIL_STRIP.includes(token[end - 1]!)) end--;
   if (end <= start) return null;
 
-  let text = token.slice(start, end);
   let line: number | undefined;
   let col: number | undefined;
 
-  const m = LINE_COL_RE.exec(text);
-  if (m && m.index > 0) {
-    line = Number(m[1]);
-    if (m[2] !== undefined) col = Number(m[2]);
-    end = start + m.index;
-    text = token.slice(start, end);
-    // The cut can expose punctuation that was hiding behind the suffix, as
-    // in `see src/main.ts:12,` once the `,` and then `:12` have gone.
-    while (end > start && TRAIL_STRIP.includes(token[end - 1]!)) {
+  // Peel the tail one layer at a time. The two orders have to interleave:
+  // `src/a.ts(12,5))` needs a `)` stripped before the position suffix is
+  // visible, and `see src/a.ts(12,5).` needs the `.` stripped first.
+  for (;;) {
+    const paren = PAREN_LINE_COL_RE.exec(token.slice(start, end));
+    if (paren && paren.index > 0) {
+      line = Number(paren[1]);
+      if (paren[2] !== undefined) col = Number(paren[2]);
+      end = start + paren.index;
+      continue;
+    }
+    if (end > start && TRAIL_STRIP.includes(token[end - 1]!)) {
       end--;
+      continue;
+    }
+    break;
+  }
+
+  let text = token.slice(start, end);
+  if (line === undefined) {
+    const m = LINE_COL_RE.exec(text);
+    if (m && m.index > 0) {
+      line = Number(m[1]);
+      if (m[2] !== undefined) col = Number(m[2]);
+      end = start + m.index;
+      // The cut can expose punctuation that was hiding behind the suffix,
+      // as in `see src/main.ts:12,` once the `,` and then `:12` have gone.
+      while (end > start && TRAIL_STRIP.includes(token[end - 1]!)) end--;
       text = token.slice(start, end);
     }
   }

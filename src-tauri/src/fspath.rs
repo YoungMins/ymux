@@ -197,11 +197,14 @@ pub fn network_probe_allowed(raw: &str, cwd: Option<&str>) -> Result<(), String>
 /// cannot be placed — a relative candidate with no cwd, or a `~` path on a
 /// system with no home directory.
 ///
-/// Note the `Path::join` semantics for a rooted-but-driveless path on
-/// Windows (`/usr/lib`): it is appended to `cwd` rather than taken as
-/// drive-relative. That can place it somewhere the user did not mean, but
-/// never anywhere they cannot see — the tooltip always shows exactly the
-/// absolute path that was resolved, and a click opens that same path.
+/// A rooted-but-driveless path on Windows (`/usr/lib`, `\srv\x`) is *not*
+/// absolute to Rust, so it takes the `cwd` branch — where `Path::join`
+/// keeps the cwd's drive and replaces the rest, giving `D:\usr\lib`. That
+/// is Windows' own drive-relative rule, so it is the right answer, but it
+/// means a POSIX path pasted into a Windows pane can resolve to a real
+/// local file with a different meaning. Harmless in practice: the link only
+/// appears when that file exists, the tooltip shows the absolute path that
+/// was resolved, and a click opens that same path.
 pub fn expand(raw: &str, cwd: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     let tilde = raw
         .strip_prefix("~/")
@@ -513,6 +516,22 @@ mod tests {
     fn expand_leaves_an_absolute_path_alone() {
         let abs = if cfg!(windows) { r"C:\x\y" } else { "/x/y" };
         assert_eq!(expand(abs, None, None).unwrap(), PathBuf::from(abs));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn expand_treats_a_driveless_root_as_drive_relative() {
+        // Windows' own rule, and `Path::join` implements it: the cwd's drive
+        // survives, everything after it is replaced.
+        let cwd = PathBuf::from(r"D:\Git\ymux");
+        assert_eq!(
+            expand("/usr/lib", Some(&cwd), None).unwrap(),
+            PathBuf::from("D:/usr/lib")
+        );
+        assert_eq!(
+            expand(r"\srv\x", Some(&cwd), None).unwrap(),
+            PathBuf::from(r"D:\srv\x")
+        );
     }
 
     #[test]

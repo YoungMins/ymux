@@ -106,6 +106,41 @@ describe("findPathCandidates — path:line:col", () => {
   });
 });
 
+describe("findPathCandidates — path(line,col)", () => {
+  it("splits the tsc / MSVC position form off", () => {
+    // This is what `npx tsc --noEmit` prints, so it matters here in
+    // particular.
+    const c = only("src/terminal/TerminalPane.ts(30,3): error TS6133");
+    expect(c.text).toBe("src/terminal/TerminalPane.ts");
+    expect(c.line).toBe(30);
+    expect(c.col).toBe(3);
+  });
+
+  it("accepts a line with no column", () => {
+    const c = only("src/main.ts(42): warning");
+    expect(c.text).toBe("src/main.ts");
+    expect(c.line).toBe(42);
+    expect(c.col).toBeUndefined();
+  });
+
+  it("peels the position form out of wrapping parentheses", () => {
+    const c = only("at foo (src/main.ts(12,5))");
+    expect(c.text).toBe("src/main.ts");
+    expect(c.line).toBe(12);
+    expect(c.col).toBe(5);
+  });
+
+  it("strips punctuation that follows the position form", () => {
+    const c = only("see src/main.ts(12,5).");
+    expect(c.text).toBe("src/main.ts");
+    expect(c.line).toBe(12);
+  });
+
+  it("leaves a parenthesised directory name alone", () => {
+    expect(only("src/foo(old)/a.ts").text).toBe("src/foo(old)/a.ts");
+  });
+});
+
 describe("findPathCandidates — surrounding punctuation", () => {
   it("strips a trailing comma", () => {
     expect(only("edit src/main.ts, then build").text).toBe("src/main.ts");
