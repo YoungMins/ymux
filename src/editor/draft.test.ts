@@ -85,4 +85,9 @@ describe("draftDisposition", () => {
     const d = { ...draft, path: "/w/한글.md".normalize("NFD") };
     expect(draftDisposition(d, "/w/한글.md", disk("other"))).toBe("restore");
   });
+
+  it("rescues a draft for another file instead of deleting it", () => {
+    expect(draftDisposition(draft, "C:\\w\\other.rs", disk("x"))).toBe("rescue");
+    expect(draftDisposition(draft, "C:\\w\\other.rs", null)).toBe("rescue");
+  });
 });

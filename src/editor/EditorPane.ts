@@ -923,7 +923,13 @@ export class EditorPane implements Pane {
       } else {
         // The buffer cannot take it: the draft is the only copy of those
         // edits, so Discard asks, and Save as… is the way out.
-        r.text.textContent = fill(t("editor.draftRescue"), { name: fileName(draft.draft.path) });
+        // A draft for another file names that file in full: it is not the
+        // one this pane shows.
+        const foreign = draft.draft.path.normalize("NFC") !== this.path.normalize("NFC");
+        r.text.textContent = fill(t("editor.draftRescue"), {
+          name: foreign ? draft.draft.path : fileName(draft.draft.path),
+        });
+        r.text.title = draft.draft.path;
         r.button("editor.discard", () => {
           void askConfirm(t("editor.discardDraftConfirm"), t("editor.discard")).then((ok) => {
             if (ok) void this.discardDraft();

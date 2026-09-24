@@ -118,7 +118,10 @@ export function draftDisposition(
   disk: DiskView | null,
 ): DraftDisposition {
   if (!draft) return "none";
-  if (draft.path.normalize("NFC") !== path.normalize("NFC")) return "drop";
+  // A draft for another file (the pane was re-pointed — a viewer-tab reuse,
+  // a save-as-copy — and the new `file_path` never reached the config before
+  // the crash) is still somebody's only copy: offered as "draft for <path>".
+  if (draft.path.normalize("NFC") !== path.normalize("NFC")) return "rescue";
   if (!disk || !disk.editable) return "rescue";
   return draft.text === disk.text ? "drop" : "restore";
 }
