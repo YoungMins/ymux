@@ -1044,16 +1044,17 @@ mod tests {
             r#"{{"hook_event_name":"PostToolUse","tool_response":"{}"}}"#,
             "x".repeat(6 * 1024 * 1024)
         );
-        for (pane, token) in [("", ""), ("", "guess")] {
-            let raw = request(port, pane, token, "", &big);
-            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-            s.write_all(&raw).expect("whole body written");
-            let mut out = String::new();
-            s.read_to_string(&mut out).expect("clean close, no reset");
-            let want = if token.is_empty() { 204 } else { 403 };
-            assert_eq!(out, response(want));
-        }
+        // Only the quiet 204 is drained. A 403 closes on the unread body on
+        // purpose (`a_rejected_request_is_not_drained`), so a big upload to
+        // it may well end in a reset: Linux reports that as EPIPE on the
+        // write, while Windows' loopback buffers happened to absorb it.
+        let raw = request(port, "", "", "", &big);
+        let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        s.write_all(&raw).expect("whole body written");
+        let mut out = String::new();
+        s.read_to_string(&mut out).expect("clean close, no reset");
+        assert_eq!(out, response(204));
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
     }
 
