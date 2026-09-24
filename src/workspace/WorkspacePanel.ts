@@ -85,6 +85,7 @@ function treeLabels(): TreeLabels {
     terminal: t("terminal.defaultTitle"),
     browser: t("tree.browser"),
     subagent: t("tree.subagent"),
+    git: t("git.title"),
   };
 }
 
