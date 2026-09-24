@@ -25,7 +25,7 @@ export interface SpawnArgs {
   rows: number;
   cols: number;
   /// Run this program directly instead of `shell` (see `SpawnArgs.argv` in
-  /// commands.rs). Used by the file dock for `ydir --dock <dir>`.
+  /// commands.rs). Used by the viewer tab for `ycode <path>`.
   argv?: string[];
 }
 
@@ -352,10 +352,6 @@ export const api = {
   /// List all worktrees for the repo rooted at `cwd`.
   gitWorktreeList: (cwd: string): Promise<WorktreeEntry[]> =>
     call("git_worktree_list", { cwd }),
-
-  /// Point the file dock's yDir at `path`. A no-op when it isn't running.
-  fileDockChangeDir: (path: string): Promise<void> =>
-    call("filedock_change_dir", { path }),
 
   /// Current agent-tree snapshot (pane id → agents).
   getAgents: (): Promise<AgentSnapshot> => call("get_agents"),

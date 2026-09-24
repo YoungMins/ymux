@@ -1980,7 +1980,7 @@ body,
   color: var(--bg);
 }
 
-/* File dock (yDir) ---------------------------------------------------- */
+/* File dock ------------------------------------------------------------ */
 .app-body {
   flex: 1 1 auto;
   display: flex;
@@ -2021,40 +2021,9 @@ body,
   background: var(--accent);
 }
 
-.file-dock__body {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* The dock runs one fixed tool: no title to rename, no HotKey bar. */
-.file-dock .pane-title,
-.file-dock .hotkey-bar {
-  display: none;
-}
-
-.file-dock__message {
-  margin: auto;
-  padding: 16px;
-  text-align: center;
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-
-.file-dock__restart {
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.file-dock__restart:hover {
-  border-color: var(--accent);
+/* The dock hosts one files pane directly (src/filedock/FileDock.ts). */
+.file-dock > .files-pane {
+  padding: 6px 6px 4px;
 }
 
 /* ---------------------------------------------------------------------------

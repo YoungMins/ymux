@@ -1,32 +1,27 @@
-// Right-side file dock: one app-wide yDir, in a normal TerminalPane that is
+// Right-side file dock: one app-wide files pane (src/files/FilesPane.ts),
 // not part of any layout tree (so it is never saved), following the active
-// pane's working directory. Spawned lazily on first open and kept alive
-// while hidden. When ydir exits or cannot start, a message and a Restart
-// button take its place.
+// pane's working directory. It hosts the pane directly — there is no PTY,
+// no `ydir --dock` process and no yipc round-trip (spec §2.4): a cwd change
+// goes through `CwdFollow`'s debounce and dedupe and then straight into
+// `FilesPane.navigate`.
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import type { Uuid } from "../types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
-import { TerminalPane } from "../terminal/TerminalPane";
+import { FilesPane } from "../files/FilesPane";
 import { api, onOpenFile, onPaneCwd } from "../ipc/bridge";
-import { t, onLangChange } from "../i18n/i18n";
 import { CwdFollow } from "./cwdFollow";
 import {
   clampDockWidth,
-  dockArgv,
   parseDockState,
   serializeDockState,
   type DockState,
 } from "./dockModel";
 
-/// The dock's PTY id (the spec's `__ydir_dock__`). It must be a UUID,
-/// because every PTY command (`spawn_pane`, `write_pane`, `resize_pane`,
-/// `kill_pane`) takes one.
-export const DOCK_PANE_ID: Uuid = "00000000-0000-4000-8000-0000000d0c00";
-
 const STORAGE_KEY = "ymux.fileDock";
 
-type DockMessage = "filedock.exited" | "filedock.failed";
+/// The dock's pane id. Not a PTY id any more, only the `data-pane-id` its
+/// element carries; kept out of the UUID space so no layout pane can clash.
+const DOCK_ID = "file-dock";
 
 function readState(): DockState {
   try {
@@ -46,20 +41,13 @@ function writeState(state: DockState): void {
 
 class FileDock {
   readonly element: HTMLElement;
-  private readonly body: HTMLElement;
-  private pane: TerminalPane | null = null;
-  private message: DockMessage | null = null;
-  private starting = false;
+  private readonly pane: FilesPane;
   private state = readState();
   private cwdUnlisten: UnlistenFn | null = null;
   /// Bumped on every follow re-subscription, so a slow, superseded one
   /// unlistens itself instead of leaking.
   private followGen = 0;
-  private readonly follow = new CwdFollow((dir) => {
-    void api.fileDockChangeDir(dir).catch((e) =>
-      console.warn("fileDockChangeDir failed:", e),
-    );
-  });
+  private readonly follow = new CwdFollow((dir) => this.pane.navigate(dir));
 
   constructor(private readonly manager: WorkspaceManager) {
     this.element = document.createElement("div");
@@ -71,26 +59,35 @@ class FileDock {
     resizer.addEventListener("pointerdown", (ev) => this.startResize(resizer, ev));
     this.element.appendChild(resizer);
 
-    this.body = document.createElement("div");
-    this.body.className = "file-dock__body";
-    this.element.appendChild(this.body);
+    // No `onFocus`, deliberately (spec §3.7): the dock's pane must never
+    // become the manager's focused pane, or "the pane active before the dock
+    // took focus" — where Enter on a file opens its viewer tab — is lost.
+    this.pane = new FilesPane({
+      id: DOCK_ID,
+      dir: null,
+      docked: true,
+      ownChrome: false,
+      openFile: (path) => this.manager.openFileInViewerTab(path),
+      openTerminal: (dir) => this.manager.splitTerminalAt(null, dir),
+    });
+    this.element.appendChild(this.pane.element);
 
     manager.onActivePaneChange(() => void this.followActivePane());
-    // yDir pressed Enter on a file. The listener lives here because this dock
-    // owns the yDir that sends it; the manager decides which tab it lands in.
+    // A `ydir --dock` still on PATH (and run by hand) can ask for a file to
+    // be opened over yipc; that route goes in step 3 with the viewer tab.
     void onOpenFile((path) => {
       void this.manager.openFileInViewerTab(path);
     }).catch((e) => console.warn("open-file listen failed:", e));
-    window.addEventListener("resize", () => {
-      if (this.state.open) this.pane?.scheduleFit();
-    });
-    onLangChange(() => {
-      if (this.message) this.showMessage(this.message);
-    });
   }
 
   /// Apply the persisted state. Call once the element is in the DOM.
-  start(): void {
+  async start(): Promise<void> {
+    // Open on the active pane's directory rather than home-then-jump.
+    const id = this.manager.activePaneId();
+    const cwd = id ? await api.getPaneCwd(id).catch(() => null) : null;
+    if (cwd) this.pane.navigate(cwd);
+    this.follow.reset(cwd);
+    await this.pane.spawn();
     if (this.state.open) this.setOpen(true, false);
     void this.followActivePane();
   }
@@ -105,12 +102,10 @@ class FileDock {
     this.element.classList.toggle("file-dock--open", open);
     writeState(this.state);
     if (open) {
-      if (this.pane) {
-        this.pane.scheduleFit();
-        if (focus) this.pane.focus();
-      } else if (!this.message) {
-        void this.startYdir(focus);
-      }
+      // Shown after `display: none`: re-measure and list whatever the
+      // follow queued while hidden (rule 14's "shown again" path).
+      this.pane.scheduleFit();
+      if (focus) this.pane.focus();
     } else if (hadFocus) {
       this.manager.focusActivePane();
     }
@@ -118,59 +113,9 @@ class FileDock {
     requestAnimationFrame(() => this.manager.refitActive());
   }
 
-  private async startYdir(focus: boolean): Promise<void> {
-    if (this.starting) return;
-    this.starting = true;
-    this.message = null;
-    this.body.replaceChildren();
-    // A previous session may still be being killed: `dispose` fires
-    // `killPane` without awaiting, and Tauri commands run on a worker pool.
-    // Serialize it here, or a late kill lands on the pane about to spawn
-    // under the same reserved id. It is a no-op error when nothing is there.
-    await api.killPane(DOCK_PANE_ID).catch(() => {});
-    const activeId = this.manager.activePaneId();
-    const cwd = activeId ? await api.getPaneCwd(activeId).catch(() => null) : null;
-    const pane = new TerminalPane({
-      spec: { id: DOCK_PANE_ID, title: "yDir", shell: "ydir", cwd, env: [] },
-      argv: dockArgv(cwd),
-      fontSize: this.manager.fontSize,
-      persistScrollback: () => false,
-      onExit: () => this.showMessage("filedock.exited"),
-    });
-    this.pane = pane;
-    this.body.appendChild(pane.element);
-    this.follow.reset(cwd);
-    try {
-      await pane.spawn();
-      if (focus) pane.focus();
-    } catch {
-      this.showMessage("filedock.failed");
-    } finally {
-      this.starting = false;
-    }
-  }
-
-  private showMessage(key: DockMessage): void {
-    this.pane?.dispose(false);
-    this.pane = null;
-    this.message = key;
-
-    const box = document.createElement("div");
-    box.className = "file-dock__message";
-    const text = document.createElement("p");
-    text.textContent = t(key);
-    const restart = document.createElement("button");
-    restart.type = "button";
-    restart.className = "file-dock__restart";
-    restart.textContent = t("filedock.restart");
-    restart.addEventListener("click", () => void this.startYdir(true));
-    box.append(text, restart);
-    this.body.replaceChildren(box);
-  }
-
   /// Re-point the cwd subscription at the active pane and hand its current
-  /// dir to CwdFollow. Runs while the dock is hidden too, which keeps a
-  /// running ydir in step and costs one small IPC message.
+  /// dir to CwdFollow. Runs while the dock is hidden too; the pane only
+  /// records the directory then and lists it when shown.
   private async followActivePane(): Promise<void> {
     const gen = ++this.followGen;
     this.cwdUnlisten?.();
@@ -208,7 +153,7 @@ class FileDock {
       handle.removeEventListener("pointerup", onUp);
       handle.removeEventListener("pointercancel", onUp);
       writeState(this.state);
-      this.pane?.scheduleFit();
+      this.pane.scheduleFit();
       requestAnimationFrame(() => this.manager.refitActive());
     };
     handle.addEventListener("pointermove", onMove);
@@ -221,11 +166,11 @@ let instance: FileDock | null = null;
 
 /// Create the dock inside `parent` (the `.app-body` row, after
 /// `.workspace-host`). Call after `manager.start()`, so the active pane
-/// exists and a restored-open dock spawns after the workspace's own panes.
+/// exists and its directory is known.
 export function mountFileDock(parent: HTMLElement, manager: WorkspaceManager): void {
   instance = new FileDock(manager);
   parent.appendChild(instance.element);
-  instance.start();
+  void instance.start();
 }
 
 /// Show or hide the dock. A no-op before `mountFileDock`.
