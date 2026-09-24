@@ -19,6 +19,7 @@ import {
   stemEnd,
   targetNames,
   toggleAt,
+  trashFailure,
   typeAhead,
   uniqueName,
   type FileEntry,
@@ -242,6 +243,36 @@ describe("overwrite resolution", () => {
     expect(resolveOverwrite("foo.txt", false, f("foo.txt"), "skip", taken)).toEqual({
       action: "skip",
     });
+  });
+});
+
+describe("trashFailure", () => {
+  it("offers a permanent delete only when the trash itself is the problem", () => {
+    // No trash on this volume (network share, WSL): deleting still works.
+    expect(trashFailure("other", "move to trash failed: no trash can on \\\\srv\\x")).toBe(
+      "offer-permanent",
+    );
+  });
+
+  it("reports a file in use instead: deleting it would fail the same way", () => {
+    for (const msg of [
+      "move to trash failed: The process cannot access the file because it is being used by another process. (os error 32)",
+      "move to trash failed: (os error 33)",
+      "move to trash failed: Device or resource busy (os error 16)",
+    ]) {
+      expect(trashFailure("other", msg)).toBe("in-use");
+    }
+  });
+
+  it("reports a permission problem instead of escalating to a permanent delete", () => {
+    expect(trashFailure("permission_denied", "x")).toBe("report");
+    expect(trashFailure("other", "move to trash failed: Access is denied. (os error 5)")).toBe(
+      "report",
+    );
+    expect(trashFailure("other", "move to trash failed: Permission denied (os error 13)")).toBe(
+      "report",
+    );
+    expect(trashFailure("not_found", "x")).toBe("report");
   });
 });
 

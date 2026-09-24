@@ -53,6 +53,7 @@ import {
   stemEnd,
   targetNames,
   toggleAt,
+  trashFailure,
   typeAhead,
   uniqueName,
   type FileEntry,
@@ -1103,6 +1104,15 @@ export class FilesPane implements Pane {
           return;
         }
         const reason = err instanceof Error ? err.message : String(err);
+        const what = trashFailure(errorKind(err), reason);
+        if (what === "in-use") {
+          this.say(t("files.inUse"), true);
+          return;
+        }
+        if (what === "report") {
+          this.say(describeFsError(err), true);
+          return;
+        }
         const again = await askConfirm(
           fill(t("files.trashFailed"), { reason }),
           t("files.deletePermanent"),
