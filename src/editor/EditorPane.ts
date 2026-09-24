@@ -32,18 +32,21 @@ import { IS_MAC, shortcutLabel } from "../platform";
 import { askChoice, askConfirm, askText } from "../ui/Dialog";
 import { describeFsError } from "../files/FilesPane";
 import {
+  closeState,
   conflictDecision,
   copyCandidate,
+  draftFileAction,
   fileName,
   isDocDirty,
   languageForPath,
   openFileDecision,
   pollStep,
+  writeArgsFor,
   type DocLike,
   type LangId,
 } from "./editorModel";
 import { closeDecision, closeResult, type CloseChoice } from "./closeGuard";
-import { eolLabel, needsEolWarning, saveEol, type Eol } from "./eol";
+import { eolLabel, needsEolWarning, type Eol } from "./eol";
 import { draftOffer, encodeDraft, parseDraft, type Draft } from "./draft";
 
 export interface EditorPaneOptions {
@@ -70,7 +73,6 @@ const POLL_MIN_INTERVAL_MS = 750;
 type Banner =
   | { kind: "changed"; sha: string }
   | { kind: "deleted" }
-  | { kind: "draft"; draft: Draft }
   | { kind: "mixedEol" }
   | { kind: "readOnly" };
 
@@ -155,6 +157,11 @@ export class EditorPane implements Pane {
   /// the same change does not re-prompt on every focus.
   private dismissedSha: string | null = null;
   private banner: Banner | null = null;
+  /// A recovered draft offered and not yet answered (Restore / Discard). Its
+  /// own banner row, above any other, and until answered nothing — an edit,
+  /// a save, an agent's rewrite reloading the buffer — may overwrite or
+  /// delete the draft file (`draftFileAction`).
+  private pendingDraft: Draft | null = null;
   /// Non-null while the pane cannot show an editable file.
   private problem: { text: string; retry: boolean } | null = null;
   private loadGen = 0;
@@ -206,7 +213,7 @@ export class EditorPane implements Pane {
     bar.append(this.saveBtn, undo, redo, sep(), file, sep(), find);
 
     this.bannerEl = document.createElement("div");
-    this.bannerEl.className = "editor__banner";
+    this.bannerEl.className = "editor__banners";
     this.bannerEl.hidden = true;
     this.bannerEl.setAttribute("role", "status");
 
@@ -283,7 +290,9 @@ export class EditorPane implements Pane {
       this.draftTimer = null;
       // Not permanent (a shutdown path): the pending draft is the whole
       // point of drafts, so write it now rather than lose the last 2 s.
-      if (!permanent && this.isDirty()) this.writeDraft();
+      if (!permanent && draftFileAction(this.pendingDraft !== null, this.dirty) === "write") {
+        this.writeDraft();
+      }
     }
     // Permanent: the user closed this pane after the guard let it go —
     // there is nothing left to recover into.
@@ -296,14 +305,27 @@ export class EditorPane implements Pane {
 
   // ── Host API ──────────────────────────────────────────────────────────────
 
-  /// Unsaved work that closing would lose.
-  isDirty(): boolean {
-    if (!this.file || this.file.readOnly) return false;
-    return this.dirty || this.deletedOnDisk;
+  private closeState(): { unsaved: boolean; savable: boolean } {
+    return closeState({
+      loaded: this.file !== null,
+      readOnly: this.file?.readOnly ?? false,
+      dirty: this.dirty,
+      deletedOnDisk: this.deletedOnDisk,
+      pendingDraft: this.pendingDraft !== null,
+      hasPath: this.path !== "",
+    });
   }
 
-  hasPath(): boolean {
-    return this.path !== "";
+  /// Unsaved work that closing would lose — including a recovered draft not
+  /// yet restored or discarded.
+  isDirty(): boolean {
+    return this.closeState().unsaved;
+  }
+
+  /// Whether a close prompt may offer Save (false for a pending draft: Save
+  /// would write the buffer, not the draft).
+  canSaveOnClose(): boolean {
+    return this.closeState().savable;
   }
 
   currentPath(): string {
@@ -316,7 +338,7 @@ export class EditorPane implements Pane {
 
   /// The close guard (spec §3.5). Resolves false to cancel the close.
   async canClose(): Promise<boolean> {
-    const choices = closeDecision(this.isDirty(), this.hasPath());
+    const choices = closeDecision(this.isDirty(), this.canSaveOnClose());
     if (!choices) return true;
     const answer = await this.askClose(choices);
     if (answer === "save") return closeResult(answer, [await this.save()]);
@@ -329,6 +351,12 @@ export class EditorPane implements Pane {
     if (this.draftTimer !== null) clearTimeout(this.draftTimer);
     this.draftTimer = null;
     this.draftOnDisk = false;
+    if (this.pendingDraft) {
+      this.pendingDraft = null;
+      this.renderBanner();
+      this.renderChrome();
+      this.opts.onDirtyChange?.();
+    }
     await api.deleteEditorDraft(this.id).catch(() => {});
   }
 
@@ -341,7 +369,7 @@ export class EditorPane implements Pane {
       return true;
     }
     if (decision === "ask") {
-      const choices = closeDecision(true, this.hasPath());
+      const choices = closeDecision(true, this.canSaveOnClose());
       const answer = choices ? await this.askClose(choices) : "discard";
       const ok =
         answer === "save" ? closeResult(answer, [await this.save()]) : closeResult(answer);
@@ -397,15 +425,13 @@ export class EditorPane implements Pane {
       // A file deleted under the buffer: the stamp can never match again,
       // so if it is still gone, recreate it outright. If something put it
       // back meanwhile, the stamped write below reports the conflict.
-      let expect: ContentStamp | null = f.stamp;
-      if (this.deletedOnDisk) {
-        const gone = await fsApi.stat(this.path).then(
+      const gone =
+        this.deletedOnDisk &&
+        (await fsApi.stat(this.path).then(
           () => false,
           (e) => errorKind(e) === "not_found",
-        );
-        if (gone) expect = null;
-      }
-      return await this.write(this.path, expect);
+        ));
+      return await this.write(this.path, gone ? null : f.stamp);
     } finally {
       this.saving = false;
     }
@@ -419,10 +445,14 @@ export class EditorPane implements Pane {
     if (!h || !f) return false;
     // Snapshot before the await: typing during the write must stay dirty.
     const doc = h.doc();
-    const eol = saveEol(f.eol);
+    const args =
+      expect === null
+        ? writeArgsFor({ path, text: doc.toString(), eol: f.eol, bom: f.bom, stamp: f.stamp, goneOnDisk: true })
+        : writeArgsFor({ path, text: doc.toString(), eol: f.eol, bom: f.bom, stamp: expect, goneOnDisk: false });
+    const eol = args.eol;
     let stamp: ContentStamp;
     try {
-      stamp = await fsApi.writeText({ path, text: doc.toString(), eol, bom: f.bom, expect });
+      stamp = await fsApi.writeText(args);
     } catch (e) {
       if (errorKind(e) === "conflict") return this.resolveConflict();
       this.say(`${fileName(path)}: ${describeFsError(e)}`, true);
@@ -440,8 +470,9 @@ export class EditorPane implements Pane {
     if (this.banner && this.banner.kind !== "readOnly") this.setBanner(null);
     this.refreshDirty();
     // Saved: the draft has nothing left to protect. (Typing during the
-    // write left the buffer dirty; its draft stays and is rescheduled.)
-    if (!this.dirty) void this.discardDraft();
+    // write left the buffer dirty; its draft stays. A pending recovered
+    // draft is not this buffer's and is left for the user to answer.)
+    if (draftFileAction(this.pendingDraft !== null, this.dirty) === "delete") void this.discardDraft();
     this.say(t("editor.saved"));
     return true;
   }
@@ -592,7 +623,9 @@ export class EditorPane implements Pane {
     this.deletedOnDisk = false;
     this.dismissedSha = null;
     this.setBanner(truncated ? { kind: "readOnly" } : null);
-    void this.discardDraft();
+    // An agent's rewrite reloading a clean buffer must not take a pending
+    // recovered draft with it.
+    if (draftFileAction(this.pendingDraft !== null, false) === "delete") void this.discardDraft();
     this.renderChrome();
     this.opts.onDirtyChange?.();
   }
@@ -658,8 +691,11 @@ export class EditorPane implements Pane {
 
   private onDocChange(): void {
     this.refreshDirty();
-    if (this.dirty) this.scheduleDraft();
-    else if (this.draftOnDisk || this.draftTimer !== null) void this.discardDraft();
+    const action = draftFileAction(this.pendingDraft !== null, this.dirty);
+    if (action === "write") this.scheduleDraft();
+    else if (action === "delete" && (this.draftOnDisk || this.draftTimer !== null)) {
+      void this.discardDraft();
+    }
   }
 
   private refreshDirty(): void {
@@ -676,14 +712,14 @@ export class EditorPane implements Pane {
     if (this.draftTimer !== null) clearTimeout(this.draftTimer);
     this.draftTimer = window.setTimeout(() => {
       this.draftTimer = null;
-      if (this.isDirty()) this.writeDraft();
+      if (draftFileAction(this.pendingDraft !== null, this.dirty) === "write") this.writeDraft();
     }, DRAFT_DELAY_MS);
   }
 
   private writeDraft(): void {
     const h = this.handle;
     const f = this.file;
-    if (!h || !f || !this.path) return;
+    if (!h || !f || !this.path || this.pendingDraft) return;
     const draft: Draft = {
       v: 1,
       path: this.path,
@@ -705,7 +741,10 @@ export class EditorPane implements Pane {
     const draft = parseDraft(blob);
     if (draftOffer(draft, path, diskText) === "offer" && draft) {
       this.draftOnDisk = true;
-      this.setBanner({ kind: "draft", draft });
+      this.pendingDraft = draft;
+      this.renderBanner();
+      this.renderChrome();
+      this.opts.onDirtyChange?.();
     } else if (blob) {
       void api.deleteEditorDraft(this.id).catch(() => {});
     }
@@ -718,7 +757,10 @@ export class EditorPane implements Pane {
     const h = this.handle;
     if (!h || !this.file) return;
     this.file = { ...this.file, eol: draft.eol, bom: draft.bom, stamp: draft.base };
-    this.setBanner(null);
+    // Answered: from here the draft is an ordinary draft of this buffer,
+    // rewritten by the next edit's debounce.
+    this.pendingDraft = null;
+    this.renderBanner();
     h.replaceAll(draft.text);
     this.refreshDirty();
     this.renderChrome();
@@ -731,31 +773,46 @@ export class EditorPane implements Pane {
     this.renderBanner();
   }
 
+  /// Up to two rows: a pending recovered draft (always first — it is the
+  /// only copy of those edits), then the file-state banner.
   private renderBanner(): void {
-    const b = this.banner;
     this.bannerEl.replaceChildren();
-    this.bannerEl.hidden = !b;
-    this.bannerEl.className = "editor__banner";
-    if (!b) return;
-    const text = document.createElement("span");
-    text.className = "editor__banner-text";
-    const actions = document.createElement("span");
-    actions.className = "editor__banner-actions";
-    const name = this.displayName();
-    const button = (key: string, onClick: () => void, primary = false) => {
-      const el = document.createElement("button");
-      el.type = "button";
-      el.className = primary ? "editor__banner-btn editor__banner-btn--primary" : "editor__banner-btn";
-      el.textContent = t(key);
-      el.addEventListener("click", onClick);
-      actions.appendChild(el);
+    const draft = this.pendingDraft;
+    const b = this.banner;
+    this.bannerEl.hidden = !draft && !b;
+    const row = (warn: boolean) => {
+      const el = document.createElement("div");
+      el.className = warn ? "editor__banner editor__banner--warn" : "editor__banner";
+      const text = document.createElement("span");
+      text.className = "editor__banner-text";
+      const actions = document.createElement("span");
+      actions.className = "editor__banner-actions";
+      el.append(text, actions);
+      this.bannerEl.appendChild(el);
+      const button = (key: string, onClick: () => void, primary = false) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = primary ? "editor__banner-btn editor__banner-btn--primary" : "editor__banner-btn";
+        btn.textContent = t(key);
+        btn.addEventListener("click", onClick);
+        actions.appendChild(btn);
+      };
+      return { text, button };
     };
+    if (draft) {
+      const r = row(true);
+      r.text.textContent = t("editor.draftFound");
+      r.button("editor.discard", () => void this.discardDraft());
+      r.button("editor.restore", () => this.restoreDraft(draft), true);
+    }
+    if (!b) return;
+    const name = this.displayName();
     switch (b.kind) {
-      case "changed":
-        this.bannerEl.classList.add("editor__banner--warn");
-        text.textContent = fill(t("editor.changedOnDisk"), { name });
-        button("editor.reload", () => void this.reloadFromDisk());
-        button(
+      case "changed": {
+        const r = row(true);
+        r.text.textContent = fill(t("editor.changedOnDisk"), { name });
+        r.button("editor.reload", () => void this.reloadFromDisk());
+        r.button(
           "editor.keepMine",
           () => {
             this.dismissedSha = b.sha;
@@ -764,28 +821,25 @@ export class EditorPane implements Pane {
           true,
         );
         break;
-      case "deleted":
-        this.bannerEl.classList.add("editor__banner--warn");
-        text.textContent = fill(t("editor.deletedOnDisk"), { name });
-        button("editor.save", () => void this.save(), true);
+      }
+      case "deleted": {
+        const r = row(true);
+        r.text.textContent = fill(t("editor.deletedOnDisk"), { name });
+        r.button("editor.save", () => void this.save(), true);
         break;
-      case "draft":
-        text.textContent = t("editor.draftFound");
-        button("editor.discard", () => {
-          void this.discardDraft();
-          this.setBanner(null);
-        });
-        button("editor.restore", () => this.restoreDraft(b.draft), true);
+      }
+      case "mixedEol": {
+        const r = row(false);
+        r.text.textContent = t("editor.mixedEol");
+        r.button("editor.dismiss", () => this.setBanner(null));
         break;
-      case "mixedEol":
-        text.textContent = t("editor.mixedEol");
-        button("editor.dismiss", () => this.setBanner(null));
+      }
+      case "readOnly": {
+        const r = row(false);
+        r.text.textContent = t("editor.readOnlyLarge");
         break;
-      case "readOnly":
-        text.textContent = t("editor.readOnlyLarge");
-        break;
+      }
     }
-    this.bannerEl.append(text, actions);
   }
 
   /// Everything that depends on the file / dirty / problem state.

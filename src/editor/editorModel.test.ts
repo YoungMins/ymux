@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Text } from "@codemirror/state";
 import {
+  closeState,
+  draftFileAction,
   conflictDecision,
   copyCandidate,
   cursorAfterReload,
@@ -9,6 +11,7 @@ import {
   languageForPath,
   openFileDecision,
   pollStep,
+  writeArgsFor,
 } from "./editorModel";
 
 describe("languageForPath", () => {
@@ -103,6 +106,75 @@ describe("openFileDecision (viewer-tab reuse)", () => {
     expect(openFileDecision("/w/a.rs", false, "/w/b.rs")).toBe("open");
     expect(openFileDecision("/w/a.rs", true, "/w/b.rs")).toBe("ask");
     expect(openFileDecision(null, false, "/w/b.rs")).toBe("open");
+  });
+});
+
+describe("closeState", () => {
+  const base = {
+    loaded: true,
+    readOnly: false,
+    dirty: false,
+    deletedOnDisk: false,
+    pendingDraft: false,
+    hasPath: true,
+  };
+
+  it("a clean loaded file has nothing to lose", () => {
+    expect(closeState(base)).toEqual({ unsaved: false, savable: false });
+  });
+
+  it("a dirty file is unsaved and savable", () => {
+    expect(closeState({ ...base, dirty: true })).toEqual({ unsaved: true, savable: true });
+  });
+
+  it("a file deleted on disk is unsaved even with no edits", () => {
+    expect(closeState({ ...base, deletedOnDisk: true }).unsaved).toBe(true);
+  });
+
+  it("a pending recovered draft is unsaved but not savable, even over a clean buffer", () => {
+    expect(closeState({ ...base, pendingDraft: true })).toEqual({ unsaved: true, savable: false });
+    expect(closeState({ ...base, pendingDraft: true, dirty: true }).savable).toBe(false);
+  });
+
+  it("read-only and not-loaded panes never block a close", () => {
+    expect(closeState({ ...base, readOnly: true, dirty: true }).unsaved).toBe(false);
+    expect(closeState({ ...base, loaded: false, dirty: true }).unsaved).toBe(false);
+  });
+});
+
+describe("draftFileAction", () => {
+  it("never touches a pending recovered draft", () => {
+    expect(draftFileAction(true, true)).toBe("keep");
+    expect(draftFileAction(true, false)).toBe("keep");
+  });
+
+  it("drafts a dirty buffer and drops the draft of a clean one", () => {
+    expect(draftFileAction(false, true)).toBe("write");
+    expect(draftFileAction(false, false)).toBe("delete");
+  });
+});
+
+describe("writeArgsFor", () => {
+  const stamp = { modified_ms: 7, sha256: "abc" };
+  const base = { path: "C:\\w\\a.rs", text: "x\n", eol: "crlf" as const, bom: true, stamp, goneOnDisk: false };
+
+  it("guards the write with the loaded stamp", () => {
+    expect(writeArgsFor(base).expect).toEqual(stamp);
+  });
+
+  it("passes the BOM and the line ending back as read", () => {
+    const a = writeArgsFor(base);
+    expect(a.bom).toBe(true);
+    expect(a.eol).toBe("crlf");
+    expect(writeArgsFor({ ...base, bom: false }).bom).toBe(false);
+  });
+
+  it("writes a mixed-ending file as LF", () => {
+    expect(writeArgsFor({ ...base, eol: "mixed" }).eol).toBe("lf");
+  });
+
+  it("drops the guard only to recreate a file confirmed gone", () => {
+    expect(writeArgsFor({ ...base, goneOnDisk: true }).expect).toBeNull();
   });
 });
 

@@ -6,6 +6,8 @@
 // tested: when the buffer is dirty, what an on-disk change means for it,
 // whether opening another file in the same pane must ask first.
 
+import { saveEol, type Eol } from "./eol";
+
 /// A grammar the editor ships in v1 (spec §3.3).
 export type LangId =
   | "rust"
@@ -127,6 +129,69 @@ export function openFileDecision(
 ): "focus" | "open" | "ask" {
   if (current !== null && current.normalize("NFC") === next.normalize("NFC")) return "focus";
   return dirty ? "ask" : "open";
+}
+
+export interface BufferState {
+  /// A file is loaded (not loading, not an error).
+  loaded: boolean;
+  readOnly: boolean;
+  /// The buffer differs from the last load/save.
+  dirty: boolean;
+  /// The file vanished from disk: the buffer is now the only copy.
+  deletedOnDisk: boolean;
+  /// A recovered draft is offered and not yet restored or discarded: the
+  /// only copy of edits from a crashed session.
+  pendingDraft: boolean;
+  hasPath: boolean;
+}
+
+/// What closing this pane would lose, and whether "Save" can protect it.
+///
+/// A pending draft counts as unsaved even over a clean buffer — closing
+/// would delete the only copy — but Save cannot protect it (it would write
+/// the buffer, not the draft), so the prompt offers Discard/Cancel.
+export function closeState(s: BufferState): { unsaved: boolean; savable: boolean } {
+  if (s.pendingDraft) return { unsaved: true, savable: false };
+  if (!s.loaded || s.readOnly) return { unsaved: false, savable: false };
+  const unsaved = s.dirty || s.deletedOnDisk;
+  return { unsaved, savable: unsaved && s.hasPath };
+}
+
+/// What to do with this pane's draft file after an edit, a save or a
+/// reload. While a recovered draft is pending the file is left alone —
+/// typing, undoing to clean, saving, or an agent's rewrite reloading the
+/// buffer must not overwrite or delete the only copy of those edits before
+/// the user has answered Restore / Discard.
+export function draftFileAction(pendingDraft: boolean, dirty: boolean): "keep" | "write" | "delete" {
+  if (pendingDraft) return "keep";
+  return dirty ? "write" : "delete";
+}
+
+export interface WriteStamp {
+  modified_ms: number;
+  sha256: string;
+}
+
+/// The arguments of a save (`fs_write_text`). The guard is the stamp the
+/// buffer was loaded or last saved from — so a file changed underneath
+/// comes back `conflict` — and is dropped (`null`, an unconditional write)
+/// only to recreate a file that was deleted and is confirmed still gone.
+/// The BOM goes back as it was read; a mixed-EOL file is written as LF.
+export function writeArgsFor(o: {
+  path: string;
+  text: string;
+  eol: Eol;
+  bom: boolean;
+  stamp: WriteStamp;
+  goneOnDisk: boolean;
+}): { path: string; text: string; eol: Eol; bom: boolean; expect: WriteStamp | null } {
+  return {
+    path: o.path,
+    text: o.text,
+    eol: saveEol(o.eol),
+    bom: o.bom,
+    expect: o.goneOnDisk ? null : o.stamp,
+  };
 }
 
 /// Where the cursor goes after a silent reload: the same line (clamped to

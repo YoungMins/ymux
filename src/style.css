@@ -2629,12 +2629,22 @@ body,
   border-color: var(--border);
 }
 
-.editor__banner {
+.editor__banners {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.editor__banners[hidden] {
+  display: none;
+}
+
+.editor__banner {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 4px;
   padding: 4px 6px 4px 10px;
   background: var(--bg-alt);
   border: 1px solid var(--border);
@@ -2642,10 +2652,6 @@ body,
   border-radius: 4px;
   color: var(--fg);
   font-size: 12px;
-}
-
-.editor__banner[hidden] {
-  display: none;
 }
 
 .editor__banner--warn {

@@ -1286,7 +1286,9 @@ export class WorkspaceManager {
   /// dirty editor asks with its own prompt. Resolves true to go ahead.
   private async confirmCloseEditors(editors: EditorPane[]): Promise<boolean> {
     const plan = closePlan(
-      editors.map((e) => ({ name: e.displayName(), dirty: e.isDirty(), hasPath: e.hasPath() })),
+      // `hasPath` here means "Save can protect it" (a pending recovered
+      // draft cannot be saved from a close prompt).
+      editors.map((e) => ({ name: e.displayName(), dirty: e.isDirty(), hasPath: e.canSaveOnClose() })),
     );
     if (plan.kind === "close") return true;
     const dirty = editors.filter((e) => e.isDirty());
