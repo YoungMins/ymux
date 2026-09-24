@@ -369,9 +369,15 @@ pub(crate) mod imp {
         let bytes = textfile::encode(&args.text, args.eol, args.bom, path)?;
 
         if let Some(expect) = &args.expect {
-            let on_disk = current_stamp(path)?;
-            if on_disk.as_ref() != Some(expect) {
-                return Err(YmuxError::Conflict(path.to_string()));
+            // Compared on the **hash only**, not on the mtime. A formatter
+            // or a `touch` that rewrites identical bytes is not a conflict:
+            // overwriting them loses nothing, and reporting one would make
+            // the editor cry wolf on every agent run that reformatted and
+            // changed nothing. A missing file *is* a conflict — it was
+            // deleted under the buffer.
+            match current_stamp(path)? {
+                Some(on_disk) if on_disk.sha256 == expect.sha256 => {}
+                _ => return Err(YmuxError::Conflict(path.to_string())),
             }
         }
 
@@ -427,8 +433,10 @@ pub(crate) mod imp {
                 return true;
             }
         }
-        // Newer Rust exposes this directly on some targets.
-        matches!(e.kind(), io::ErrorKind::CrossesDevices)
+        // `io::ErrorKind::CrossesDevices` would read better but postdates
+        // this crate's `rust-version = "1.77"`; the two errnos above cover
+        // both shipping platforms.
+        false
     }
 }
 
@@ -681,8 +689,50 @@ mod tests {
         std::fs::write(&lower, b"x").unwrap();
         let upper = s(d.path().join("README.md"));
         imp::rename(&lower, &upper).unwrap();
-        // Both spellings resolve, whichever the volume kept.
-        assert!(Path::new(&upper).exists() || Path::new(&lower).exists());
+
+        // `exists()` is useless here — on a case-insensitive volume both
+        // spellings resolve either way. Ask the directory what the name
+        // actually is.
+        let listed = imp::list_dir(&s(d.path().to_path_buf()), false).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "README.md");
+    }
+
+    /// A Windows **junction** is the case that matters in practice — it
+    /// needs no privilege to create, unlike a symlink, so it is what users
+    /// and tools actually leave lying around. `mklink /J` is a `cmd`
+    /// builtin, so this is the one place the test suite shells out.
+    #[cfg(windows)]
+    #[test]
+    fn deleting_a_junction_spares_its_target() {
+        let d = tmp();
+        let target = d.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("precious.txt"), b"keep me").unwrap();
+        let link = d.path().join("junction");
+
+        let out = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .expect("run mklink");
+        assert!(
+            out.status.success(),
+            "mklink /J failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let info = imp::stat(&s(link.clone())).unwrap();
+        assert!(info.is_symlink, "a junction is a reparse point");
+        assert!(info.is_dir, "...whose target is a directory");
+
+        imp::delete(std::slice::from_ref(&s(link.clone())), false).unwrap();
+        assert!(!link.exists(), "the junction is gone");
+        assert!(
+            target.join("precious.txt").exists(),
+            "the target must survive"
+        );
     }
 
     #[test]
@@ -886,6 +936,30 @@ mod tests {
         })
         .unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"x");
+    }
+
+    /// The other side of the conflict rule: a rewrite with identical bytes
+    /// moves the mtime but is not a conflict, or an agent that reformatted
+    /// and changed nothing would make the editor cry wolf.
+    #[test]
+    fn an_identical_rewrite_is_not_a_conflict() {
+        let d = tmp();
+        let p = s(d.path().join("touched.txt"));
+        std::fs::write(&p, b"same\n").unwrap();
+        let read = imp::read_text(&p).unwrap();
+
+        // Rewrite the very same bytes; the mtime moves, the hash does not.
+        std::fs::write(&p, b"same\n").unwrap();
+
+        imp::write_text(&WriteTextArgs {
+            path: p.clone(),
+            text: "my edit\n".into(),
+            eol: Eol::Lf,
+            bom: false,
+            expect: Some(read.stamp),
+        })
+        .expect("an identical rewrite must not block the save");
+        assert_eq!(std::fs::read(&p).unwrap(), b"my edit\n");
     }
 
     #[test]

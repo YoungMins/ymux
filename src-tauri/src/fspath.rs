@@ -78,18 +78,29 @@ pub fn caller_allowed(label: &str) -> bool {
 /// equal, so `a.origin() == b.origin()` would reject macOS's own
 /// `tauri://localhost`.
 ///
+/// `allowed` is built from the **configuration** ([`allowed_origins`]), not
+/// from whatever the webview currently shows. That distinction is
+/// load-bearing: comparing against `webview.url()` would mean that if the
+/// `main` webview were ever navigated to a remote page, that page's origin
+/// would trivially equal the app origin and the guard would pass. Tauri's
+/// own `is_local_url` compares against the configured app URL for the same
+/// reason. (Today `BrowserPane`'s iframe carries a `sandbox` without
+/// `allow-top-navigation` and no navigation handler exists, so the
+/// navigation is not reachable — the guard simply does not depend on that
+/// staying true.)
+///
 /// Fails closed. A missing header, `null` (a sandboxed or `data:` frame), an
 /// unparseable value or a host-only near-miss such as
 /// `http://tauri.localhost.evil.com` all return `false`.
-pub fn origin_is_local(origin: Option<&str>, app_url: &str) -> bool {
+pub fn origin_is_local<S: AsRef<str>>(origin: Option<&str>, allowed: &[S]) -> bool {
     let Some(origin) = origin else {
-        // No `Origin` at all. Tauri's `fetch` path always carries one; the
-        // `postMessage` fallback (taken only when the custom protocol is
-        // blocked) does not, and there the header map is deserialized from
-        // the caller's own JSON (`src/ipc/protocol.rs:304`) and so would be
-        // forgeable anyway. Refusing is the only safe answer in both cases.
         return false;
     };
+    allowed.iter().any(|a| same_origin(origin, a.as_ref()))
+}
+
+/// Component-wise origin equality for one candidate.
+fn same_origin(origin: &str, app_url: &str) -> bool {
     if origin.trim().eq_ignore_ascii_case("null") {
         return false;
     }
@@ -141,15 +152,45 @@ pub fn guard_local(
             webview.label()
         )));
     }
-    let app_url = webview
-        .url()
-        .map_err(|e| crate::YmuxError::Forbidden(format!("{cmd}: no app origin to check ({e})")))?;
-    if !origin_is_local(request_origin(request), app_url.as_str()) {
+    if !origin_is_local(request_origin(request), &allowed_origins(webview)) {
         return Err(crate::YmuxError::Forbidden(format!(
             "{cmd}: only ymux's own document may call this, not embedded web content"
         )));
     }
     Ok(())
+}
+
+/// The origins ymux's own document can legitimately have, derived from the
+/// running configuration rather than from the webview's current URL.
+///
+/// Mirrors `AppManager::tauri_protocol_url` (`tauri-2.10.3`
+/// `src/manager/mod.rs:331`): Windows and Android serve the app over
+/// `http(s)://tauri.localhost`, everything else over `tauri://localhost`.
+/// The dev-server origin is added only in a dev build, so a release binary
+/// never accepts `http://localhost:1420`.
+#[cfg(feature = "desktop")]
+fn allowed_origins(webview: &tauri::Webview) -> Vec<String> {
+    use tauri::Manager;
+    let cfg = webview.config();
+
+    let https = cfg.app.windows.iter().any(|w| w.use_https_scheme);
+    let mut out = Vec::with_capacity(2);
+    if cfg!(windows) || cfg!(target_os = "android") {
+        out.push(if https {
+            "https://tauri.localhost".to_string()
+        } else {
+            "http://tauri.localhost".to_string()
+        });
+    } else {
+        out.push("tauri://localhost".to_string());
+    }
+
+    #[cfg(dev)]
+    if let Some(dev_url) = &cfg.build.dev_url {
+        out.push(dev_url.to_string());
+    }
+
+    out
 }
 
 /// Longest raw candidate worth looking at. Comfortably past any real path
@@ -536,11 +577,38 @@ mod tests {
 
     #[test]
     fn origin_accepts_ymuxs_own_document() {
-        assert!(origin_is_local(Some("tauri://localhost"), APP_URLS[0]));
-        assert!(origin_is_local(Some("http://tauri.localhost"), APP_URLS[1]));
-        assert!(origin_is_local(Some("http://localhost:1420"), APP_URLS[2]));
+        assert!(origin_is_local(Some("tauri://localhost"), &[APP_URLS[0]]));
+        assert!(origin_is_local(
+            Some("http://tauri.localhost"),
+            &[APP_URLS[1]]
+        ));
+        assert!(origin_is_local(
+            Some("http://localhost:1420"),
+            &[APP_URLS[2]]
+        ));
         // A scheme is case-insensitive per RFC 3986, and so is a host.
-        assert!(origin_is_local(Some("TAURI://LocalHost"), APP_URLS[0]));
+        assert!(origin_is_local(Some("TAURI://LocalHost"), &[APP_URLS[0]]));
+        // A dev build allows the app origin *and* the dev server; any one
+        // match is enough.
+        assert!(origin_is_local(
+            Some("http://localhost:1420"),
+            &[APP_URLS[1], APP_URLS[2]]
+        ));
+    }
+
+    /// The list is built from configuration, never from the page currently
+    /// loaded. If it were the current URL, a `main` webview that had been
+    /// navigated to a remote page would hand that page an origin equal to
+    /// the app's and the guard would pass.
+    #[test]
+    fn a_remote_page_is_refused_even_if_it_is_what_main_is_showing() {
+        // "main is showing https://evil.example" is simply not expressible:
+        // the allow-list never contains a remote origin.
+        let allowed = [APP_URLS[1]];
+        assert!(!origin_is_local(Some("https://evil.example"), &allowed));
+        // An empty allow-list refuses everything rather than allowing it.
+        let none: [&str; 0] = [];
+        assert!(!origin_is_local(Some("http://tauri.localhost"), &none));
     }
 
     /// The case the label check cannot see: a page in a `browser` pane is an
@@ -548,9 +616,11 @@ mod tests {
     #[test]
     fn origin_rejects_remote_web_content() {
         for app in APP_URLS {
-            assert!(!origin_is_local(Some("https://evil.example"), app));
-            assert!(!origin_is_local(Some("http://evil.example"), app));
+            assert!(!origin_is_local(Some("https://evil.example"), &[*app]));
+            assert!(!origin_is_local(Some("http://evil.example"), &[*app]));
         }
+        // Not even when every app origin is on the list at once.
+        assert!(!origin_is_local(Some("https://evil.example"), APP_URLS));
     }
 
     /// Fail-closed cases. A missing header is the important one: Tauri's
@@ -558,49 +628,45 @@ mod tests {
     /// would also accept a forged `Origin` on that path.
     #[test]
     fn origin_fails_closed() {
-        assert!(!origin_is_local(None, APP_URLS[1]));
+        let app = [APP_URLS[1]];
+        assert!(!origin_is_local(None, &app));
         // A sandboxed iframe or a `data:`/`blob:` document.
-        assert!(!origin_is_local(Some("null"), APP_URLS[1]));
-        assert!(!origin_is_local(Some(" NULL "), APP_URLS[1]));
-        assert!(!origin_is_local(Some(""), APP_URLS[1]));
-        assert!(!origin_is_local(Some("not a url"), APP_URLS[1]));
+        assert!(!origin_is_local(Some("null"), &app));
+        assert!(!origin_is_local(Some(" NULL "), &app));
+        assert!(!origin_is_local(Some(""), &app));
+        assert!(!origin_is_local(Some("not a url"), &app));
         // No authority at all.
-        assert!(!origin_is_local(Some("data:text/html,x"), APP_URLS[1]));
-        // An unparseable app URL must not degrade into "allow".
-        assert!(!origin_is_local(Some("http://tauri.localhost"), "nonsense"));
+        assert!(!origin_is_local(Some("data:text/html,x"), &app));
+        // An unparseable entry on the allow-list must not degrade into
+        // "allow".
+        assert!(!origin_is_local(
+            Some("http://tauri.localhost"),
+            &["nonsense"]
+        ));
     }
 
     /// The near-misses a naive `starts_with` or `contains` would wave
     /// through.
     #[test]
     fn origin_rejects_host_and_port_near_misses() {
+        let app = ["http://tauri.localhost/"];
         assert!(!origin_is_local(
             Some("http://tauri.localhost.evil.example"),
-            "http://tauri.localhost/"
+            &app
         ));
-        assert!(!origin_is_local(
-            Some("http://eviltauri.localhost"),
-            "http://tauri.localhost/"
-        ));
+        assert!(!origin_is_local(Some("http://eviltauri.localhost"), &app));
         // Scheme must match: an https page is not the app.
-        assert!(!origin_is_local(
-            Some("https://tauri.localhost"),
-            "http://tauri.localhost/"
-        ));
+        assert!(!origin_is_local(Some("https://tauri.localhost"), &app));
+
         // Port must match, and the default must not be confused with a
         // different explicit one.
-        assert!(!origin_is_local(
-            Some("http://localhost:1421"),
-            "http://localhost:1420/"
-        ));
-        assert!(!origin_is_local(
-            Some("http://localhost"),
-            "http://localhost:1420/"
-        ));
+        let dev = ["http://localhost:1420/"];
+        assert!(!origin_is_local(Some("http://localhost:1421"), &dev));
+        assert!(!origin_is_local(Some("http://localhost"), &dev));
         // ...but an explicit default port is the same origin.
         assert!(origin_is_local(
             Some("http://localhost:80"),
-            "http://localhost/"
+            &["http://localhost/"]
         ));
     }
 

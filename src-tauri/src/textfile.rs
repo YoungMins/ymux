@@ -76,11 +76,12 @@ impl Eol {
 
 /// Identity of a file's contents at a moment in time.
 ///
-/// Both halves are carried because neither is sufficient: an mtime can be
-/// unavailable or coarse, and hashing alone cannot distinguish "rewritten
-/// with the same bytes" (which is harmless) from a real conflict. A write
-/// compares this against what is on disk and returns
-/// [`YmuxError::Conflict`] rather than clobbering.
+/// Both halves are carried, but a conditional write compares the **hash
+/// only** (see `fsops::imp::write_text`): a formatter or a `touch` that
+/// rewrites identical bytes moves the mtime and is not a conflict, because
+/// overwriting those bytes loses nothing. The mtime is kept because the
+/// editor's focus-based staleness poll wants a cheap "might have changed?"
+/// before it reads the file to hash it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentStamp {
     /// Unix-epoch milliseconds, or 0 if unknown.
