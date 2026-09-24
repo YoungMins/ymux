@@ -58,13 +58,13 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy (workspace, no tauri deps)
-        run: cargo clippy -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit -- -D warnings
+        run: cargo clippy -p ytheme -p yipc -p ypath -p ylauncher -- -D warnings
 
       - name: cargo clippy (ymux lib, no tauri runtime)
         run: cargo clippy --no-default-features --lib --tests -p ymux -- -D warnings
 
-      - name: cargo test (tools + shared crates)
-        run: cargo test -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit
+      - name: cargo test (y hook relay + shared crates)
+        run: cargo test -p ytheme -p yipc -p ypath -p ylauncher
 
       - name: cargo test (ymux lib, no tauri runtime)
         run: cargo test --no-default-features --lib -p ymux
@@ -88,7 +88,7 @@ jobs:
         run: |
           mkdir -p src-tauri/binaries
           TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
-          for tool in ymon ydir ycode y ygit; do
+          for tool in y; do
             touch "src-tauri/binaries/${tool}-${TRIPLE}"
           done
 

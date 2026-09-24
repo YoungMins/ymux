@@ -1,6 +1,7 @@
-// Build the ymux companion tools (ymon, ydir, ycode, ylauncher) and copy
-// them into src-tauri/binaries/ with the target-triple suffix Tauri's
-// externalBin requires. Called by `pnpm build` before `tauri build`.
+// Build ymux's one sidecar — `y`, the Claude Code hook relay (package
+// `ylauncher`) — and copy it into src-tauri/binaries/ with the target-triple
+// suffix Tauri's externalBin requires. Called by `pnpm build` before
+// `tauri build`. The TUI tools that used to ship beside it are GUI panes now.
 //
 // Usage: node scripts/build-tools.mjs
 
@@ -14,13 +15,9 @@ const root = join(__dirname, "..");
 
 // Workspace members to bundle. Each entry: cargo package name → output binary
 // basename (matches the [[bin]] name in the package's Cargo.toml).
-const TOOLS = [
-  { pkg: "ymon", bin: "ymon" },
-  { pkg: "ydir", bin: "ydir" },
-  { pkg: "ycode", bin: "ycode" },
-  { pkg: "ylauncher", bin: "y" },
-  { pkg: "ygit", bin: "ygit" },
-];
+// Must match `bundle.externalBin` in tauri.conf.json and the dummy-file loop
+// in .github/workflows/release.yml (CLAUDE.md rule 4).
+const TOOLS = [{ pkg: "ylauncher", bin: "y" }];
 
 function run(cmd) {
   console.log(`> ${cmd}`);
@@ -72,8 +69,9 @@ for (const tool of TOOLS) {
   copyFileSync(srcPath, destPath);
   if (!isWindows) {
     // Tauri copies sidecars into `ymux.app/Contents/MacOS/` verbatim. If the
-    // executable bit is lost along the way the tools silently fail to launch
-    // from a pane, so set it explicitly rather than trusting copy semantics.
+    // executable bit is lost along the way Claude Code's hook invocation of
+    // `y` silently fails, so set it explicitly rather than trusting copy
+    // semantics.
     chmodSync(destPath, 0o755);
   }
   console.log(`copied ${srcPath} → ${destPath}`);

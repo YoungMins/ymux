@@ -2,7 +2,7 @@
 name = "ytheme"
 version = "0.1.0"
 edition = "2021"
-description = "Shared theme and config directory utilities for the ymux tool family"
+description = "Shared theme and config directory utilities for ymux"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

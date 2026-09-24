@@ -1,9 +1,9 @@
-//! Shared theme and configuration directory utilities for the ymux tool
-//! family (ymux, ymon, ydir, ycode, ylauncher).
+//! Shared theme and configuration directory utilities for ymux.
 //!
-//! Every y* tool reads its colors from `%APPDATA%\ymux\theme.toml` (Windows)
-//! or `~/.config/ymux/theme.toml` (Unix dev hosts). If the file doesn't
-//! exist, the built-in Night Owl–inspired defaults are used.
+//! The palette lives in `%APPDATA%\ymux\theme.toml` (Windows) or
+//! `~/.config/ymux/theme.toml` (Unix). The settings overlay edits it and the
+//! editor pane reads its syntax colours. If the file doesn't exist, the
+//! built-in Night Owl–inspired defaults are used.
 
 use std::path::{Path, PathBuf};
 
@@ -21,12 +21,6 @@ pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
-}
-
-/// Return the path where tool-specific config lives.
-/// e.g. `config_dir_for("ymon")` → `%APPDATA%\ymux\ymon\`
-pub fn config_dir_for(tool: &str) -> Option<PathBuf> {
-    config_dir().map(|d| d.join(tool))
 }
 
 /// Return the path to `theme.toml`.
@@ -63,7 +57,7 @@ impl Default for HexColor {
     }
 }
 
-/// Colors used by yCode's syntax highlighter. Maps to TextMate-style scope
+/// Colors used by the editor pane's syntax highlighting. Maps to TextMate-style scope
 /// selectors (keyword.*, string, comment, constant.numeric, entity.name.function,
 /// entity.name.type, etc.). Defaults are Night Owl-inspired and harmonize
 /// with the main palette.
@@ -103,7 +97,7 @@ impl Default for SyntaxColors {
     }
 }
 
-/// The full theme definition shared across all y* tools.
+/// The full theme definition: the ymux palette plus the editor syntax colours.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Theme {
@@ -162,12 +156,6 @@ impl Theme {
         let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(dir.join("theme.toml"), text)
     }
-}
-
-/// Convenience: load the theme (or defaults) and return it. Every y* tool
-/// calls this at startup.
-pub fn load_theme() -> Theme {
-    Theme::load()
 }
 
 #[cfg(test)]
@@ -230,13 +218,6 @@ mod tests {
         // On any system with a home directory this should return Some
         if let Some(dir) = config_dir() {
             assert!(dir.to_string_lossy().contains("ymux"));
-        }
-    }
-
-    #[test]
-    fn config_dir_for_appends_tool_name() {
-        if let Some(dir) = config_dir_for("ymon") {
-            assert!(dir.to_string_lossy().ends_with("ymon"));
         }
     }
 }

@@ -1,5 +1,0 @@
-[package]
-name = "yversion"
-version = "0.1.0"
-edition = "2021"
-description = "Shared ymux release version exposed to every y* tool"
