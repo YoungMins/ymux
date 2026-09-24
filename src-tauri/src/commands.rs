@@ -492,11 +492,12 @@ pub async fn resolve_paths(
 /// Windows, `open` on macOS, both via `opener`. Neither builds a command
 /// line, so `&`, `^`, `%` and quotes in a filename are inert.
 ///
-/// A directory opens in the file manager. An executable or script is
-/// *revealed* in the file manager rather than launched: clicking a path in
-/// terminal output means "show me this", and terminal output is
-/// attacker-influenced, so `ShellExecuteW` running `evil.bat` is not an
-/// acceptable reading of the click. See [`crate::fspath::should_reveal`].
+/// A directory opens in the file manager. Only an allowlist of document
+/// types is opened with its program; everything else is *revealed* in the
+/// file manager rather than launched: clicking a path in terminal output
+/// means "show me this", and terminal output is attacker-influenced, so
+/// `ShellExecuteW` running `evil.bat` is not an acceptable reading of the
+/// click. See [`crate::fspath::should_reveal`].
 #[tauri::command]
 pub async fn open_path(webview: Webview, request: Request<'_>, path: String) -> YmuxResult<()> {
     guard_local(&webview, &request, "open_path")?;
@@ -512,10 +513,17 @@ pub async fn open_path(webview: Webview, request: Request<'_>, path: String) -> 
         // from reaching SMB through a `metadata` call here.
         let resolved = crate::fspath::resolve_local(Path::new(&path))
             .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
+        // A junction's target comes back verbatim (`\\?\C:\…`), which
+        // `ShellExecuteW` does not reliably accept.
+        let resolved = crate::fspath::strip_verbatim(&resolved);
         let p = resolved.as_path();
         let meta = std::fs::symlink_metadata(p)
             .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
-        let result = if crate::fspath::should_reveal(p, meta.is_dir()) {
+        // Judged on the resolved name, so a `notes.md` symlink to `evil.bat`
+        // is judged as `evil.bat`. An allowlist: anything not a known
+        // document type is revealed.
+        let reveal = crate::fspath::should_reveal(p, meta.is_dir(), crate::fspath::exec_bit(&meta));
+        let result = if reveal {
             opener::reveal(p)
         } else {
             opener::open(p)

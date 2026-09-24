@@ -35,8 +35,9 @@
 //!  2. **"Open with the default program" runs executables.** `ShellExecuteW`
 //!     on `evil.bat` does not open it, it executes it — and the user's
 //!     mental model for clicking a link is "show me this", not "run this".
-//!     Executables and scripts are therefore revealed in the file manager
-//!     instead of launched. See [`should_reveal`].
+//!     Only an allowlist of document types is opened; everything else —
+//!     and anything with an execute bit — is revealed in the file manager
+//!     instead. See [`should_reveal`].
 //!
 //! Nothing here ever builds a shell command line. `opener` uses
 //! `ShellExecuteW` on Windows and `Command::new("open")` on macOS, both of
@@ -749,80 +750,107 @@ pub fn strip_verbatim(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Extensions that `ShellExecuteW` or `open` would *run* rather than show.
+/// File types a click may hand to the OS default program. **Everything
+/// else is revealed** in the file manager instead of opened.
 ///
-/// Opening one of these on a click would turn "the terminal printed a path"
-/// into "the terminal got code executed", with the user believing they asked
-/// to look at a file. They are revealed in the file manager instead.
-const RUNNABLE_EXTENSIONS: &[&str] = &[
-    // Windows executables and installers
-    "exe",
-    "com",
-    "scr",
-    "pif",
-    "msi",
-    "msp",
-    "msc",
-    "cpl",
-    "hta",
-    "jar", //
-    // Windows shells and script hosts
-    "bat",
-    "cmd",
-    "ps1",
-    "psm1",
-    "ps1xml",
-    "vbs",
-    "vbe",
-    "js",
-    "jse",
-    "wsf",
-    "wsh",
-    "reg",
-    // Shortcuts, which can point at anything
-    "lnk",
-    "url",
-    "scf", //
-    // macOS
-    "app",
-    "command",
-    "workflow",
-    "scpt",
-    "applescript",
-    "pkg",
-    "mpkg",
-    "term",
-    // ClickOnce application reference: opening one downloads and runs.
-    "appref-ms",
+/// An allowlist because the previous denylist could not be complete: every
+/// interpreter installer registers its own "open = run" association
+/// (`.py`, `.pyw`, `.sh` under Git for Windows, `.rb`, `.pl`), Windows keeps
+/// adding executable document types (`.settingcontent-ms`, `.appinstaller`,
+/// `.application`, `.library-ms`, `.search-ms`, `.xll`, `.wsc`, `.sct`,
+/// `.chm`), and disk images auto-mount (`.iso`, `.vhd`, `.vhdx`). A type
+/// missing from this list costs one extra click in the file manager; a type
+/// missing from a denylist cost code execution.
+///
+/// Every entry is a *document* for which no mainstream default handler
+/// executes content on open. Deliberately absent, although they look like
+/// "source files":
+///
+///  - `js` (Windows Script Host runs it), `jsx` (Adobe ExtendScript),
+///    `py`/`pyw`/`sh`/`rb`/`pl`/`php`/`ps1`/`lua`/`tcl` (interpreters
+///    register "open" as "run"), `jar`;
+///  - `sln`/`csproj`/`vcxproj` and friends: Visual Studio runs MSBuild
+///    targets when it loads a project;
+///  - `xml` (an `mso-application` processing instruction routes it to Office
+///    as a macro-capable document), `csv`/`tsv` (Excel formulas and DDE),
+///    `rtf` and the legacy/macro-enabled Office formats (`doc`, `xls`, `ppt`,
+///    `docm`, `xlsm`, `pptm`, …).
+const OPENABLE_EXTENSIONS: &[&str] = &[
+    // Plain text, markup and data. Opened in an editor or viewer.
+    "txt", "text", "log", "md", "markdown", "rst", "adoc", "json", "jsonc", "json5", "jsonl",
+    "yaml", "yml", "toml", "ini", "cfg", "conf", "lock", "diff", "patch", "sql", //
+    // Source code in languages with no "double-click runs it" association.
+    "rs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "cs", "java", "kt", "go", "swift", "ts", "tsx",
+    "css", "scss", "sass", "less", "vue", "svelte", "proto", "graphql", "zig", //
+    // Images.
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "tif", "tiff", "avif", "heic", //
+    // PDF.
+    "pdf", //
+    // Office documents that cannot carry macros (OOXML without the `m`,
+    // OpenDocument).
+    "docx", "xlsx", "pptx", "odt", "ods", "odp", //
+    // HTML: opens a browser, which sandboxes the page's script. The same
+    // exposure as clicking a URL link in the same pane.
+    "html", "htm",
 ];
+
+/// Does `meta` carry an execute bit? macOS `open` runs an extensionless
+/// executable in Terminal, and a `.txt` with `+x` is suspicious enough to
+/// be shown rather than opened. Always `false` on Windows, which has no
+/// such bit — there the extension is the whole story.
+pub fn exec_bit(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        !meta.is_dir() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        false
+    }
+}
 
 /// Should this path be revealed in the file manager instead of opened?
 ///
-/// Files whose extension would execute are revealed; plain directories are
-/// opened, because that *is* "show it in the file manager".
+/// `path` must be the **resolved** path (links followed, see
+/// [`resolve_local`]), so the name judged is the name of what will open.
 ///
-/// The extension is checked **before** `is_dir`, and that order is
-/// load-bearing: a macOS `.app` (and `.pkg`, `.workflow`, `.mpkg`) is a
-/// *directory*, so an `is_dir` early return would send it to `opener::open`
-/// — which is `open Foo.app`, i.e. launch the application. A directory that
-/// merely happens to be named `foo.exe` gets revealed instead of opened,
-/// which is harmless.
-///
-/// This is a denylist and so cannot be complete: a new script host with a
-/// new extension, or a file type the user has associated with an
-/// interpreter, is not covered. It is the reason nothing on the filesystem
-/// command surface calls `opener::open` without going through here.
-pub fn should_reveal(path: &Path, _is_dir: bool) -> bool {
-    // `_is_dir` is no longer consulted, but stays in the signature so the
-    // caller keeps paying for the `metadata` call it needs anyway and so
-    // this is a drop-in for the previous behaviour.
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| {
-            let lower = e.to_ascii_lowercase();
-            RUNNABLE_EXTENSIONS.contains(&lower.as_str())
-        })
-        .unwrap_or(false)
+/// - A name containing `:` is revealed: past the drive it can only be an
+///   NTFS alternate data stream, and `evil.exe:x.txt` would otherwise pass
+///   as a `.txt`.
+/// - A directory opens in the file manager — that *is* "show it" — unless its
+///   name has an extension. That catches every macOS bundle (`Foo.app`,
+///   `x.pkg`, `y.workflow`, `z.framework`: `open Foo.app` launches it) and
+///   Windows' `folder.{CLSID}` shell-namespace junctions. A plain directory
+///   named `v1.2` being revealed rather than opened is harmless.
+/// - A file with an execute bit (`exec_bit`) is revealed.
+/// - Otherwise a file opens only if its extension, lowercased, is **exactly**
+///   an entry in [`OPENABLE_EXTENSIONS`]. So `evil.bat.` (trailing dot,
+///   which Win32 strips), `evil.bat ` and an extensionless file are all
+///   revealed.
+pub fn should_reveal(path: &Path, is_dir: bool, executable: bool) -> bool {
+    let Some(name) = path.file_name() else {
+        // A root (`C:\`, `/`): a directory with no name to judge.
+        return !is_dir;
+    };
+    let name = name.to_string_lossy();
+    if name.contains(':') {
+        return true;
+    }
+    let ext = Path::new(name.as_ref())
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if is_dir {
+        return ext.is_some();
+    }
+    if executable {
+        return true;
+    }
+    match ext {
+        Some(e) => !OPENABLE_EXTENSIONS.contains(&e.as_str()),
+        None => true,
+    }
 }
 
 /// Final gate before handing a path to the OS opener.
@@ -1605,9 +1633,14 @@ mod tests {
         );
     }
 
+    fn reveals(name: &str) -> bool {
+        should_reveal(Path::new(name), false, false)
+    }
+
     #[test]
     fn executables_and_scripts_are_revealed_not_run() {
         for name in [
+            // What the old denylist covered.
             "evil.bat",
             "evil.BAT",
             "setup.exe",
@@ -1622,45 +1655,181 @@ mod tests {
             "a.command",
             "a.msi",
             "a.appref-ms",
+            // The review's examples, which the denylist let through.
+            "a.sh",
+            "a.py",
+            "a.pyw",
+            "a.settingcontent-ms",
+            "a.appinstaller",
+            "a.application",
+            "a.chm",
+            "a.iso",
+            "a.vhd",
+            "a.vhdx",
+            "a.xll",
+            "a.wsc",
+            "a.sct",
+            "a.library-ms",
+            "a.search-ms",
+            // Other interpreters and loaders.
+            "a.rb",
+            "a.pl",
+            "a.php",
+            "a.jar",
+            "a.jsx",
+            "a.sln",
+            "a.csproj",
+            "a.docm",
+            "a.xlsm",
+            "a.doc",
+            "a.xml",
+            "a.csv",
         ] {
-            assert!(should_reveal(Path::new(name), false), "{name}");
+            assert!(reveals(name), "{name}");
         }
     }
 
-    /// A macOS `.app` (and `.pkg`, `.workflow`, `.mpkg`) is a **directory**.
-    /// An `is_dir` early return therefore sent it to `opener::open`, which
-    /// is `open Foo.app` — launching the application. The extension has to
-    /// be consulted before `is_dir`, so this pins the order.
+    /// The allowlist compares the extension exactly, so every respelling
+    /// Win32 would quietly turn back into `.bat` fails closed.
+    #[test]
+    fn respellings_of_a_runnable_name_are_revealed() {
+        for name in [
+            "evil.bat.",   // Win32 strips trailing dots
+            "evil.bat ",   // ...and trailing spaces
+            "evil.bat. .", // ...in any mix
+            "evil.Bat",
+            "evil.exe:x.txt", // an ADS on an .exe, dressed as .txt
+            "a.txt:evil.exe", // the review's ADS example
+            "a.txt:",
+            "Makefile", // extensionless: no allowlisted type to open with
+            "evil",
+        ] {
+            assert!(reveals(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn allowlisted_documents_are_opened_in_any_case() {
+        for name in [
+            "notes.md",
+            "NOTES.MD",
+            "a.rs",
+            "a.ts",
+            "cfg.toml",
+            "photo.png",
+            "Photo.JPG",
+            "report.pdf",
+            "sheet.xlsx",
+            "index.html",
+            "/srv/x/y.json",
+        ] {
+            assert!(!reveals(name), "{name}");
+        }
+        if cfg!(windows) {
+            // The drive colon is not in the file name, so it is not an ADS.
+            assert!(!reveals(r"C:\x\y.txt"));
+        }
+    }
+
+    /// macOS `open` runs an extensionless executable in Terminal, so the
+    /// execute bit wins over any extension.
+    #[test]
+    fn an_executable_bit_always_reveals() {
+        assert!(should_reveal(Path::new("tool"), false, true));
+        assert!(should_reveal(Path::new("notes.txt"), false, true));
+        // A directory's search bit is not an execute bit.
+        assert!(!should_reveal(Path::new("scripts"), true, false));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn exec_bit_reads_the_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ymux-execbit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("tool");
+        std::fs::write(&f, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!exec_bit(&std::fs::metadata(&f).unwrap()));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let md = std::fs::metadata(&f).unwrap();
+        assert!(exec_bit(&md));
+        assert!(should_reveal(&f, false, exec_bit(&md)));
+        assert!(!exec_bit(&std::fs::metadata(&dir).unwrap()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A macOS `.app` (and `.pkg`, `.workflow`, `.framework`) is a
+    /// **directory**, and `open Foo.app` launches it. Any directory whose
+    /// name has an extension is revealed, which also covers Windows'
+    /// `folder.{CLSID}` shell junctions.
     #[test]
     fn a_bundle_is_a_directory_and_must_still_be_revealed() {
-        for name in ["Foo.app", "Installer.pkg", "x.mpkg", "y.workflow"] {
+        for name in [
+            "Foo.app",
+            "Installer.pkg",
+            "x.mpkg",
+            "y.workflow",
+            "z.framework",
+            "q.{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
+        ] {
             assert!(
-                should_reveal(Path::new(name), true),
+                should_reveal(Path::new(name), true, false),
                 "{name} is a directory that would otherwise be launched"
             );
         }
-        // An ordinary directory still opens in the file manager.
-        assert!(!should_reveal(Path::new("/srv/project"), true));
-        assert!(!should_reveal(Path::new("notes.txt"), false));
     }
 
     #[test]
-    fn documents_and_directories_are_opened() {
-        for name in [
-            "notes.md",
-            "a.rs",
-            "a.ts",
-            "photo.png",
-            "report.pdf",
-            "Makefile",
-        ] {
-            assert!(!should_reveal(Path::new(name), false), "{name}");
+    fn plain_directories_are_opened() {
+        assert!(!should_reveal(Path::new("/srv/project"), true, false));
+        assert!(!should_reveal(Path::new("scripts"), true, false));
+        assert!(!should_reveal(Path::new(".git"), true, false));
+        // A filesystem root has no name, and is still a folder to show.
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        assert!(!should_reveal(Path::new(root), true, false));
+    }
+
+    /// The review says resolution canonicalises case, trailing dots and ADS
+    /// before the reveal decision ever sees the name. Proven here on the real
+    /// filesystem: what the frontend is handed back — and so what `open_path`
+    /// judges — is the canonical name.
+    #[test]
+    #[cfg(windows)]
+    fn resolution_canonicalises_respellings_before_the_decision() {
+        let dir = std::env::temp_dir().join(format!("ymux-canon-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("evil.bat"), b"@echo pwned").unwrap();
+        std::fs::write(dir.join("a.txt"), b"x").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        for spelled in ["evil.bat.", "EVIL.BAT", "evil.bat. ."] {
+            let got = probe_one(spelled, Some(&cwd)).expect(spelled);
+            assert!(
+                got.absolute.ends_with("evil.bat"),
+                "{spelled} -> {}",
+                got.absolute
+            );
+            assert!(
+                should_reveal(Path::new(&got.absolute), got.is_dir, false),
+                "{spelled}"
+            );
         }
-        // A plain directory *is* the file-manager case, so it opens.
-        assert!(!should_reveal(Path::new("scripts"), true));
-        // `bundle.app` used to be asserted here as "opens", which was the
-        // bug: on macOS a `.app` is a directory and `open Foo.app` launches
-        // it. See `a_bundle_is_a_directory_and_must_still_be_revealed`.
+        // An alternate data stream that does not exist is not a link at all.
+        assert!(probe_one("a.txt:evil.exe", Some(&cwd)).is_none());
+        // One that does exist is NOT canonicalised away — `canonicalize`
+        // keeps the `:evil.exe` (measured) — so it is the colon rule in
+        // `should_reveal` that stops it, not resolution.
+        std::fs::write(dir.join("a.txt:evil.exe"), b"MZ").unwrap();
+        let got = probe_one("a.txt:evil.exe", Some(&cwd)).expect("existing ADS");
+        assert!(got.absolute.ends_with("a.txt:evil.exe"), "{}", got.absolute);
+        assert!(should_reveal(Path::new(&got.absolute), got.is_dir, false));
+        // ...and the same for a stream named like a document on an `.exe`.
+        std::fs::write(dir.join("evil.bat:x.txt"), b"x").unwrap();
+        let got = probe_one("evil.bat:x.txt", Some(&cwd)).expect("existing ADS");
+        assert!(should_reveal(Path::new(&got.absolute), got.is_dir, false));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
