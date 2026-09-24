@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import type { YTheme, ConfigPathKind } from "../settings/types";
 import type { ResumeOutcome } from "../terminal/resumePlan";
+import type { FileEntry } from "../files/fileModel";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -75,6 +76,77 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
     throw new Error(`${cmd}: ${describeError(e)}`);
   }
 }
+
+/// A rejected fs/git command, keeping the backend's machine-readable `kind`
+/// (`YmuxError::kind()` in src-tauri/src/error.rs: `not_found`,
+/// `permission_denied`, `already_exists`, …). `call()` flattens errors to a
+/// string, which is fine for a log line but not for a pane that has to tell
+/// "already exists" (ask to overwrite) from "permission denied" (say so).
+export class YmuxCallError extends Error {
+  constructor(
+    readonly cmd: string,
+    readonly kind: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "YmuxCallError";
+  }
+}
+
+/// The backend error kind of `e`, or `"other"` for anything that is not a
+/// `YmuxCallError`.
+export function errorKind(e: unknown): string {
+  return e instanceof YmuxCallError ? e.kind : "other";
+}
+
+/// Like `call`, but rejects with a `YmuxCallError` carrying the error kind.
+async function callKind<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return (await tauriInvoke(cmd, args)) as T;
+  } catch (e) {
+    const kind =
+      e && typeof e === "object" && typeof (e as { kind?: unknown }).kind === "string"
+        ? (e as { kind: string }).kind
+        : "other";
+    throw new YmuxCallError(cmd, kind, describeError(e));
+  }
+}
+
+/// A bounded directory look for the preview (`fsops::DirPeek`).
+export interface DirPeek {
+  entries: { name: string; is_dir: boolean }[];
+  more: boolean;
+}
+
+/// The guarded filesystem surface (src-tauri/src/fsops.rs). Every call
+/// rejects with a `YmuxCallError`. Paths are raw strings: open them, never
+/// compare them (rule 15).
+export const fsApi = {
+  listDir: (path: string, showHidden: boolean): Promise<FileEntry[]> =>
+    callKind("fs_list_dir", { path, showHidden }),
+  roots: (): Promise<string[]> => callKind("fs_roots"),
+  homeDir: (): Promise<string> => callKind("fs_home_dir"),
+  stat: (path: string): Promise<FileEntry> => callKind("fs_stat", { path }),
+  createDir: (path: string): Promise<void> => callKind("fs_create_dir", { path }),
+  createFile: (path: string): Promise<void> => callKind("fs_create_file", { path }),
+  rename: (from: string, to: string): Promise<void> => callKind("fs_rename", { from, to }),
+  copy: (from: string, to: string, overwrite: boolean): Promise<void> =>
+    callKind("fs_copy", { from, to, overwrite }),
+  move: (from: string, to: string, overwrite: boolean): Promise<void> =>
+    callKind("fs_move", { from, to, overwrite }),
+  delete: (paths: string[], toTrash: boolean): Promise<void> =>
+    callKind("fs_delete", { paths, toTrash }),
+  /// At most 64 KiB from the start of a file, as raw bytes.
+  readHead: async (path: string, maxBytes: number): Promise<Uint8Array> => {
+    const buf = await callKind<ArrayBuffer | number[]>("fs_read_head", { path, maxBytes });
+    return buf instanceof ArrayBuffer ? new Uint8Array(buf) : Uint8Array.from(buf);
+  },
+  peekDir: (path: string, showHidden: boolean): Promise<DirPeek> =>
+    callKind("fs_peek_dir", { path, showHidden }),
+  reveal: (path: string): Promise<void> => callKind("fs_reveal", { path }),
+  /// Open with the OS default app; executables are revealed, never run.
+  openDefault: (path: string): Promise<void> => callKind("fs_open_default", { path }),
+};
 
 /// Wrap a `tauriListen` call so that listen failures (typically capability /
 /// permission denials in Tauri 2) surface as proper Errors instead of bare

@@ -74,6 +74,28 @@ pub struct WriteTextArgs {
     pub expect: Option<ContentStamp>,
 }
 
+/// Upper bound on [`fs_read_head`], whatever the caller asks for. Matches the
+/// preview's `MAX_PREVIEW_BYTES` (`src/files/preview.ts`): a preview of a
+/// 2 GB log must cost the same as a preview of a README.
+pub const MAX_HEAD_BYTES: usize = 64 * 1024;
+
+/// Entries [`fs_peek_dir`] walks before giving up and reporting `more`.
+pub const MAX_PEEK_SCAN: usize = 512;
+
+/// One row of [`fs_peek_dir`]: just enough to draw a directory preview.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PeekEntry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+/// A bounded look inside a directory. `more` means the walk stopped early.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DirPeek {
+    pub entries: Vec<PeekEntry>,
+    pub more: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers. Not `pub`: they take already-guarded input.
 // ---------------------------------------------------------------------------
@@ -386,6 +408,60 @@ pub(crate) mod imp {
         Ok(textfile::stamp_of(&bytes, mtime_ms(&md)))
     }
 
+    /// The first `max` bytes of a file (at most [`MAX_HEAD_BYTES`]), for the
+    /// files pane's preview and its binary sniff before "open". Unlike
+    /// [`read_text`] it neither decodes nor refuses binary content: the
+    /// preview's decisions live in `src/files/preview.ts`.
+    pub fn read_head(path: &str, max: usize) -> YmuxResult<Vec<u8>> {
+        use std::io::Read;
+
+        let md = fs::metadata(path).map_err(|e| YmuxError::from_io(&e, path))?;
+        if md.is_dir() {
+            return Err(YmuxError::Other(format!("{path} is a directory")));
+        }
+        let f = fs::File::open(path).map_err(|e| YmuxError::from_io(&e, path))?;
+        let mut buf = Vec::new();
+        f.take(max.min(MAX_HEAD_BYTES) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| YmuxError::from_io(&e, path))?;
+        Ok(buf)
+    }
+
+    /// The head of a directory for the preview: names and kinds only, no
+    /// per-entry `stat`, walking at most [`MAX_PEEK_SCAN`] entries so a
+    /// cursor resting on `node_modules` costs the same as on any folder.
+    /// Counts entries *walked*, not kept, as `tools/ydir`'s preview did.
+    pub fn peek_dir(path: &str, show_hidden: bool) -> YmuxResult<DirPeek> {
+        let mut entries = Vec::new();
+        let mut more = false;
+        let iter = fs::read_dir(path).map_err(|e| YmuxError::from_io(&e, path))?;
+        for (scanned, entry) in iter.enumerate() {
+            if scanned >= MAX_PEEK_SCAN {
+                more = true;
+                break;
+            }
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !show_hidden {
+                if fsx::is_hidden_name(&name) {
+                    continue;
+                }
+                // On Windows this metadata comes from the directory read
+                // itself, so it costs no extra syscall.
+                if entry.metadata().map(|md| os_hidden(&md)).unwrap_or(false) {
+                    continue;
+                }
+            }
+            let is_dir = match entry.file_type() {
+                Ok(t) if t.is_symlink() => entry.path().is_dir(),
+                Ok(t) => t.is_dir(),
+                Err(_) => false,
+            };
+            entries.push(PeekEntry { name, is_dir });
+        }
+        Ok(DirPeek { entries, more })
+    }
+
     /// The stamp of the file as it is right now, or `None` if it is gone.
     fn current_stamp(path: &str) -> YmuxResult<Option<ContentStamp>> {
         let md = match fs::metadata(path) {
@@ -563,6 +639,30 @@ pub fn fs_read_text(
 ) -> YmuxResult<TextFile> {
     guarded!(webview, request, "fs_read_text");
     imp::read_text(&path)
+}
+
+/// Raw bytes, not JSON: `tauri::ipc::Response` reaches the frontend as an
+/// `ArrayBuffer`, where a `Vec<u8>` would be a 64 Ki-element number array.
+#[tauri::command(async)]
+pub fn fs_read_head(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    path: String,
+    max_bytes: usize,
+) -> YmuxResult<tauri::ipc::Response> {
+    guarded!(webview, request, "fs_read_head");
+    imp::read_head(&path, max_bytes).map(tauri::ipc::Response::new)
+}
+
+#[tauri::command(async)]
+pub fn fs_peek_dir(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+    path: String,
+    show_hidden: bool,
+) -> YmuxResult<DirPeek> {
+    guarded!(webview, request, "fs_peek_dir");
+    imp::peek_dir(&path, show_hidden)
 }
 
 #[tauri::command(async)]
@@ -989,6 +1089,68 @@ mod tests {
             Ok(()) => assert!(!Path::new(&p).exists()),
             Err(e) => eprintln!("skipped: no trash available here ({e})"),
         }
+    }
+
+    #[test]
+    fn read_head_is_capped_and_returns_raw_bytes() {
+        let d = tmp();
+        let p = s(d.path().join("big.bin"));
+        let mut data = vec![b'a'; MAX_HEAD_BYTES * 2];
+        data[10] = 0; // binary content is returned, not refused
+        std::fs::write(&p, &data).unwrap();
+
+        let head = imp::read_head(&p, usize::MAX).unwrap();
+        assert_eq!(head.len(), MAX_HEAD_BYTES);
+        assert_eq!(head[10], 0);
+        assert_eq!(imp::read_head(&p, 16).unwrap().len(), 16);
+
+        let small = s(d.path().join("한글.txt"));
+        std::fs::write(&small, "안녕".as_bytes()).unwrap();
+        assert_eq!(imp::read_head(&small, 1024).unwrap(), "안녕".as_bytes());
+
+        assert_eq!(
+            imp::read_head(&s(d.path().join("nope")), 16)
+                .unwrap_err()
+                .kind(),
+            "not_found"
+        );
+        assert!(imp::read_head(&s(d.path().to_path_buf()), 16).is_err());
+    }
+
+    #[test]
+    fn peek_dir_is_bounded_and_honours_hidden() {
+        let d = tmp();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        std::fs::write(d.path().join(".hidden"), b"").unwrap();
+        std::fs::write(d.path().join("a.txt"), b"").unwrap();
+        let dir = s(d.path().to_path_buf());
+
+        let mut peek = imp::peek_dir(&dir, false).unwrap();
+        peek.entries.sort_by(|a, b| a.name.cmp(&b.name));
+        assert!(!peek.more);
+        assert_eq!(
+            peek.entries,
+            vec![
+                PeekEntry {
+                    name: "a.txt".into(),
+                    is_dir: false
+                },
+                PeekEntry {
+                    name: "sub".into(),
+                    is_dir: true
+                },
+            ]
+        );
+        assert_eq!(imp::peek_dir(&dir, true).unwrap().entries.len(), 3);
+
+        let many = d.path().join("many");
+        std::fs::create_dir(&many).unwrap();
+        for i in 0..MAX_PEEK_SCAN + 3 {
+            std::fs::write(many.join(format!("f{i}")), b"").unwrap();
+        }
+        let peek = imp::peek_dir(&s(many), false).unwrap();
+        assert!(peek.more);
+        assert_eq!(peek.entries.len(), MAX_PEEK_SCAN);
     }
 
     #[test]

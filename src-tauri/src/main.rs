@@ -88,6 +88,8 @@ fn main() {
             ymux_lib::fsops::fs_move,
             ymux_lib::fsops::fs_delete,
             ymux_lib::fsops::fs_read_text,
+            ymux_lib::fsops::fs_read_head,
+            ymux_lib::fsops::fs_peek_dir,
             ymux_lib::fsops::fs_write_text,
             ymux_lib::fsops::fs_reveal,
             ymux_lib::fsops::fs_open_default,
