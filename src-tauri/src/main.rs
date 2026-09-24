@@ -17,14 +17,36 @@ fn main() {
         )
         .init();
 
+    // Whether the layout below was really read from the user's config file,
+    // rather than defaulted: only then may it prune agent-session records.
+    let mut layout_from_disk = ymux_lib::config::config_path().exists();
     let config = ConfigStore::load_default().unwrap_or_else(|e| {
         tracing::error!(error = %e, "failed to load config, using default");
+        layout_from_disk = false;
         // Fall back to an in-memory default at a throwaway path if load
         // somehow fails after the empty-file path — this keeps the app from
         // refusing to start on permission issues.
         ConfigStore::load(std::env::temp_dir().join("ymux-fallback.toml"))
             .expect("default load cannot fail")
     });
+
+    // Resumable agent sessions, loaded from disk once at startup. A missing
+    // or corrupt file loads as an empty store (see `agent_sessions::load_from`)
+    // — panes then just start normally. Records for panes the saved layout no
+    // longer has are dropped here, once.
+    let mut sessions =
+        ymux_lib::agent_sessions::SessionTracker::from_store(ymux_lib::agent_sessions::load());
+    if layout_from_disk {
+        let panes: std::collections::HashSet<uuid::Uuid> = config
+            .snapshot()
+            .workspaces
+            .iter()
+            .flat_map(|w| w.panes())
+            .map(|p| p.id)
+            .collect();
+        sessions.retain_panes(&panes);
+        ymux_lib::commands::flush_sessions(&mut sessions);
+    }
 
     let state = AppState {
         config,
@@ -41,13 +63,8 @@ fn main() {
         .manage(eb_registry)
         .manage(ymux_lib::agents::SharedAgents::default())
         .manage(ymux_lib::agent_scan::SharedLabels::default())
-        // Resumable agent sessions, loaded from disk once at startup. A
-        // missing or corrupt file loads as an empty store (see
-        // `agent_sessions::load_from`) — panes then just start normally.
         .manage(ymux_lib::agent_sessions::SharedSessions(
-            parking_lot::Mutex::new(ymux_lib::agent_sessions::SessionTracker::from_store(
-                ymux_lib::agent_sessions::load(),
-            )),
+            parking_lot::Mutex::new(sessions),
         ))
         // EVERY command below must start with a guard — `fspath::guard_local`
         // (ymux's own document only), or `embedded_browser::guard_embedded_child`

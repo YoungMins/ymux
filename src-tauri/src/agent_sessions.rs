@@ -1198,6 +1198,19 @@ impl SessionTracker {
         std::mem::take(&mut self.confirmed)
     }
 
+    /// Drop every record whose pane is not in `panes` — the panes the saved
+    /// layout still has. A pane closed while ymux was not running to see it
+    /// (a crash, a hand-edited config, a deleted workspace whose frontend
+    /// cleanup never ran) otherwise keeps its record forever.
+    ///
+    /// Only for a layout that was actually read from disk: pruning against a
+    /// default or fallback config would wipe every record.
+    pub fn retain_panes(&mut self, panes: &HashSet<Uuid>) {
+        let before = self.store.sessions.len();
+        self.store.sessions.retain(|id, _| panes.contains(id));
+        self.dirty |= self.store.sessions.len() != before;
+    }
+
     /// The user closed the pane for good. Mirrors `delete_scrollback`.
     pub fn forget(&mut self, pane_id: Uuid) {
         self.dirty |= self.store.remove(pane_id);
@@ -2595,6 +2608,21 @@ mod tests {
             Some(AgentStatus::Working)
         );
         assert!(t.get(other_pane).is_some_and(|s| s.interrupted));
+    }
+
+    #[test]
+    fn records_for_panes_the_layout_no_longer_has_are_dropped() {
+        let (kept, gone) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut store = AgentSessionStore::default();
+        store.put(session(kept, ID_A, IdSource::Disk));
+        store.put(session(gone, ID_B, IdSource::Disk));
+        let mut t = SessionTracker::from_store(store);
+        t.retain_panes(&[kept].into_iter().collect());
+        assert!(t.get(kept).is_some());
+        assert!(t.get(gone).is_none());
+        assert!(t.take_dirty(), "the pruned store is written back");
+        t.retain_panes(&[kept].into_iter().collect());
+        assert!(!t.take_dirty(), "nothing to prune: no write");
     }
 
     #[test]
