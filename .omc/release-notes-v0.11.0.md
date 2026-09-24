@@ -24,11 +24,11 @@ One binary survives: `y`, shrunk to a single job — relaying Claude Code hook e
 
 ### Agent session resume
 
-Restart ymux while a pane is running Claude Code or Codex, and that pane picks the conversation back up instead of showing a static picture of the old scrollback: `claude --resume <id> --dangerously-skip-permissions` — the skip-permissions flag is always added, so you're not re-approving everything you'd already approved — or `codex resume <id>`. Eligible for up to 24 hours after the session was last active. This works even if you've never turned on agent tracking: ymux finds the session id by reading the CLI's own transcript files from disk, matched to the pane's working directory. Shell-only panes are untouched and keep restoring scrollback exactly as before.
+Restart ymux while a pane is running Claude Code or Codex, and that pane picks the conversation back up instead of showing a static picture of the old scrollback: `claude --resume <id> --dangerously-skip-permissions` — the skip-permissions flag is always added, so you're not re-approving everything you'd already approved — or `codex resume <id>`. Eligible for up to 24 hours after the session was last active. This works even if you've never turned on agent tracking: ymux ties each session to the agent process that was actually running in that pane — from the hook stream when tracking is on, otherwise from the CLI's own session files and command line — so two panes in the same folder, or a Claude you started in another terminal, never trade conversations. When ymux can't tell for certain which session a pane owned, it starts that pane fresh rather than guess. A resume that fails leaves the pane's old scrollback in place and isn't retried. Only flags that are safe to repeat are carried over from a pane's startup command; a prompt in it is not re-sent. Shell-only panes are untouched and keep restoring scrollback exactly as before.
 
 ### Clickable file paths
 
-`Ctrl+Click` (`Cmd+Click` on macOS) already opened URLs; it now also opens filesystem paths a command printed — `cat`, `git log`, an agent's answer, whatever's sitting in the pane. Executables and scripts are revealed in the file manager rather than launched.
+`Ctrl+Click` (`Cmd+Click` on macOS) already opened URLs; it now also opens filesystem paths a command printed — `cat`, `git log`, an agent's answer, whatever's sitting in the pane. Only documents, images and source files open with their default program; everything else — executables, scripts, installers, disk images, anything without an extension or with an execute bit — is revealed in the file manager instead. Paths on network shares are never probed, so hovering output can't make Windows contact another machine.
 
 ### Workspace panel polish
 
