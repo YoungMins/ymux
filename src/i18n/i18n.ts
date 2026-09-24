@@ -209,13 +209,6 @@ const strings: Translations = {
     ar: "حجم خط الطرفية", pt: "Tamanho da fonte do terminal", ru: "Размер шрифта терминала",
     tr: "Terminal yazı tipi boyutu", de: "Terminal-Schriftgröße", vi: "Cỡ chữ terminal",
   },
-  "shortcut.fontSize": {
-    en: "Increase / decrease font size", ko: "글자 크기 확대 / 축소", ja: "文字サイズを拡大 / 縮小",
-    zh: "增大 / 减小字体", hi: "फ़ॉन्ट आकार बढ़ाएँ / घटाएँ", es: "Aumentar / reducir tamaño de fuente",
-    fr: "Augmenter / réduire la taille de police", ar: "تكبير / تصغير حجم الخط",
-    pt: "Aumentar / diminuir tamanho da fonte", ru: "Увеличить / уменьшить шрифт",
-    tr: "Yazı tipini büyüt / küçült", de: "Schrift vergrößern / verkleinern", vi: "Tăng / giảm cỡ chữ",
-  },
   "shortcut.fontIncrease": {
     en: "Increase font size", ko: "글자 크기 확대", ja: "文字サイズを拡大", zh: "增大字体",
     hi: "फ़ॉन्ट आकार बढ़ाएँ", es: "Aumentar tamaño de fuente", fr: "Augmenter la taille de police",
@@ -733,28 +726,14 @@ const strings: Translations = {
   },
 
   // ── Help overlay ────────────────────────────────────────────────
-  "help.title": {
-    en: "Keyboard Shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット", zh: "键盘快捷键",
-    hi: "कीबोर्ड शॉर्टकट", es: "Atajos de teclado", fr: "Raccourcis clavier", ar: "اختصارات لوحة المفاتيح",
-    pt: "Atalhos do teclado", ru: "Сочетания клавиш", tr: "Klavye kısayolları", de: "Tastaturkürzel", vi: "Phím tắt bàn phím",
-  },
-  "help.close": {
-    en: "Close", ko: "닫기", ja: "閉じる", zh: "关闭",
-    hi: "बंद करें", es: "Cerrar", fr: "Fermer", ar: "إغلاق",
-    pt: "Fechar", ru: "Закрыть", tr: "Kapat", de: "Schließen", vi: "Đóng",
-  },
   "help.langLabel": {
     en: "Language", ko: "언어", ja: "言語", zh: "语言",
     hi: "भाषा", es: "Idioma", fr: "Langue", ar: "اللغة",
     pt: "Idioma", ru: "Язык", tr: "Dil", de: "Sprache", vi: "Ngôn ngữ",
   },
-  "help.buttonTitle": {
-    en: "Keyboard shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット", zh: "键盘快捷键",
-    hi: "कीबोर्ड शॉर्टकट", es: "Atajos de teclado", fr: "Raccourcis clavier", ar: "اختصارات لوحة المفاتيح",
-    pt: "Atalhos do teclado", ru: "Сочетания клавиш", tr: "Klavye kısayolları", de: "Tastaturkürzel", vi: "Phím tắt bàn phím",
-  },
 
-  // ── Shortcut descriptions (used in help overlay table) ─────────
+  // ── Shortcut descriptions (used in the Settings panel's Shortcuts table
+  // and the Command Palette) ──────────────────────────────────────────
   "shortcut.switchWs": {
     en: "Switch to workspace 1 – 9",
     ko: "워크스페이스 1 – 9로 전환",
@@ -1080,21 +1059,6 @@ const strings: Translations = {
     tr: "Odaklanmış paneli yeniden adlandır",
     de: "Fokussierten Bereich umbenennen",
     vi: "Đổi tên khung đang chọn",
-  },
-  "shortcut.helpToggle": {
-    en: "Show / hide this shortcut reference",
-    ko: "단축키 안내 팝업 표시 / 숨기기",
-    ja: "ショートカット一覧を表示 / 非表示",
-    zh: "显示 / 隐藏快捷键参考",
-    hi: "शॉर्टकट संदर्भ दिखाएँ / छिपाएँ",
-    es: "Mostrar / ocultar referencia de atajos",
-    fr: "Afficher / masquer la référence des raccourcis",
-    ar: "إظهار / إخفاء مرجع الاختصارات",
-    pt: "Mostrar / ocultar referência de atalhos",
-    ru: "Показать / скрыть справку по сочетаниям",
-    tr: "Kısayol referansını göster / gizle",
-    de: "Tastaturkürzel-Referenz ein-/ausblenden",
-    vi: "Hiện / ẩn bảng tham chiếu phím tắt",
   },
   "shortcut.palette": {
     en: "Open command palette",

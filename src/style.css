@@ -356,29 +356,9 @@ body,
   border-color: var(--accent);
 }
 
-/* ── Help "?" button in the workspace bar ─────────────────────────────────── */
-
-.workspace-bar__help {
-  width: 20px;
-  height: 20px;
-  background: transparent;
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0;
-  flex-shrink: 0;
-}
-
-.workspace-bar__help:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-/* ── Help overlay ─────────────────────────────────────────────────────────── */
+/* ── Shared modal backdrop/box (Settings' Shortcuts table has its own
+   `.settings-table` styling; this pair is now only used by the HotKeyManager
+   modal, which composes it with its own `.hotkey-modal` classes) ─────────── */
 
 .help-backdrop {
   display: none;
@@ -414,91 +394,6 @@ body,
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.help-modal__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.help-modal__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-.help-modal__lang-wrap {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.help-modal__lang-label {
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-.help-modal__lang-sel {
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 4px;
-  font-size: 11px;
-  outline: none;
-  cursor: pointer;
-}
-
-.help-modal__table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 13px;
-}
-
-.help-modal__table tr + tr td {
-  border-top: 1px solid var(--border);
-}
-
-.help-modal__keys {
-  padding: 8px 12px 8px 0;
-  white-space: nowrap;
-  vertical-align: middle;
-}
-
-.help-modal__keys kbd {
-  display: inline-block;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
-  color: var(--accent);
-}
-
-.help-modal__desc {
-  padding: 8px 0;
-  color: var(--fg);
-  vertical-align: middle;
-}
-
-.help-modal__close {
-  align-self: flex-end;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 16px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.help-modal__close:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* ── Notes overlay ─────────────────────────────────────────────────────── */
