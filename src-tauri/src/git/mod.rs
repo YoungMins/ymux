@@ -296,6 +296,10 @@ pub struct BranchList {
     /// path (git's spelling). `git checkout` of one of these fails ("already
     /// used by worktree at …"); this is what plain `git branch` marks `+ `.
     pub held: std::collections::BTreeMap<String, String>,
+    /// The repository's remote names (`git remote`). A remote name may
+    /// contain `/` (`team/fork`), so `team/fork/x` cannot be split into
+    /// remote and branch without this list.
+    pub remotes: Vec<String>,
 }
 
 /// Unit separator: between the fields of one commit.
@@ -493,6 +497,12 @@ pub fn branches(cwd: &Path) -> YmuxResult<BranchList> {
     let fmt = format!("--format={BRANCH_FORMAT}");
     let out = run_git(cwd, &["branch", "--list", "--all", &fmt])?;
     let mut list = parse_branch_list(&out);
+    list.remotes = run_git(cwd, &["remote"])?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
     if !list.held.is_empty() {
         let root = repo_root(cwd)?;
         drop_held_at(&mut list, &root.to_string_lossy());
@@ -1695,6 +1705,18 @@ branch refs/heads/lockedish
             "{before:?}"
         );
         assert!(!before.local.contains(&"기능/원격".to_string()));
+        assert_eq!(before.remotes, vec!["origin"]);
+
+        // A remote whose own name has a slash: the pane can only split
+        // `team/fork/기능/원격` correctly if it knows the remote names.
+        git_ok(
+            &clone,
+            &["remote", "add", "team/fork", &repo.to_string_lossy()],
+        );
+        git_ok(&clone, &["fetch", "-q", "team/fork"]);
+        let forked = branches(&clone).unwrap();
+        assert_eq!(forked.remotes, vec!["origin", "team/fork"]);
+        assert!(forked.remote.contains(&"team/fork/기능/원격".to_string()));
 
         checkout_track(&clone, "origin/기능/원격").unwrap();
         let after = branches(&clone).unwrap();

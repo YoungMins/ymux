@@ -165,7 +165,7 @@ export class GitPane implements Pane {
   private layout: LaneLayout = { rows: [], width: 0 };
   private hasMore = false;
   private loadingMore = false;
-  private branches: BranchList = { current: "", local: [], remote: [], held: {} };
+  private branches: BranchList = { current: "", local: [], remote: [], held: {}, remotes: [] };
   private items: BranchItem[] = [];
   private remotes = new Set<string>();
   private worktrees: WorktreeEntry[] = [];

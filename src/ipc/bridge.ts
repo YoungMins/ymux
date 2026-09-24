@@ -79,6 +79,8 @@ export interface BranchList {
   remote: string[];
   /// Local branch → path of the *other* worktree it is checked out in.
   held: Record<string, string>;
+  /// The repository's remote names (`git remote`), which may contain `/`.
+  remotes: string[];
 }
 
 /// `git::StatusEntry`: one path of `git status --porcelain=v1 -z`.

@@ -48,8 +48,15 @@ export function branchItems(list: BranchList): BranchItem[] {
 }
 
 /// `origin/feature/x` → `feature/x`: the local branch `git checkout --track`
-/// would create. The remote's name is the first path segment.
-export function localNameOf(remote: string): string {
+/// would create. Remote names may themselves contain `/` (`team/fork`), so
+/// the prefix is the longest of the repository's actual `remotes` that
+/// matches; with none known, the first path segment.
+export function localNameOf(remote: string, remotes: readonly string[]): string {
+  let best = "";
+  for (const r of remotes) {
+    if (r.length > best.length && remote.startsWith(`${r}/`)) best = r;
+  }
+  if (best) return remote.slice(best.length + 1);
   const slash = remote.indexOf("/");
   return slash === -1 ? remote : remote.slice(slash + 1);
 }
@@ -72,7 +79,7 @@ export function checkoutPlan(item: BranchItem, list: BranchList): CheckoutPlan {
     if (held !== undefined) return { kind: "held", branch: item.name, path: held };
     return { kind: "local", branch: item.name };
   }
-  const local = localNameOf(item.name);
+  const local = localNameOf(item.name, list.remotes);
   if (!list.local.includes(local)) return { kind: "track", remote: item.name, branch: local };
   if (local === list.current) return { kind: "noop", branch: local };
   const held = list.held[local];

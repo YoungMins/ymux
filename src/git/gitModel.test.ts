@@ -9,6 +9,7 @@ import {
   confirmationStillHolds,
   focusRefreshDue,
   formatCommitDate,
+  localNameOf,
   refChips,
   removePlan,
   validateBranchName,
@@ -19,6 +20,7 @@ const list = (over: Partial<BranchList> = {}): BranchList => ({
   local: ["main", "기능/한글브랜치", "held"],
   remote: ["origin/main", "origin/기능/원격", "origin/held"],
   held: { held: "C:/wt/held" },
+  remotes: ["origin"],
   ...over,
 });
 
@@ -103,6 +105,26 @@ describe("checkoutPlan", () => {
       remote: "origin/기능/원격",
       branch: "기능/원격",
     });
+  });
+
+  it("strips the remote's real name, even one containing a slash", () => {
+    const forks = list({
+      local: ["main"],
+      remote: ["team/fork/feature/x", "origin/feature/x"],
+      remotes: ["origin", "team/fork"],
+      held: {},
+    });
+    const items = branchItems(forks);
+    expect(checkoutPlan(items.find((i) => i.name === "team/fork/feature/x")!, forks)).toEqual({
+      kind: "track",
+      remote: "team/fork/feature/x",
+      branch: "feature/x",
+    });
+    expect(localNameOf("origin/feature/x", ["origin", "team/fork"])).toBe("feature/x");
+    // The longest matching remote wins over a shorter prefix of it.
+    expect(localNameOf("team/fork/a", ["team", "team/fork"])).toBe("a");
+    // No known remote (list not loaded): first segment, as before.
+    expect(localNameOf("up/x", [])).toBe("x");
   });
 
   it("uses the existing local branch for a remote one, with its own rules", () => {
