@@ -119,12 +119,17 @@ export class PaneGroup {
     this.titleEl.textContent = activeId ? this.cb.labelOf(activeId) : "";
     this.renderStrip(node);
 
-    if (activeId && activeId !== this.boundId) {
-      // The child nodes *are* pane specs, so the bar's list and colour come
-      // straight off the tree — no lookup through the manager needed.
-      const spec = node.children.find(
-        (c): c is PaneNode => c.kind === "pane" && c.id === activeId,
-      );
+    // The child nodes *are* pane specs, so the bar's list and colour come
+    // straight off the tree — no lookup through the manager needed.
+    const spec = node.children.find(
+      (c): c is PaneNode => c.kind === "pane" && c.id === activeId,
+    );
+    // A GUI pane (files) has no PTY for the bar to write to: hide the bar
+    // rather than show dead buttons (spec §0.5). Toggled on every update, not
+    // only on a rebind, so switching back to a terminal tab brings it back.
+    const isTerminal = (spec?.pane_kind ?? "terminal") === "terminal";
+    this.element.classList.toggle("pane-group--no-hotkeys", !isTerminal);
+    if (activeId && isTerminal && activeId !== this.boundId) {
       this.boundId = activeId;
       this.hotkeyBar.bind(activeId, spec?.hotkeys ?? [], spec?.bg_color || null);
     }
