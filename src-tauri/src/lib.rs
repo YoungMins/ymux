@@ -12,6 +12,9 @@ pub mod agent_scan_disk;
 pub mod agent_sessions;
 pub mod agents;
 pub mod config;
+// Loopback receiver for Claude Code's `type: "http"` hooks. Pure std and not
+// desktop-gated, so the auth decision and a real listener run on Linux CI.
+pub mod hook_http;
 // Local drafts of unsaved editor content (the editor pane's safety net).
 pub mod drafts;
 pub mod error;
