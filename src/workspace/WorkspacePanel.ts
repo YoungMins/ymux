@@ -1,5 +1,9 @@
 import type { WorkspaceManager } from "./WorkspaceManager";
-import { formatWorkspaceLabel } from "./workspaceLabel";
+import {
+  editableWorkspaceName,
+  formatWorkspaceLabel,
+  nextWorkspaceName,
+} from "./workspaceLabel";
 import { insertIndexFromMidpoints } from "./reorder";
 import {
   toggle as toggleNotes,
@@ -7,7 +11,7 @@ import {
   onNotesChange,
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
-import { askText, askConfirm } from "../ui/Dialog";
+import { askConfirm } from "../ui/Dialog";
 import { describeError } from "../ipc/bridge";
 import type { Uuid } from "../types";
 import {
@@ -167,6 +171,8 @@ export function mountWorkspacePanel(
   panel.appendChild(addBtn);
 
   const buttons = new Map<number, HTMLButtonElement>();
+  /// The in-place rename box of each row, hidden until a double-click.
+  const editors = new Map<number, HTMLInputElement>();
   const noteButtons = new Map<number, HTMLButtonElement>();
   /// Rows in render order, so a row's array index *is* its position in
   /// `manager.workspaces` — what `moveWorkspace` takes.
@@ -176,6 +182,11 @@ export function mountWorkspacePanel(
   /// because its indices feed `moveWorkspace`, and a press inside a
   /// `.workspace-panel__row` would start a workspace drag.
   const childHosts = new Map<number, HTMLElement>();
+  /// Per-workspace wrapper around the row *and* its child host, so the active
+  /// workspace can be outlined as one region. It is only a box: the drag
+  /// pointerdown stays on the row, so a press on a pane/agent row inside a
+  /// block never starts a workspace reorder.
+  const blocks = new Map<number, HTMLElement>();
   const carets = new Map<number, HTMLButtonElement>();
   let expanded: ExpandedMap = readExpanded();
 
@@ -198,11 +209,26 @@ export function mountWorkspacePanel(
   /// rebuild, so the pressed button is still in the DOM to receive the click).
   let dragJustEnded = false;
 
+  // ── In-place rename ────────────────────────────────────────────────
+  /// Finisher of the open rename editor, or null when none is open. Held at
+  /// panel level so `rebuild()` can close an editor whose row is about to be
+  /// destroyed, and so a second double-click can't open two at once.
+  let endEdit: ((commit: boolean) => void) | null = null;
+
+  /// The block wrapping a workspace row — its parent, always, since
+  /// `rebuild()` builds the two together. The drop line is drawn on the
+  /// *block* so it lands in the gap between workspaces instead of inside one
+  /// (and, at the end of the list, below a workspace's children rather than
+  /// between the workspace and its own children).
+  function blockOf(row: HTMLElement): HTMLElement | null {
+    return row.parentElement;
+  }
+
   function clearDropMarkers(): void {
     for (const r of rows) {
-      r.classList.remove(
-        "workspace-panel__row--drop-above",
-        "workspace-panel__row--drop-below",
+      blockOf(r)?.classList.remove(
+        "workspace-panel__block--drop-above",
+        "workspace-panel__block--drop-below",
       );
     }
   }
@@ -218,9 +244,13 @@ export function mountWorkspacePanel(
     drag.insertBefore = insertIndexFromMidpoints(midpoints, y);
     clearDropMarkers();
     if (drag.insertBefore < rows.length) {
-      rows[drag.insertBefore].classList.add("workspace-panel__row--drop-above");
+      blockOf(rows[drag.insertBefore])?.classList.add(
+        "workspace-panel__block--drop-above",
+      );
     } else if (rows.length > 0) {
-      rows[rows.length - 1].classList.add("workspace-panel__row--drop-below");
+      blockOf(rows[rows.length - 1])?.classList.add(
+        "workspace-panel__block--drop-below",
+      );
     }
   }
 
@@ -259,7 +289,14 @@ export function mountWorkspacePanel(
       dragJustEnded = false; // a fresh press always re-arms clicking
       if (ev.button !== 0) return;
       // Never start a drag off the delete button — that click must stay exact.
-      if ((ev.target as HTMLElement | null)?.closest(".workspace-panel__del, .workspace-panel__caret")) {
+      // The rename box is excluded for a second reason: `onDragMove` calls
+      // `preventDefault()`, which would kill drag-selecting text inside it, and
+      // a vertical wiggle while selecting would reorder the workspace.
+      if (
+        (ev.target as HTMLElement | null)?.closest(
+          ".workspace-panel__del, .workspace-panel__caret, .workspace-panel__ws-edit",
+        )
+      ) {
         return;
       }
       const fromIndex = rows.indexOf(row);
@@ -292,19 +329,34 @@ export function mountWorkspacePanel(
       void manager.activate(id);
       highlight();
     });
+    // Rename in place. The 4px threshold already means a stationary
+    // double-click never became a drag, but a *shaky* one did — and a no-op
+    // drop leaves the button in the DOM to receive the trailing dblclick, so
+    // this checks the same flag the click handler does.
     btn.addEventListener("dblclick", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      const current = manager.getWorkspaceName(id) ?? "";
-      void askText(t("workspace.renamePrompt"), current).then((next) => {
-        if (next !== null) {
-          manager.renameWorkspace(id, next);
-          highlight();
-        }
-      });
+      if (dragJustEnded) return;
+      beginEdit(id);
     });
     row.appendChild(btn);
     buttons.set(id, btn);
+
+    // A sibling `<input>`, not `contenteditable` on the button: `highlight()`
+    // rewrites `btn.textContent` on every pane-status / notes change and would
+    // wipe an edit mid-typing, Space and Enter activate a `<button>`, and the
+    // button reads `1: name` while the edit value is the bare name. It takes
+    // the button's flex slot while visible, so the row never changes size.
+    const edit = document.createElement("input");
+    edit.type = "text";
+    edit.className = "workspace-panel__ws-edit";
+    edit.spellcheck = false;
+    edit.style.display = "none";
+    // What the row will read if the name is left empty — costs no i18n key.
+    edit.placeholder = String(id);
+    edit.setAttribute("aria-label", t("workspace.renamePrompt"));
+    row.appendChild(edit);
+    editors.set(id, edit);
 
     const noteBtn = document.createElement("button");
     noteBtn.className = "workspace-panel__note-btn";
@@ -339,6 +391,66 @@ export function mountWorkspacePanel(
     row.appendChild(delBtn);
 
     return row;
+  }
+
+  /// Swap the workspace button for its rename box and drive one edit to its
+  /// end. Enter commits, Escape cancels, blur commits; an empty, whitespace-
+  /// only or unchanged value is rejected by `nextWorkspaceName` and the old
+  /// name survives. Renaming goes through `manager.renameWorkspace` — the same
+  /// method the command palette uses — so there is still one writer of a
+  /// workspace name.
+  function beginEdit(id: number): void {
+    const btn = buttons.get(id);
+    const edit = editors.get(id);
+    if (!btn || !edit) return;
+    endEdit?.(false); // one open editor at a time
+    const current = editableWorkspaceName(id, manager.getWorkspaceName(id));
+    edit.value = current;
+    btn.style.display = "none";
+    edit.style.display = "";
+
+    // Enter and Escape each remove the input, which fires `blur` — without
+    // this guard an Escape would be followed by a blur that commits the very
+    // text the user just cancelled.
+    let finished = false;
+    const finish = (commit: boolean): void => {
+      if (finished) return;
+      finished = true;
+      edit.removeEventListener("keydown", onKey);
+      edit.removeEventListener("blur", onBlur);
+      endEdit = null;
+      edit.style.display = "none";
+      btn.style.display = "";
+      if (!commit) return;
+      const next = nextWorkspaceName(edit.value, current);
+      if (next === null) return; // empty / whitespace / no-op → keep the name
+      manager.renameWorkspace(id, next); // persists only; nothing re-renders
+      highlight();
+    };
+
+    const onKey = (ev: KeyboardEvent): void => {
+      // ymux's global shortcut handler sits on `window` and does not skip
+      // text inputs, so without this `?` would open Help and Ctrl+Shift+W
+      // would close a pane while a name is being typed.
+      ev.stopPropagation();
+      // Mid-composition, Enter belongs to the IME — it commits a Hangul
+      // syllable, not the rename — and Escape cancels the candidate.
+      if (ev.isComposing || ev.keyCode === 229) return;
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        finish(true);
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        finish(false);
+      }
+    };
+    const onBlur = (): void => finish(true);
+
+    edit.addEventListener("keydown", onKey);
+    edit.addEventListener("blur", onBlur);
+    endEdit = finish;
+    edit.focus();
+    edit.select();
   }
 
   function statusTitle(label: string, key: string | null): string {
@@ -433,7 +545,14 @@ export function mountWorkspacePanel(
   }
 
   function rebuild(): void {
+    // A language change / add / delete can land mid-edit. Cancel rather than
+    // commit: the row is about to be replaced, and detaching a focused input
+    // does not reliably fire `blur`, which would otherwise leave `endEdit`
+    // pointing at a dead row and block every later rename.
+    endEdit?.(false);
     buttons.clear();
+    editors.clear();
+    blocks.clear();
     noteButtons.clear();
     childHosts.clear();
     carets.clear();
@@ -442,13 +561,19 @@ export function mountWorkspacePanel(
     // Render in `config.workspaces` order — that array *is* the user's order,
     // set by drag-to-reorder and persisted by TOML's `[[workspaces]]`.
     for (const ws of manager.workspaces) {
+      const block = document.createElement("div");
+      block.className = "workspace-panel__block";
       const row = makeRow(ws.id);
+      // `rows` stays workspace-rows-only — its indices feed `moveWorkspace`
+      // and its boxes feed the drop-target midpoints.
       rows.push(row);
-      list.appendChild(row);
+      block.appendChild(row);
       const children = document.createElement("div");
       children.className = "workspace-panel__children";
       childHosts.set(ws.id, children);
-      list.appendChild(children);
+      block.appendChild(children);
+      blocks.set(ws.id, block);
+      list.appendChild(block);
     }
     highlight();
     renderTree();
@@ -457,7 +582,13 @@ export function mountWorkspacePanel(
   function highlight(): void {
     for (const [id, btn] of buttons) {
       const status = manager.workspaceStatus(id);
-      btn.classList.toggle("workspace-panel__ws--active", id === manager.activeIdValue);
+      const active = id === manager.activeIdValue;
+      btn.classList.toggle("workspace-panel__ws--active", active);
+      // The outline belongs to the whole block (row + pane/tab/agent rows), so
+      // the active workspace reads as one region. Driven from here so every
+      // path that re-highlights — click, Ctrl+Alt+N, panel toggle via
+      // refreshWorkspacePanel — keeps it in sync.
+      blocks.get(id)?.classList.toggle("workspace-panel__block--active", active);
       btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
       // The whole row is tinted by status (idle = no tint); CSS keys off this.
       btn.dataset.status = status;
