@@ -34,7 +34,7 @@ pub struct PtyManager {
     // patch the persisted layout with live working directories.
     cwds: CwdMap,
     // Extra environment variables injected into every spawned PTY process
-    // (e.g. `YMUX_IPC`). Set once at startup, read on every spawn.
+    // (`YMUX_HOOK_TOKEN`). Set once at startup, read on every spawn.
     extra_env: Mutex<Vec<(String, String)>>,
 }
 
@@ -59,7 +59,8 @@ impl PtyManager {
     }
 
     /// Register extra environment variables that will be injected into every
-    /// subsequently spawned PTY process. Intended for things like `YMUX_IPC`.
+    /// subsequently spawned PTY process. Intended for things like
+    /// `YMUX_HOOK_TOKEN`.
     pub fn set_extra_env(&self, env: Vec<(String, String)>) {
         *self.extra_env.lock() = env;
     }

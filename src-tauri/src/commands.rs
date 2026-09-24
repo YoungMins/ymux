@@ -253,13 +253,10 @@ pub fn emit_agents_changed(app: &AppHandle, snapshot: &AgentSnapshot) {
     }
 }
 
-/// Route one `agent-hook` IPC payload (from `y agent-hook`) into the agent
-/// registry. Payloads for panes this ymux doesn't own — malformed id, or a
-/// pane that has since closed — are dropped.
-pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
-    let Some(ev) = HookEvent::from_payload(payload) else {
-        return;
-    };
+/// Route one Claude Code hook event (from the `hook_http` receiver) into
+/// the agent registry. Events for panes this ymux doesn't own — one that has
+/// closed since the receiver checked — are dropped.
+pub fn apply_agent_hook(app: &AppHandle, ev: HookEvent) {
     if !app.state::<AppState>().pty.has(ev.pane_id) {
         return;
     }
@@ -466,13 +463,89 @@ pub fn set_agent_tracking(
     webview: Webview,
     request: Request<'_>,
     state: State<'_, AppState>,
+    hook_port: State<'_, AgentHookPort>,
     enabled: bool,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "set_agent_tracking")?;
-    crate::agent_hooks::set_enabled(enabled)?;
+    let port = match (enabled, hook_port.0) {
+        (true, None) => {
+            return Err(YmuxError::Other(
+                "this ymux has no Claude Code hook receiver (another ymux instance \
+                 holds its port, or it failed to start)"
+                    .into(),
+            ))
+        }
+        // Uninstall doesn't need the port: it matches any ymux entry.
+        (_, port) => port.unwrap_or(0),
+    };
+    crate::agent_hooks::set_enabled(enabled, port)?;
     state.config.update(|c| c.agent_tracking = enabled);
     state.config.flush()?;
     Ok(())
+}
+
+/// Port the Claude Code hook receiver listens on this run (`None` if it
+/// could not start). Managed state, read by [`set_agent_tracking`].
+pub struct AgentHookPort(pub Option<u16>);
+
+/// Start the loopback receiver for Claude Code's http hooks
+/// (`crate::hook_http`, CLAUDE.md rule 13) and return its port.
+///
+/// The port is persisted in `Config::agent_hook_port` and reused, because the
+/// hooks in `~/.claude/settings.json` carry it literally. When it is taken:
+/// if another ymux answers the ping there, this instance runs **without** a
+/// receiver (`None`) and never touches the port or the hooks — moving them
+/// would strand that instance's panes; otherwise an OS-assigned port is used
+/// and — if `may_persist` (see `agent_hooks::startup_refresh_allowed`) —
+/// saved, so the startup hook refresh that follows points the hooks at it.
+/// Accepted events are applied after the receiver has already answered, so
+/// Claude never waits on a lock.
+pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) -> Option<u16> {
+    use crate::hook_http;
+    let state = app.state::<AppState>();
+    let persisted = state.config.snapshot().agent_hook_port;
+    let bound = hook_http::choose_port(persisted, hook_http::bind_loopback, hook_http::probe_ymux);
+    let (listener, reused) = match bound {
+        Ok(hook_http::Bound::Listening { listener, reused }) => (listener, reused),
+        Ok(hook_http::Bound::HeldByYmux) => {
+            tracing::warn!(
+                port = persisted,
+                "another ymux is receiving Claude Code hooks on this port; this instance \
+                 runs without a receiver, so its panes get no hook events (the process \
+                 scan still lists their agents)"
+            );
+            return None;
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to bind the Claude Code hook receiver");
+            return None;
+        }
+    };
+    let port = listener.local_addr().ok()?.port();
+    if !reused && may_persist {
+        state.config.update(|c| c.agent_hook_port = port);
+        if let Err(e) = state.config.flush() {
+            tracing::warn!(error = %e, "failed to persist the hook receiver port");
+        }
+    }
+    let known = app.clone();
+    let apply = app.clone();
+    let served = hook_http::serve(
+        listener,
+        token,
+        std::sync::Arc::new(move |pane| known.state::<AppState>().pty.has(pane)),
+        std::sync::Arc::new(move |ev| apply_agent_hook(&apply, ev)),
+    );
+    if let Err(e) = served {
+        tracing::error!(error = %e, "failed to start the Claude Code hook receiver");
+        return None;
+    }
+    tracing::info!(
+        port,
+        reused,
+        "Claude Code hook receiver listening on 127.0.0.1"
+    );
+    Some(port)
 }
 
 /// Open a URL in the system default browser. Only `http://` and `https://`

@@ -85,6 +85,15 @@ pub struct Config {
     /// serde default, so no `CONFIG_VERSION` bump.
     #[serde(default)]
     pub agent_tracking: bool,
+    /// Loopback port of the Claude Code hook receiver (`hook_http`). Chosen
+    /// once and reused on every launch, because Claude Code's hook URL can't
+    /// interpolate env vars — the port is a literal in
+    /// `~/.claude/settings.json`. `0` = not chosen yet. Backend-owned like
+    /// `agent_tracking` (CLAUDE.md rule 11): never copied in
+    /// `merge_layouts_from`. Additive with a serde default, no
+    /// `CONFIG_VERSION` bump.
+    #[serde(default)]
+    pub agent_hook_port: u16,
 }
 
 fn default_version() -> u32 {
@@ -130,6 +139,7 @@ impl Default for Config {
             font_size: default_font_size(),
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         }
     }
 }
@@ -187,6 +197,7 @@ impl Config {
         // must mirror what is actually in settings.json. Copying a (possibly
         // stale) frontend snapshot here would let an unrelated layout save
         // turn tracking off while the hooks stay installed.
+        // `agent_hook_port` likewise: the installed hooks' URL carries it.
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
         }
@@ -846,6 +857,7 @@ mod tests {
         };
         let stale_save = Config {
             agent_tracking: false,
+            agent_hook_port: 0,
             ..Config::default()
         };
         backend.merge_layouts_from(stale_save);
@@ -884,6 +896,35 @@ mod tests {
     fn agent_tracking_defaults_off_when_absent() {
         let parsed: Config = toml::from_str("version = 7\n").expect("parse");
         assert!(!parsed.agent_tracking);
+    }
+
+    /// The hook receiver's port is backend-owned like `agent_tracking`: it is
+    /// written into `~/.claude/settings.json`, so a stale frontend save must
+    /// never move it away from the URL the installed hooks point at.
+    #[test]
+    fn merge_layouts_does_not_carry_agent_hook_port() {
+        let mut backend = Config {
+            agent_hook_port: 41234,
+            ..Config::default()
+        };
+        backend.merge_layouts_from(Config {
+            agent_hook_port: 0,
+            ..Config::default()
+        });
+        assert_eq!(backend.agent_hook_port, 41234);
+    }
+
+    #[test]
+    fn agent_hook_port_defaults_to_unset_and_roundtrips() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert_eq!(parsed.agent_hook_port, 0);
+        let config = Config {
+            agent_hook_port: 41234,
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(loaded.agent_hook_port, 41234);
     }
 
     #[test]
@@ -927,6 +968,7 @@ mod tests {
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -941,6 +983,7 @@ mod tests {
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -1003,6 +1046,7 @@ mod tests {
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -1037,6 +1081,7 @@ mod tests {
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -1174,6 +1219,7 @@ shell = "PowerShell 7"
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1205,6 +1251,7 @@ shell = "PowerShell 7"
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -1270,6 +1317,7 @@ shell = "PowerShell 7"
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1523,6 +1571,7 @@ shell = "PowerShell 7"
             font_size: 13,
             default_shell: String::new(),
             agent_tracking: false,
+            agent_hook_port: 0,
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

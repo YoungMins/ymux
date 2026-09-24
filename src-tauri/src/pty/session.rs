@@ -177,13 +177,14 @@ impl PtySession {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
-        // Inject manager-level env vars (e.g. YMUX_IPC).
+        // Inject manager-level env vars (the hook receiver's
+        // `YMUX_HOOK_TOKEN`).
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
-        // Per-pane identity for tools running inside the pane: the Claude
-        // Code hook (`y agent-hook claude`) reports it back over yipc so the
-        // agent tree knows which pane an event belongs to. Set last so
+        // Per-pane identity for tools running inside the pane: Claude
+        // Code's http hooks send it back in `X-Ymux-Pane` (`hook_http`) so
+        // the agent tree knows which pane an event belongs to. Set last so
         // neither the profile nor the pane env can clobber it.
         cmd.env("YMUX_PANE_ID", spec.id.to_string());
 

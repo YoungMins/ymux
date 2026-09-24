@@ -4,7 +4,6 @@ use tauri::{Manager, RunEvent};
 use ymux_lib::agent_scan::start_agent_scan;
 use ymux_lib::commands::{start_pty_event_pump, AppState};
 use ymux_lib::config::ConfigStore;
-use ymux_lib::ipc_server::start_ipc_server;
 use ymux_lib::pty::PtyManager;
 use ymux_lib::sysmonitor::start_sysmonitor;
 use ymux_lib::updater::start_update_checker;
@@ -149,13 +148,31 @@ fn main() {
         ])
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            let ipc_addr = start_ipc_server(app.handle().clone());
-            // Inject YMUX_IPC into every PTY that will be spawned, so the `y`
-            // hook relay a Claude Code session runs can reach this process.
+            // Claude Code hook receiver. Its per-run token goes into every
+            // PTY spawned from here on, so only a Claude running inside one
+            // of this ymux's panes can report agent events (rule 13).
+            let refresh_allowed = {
+                use ymux_lib::agent_hooks::{startup_refresh_allowed, DEV_HOOKS_ENV};
+                let opt_in = std::env::var(DEV_HOOKS_ENV).ok();
+                startup_refresh_allowed(cfg!(debug_assertions), opt_in.as_deref())
+            };
+            let token = ymux_lib::hook_http::new_token();
+            let hook_port = ymux_lib::commands::start_hook_receiver(
+                app.handle(),
+                token.clone(),
+                refresh_allowed,
+            );
+            app.manage(ymux_lib::commands::AgentHookPort(hook_port));
+            // Without a receiver the token is set *empty* rather than left
+            // out: a ymux started from another ymux's pane would otherwise
+            // hand its panes the parent's token, and their hooks would reach
+            // the parent as 403s (hook errors). Empty is a quiet no-op there.
+            let token = if hook_port.is_some() { token } else { String::new() };
             let state = app.state::<AppState>();
-            state
-                .pty
-                .set_extra_env(vec![("YMUX_IPC".to_string(), ipc_addr)]);
+            state.pty.set_extra_env(vec![(
+                ymux_lib::hook_http::TOKEN_ENV.to_string(),
+                token,
+            )]);
             // Prune paste-image temp files left over from a previous
             // session — otherwise the last paste of a session would outlive
             // its retention window forever, since `save` only prunes on the
@@ -167,23 +184,24 @@ fn main() {
                 tracing::warn!(error = %e, "failed to prune old paste images at startup");
             }
             // While agent tracking is on, re-run the hook install on every
-            // launch: a reinstall to another directory would otherwise leave
-            // Claude Code calling a stale `y` path.
+            // launch: it points the hooks at a port that had to change, and
+            // migrates the retired `y` command entries of an upgraded user.
             // Debug builds skip it (unless opted in) so `tauri dev` doesn't
-            // repoint the real hooks at `target/debug/y.exe`.
+            // repoint the real hooks at the dev build's receiver.
             if state.config.snapshot().agent_tracking {
-                use ymux_lib::agent_hooks::{startup_refresh_allowed, DEV_HOOKS_ENV};
-                let opt_in = std::env::var(DEV_HOOKS_ENV).ok();
-                if startup_refresh_allowed(cfg!(debug_assertions), opt_in.as_deref()) {
-                    if let Err(e) = ymux_lib::agent_hooks::set_enabled(true) {
-                        tracing::warn!(error = %e, "failed to refresh Claude Code hooks at startup");
+                match (refresh_allowed, hook_port) {
+                    (true, Some(port)) => {
+                        if let Err(e) = ymux_lib::agent_hooks::set_enabled(true, port) {
+                            tracing::warn!(error = %e, "failed to refresh Claude Code hooks at startup");
+                        }
                     }
-                } else {
-                    tracing::info!(
+                    (true, None) => {}
+                    (false, _) => tracing::info!(
                         "debug build: skipping Claude Code hook refresh so the installed \
-                         hooks keep pointing at the release `y`; set {DEV_HOOKS_ENV}=1 to \
-                         refresh them to this build"
-                    );
+                         hooks keep pointing at the release build; set {}=1 to refresh \
+                         them to this build",
+                        ymux_lib::agent_hooks::DEV_HOOKS_ENV
+                    ),
                 }
             }
             start_pty_event_pump(app.handle().clone());

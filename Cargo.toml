@@ -2,8 +2,6 @@
 members = [
     "src-tauri",
     "crates/ytheme",
-    "crates/yipc",
     "crates/ypath",
-    "tools/ylauncher",
 ]
 resolver = "2"

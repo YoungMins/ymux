@@ -57,14 +57,14 @@ jobs:
       - name: cargo fmt (workspace)
         run: cargo fmt --all --check
 
-      - name: cargo clippy (workspace, no tauri deps)
-        run: cargo clippy -p ytheme -p yipc -p ypath -p ylauncher -- -D warnings
+      - name: cargo clippy (shared crates, no tauri deps)
+        run: cargo clippy -p ytheme -p ypath -- -D warnings
 
       - name: cargo clippy (ymux lib, no tauri runtime)
         run: cargo clippy --no-default-features --lib --tests -p ymux -- -D warnings
 
-      - name: cargo test (y hook relay + shared crates)
-        run: cargo test -p ytheme -p yipc -p ypath -p ylauncher
+      - name: cargo test (shared crates)
+        run: cargo test -p ytheme -p ypath
 
       - name: cargo test (ymux lib, no tauri runtime)
         run: cargo test --no-default-features --lib -p ymux
@@ -83,14 +83,6 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             librsvg2-dev \
             pkg-config
-
-      - name: Create dummy sidecar binaries for cargo check
-        run: |
-          mkdir -p src-tauri/binaries
-          TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
-          for tool in y; do
-            touch "src-tauri/binaries/${tool}-${TRIPLE}"
-          done
 
       - name: cargo check --bin (with desktop feature)
         run: cargo check --features desktop --bin ymux -p ymux
@@ -268,11 +260,7 @@ jobs:
       - name: Build .app + .dmg
         uses: tauri-apps/tauri-action@v0
         id: tauri
-        env:
-          # Keeps `scripts/build-tools.mjs` (which stages the sidecar binaries
-          # under a triple-suffixed name) in lockstep with the `--target` below.
-          # The Apple signing vars come from the step above, via $GITHUB_ENV.
-          YMUX_TARGET_TRIPLE: aarch64-apple-darwin
+        # The Apple signing vars come from the step above, via $GITHUB_ENV.
         with:
           # No tagName/releaseId: this step only builds. Uploading is done
           # below so the artifact can be renamed to carry its architecture.
