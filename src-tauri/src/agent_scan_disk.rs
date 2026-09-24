@@ -598,29 +598,51 @@ pub fn claude_pid_file_id(proc: &crate::agent_binding::PaneProcess) -> Option<St
     crate::agent_binding::registry_session_id(proc, &file)
 }
 
+/// Directory entries one existence check may visit. The check runs as a pane
+/// spawns, so it is bounded well below [`MAX_DIR_ENTRIES`]; the fast paths
+/// below make the typical answer a single `stat`.
+pub const MAX_EXISTS_ENTRIES: usize = 5_000;
+
 /// Whether the transcript for `session_id` is still on disk.
 ///
-/// Deliberately a *search by id*, not a path rebuilt from the record's `cwd`.
-/// Two reasons, one per agent:
+/// A *search by id*, not only a path rebuilt from the record's `cwd`. Two
+/// reasons, one per agent:
 ///
 /// * Claude's directory name is derived from the cwd, and the spelling in the
 ///   record came from whatever produced it — a hook-borne record carries the
 ///   shell's OSC 7 spelling, which from Git Bash is `/d/Git/ymux`, not
-///   `D:\Git\ymux`. Rebuilding the name from that finds nothing.
+///   `D:\Git\ymux`. So the directory `cwd_hint` mangles to is tried first
+///   (one `stat`, and right for every disk-scanned record), and only then
+///   every project directory.
 /// * Codex's filename embeds a timestamp *before* the id, so there is no path
 ///   to rebuild at all; and asking "is this still the newest session here?"
 ///   would decline a perfectly good resume as soon as any later Codex run
-///   touched the same directory.
+///   touched the same directory. The date tree is walked newest first, since
+///   a resumable session was active in the last day.
 ///
-/// Both walks read directory entries only — 22 project directories here for
-/// Claude, the date tree for Codex — and open nothing.
-pub fn transcript_exists_under(agent: AgentKind, root: &Path, session_id: &str) -> bool {
+/// Both read directory entries only and open nothing, and both give up
+/// (answering "gone") after `budget` entries.
+pub fn transcript_exists_within(
+    agent: AgentKind,
+    root: &Path,
+    session_id: &str,
+    cwd_hint: &str,
+    mut budget: usize,
+) -> bool {
     if !is_valid_session_id(session_id) {
         return false;
     }
-    let mut budget = MAX_DIR_ENTRIES;
+    let file_name = format!("{session_id}.jsonl");
     match agent {
         AgentKind::Claude => {
+            if !cwd_hint.is_empty()
+                && root
+                    .join(claude_project_dir_name(cwd_hint))
+                    .join(&file_name)
+                    .is_file()
+            {
+                return true;
+            }
             let Ok(entries) = std::fs::read_dir(root) else {
                 return false;
             };
@@ -629,57 +651,67 @@ pub fn transcript_exists_under(agent: AgentKind, root: &Path, session_id: &str) 
                     return false;
                 }
                 budget -= 1;
-                if entry.path().join(format!("{session_id}.jsonl")).is_file() {
+                if entry.path().join(&file_name).is_file() {
                     return true;
                 }
             }
             false
         }
         AgentKind::Codex => {
-            let suffix = format!("-{session_id}.jsonl");
-            let mut level: Vec<PathBuf> = vec![root.to_path_buf()];
-            for depth in 0..4 {
-                let mut next = Vec::new();
-                for dir in &level {
-                    let Ok(entries) = std::fs::read_dir(dir) else {
-                        continue;
-                    };
-                    for entry in entries.flatten() {
-                        if budget == 0 {
-                            return false;
-                        }
-                        budget -= 1;
-                        // `YYYY/MM/DD` are directories; the fourth level is
-                        // the rollout files themselves.
-                        if depth == 3 {
-                            if entry
-                                .file_name()
-                                .to_str()
-                                .is_some_and(|n| n.ends_with(&suffix))
-                            {
-                                return true;
-                            }
-                        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                            next.push(entry.path());
-                        }
-                    }
-                }
-                level = next;
-            }
-            false
+            let suffix = format!("-{file_name}");
+            codex_find(root, 0, &suffix, &mut budget)
         }
     }
+}
+
+/// Depth-first over `YYYY/MM/DD/rollout-*.jsonl`, newest name first at every
+/// level.
+fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut names: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if depth == 3 {
+            if name.ends_with(suffix) {
+                return true;
+            }
+        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            names.push((name, entry.path()));
+        }
+    }
+    names.sort_by(|a, b| b.0.cmp(&a.0));
+    names
+        .iter()
+        .any(|(_, path)| codex_find(path, depth + 1, suffix, budget))
+}
+
+/// [`transcript_exists_within`] with the default budget.
+pub fn transcript_exists_under(
+    agent: AgentKind,
+    root: &Path,
+    session_id: &str,
+    cwd_hint: &str,
+) -> bool {
+    transcript_exists_within(agent, root, session_id, cwd_hint, MAX_EXISTS_ENTRIES)
 }
 
 /// [`transcript_exists_under`] against the real roots in the user's home
 /// directory. A machine with no home directory has no transcripts either, so
 /// nothing is resumable there.
-pub fn transcript_exists(agent: AgentKind, session_id: &str) -> bool {
+pub fn transcript_exists(agent: AgentKind, session_id: &str, cwd_hint: &str) -> bool {
     let root = match agent {
         AgentKind::Claude => claude_projects_root(),
         AgentKind::Codex => codex_sessions_root(),
     };
-    root.is_some_and(|r| transcript_exists_under(agent, &r, session_id))
+    root.is_some_and(|r| transcript_exists_under(agent, &r, session_id, cwd_hint))
 }
 
 #[cfg(test)]
@@ -1217,17 +1249,19 @@ mod tests {
             &root.join("D--Git-ymux").join(format!("{id}.jsonl")),
             &claude_transcript("D:\\Git\\ymux", "cli"),
         );
-        assert!(transcript_exists_under(AgentKind::Claude, &root, id));
+        assert!(transcript_exists_under(AgentKind::Claude, &root, id, ""));
         assert!(!transcript_exists_under(
             AgentKind::Claude,
             &root,
-            "cccccccc-0000-0000-0000-00000000000f"
+            "cccccccc-0000-0000-0000-00000000000f",
+            ""
         ));
         // And it refuses an id that is not safe to build a filename from.
         assert!(!transcript_exists_under(
             AgentKind::Claude,
             &root,
-            "../evil"
+            "../evil",
+            ""
         ));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1249,12 +1283,84 @@ mod tests {
                 "{}",
             );
         }
-        assert!(transcript_exists_under(AgentKind::Codex, &root, mine));
-        assert!(transcript_exists_under(AgentKind::Codex, &root, newer));
+        assert!(transcript_exists_under(AgentKind::Codex, &root, mine, ""));
+        assert!(transcript_exists_under(AgentKind::Codex, &root, newer, ""));
         assert!(!transcript_exists_under(
             AgentKind::Codex,
             &root,
-            "01a00000-0000-0000-0000-00000000002c"
+            "01a00000-0000-0000-0000-00000000002c",
+            ""
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_existence_check_is_one_stat_when_the_cwd_says_where_to_look() {
+        let root = tempdir("claude-exists-fast");
+        let id = "aaaaaaaa-0000-0000-0000-00000000001f";
+        for n in 0..20 {
+            std::fs::create_dir_all(root.join(format!("C--other-{n}"))).expect("mkdir");
+        }
+        write(
+            &root.join("D--Work-proj").join(format!("{id}.jsonl")),
+            &claude_transcript("D:\\Work\\proj", "cli"),
+        );
+        // No directory walk allowed at all: only the derived path is tried.
+        assert!(transcript_exists_within(
+            AgentKind::Claude,
+            &root,
+            id,
+            "D:\\Work\\proj",
+            0
+        ));
+        // A hint spelled differently (Git Bash's OSC 7) misses the fast path
+        // and falls back to the bounded walk.
+        assert!(!transcript_exists_within(
+            AgentKind::Claude,
+            &root,
+            id,
+            "/d/Work/proj",
+            0
+        ));
+        assert!(transcript_exists_within(
+            AgentKind::Claude,
+            &root,
+            id,
+            "/d/Work/proj",
+            100
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_codex_existence_check_walks_newest_first_and_is_bounded() {
+        let root = tempdir("codex-exists-bounded");
+        let recent = "01a00000-0000-0000-0000-00000000003a";
+        // Many old days, and the session in the newest one.
+        for day in 1..=28 {
+            std::fs::create_dir_all(root.join(format!("2025/01/{day:02}"))).expect("mkdir");
+        }
+        write(
+            &root
+                .join("2026/09/23")
+                .join(format!("rollout-2026-09-23T10-00-00-{recent}.jsonl")),
+            "{}",
+        );
+        // Found with a budget far below the size of the tree...
+        assert!(transcript_exists_within(
+            AgentKind::Codex,
+            &root,
+            recent,
+            "",
+            8
+        ));
+        // ...and a budget of nothing finds nothing, rather than walking on.
+        assert!(!transcript_exists_within(
+            AgentKind::Codex,
+            &root,
+            recent,
+            "",
+            1
         ));
         let _ = std::fs::remove_dir_all(&root);
     }

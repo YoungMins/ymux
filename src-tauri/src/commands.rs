@@ -316,7 +316,11 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
 /// provably carries over are kept (and any selector dropped). `shell` is the
 /// pane's shell profile name: the command is typed into that shell, so it is
 /// quoted by that shell's rules (`agent_sessions::ShellFamily`).
-#[tauri::command]
+///
+/// `async` so it runs off the main thread: the session lock is shared with
+/// the scan thread, and the transcript check touches the disk. The lock is
+/// never held across that check.
+#[tauri::command(async)]
 pub fn get_agent_session(
     webview: Webview,
     request: Request<'_>,
@@ -338,9 +342,10 @@ pub fn get_agent_session(
         })
         .unwrap_or(crate::agent_sessions::ShellFamily::Unknown);
     let now = crate::agent_sessions::now_secs();
-    let mut tracker = sessions.0.lock();
+    // Copy the record out; the disk check below runs without the lock.
+    let record = sessions.0.lock().get(pane_id).cloned();
     let outcome = crate::agent_sessions::outcome_for(
-        tracker.get(pane_id),
+        record.as_ref(),
         startup_cmd.as_deref().unwrap_or_default(),
         family,
         now,
@@ -349,8 +354,8 @@ pub fn get_agent_session(
     // The frontend types the command next. Until the scan sees the resumed
     // agent running, the pane's old scrollback stays on disk.
     if matches!(outcome, ResumeOutcome::Resume { .. }) {
-        if let Some(id) = tracker.get(pane_id).map(|s| s.session_id.clone()) {
-            tracker.begin_resume(pane_id, &id, now);
+        if let Some(r) = &record {
+            sessions.0.lock().begin_resume(pane_id, &r.session_id, now);
         }
     }
     Ok(outcome)
@@ -582,7 +587,10 @@ pub fn notify(
 /// Thin wrapper — the actual fs logic lives in [`crate::scrollback`] so it
 /// can be unit-tested without a running webview (and on Linux CI, where this
 /// `desktop`-gated module doesn't even compile).
-#[tauri::command]
+///
+/// `async` so the file write, and the wait for the session lock the scan
+/// thread shares, happen off the main thread.
+#[tauri::command(async)]
 pub fn save_scrollback(
     webview: Webview,
     request: Request<'_>,

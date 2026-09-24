@@ -1299,7 +1299,44 @@ pub fn outcome_for(
 /// `cwd` — see `agent_scan_disk::transcript_exists_under` for why both agents
 /// need that.
 pub fn transcript_exists(session: &AgentSession) -> bool {
-    crate::agent_scan_disk::transcript_exists(session.agent, &session.session_id)
+    static CACHE: std::sync::OnceLock<parking_lot::Mutex<ExistsCache>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let key = (session.agent, session.session_id.clone());
+    let now = std::time::Instant::now();
+    if let Some(hit) = cache.lock().get(&key, now) {
+        return hit;
+    }
+    // The walk runs outside the cache lock: two panes checking at once may
+    // both walk, which is cheaper than serialising every spawn on one walk.
+    let found =
+        crate::agent_scan_disk::transcript_exists(session.agent, &session.session_id, &session.cwd);
+    cache.lock().put(key, found, now);
+    found
+}
+
+/// How long an answer to "is this transcript still on disk?" is reused.
+pub const EXISTS_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Recent existence answers, so a burst of pane spawns (a workspace restore)
+/// or a quick relaunch does not walk the transcript tree once per pane.
+#[derive(Debug, Default)]
+pub struct ExistsCache {
+    entries: BTreeMap<(AgentKind, String), (bool, std::time::Instant)>,
+}
+
+impl ExistsCache {
+    pub fn get(&self, key: &(AgentKind, String), now: std::time::Instant) -> Option<bool> {
+        self.entries
+            .get(key)
+            .filter(|(_, at)| now.saturating_duration_since(*at) < EXISTS_CACHE_TTL)
+            .map(|(found, _)| *found)
+    }
+
+    pub fn put(&mut self, key: (AgentKind, String), found: bool, now: std::time::Instant) {
+        self.entries
+            .retain(|_, (_, at)| now.saturating_duration_since(*at) < EXISTS_CACHE_TTL);
+        self.entries.insert(key, (found, now));
+    }
 }
 
 #[cfg(test)]
@@ -2558,6 +2595,22 @@ mod tests {
             Some(AgentStatus::Working)
         );
         assert!(t.get(other_pane).is_some_and(|s| s.interrupted));
+    }
+
+    #[test]
+    fn existence_answers_are_reused_for_a_while_then_rechecked() {
+        let mut c = ExistsCache::default();
+        let t0 = std::time::Instant::now();
+        let key = (AgentKind::Claude, ID_A.to_string());
+        assert_eq!(c.get(&key, t0), None);
+        c.put(key.clone(), true, t0);
+        assert_eq!(c.get(&key, t0 + Duration::from_secs(5)), Some(true));
+        assert_eq!(c.get(&key, t0 + EXISTS_CACHE_TTL), None, "expired");
+        assert_eq!(
+            c.get(&(AgentKind::Codex, ID_A.to_string()), t0),
+            None,
+            "keyed by agent too"
+        );
     }
 
     /// A tracker holding last launch's live record for `pane` (id `ID_A`).
