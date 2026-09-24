@@ -40,7 +40,9 @@ ytheme = { path = "../crates/ytheme" }
 ypath = { path = "../crates/ypath" }
 # Cross-platform "open file/folder with the OS default app" used by the
 # Config Files settings section.
-opener = "0.7"
+# `reveal` (show-in-file-manager) is used by the terminal path linkifier for
+# executables and scripts, which "open with the default program" would run.
+opener = { version = "0.7", features = ["reveal"] }
 
 # PNG encoding for clipboard images. Pure Rust and deliberately NOT behind
 # `desktop`: the encode half of the clipboard-image path (`paste_images::

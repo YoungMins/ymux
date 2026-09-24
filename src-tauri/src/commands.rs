@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use std::path::Path;
 
+use crate::agent_sessions::{ResumeOutcome, SharedSessions};
 use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
@@ -220,7 +221,13 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
     }
     let agents = app.state::<SharedAgents>();
     let mut reg = agents.0.lock();
-    if reg.apply_hook(&ev) {
+    let changed = reg.apply_hook(&ev);
+    // Record the id the hook just carried, then drop the registry lock before
+    // taking the session lock — the scan thread takes them in this order too,
+    // so there is one lock order and no way to deadlock against it.
+    let hook_id = reg.hook_session_id(ev.pane_id).map(str::to_string);
+    let lead = reg.snapshot().get(&ev.pane_id).and_then(|p| p.lead.clone());
+    if changed {
         // Emit while still holding the lock: the hook listener and the scan
         // thread both write the registry, and emitting after release let a
         // newer snapshot overtake an older one, leaving the UI stale. Safe —
@@ -228,6 +235,97 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
         // the registry, and it only queues the JS dispatch (non-blocking).
         emit_agents_changed(app, &reg.snapshot());
     }
+    drop(reg);
+    // `SessionEnd` clears the pane's agents, so there is no lead to read here
+    // and nothing to record — which is right: a hook cannot distinguish "the
+    // user quit Claude" from "ymux is killing every PTY on the way out", and
+    // deactivating on the second would erase exactly the records the next
+    // launch needs. The process scan's `exited_panes` makes that distinction
+    // (it only reports panes still in `live`), so the decision belongs there.
+    let Some(lead) = lead else { return };
+    let sessions = app.state::<SharedSessions>();
+    let mut tracker = sessions.0.lock();
+    observe_pane_session(
+        app,
+        &mut tracker,
+        ev.pane_id,
+        &lead.kind,
+        lead.status,
+        hook_id,
+    );
+    flush_sessions(&mut tracker);
+}
+
+/// The resume plan for one pane, or `None` when it should start normally.
+///
+/// Called by `TerminalPane.spawn()` *before* it decides whether to replay
+/// scrollback (spec §4/§5): for a pane that is about to resume an agent, the
+/// saved backlog is dead history that would sit above the resumed
+/// conversation, so it is skipped entirely.
+///
+/// `startup_cmd` is the pane's own saved startup command, so any selector it
+/// already carries can be stripped rather than fighting ours.
+#[tauri::command]
+pub fn get_agent_session(
+    sessions: State<'_, SharedSessions>,
+    pane_id: Uuid,
+    startup_cmd: Option<String>,
+) -> ResumeOutcome {
+    let tracker = sessions.0.lock();
+    crate::agent_sessions::outcome_for(
+        tracker.get(pane_id),
+        startup_cmd.as_deref().unwrap_or_default(),
+        crate::agent_sessions::now_secs(),
+        crate::agent_sessions::transcript_exists,
+    )
+}
+
+/// Forget a pane's session entirely. Called when the user closes a pane for
+/// good, mirroring `delete_scrollback`.
+#[tauri::command]
+pub fn clear_agent_session(sessions: State<'_, SharedSessions>, pane_id: Uuid) -> YmuxResult<()> {
+    let mut tracker = sessions.0.lock();
+    tracker.forget(pane_id);
+    flush_sessions(&mut tracker);
+    Ok(())
+}
+
+/// Persist the session store if anything changed. A no-op on an idle tick, so
+/// the 2 s scan does not rewrite the file forever.
+pub fn flush_sessions(tracker: &mut crate::agent_sessions::SessionTracker) {
+    if tracker.take_dirty() {
+        if let Err(e) = crate::agent_sessions::save(tracker.store()) {
+            tracing::warn!(error = %e, "saving agent sessions failed");
+        }
+    }
+}
+
+/// Feed one pane's current state into the session tracker.
+///
+/// Shared by the hook listener and the process scan so both write the same
+/// store. The transcript lookup is only reached when the tracker's throttle
+/// allows it, and it is skipped entirely for a pane with no known cwd —
+/// without one there is nothing to match a transcript against.
+pub fn observe_pane_session(
+    app: &AppHandle,
+    tracker: &mut crate::agent_sessions::SessionTracker,
+    pane_id: Uuid,
+    kind: &str,
+    status: crate::agents::AgentStatus,
+    hook_session_id: Option<String>,
+) {
+    let obs = crate::agent_sessions::PaneObservation {
+        pane_id,
+        kind: kind.to_string(),
+        cwd: app.state::<AppState>().pty.cwd_for(pane_id),
+        status,
+        hook_session_id,
+    };
+    tracker.observe(
+        &obs,
+        crate::agent_sessions::now_secs(),
+        crate::agent_scan_disk::newest_session,
+    );
 }
 
 /// Current agent snapshot, for the frontend's initial render.
@@ -295,6 +393,75 @@ pub fn open_url(url: String) -> YmuxResult<()> {
     Ok(())
 }
 
+/// Resolve terminal-output path candidates against a pane's live cwd,
+/// reporting which of them actually exist. Backs the terminal's path
+/// linkifier: a candidate only becomes a clickable link if this says it is
+/// real, and the answer is what the tooltip shows.
+///
+/// `async` on purpose. Tauri runs a non-async command on the main thread,
+/// and `metadata` on a mapped network drive that has gone away blocks for
+/// tens of seconds — long enough to freeze the whole UI on a mouse move.
+/// The work goes to a blocking pool and carries its own timeout
+/// ([`fspath::PROBE_TIMEOUT`]).
+///
+/// All the interesting logic — validation, tilde expansion, the UNC policy
+/// that stops a hover from leaking SMB credentials — lives in
+/// [`crate::fspath`], where it is unit-tested.
+#[tauri::command]
+pub async fn resolve_paths(
+    webview: tauri::Webview,
+    paths: Vec<String>,
+    cwd: Option<String>,
+) -> YmuxResult<Vec<Option<crate::fspath::ResolvedPath>>> {
+    // `capabilities/browser-children.json` hands `core:default` to every
+    // `eb-*` child webview on http(s) origins, so without this an arbitrary
+    // website open in an embedded browser pane could use this command as a
+    // filesystem oracle.
+    if !crate::fspath::caller_allowed(webview.label()) {
+        return Err(YmuxError::Other(
+            "resolve_paths: only the main webview may resolve local paths".into(),
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || crate::fspath::probe_batch(paths, cwd))
+        .await
+        .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))
+}
+
+/// Open an absolute path with the OS default handler — `ShellExecuteW` on
+/// Windows, `open` on macOS, both via `opener`. Neither builds a command
+/// line, so `&`, `^`, `%` and quotes in a filename are inert.
+///
+/// A directory opens in the file manager. An executable or script is
+/// *revealed* in the file manager rather than launched: clicking a path in
+/// terminal output means "show me this", and terminal output is
+/// attacker-influenced, so `ShellExecuteW` running `evil.bat` is not an
+/// acceptable reading of the click. See [`crate::fspath::should_reveal`].
+#[tauri::command]
+pub async fn open_path(webview: tauri::Webview, path: String) -> YmuxResult<()> {
+    if !crate::fspath::caller_allowed(webview.label()) {
+        return Err(YmuxError::Other(
+            "open_path: only the main webview may open local paths".into(),
+        ));
+    }
+    // The path was vetted by `resolve_paths`, but it made a round trip
+    // through the frontend to get here, so it is validated again from
+    // scratch rather than trusted.
+    crate::fspath::validate_open(&path).map_err(YmuxError::Other)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = Path::new(&path);
+        let meta = std::fs::metadata(p)
+            .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
+        let result = if crate::fspath::should_reveal(p, meta.is_dir()) {
+            opener::reveal(p)
+        } else {
+            opener::open(p)
+        };
+        result.map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))
+    })
+    .await
+    .map_err(|e| YmuxError::Other(format!("open_path: {e}")))?
+}
+
 /// Show an OS desktop notification with the given title and body.
 #[tauri::command]
 pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
@@ -308,7 +475,27 @@ pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
 /// can be unit-tested without a running webview (and on Linux CI, where this
 /// `desktop`-gated module doesn't even compile).
 #[tauri::command]
-pub fn save_scrollback(pane_id: String, blob: String) -> YmuxResult<()> {
+pub fn save_scrollback(
+    sessions: State<'_, SharedSessions>,
+    pane_id: String,
+    blob: String,
+) -> YmuxResult<()> {
+    // A pane whose agent is mid-conversation neither restores nor saves
+    // (spec §5). Enforced here rather than only in the frontend because the
+    // condition is "has a fresh record", not "was resumed at spawn": the
+    // *first* Claude session in a pane is not resumed, and a blob it wrote
+    // would sit unread until the record went stale and then be replayed —
+    // putting back exactly the dead screen this feature removes. Any blob
+    // already on disk goes with it.
+    let suppressed = Uuid::parse_str(&pane_id).is_ok_and(|id| {
+        sessions
+            .0
+            .lock()
+            .suppresses_scrollback(id, crate::agent_sessions::now_secs())
+    });
+    if suppressed {
+        return crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io);
+    }
     crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
 }
 

@@ -41,6 +41,14 @@ fn main() {
         .manage(eb_registry)
         .manage(ymux_lib::agents::SharedAgents::default())
         .manage(ymux_lib::agent_scan::SharedLabels::default())
+        // Resumable agent sessions, loaded from disk once at startup. A
+        // missing or corrupt file loads as an empty store (see
+        // `agent_sessions::load_from`) — panes then just start normally.
+        .manage(ymux_lib::agent_sessions::SharedSessions(
+            parking_lot::Mutex::new(ymux_lib::agent_sessions::SessionTracker::from_store(
+                ymux_lib::agent_sessions::load(),
+            )),
+        ))
         .invoke_handler(tauri::generate_handler![
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
@@ -52,10 +60,14 @@ fn main() {
             ymux_lib::commands::set_active_workspace,
             ymux_lib::commands::get_pane_cwd,
             ymux_lib::commands::open_url,
+            ymux_lib::commands::resolve_paths,
+            ymux_lib::commands::open_path,
             ymux_lib::commands::notify,
             ymux_lib::commands::save_scrollback,
             ymux_lib::commands::load_scrollback,
             ymux_lib::commands::delete_scrollback,
+            ymux_lib::commands::get_agent_session,
+            ymux_lib::commands::clear_agent_session,
             ymux_lib::commands::paste_clipboard_image,
             ymux_lib::commands::git_is_repo,
             ymux_lib::commands::git_worktree_add,

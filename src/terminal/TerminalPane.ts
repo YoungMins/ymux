@@ -14,7 +14,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import type { HotKeyDef, PaneSpec, Uuid } from "../types";
 import type { Pane } from "../layout/Pane";
-import { api, describeError, onPaneData, onPaneExit } from "../ipc/bridge";
+import { api, describeError, onPaneCwd, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
 import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
@@ -26,9 +26,16 @@ import {
 import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
+import {
+  spawnAction,
+  shouldPersistScrollback,
+  describeAge,
+  type ResumePlan,
+} from "./resumePlan";
 import { hasMod, isWorkspaceSwitch } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
 import { decideImagePaste, preparePaste } from "./paste";
+import { PathLinks } from "./pathLinks";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
@@ -101,6 +108,13 @@ export class TerminalPane implements Pane {
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
+  /// The plan this pane came up with, once `spawn()` has asked for one.
+  /// Non-null means the agent was resumed, so this pane neither restored
+  /// nor saves scrollback for the rest of its life (spec §5).
+  private resumePlan: ResumePlan | null = null;
+  /// Set when a recent session could not be resumed because its transcript is
+  /// gone: the pane starts normally but says so first (spec §4.3).
+  private missingAgent: string | null = null;
   private spec: PaneSpec;
   private opts: TerminalPaneOptions;
   private pendingResizeRaf = 0;
@@ -141,6 +155,14 @@ export class TerminalPane implements Pane {
   /// revisions a Hangul IME is built out of. Created in `open()`, once the
   /// helper textarea exists. See `ime.ts`.
   private ime: ImeBridge | undefined;
+  /// Linkifies filesystem paths in the output, next to the URL links the
+  /// `WebLinksAddon` above provides. See `pathLinks.ts`.
+  private pathLinks: PathLinks | undefined;
+  /// This pane's working directory as the shell last reported it (OSC 7).
+  /// The path linkifier resolves relative candidates against it, so it is
+  /// tracked here rather than asked for per hover. Seeded from the spec,
+  /// corrected once the PTY is up, then kept live by `pty:cwd:{id}`.
+  private liveCwd: string | null = null;
   private flushScrollbackOnUnload = (): void => {
     if (
       shouldSaveScrollback({
@@ -156,6 +178,7 @@ export class TerminalPane implements Pane {
     this.id = opts.spec.id;
     this.spec = opts.spec;
     this.opts = opts;
+    this.liveCwd = opts.spec.cwd || null;
 
     this.element = document.createElement("div");
     this.element.className = "pane";
@@ -307,6 +330,21 @@ export class TerminalPane implements Pane {
         }
       }),
     );
+    // Path links, registered *after* the URL provider above: xterm queries
+    // providers in registration order and drops a link that intersects one
+    // from an earlier provider, which is what keeps the path half of
+    // `https://host/a/b` from being linkified twice.
+    this.pathLinks = new PathLinks(this.term, {
+      cwd: () => this.liveCwd,
+      probe: (paths, cwd) => api.resolvePaths(paths, cwd),
+      // Same treatment as a failed `openUrl` above: log it rather than
+      // writing into the buffer, which belongs to the shell.
+      open: (resolved) =>
+        void api
+          .openPath(resolved.absolute)
+          .catch((e) => console.warn("openPath failed:", describeError(e))),
+    });
+    this.pathLinks.install();
     this.term.open(this.termHost);
     // IME input is ours now — see `ime.ts` for why xterm cannot keep a Hangul
     // syllable intact on macOS. Installed here because the helper textarea and
@@ -460,11 +498,38 @@ export class TerminalPane implements Pane {
     }
     const { cols, rows } = this.currentDims();
 
+    // Ask the backend whether this pane held an agent mid-conversation. A
+    // failure here must never block spawn — the pane then behaves exactly as
+    // it always did.
+    let outcome = null;
+    try {
+      outcome =
+        (await api.getAgentSession(
+          this.id,
+          this.spec.startup_cmd ?? undefined,
+        )) ?? null;
+    } catch {
+      outcome = null;
+    }
+    const action = spawnAction({
+      outcome,
+      persistEnabled: this.opts.persistScrollback?.() ?? false,
+    });
+    this.resumePlan = action.kind === "resume" ? action.plan : null;
+    this.missingAgent = action.kind === "resume" ? null : action.missingAgent;
+    if (action.kind === "resume") {
+      // The blob this pane last wrote is a picture of the conversation we
+      // are about to continue for real. Drop it now, or a later launch that
+      // declines the resume (stale record, transcript pruned) would replay
+      // that dead screen (spec §5).
+      void api.deleteScrollback(this.id).catch(() => {});
+    }
+
     // Restore prior scrollback (if persistence is enabled and a save exists)
     // BEFORE the live PTY listener is registered below, so replayed history
     // always renders above anything the shell writes this session. A load
     // failure must never block spawn, hence the try/catch swallow.
-    if (this.opts.persistScrollback?.()) {
+    if (action.kind === "restore") {
       try {
         const prior = await api.loadScrollback(this.id);
         if (prior) {
@@ -517,18 +582,42 @@ export class TerminalPane implements Pane {
       this.term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`);
       this.opts.onExit?.(code);
     });
-    this.unlisteners.push(dataUnlisten, exitUnlisten);
+    // Keep the path linkifier's idea of the cwd current. Registered with
+    // the other listeners (and before the spawn) so a failed spawn tears it
+    // down along with them.
+    const noop = (): void => {};
+    const cwdUnlisten = await onPaneCwd(this.id, (cwd) => {
+      if (cwd) this.liveCwd = cwd;
+    }).catch(() => noop);
+    this.unlisteners.push(dataUnlisten, exitUnlisten, cwdUnlisten);
 
     try {
       await api.spawnPane({
         id: this.id,
         shell: this.spec.shell,
-        cwd: this.spec.cwd ?? null,
+        // A resumed session is spawned in the directory its *transcript*
+        // belongs to, not the pane's saved `cwd`. Claude sessions are
+        // project-scoped, so resuming one from anywhere else finds nothing,
+        // and the saved cwd may have drifted since the session was recorded.
+        // `||`, not `??`: an empty cwd is "unknown", not a directory. The
+        // backend already refuses to build a plan without one, and this is
+        // the belt to that braces.
+        cwd: this.resumePlan?.cwd || this.spec.cwd || null,
         rows,
         cols,
         argv: this.opts.argv,
       });
       this.spawned = true;
+
+      // The shell may already have emitted its OSC 7 before the listener
+      // above was attached (or may never emit one, on a shell without the
+      // integration), so ask for the backend's last known value once.
+      void api
+        .getPaneCwd(this.id)
+        .then((cwd) => {
+          if (cwd) this.liveCwd = cwd;
+        })
+        .catch(() => {});
 
       // Re-apply background color after spawn — xterm may reset its
       // internal theme when the terminal size changes during fit().
@@ -540,16 +629,22 @@ export class TerminalPane implements Pane {
       // this itself; the frontend knows when the terminal is actually ready
       // to accept input, which avoids races with the shell's own init
       // output.
-      if (this.spec.startup_cmd) {
+      // A resumed agent's command replaces the pane's own startup command.
+      // The backend has already merged the two, stripping any selector the
+      // saved one carried, so `claude -c` and our `--resume <id>` are not
+      // two selectors fighting (spec §3).
+      // A recent session whose transcript is gone gets said out loud, even
+      // though the pane then starts exactly as it always would (spec §4.3).
+      if (this.missingAgent) this.writeMissingBanner();
+      const startup = this.resumePlan?.command ?? this.spec.startup_cmd;
+      if (startup) {
+        if (this.resumePlan) this.writeResumeBanner(this.resumePlan);
         setTimeout(() => {
           // Same reason as the HotKeyBar's onSubmit: this write bypasses
           // xterm's onData, so tell the status machine a command started or
           // the pane would sit at `idle` while the command runs.
           this.statusMachine.onSubmit(Date.now());
-          void api.writePane(
-            this.id,
-            ENCODER.encode(`${this.spec.startup_cmd}\r`),
-          );
+          void api.writePane(this.id, ENCODER.encode(`${startup}\r`));
         }, 200);
       }
     } catch (e) {
@@ -958,6 +1053,37 @@ export class TerminalPane implements Pane {
     }
   }
 
+  /// One dim line above the resumed conversation, e.g.
+  /// `── 세션 복원 (claude · 3시간 전) ──`. No prompt and no modal: the pane
+  /// is a terminal, and if the resume is wrong Ctrl-C is cheaper than a
+  /// dialog on every launch (spec §4).
+  ///
+  /// Every part goes through i18n (rule 7). The age suffix is appended
+  /// straight after the number, so each translation carries whatever
+  /// separator its own language wants.
+  private writeResumeBanner(plan: ResumePlan): void {
+    const { unit, count } = describeAge(plan.age_secs);
+    const age =
+      unit === "now"
+        ? t("terminal.agentAgeNow")
+        : unit === "minutes"
+          ? `${count}${t("terminal.agentAgeMinutes")}`
+          : `${count}${t("terminal.agentAgeHours")}`;
+    const label = t("terminal.agentResumed");
+    this.term.write(
+      `\x1b[2m── ${label} (${plan.agent} · ${age}) ──\x1b[0m\r\n`,
+    );
+  }
+
+  /// The other half of spec §4.3: a session was recorded here and is recent,
+  /// but its transcript is gone — pruned by the agent itself or by a
+  /// `~/.claude` cleanup — so the pane starts fresh and says why.
+  private writeMissingBanner(): void {
+    this.term.write(
+      `\x1b[2m── ${t("terminal.agentResumeMissing")} ──\x1b[0m\r\n`,
+    );
+  }
+
   private currentDims(): { cols: number; rows: number } {
     const cols = this.term.cols || 80;
     const rows = this.term.rows || 24;
@@ -970,7 +1096,14 @@ export class TerminalPane implements Pane {
   private scheduleScrollbackSave(): void {
     if (
       !shouldSaveScrollback({
-        persistEnabled: this.opts.persistScrollback?.() ?? false,
+        persistEnabled: shouldPersistScrollback({
+          persistEnabled: this.opts.persistScrollback?.() ?? false,
+          // A resumed pane neither restored nor saves: the blob would be a
+          // picture of a conversation that is being continued for real, and
+          // keeping it only gives the next launch something to replay above
+          // the resumed session (spec §5).
+          resuming: this.resumePlan !== null,
+        }),
         hadUserActivity: this.hadUserActivity,
       })
     ) {
@@ -1006,6 +1139,7 @@ export class TerminalPane implements Pane {
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     this.ime?.dispose();
+    this.pathLinks?.dispose();
     if (this.spawned) {
       void api.killPane(this.id).catch(() => {});
     }
@@ -1015,6 +1149,9 @@ export class TerminalPane implements Pane {
       // no-op if there's nothing to remove, so this can't leave an orphaned
       // scrollback file behind after the user permanently closes the pane.
       void api.deleteScrollback(this.id);
+      // Same reasoning, for the agent session: the pane is gone for good,
+      // so nothing should ever resume into it again.
+      void api.clearAgentSession(this.id).catch(() => {});
     }
     this.term.dispose();
     this.element.remove();

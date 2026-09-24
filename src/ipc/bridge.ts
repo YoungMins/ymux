@@ -9,11 +9,13 @@ import type {
   AgentSnapshot,
   BootstrapPayload,
   Config,
+  ResolvedPath,
   ShellProfile,
   SpawnedPane,
   Uuid,
 } from "../types";
 import type { YTheme, ConfigPathKind } from "../settings/types";
+import type { ResumeOutcome } from "../terminal/resumePlan";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -122,6 +124,21 @@ export const api = {
   /// Open a URL in the system default browser. Only http/https are allowed.
   openUrl: (url: string): Promise<void> => call("open_url", { url }),
 
+  /// Which of these terminal-output path candidates actually exist,
+  /// resolved against `cwd`. Answers align with `paths` by index; `null`
+  /// means "not a path we will link". One call per hovered row — see
+  /// `src/terminal/pathProbe.ts` for the cache in front of it.
+  resolvePaths: (
+    paths: readonly string[],
+    cwd: string | null,
+  ): Promise<Array<ResolvedPath | null>> =>
+    call("resolve_paths", { paths, cwd }),
+
+  /// Open an absolute local path with the OS default handler. Directories
+  /// open in the file manager; executables and scripts are revealed there
+  /// rather than run. Rejected unless the path is absolute and exists.
+  openPath: (path: string): Promise<void> => call("open_path", { path }),
+
   /// Create a native child webview window positioned over a layout placeholder.
   createWebview: (
     id: string,
@@ -193,6 +210,23 @@ export const api = {
   /// frontend must re-emit real bounds via setEmbeddedBrowserBounds).
   setEmbeddedBrowserVisible: (id: string, visible: boolean): Promise<void> =>
     call("set_embedded_browser_visible", { id, visible }),
+
+  /// What a pane should do as it comes up: resume its agent, say that a
+  /// recent session's transcript is gone, or nothing.
+  /// Asked before `spawn()` decides whether to replay scrollback: a pane that
+  /// resumes its agent skips the replay entirely (spec §4/§5). `startupCmd` is
+  /// the pane's own saved startup command, so a selector it already carries
+  /// can be stripped instead of fighting ours.
+  getAgentSession: (
+    id: Uuid,
+    startupCmd?: string,
+  ): Promise<ResumeOutcome | null> =>
+    call("get_agent_session", { paneId: id, startupCmd: startupCmd ?? null }),
+
+  /// Forget a pane's agent session. Called when the user closes a pane for
+  /// good, mirroring `deleteScrollback`.
+  clearAgentSession: (id: Uuid): Promise<void> =>
+    call("clear_agent_session", { paneId: id }),
 
   /// Load the shared ymux/yCode color palette from `<config_dir>/theme.toml`.
   /// Returns the default Night Owl-inspired palette if no file exists yet.
