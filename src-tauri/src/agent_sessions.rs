@@ -23,6 +23,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agent_binding::{
+    argv_session_id, guess_transcript, OtherAgent, PaneProcess, ProcessKey,
+};
 use crate::agents::AgentStatus;
 
 /// A coding-agent CLI ymux knows how to resume.
@@ -62,6 +65,10 @@ impl AgentKind {
 #[serde(rename_all = "lowercase")]
 pub enum IdSource {
     Hook,
+    /// Named by the agent process itself: its argv (`--resume <id>`) or
+    /// Claude's `~/.claude/sessions/<pid>.json`. Exact, like a hook.
+    Process,
+    /// Inferred from a transcript on disk (`agent_binding::guess_transcript`).
     Disk,
 }
 
@@ -356,20 +363,20 @@ impl AgentSessionStore {
     /// * **A session id belongs to at most one pane.** Two panes opened in the
     ///   same directory scan up the same newest transcript; resuming one id in
     ///   both forks the conversation. A later claim on an id another pane
-    ///   holds is refused — unless it comes from a hook, which is the agent
-    ///   itself saying "this id is mine", and then the other pane's record
-    ///   loses the id.
-    /// * **A disk-scanned id never overwrites a live hook-borne one** for the
-    ///   same pane, because the hook id is exact and the scan is a guess. An
-    ///   inactive hook record belongs to an agent that has exited, and the
-    ///   pane's next agent is free to replace it.
+    ///   holds is refused — unless it is exact (a hook, or the process's own
+    ///   argv / pid file), which is the agent itself saying "this id is
+    ///   mine", and then the other pane's record loses the id.
+    /// * **A disk-scanned id never overwrites a live exact one** for the same
+    ///   pane, because the exact id is the agent's word and the scan is a
+    ///   guess. An inactive record belongs to an agent that has exited, and
+    ///   the pane's next agent is free to replace it.
     pub fn put(&mut self, session: AgentSession) -> bool {
         if !is_valid_session_id(&session.session_id) {
             return false;
         }
         if let Some(existing) = self.sessions.get(&session.pane_id) {
             if existing.active
-                && existing.source == IdSource::Hook
+                && existing.source != IdSource::Disk
                 && session.source == IdSource::Disk
                 && existing.session_id != session.session_id
             {
@@ -461,13 +468,15 @@ pub fn save(store: &AgentSessionStore) -> std::io::Result<()> {
 // Tracker: turning scan ticks and hook events into store records
 // ---------------------------------------------------------------------------
 
-/// How often a pane's transcripts are re-read once a record already exists.
+/// How often an agent pane's transcripts are re-read while its process is not
+/// yet tied to a conversation (typically: Claude is open but nothing has been
+/// typed, so no transcript exists yet).
 ///
 /// The process scan runs every 2 s; a disk scan on every tick would open files
-/// for every pane forever. A session id does not change while its conversation
-/// is alive, so re-reading is only about noticing that the user started a
-/// *new* conversation in the same pane.
-pub const DISK_RESCAN_INTERVAL: u64 = 30;
+/// for every such pane for as long as it sat there. Once a process is bound
+/// its pane is never scanned again — the only thing a rescan could add is
+/// somebody else's conversation.
+pub const DISK_RESCAN_INTERVAL: u64 = 10;
 
 /// Granularity `updated_at` is rounded down to.
 ///
@@ -480,7 +489,7 @@ pub const DISK_RESCAN_INTERVAL: u64 = 30;
 /// errs toward calling a record stale rather than fresh.
 pub const PERSIST_GRANULARITY: u64 = 60;
 
-/// What one scan tick knows about a pane.
+/// What one scan tick (or one hook event) knows about a pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneObservation {
     pub pane_id: Uuid,
@@ -493,9 +502,27 @@ pub struct PaneObservation {
     /// The session id a Claude Code hook relayed for this pane, when agent
     /// tracking is on. Exact, so it outranks anything found on disk.
     pub hook_session_id: Option<String>,
+    /// The agent process the scan found in the pane. `None` from the hook
+    /// listener, which cannot see processes.
+    pub process: Option<PaneProcess>,
+    /// The id Claude's own `~/.claude/sessions/<pid>.json` names for that
+    /// process, already vetted by `agent_binding::registry_session_id`.
+    pub pid_file_session_id: Option<String>,
 }
 
-/// The store plus the bookkeeping that keeps the disk scan bounded.
+/// Which process a pane's record was established by, and for which id.
+///
+/// In memory only: a process does not outlive the app run that saw it, so a
+/// binding from a previous launch has nothing to point at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Binding {
+    process: ProcessKey,
+    /// `None` while the process has been seen but not yet tied to a
+    /// conversation.
+    session_id: Option<String>,
+}
+
+/// The store plus the bookkeeping that ties each record to a process.
 ///
 /// Holds no Tauri types and opens no files itself — the transcript lookup is
 /// passed in, so its tests drive it with a stub instead of the developer's
@@ -505,6 +532,8 @@ pub struct SessionTracker {
     store: AgentSessionStore,
     /// Pane id -> when its transcripts were last read (epoch seconds).
     last_disk_scan: BTreeMap<Uuid, u64>,
+    /// Pane id -> the agent process running in it.
+    bindings: BTreeMap<Uuid, Binding>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
 }
@@ -533,9 +562,9 @@ impl SessionTracker {
 
     /// Whether `pane_id`'s transcripts should be read on this tick.
     ///
-    /// Yes when nothing is known about the pane yet, and after that only once
-    /// every [`DISK_RESCAN_INTERVAL`]. A pane whose *live* agent's id came
-    /// from a hook is not re-scanned: the agent already told us, exactly.
+    /// Only for a pane whose agent is not yet tied to a conversation, and then
+    /// at most once every [`DISK_RESCAN_INTERVAL`]. A pane whose live agent's
+    /// id came from a hook is not scanned: the agent already told us, exactly.
     /// Once that agent has exited (the record is inactive) the pane is
     /// scanned again, so the next agent in it gets a binding of its own.
     pub fn wants_disk_scan(&self, pane_id: Uuid, now: u64) -> bool {
@@ -546,72 +575,188 @@ impl SessionTracker {
         {
             return false;
         }
+        if self
+            .bindings
+            .get(&pane_id)
+            .is_some_and(|b| b.session_id.is_some())
+        {
+            return false;
+        }
         match self.last_disk_scan.get(&pane_id) {
             None => true,
             Some(last) => now.saturating_sub(*last) >= DISK_RESCAN_INTERVAL,
         }
     }
 
-    /// Fold one observation into the store, reading transcripts through
-    /// `lookup` only when [`SessionTracker::wants_disk_scan`] allows it.
+    /// Fold one observation into the store.
+    ///
+    /// The record for a pane is always about the agent *process* running in
+    /// it (see `agent_binding` for the sources and their order):
+    ///
+    /// * A new process in the pane ends the previous one's claim: its record
+    ///   is declined until the new process is tied to a conversation — which
+    ///   may well be the same one, when it was started with `--resume <id>`.
+    /// * An exact id (hook, Claude's pid file, argv) is taken as given and may
+    ///   move the pane to a new conversation (`/clear`, `/resume`).
+    /// * Otherwise transcripts are read, through `lookup`, only while the
+    ///   process is unbound, and a guess is made only when it is unambiguous
+    ///   ([`crate::agent_binding::guess_transcript`]). Once made it is never
+    ///   changed while that process lives.
+    ///
+    /// `others` is every other agent process on the machine; the tracker adds
+    /// the ids it has already bound other panes' processes to.
     ///
     /// An agent ymux has no resume story for (Gemini and the rest — spec §8)
     /// is ignored rather than recorded with no way to act on it.
-    /// `lookup` is handed the session ids *other* panes already hold, so it
-    /// can return the newest transcript nobody has claimed. Without that, two
-    /// panes open in the same directory converge: pane B's first claim on the
-    /// newest transcript is refused because pane A holds it, and then A's own
-    /// rescan 30 s later picks up B's newer conversation instead of its own.
-    pub fn observe<F>(&mut self, obs: &PaneObservation, now: u64, lookup: F)
+    pub fn observe<F>(&mut self, obs: &PaneObservation, now: u64, others: &[OtherAgent], lookup: F)
     where
-        F: FnOnce(AgentKind, &str, &HashSet<String>) -> Option<crate::agent_scan_disk::DiskSession>,
+        F: FnOnce(AgentKind, &str) -> Vec<crate::agent_scan_disk::DiskSession>,
     {
         let Some(agent) = AgentKind::from_kind(&obs.kind) else {
             return;
         };
-        // A hook-borne id is the agent naming itself: take it and stop.
-        if let Some(id) = obs.hook_session_id.as_deref().filter(|s| !s.is_empty()) {
-            let cwd = obs
-                .cwd
-                .clone()
-                .or_else(|| self.store.get(obs.pane_id).map(|s| s.cwd.clone()))
-                .unwrap_or_default();
-            self.record(agent, obs, id, cwd, IdSource::Hook, now);
-            return;
-        }
-        // Refresh an existing record in place: `updated_at` means "when ymux
-        // last saw this agent alive", which is what the 24 h window measures.
-        //
-        // Only an *active* record. An inactive one belongs to an agent that
-        // has exited; that another agent of the same kind is running in the
-        // pane now says nothing about which conversation it holds, and
-        // flipping the old record back to active would resume a conversation
-        // the user ended. The new agent gets its own binding below.
-        if let Some(existing) = self.store.get(obs.pane_id) {
-            if existing.agent == agent && existing.active {
-                let (id, cwd, source) = (
-                    existing.session_id.clone(),
-                    existing.cwd.clone(),
-                    existing.source,
-                );
-                self.record(agent, obs, &id, cwd, source, now);
+        let pane = obs.pane_id;
+        // A different process from the one this pane was bound to: that one
+        // is gone, and whatever it was running goes with it.
+        if let Some(p) = &obs.process {
+            if self
+                .bindings
+                .get(&pane)
+                .is_some_and(|b| b.process != p.key())
+            {
+                self.release(pane);
             }
         }
-        if !self.wants_disk_scan(obs.pane_id, now) {
+        let key = obs
+            .process
+            .as_ref()
+            .map(PaneProcess::key)
+            .or_else(|| self.bindings.get(&pane).map(|b| b.process));
+
+        // Exact ids: the hook, Claude's pid file, the process's own argv.
+        let exact = obs
+            .hook_session_id
+            .clone()
+            .filter(|s| is_valid_session_id(s))
+            .map(|s| (s, IdSource::Hook))
+            .or_else(|| {
+                obs.pid_file_session_id
+                    .clone()
+                    .filter(|s| is_valid_session_id(s))
+                    .map(|s| (s, IdSource::Process))
+            })
+            .or_else(|| {
+                obs.process
+                    .as_ref()
+                    .and_then(|p| argv_session_id(agent, &p.argv))
+                    .map(|s| (s, IdSource::Process))
+            });
+        if let Some((id, source)) = exact {
+            let existing = self.store.get(pane);
+            // Keep a cwd the record already had for this very conversation
+            // (a transcript's own spelling beats the shell's), else the
+            // pane's live one, else whatever the record had.
+            let cwd = existing
+                .filter(|s| s.session_id == id && !s.cwd.is_empty())
+                .map(|s| s.cwd.clone())
+                .or_else(|| obs.cwd.clone().filter(|c| !c.is_empty()))
+                .or_else(|| existing.map(|s| s.cwd.clone()))
+                .unwrap_or_default();
+            self.record(agent, obs, &id, cwd, source, now);
+            if let Some(process) = key {
+                self.bindings.insert(
+                    pane,
+                    Binding {
+                        process,
+                        session_id: Some(id),
+                    },
+                );
+            }
+            return;
+        }
+
+        // Nothing exact, and no process to reason about (a hook event that
+        // carried no id): nothing to do.
+        let Some(process) = obs.process.as_ref() else {
+            return;
+        };
+        match self.bindings.get(&pane) {
+            Some(Binding {
+                session_id: Some(id),
+                ..
+            }) => {
+                // Already tied to this very process. Refresh `updated_at`
+                // ("when ymux last saw this agent alive", which the 24 h
+                // window measures) — only while the record is the live one
+                // for that id, never reviving one that was declined.
+                let id = id.clone();
+                if let Some(existing) = self
+                    .store
+                    .get(pane)
+                    .filter(|s| s.active && s.session_id == id)
+                {
+                    let (cwd, source) = (existing.cwd.clone(), existing.source);
+                    self.record(agent, obs, &id, cwd, source, now);
+                }
+                return;
+            }
+            Some(_) => {}
+            None => {
+                // First sight of this process. Whatever the pane's record
+                // says was established by an earlier process (the previous
+                // launch, or an agent that exited between two ticks), so it
+                // is declined until this one is tied to a conversation.
+                self.bindings.insert(
+                    pane,
+                    Binding {
+                        process: process.key(),
+                        session_id: None,
+                    },
+                );
+                self.dirty |= self.store.deactivate(pane);
+            }
+        }
+
+        if !self.wants_disk_scan(pane, now) {
             return;
         }
         let Some(cwd) = obs.cwd.as_deref().filter(|c| !c.is_empty()) else {
             return;
         };
-        self.last_disk_scan.insert(obs.pane_id, now);
+        self.last_disk_scan.insert(pane, now);
         let claimed: HashSet<String> = self
             .store
             .sessions
             .iter()
-            .filter(|(id, _)| **id != obs.pane_id)
+            .filter(|(id, _)| **id != pane)
             .map(|(_, s)| s.session_id.clone())
             .collect();
-        let Some(found) = lookup(agent, cwd, &claimed) else {
+        // Another pane's process that is already tied to a conversation is
+        // not a candidate author of this one's.
+        let others: Vec<OtherAgent> = others
+            .iter()
+            .map(|o| {
+                let mut o = o.clone();
+                if o.known_id.is_none() {
+                    o.known_id = self
+                        .bindings
+                        .iter()
+                        .find(|(p, b)| {
+                            **p != pane
+                                && b.process
+                                    == ProcessKey {
+                                        pid: o.pid,
+                                        start_secs: o.start_secs,
+                                    }
+                        })
+                        .and_then(|(_, b)| b.session_id.clone());
+                }
+                o
+            })
+            .collect();
+        let candidates = lookup(agent, cwd);
+        let Some(found) = guess_transcript(agent, cwd, process, &candidates, &claimed, &others)
+        else {
             return;
         };
         self.record(
@@ -622,6 +767,15 @@ impl SessionTracker {
             IdSource::Disk,
             now,
         );
+        if self
+            .store
+            .get(pane)
+            .is_some_and(|s| s.active && s.session_id == found.session_id)
+        {
+            if let Some(b) = self.bindings.get_mut(&pane) {
+                b.session_id = Some(found.session_id);
+            }
+        }
     }
 
     fn record(
@@ -647,6 +801,13 @@ impl SessionTracker {
         self.dirty |= changed;
     }
 
+    /// Drop the pane's process binding and decline its record.
+    fn release(&mut self, pane_id: Uuid) {
+        self.bindings.remove(&pane_id);
+        self.last_disk_scan.remove(&pane_id);
+        self.dirty |= self.store.deactivate(pane_id);
+    }
+
     /// The agent in `pane_id` is gone while the pane itself lives on — the
     /// user quit it. Stop offering to resume that conversation, but keep the
     /// record ("decline, don't delete", spec §4).
@@ -655,8 +816,7 @@ impl SessionTracker {
     /// PTY dies at once, and treating that as "the user quit the agent" would
     /// erase exactly the records the next launch needs.
     pub fn note_agent_exit(&mut self, pane_id: Uuid) {
-        self.dirty |= self.store.deactivate(pane_id);
-        self.last_disk_scan.remove(&pane_id);
+        self.release(pane_id);
     }
 
     /// Whether `pane_id` should stop persisting its scrollback (spec §5).
@@ -678,6 +838,7 @@ impl SessionTracker {
     pub fn forget(&mut self, pane_id: Uuid) {
         self.dirty |= self.store.remove(pane_id);
         self.last_disk_scan.remove(&pane_id);
+        self.bindings.remove(&pane_id);
     }
 }
 
@@ -1096,14 +1257,42 @@ mod tests {
             cwd: cwd.map(str::to_string),
             status: AgentStatus::Working,
             hook_session_id: None,
+            process: Some(process(100, 0, &["claude"])),
+            pid_file_session_id: None,
         }
     }
 
-    fn disk(id: &str, cwd: &str) -> crate::agent_scan_disk::DiskSession {
+    fn process(pid: u32, start_secs: u64, argv: &[&str]) -> PaneProcess {
+        PaneProcess {
+            pid,
+            start_secs,
+            argv: argv.iter().map(|s| s.to_string()).collect(),
+            subtree: [pid].into_iter().collect(),
+        }
+    }
+
+    /// A transcript that began at `created` (epoch seconds).
+    fn disk_at(id: &str, cwd: &str, created: u64) -> crate::agent_scan_disk::DiskSession {
         crate::agent_scan_disk::DiskSession {
             session_id: id.to_string(),
             cwd: cwd.to_string(),
             modified: SystemTime::UNIX_EPOCH,
+            created: Some(created),
+        }
+    }
+
+    /// A transcript begun after the default test process (start 0) started.
+    fn disk(id: &str, cwd: &str) -> crate::agent_scan_disk::DiskSession {
+        disk_at(id, cwd, 1)
+    }
+
+    fn other(pid: u32, start_secs: u64, cwd: &str) -> OtherAgent {
+        OtherAgent {
+            kind: AgentKind::Claude,
+            pid,
+            start_secs,
+            cwd: Some(cwd.to_string()),
+            known_id: None,
         }
     }
 
@@ -1171,9 +1360,10 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_000,
-            |_, cwd, _| {
+            &[],
+            |_, cwd| {
                 assert_eq!(cwd, "D:/Git/ymux");
-                Some(disk(ID_A, "D:\\Git\\ymux"))
+                vec![disk(ID_A, "D:\\Git\\ymux")]
             },
         );
         let rec = t.get(pane).expect("recorded");
@@ -1194,7 +1384,8 @@ mod tests {
         t.observe(
             &obs(pane, "gemini", Some("D:/Git/ymux")),
             1_000,
-            |_, _, _| panic!("must not even look on disk for an agent we cannot resume"),
+            &[],
+            |_, _| panic!("must not even look on disk for an agent we cannot resume"),
         );
         assert!(t.get(pane).is_none());
     }
@@ -1211,9 +1402,12 @@ mod tests {
             if t.wants_disk_scan(pane, now) {
                 calls += 1;
             }
-            t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _, _| {
-                None
-            });
+            t.observe(
+                &obs(pane, "claude", Some("D:/Git/ymux")),
+                now,
+                &[],
+                |_, _| vec![],
+            );
         }
         assert_eq!(calls, 1, "only the first tick may look");
         assert!(
@@ -1228,7 +1422,9 @@ mod tests {
         let mut t = SessionTracker::default();
         let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
         o.hook_session_id = Some(ID_A.to_string());
-        t.observe(&o, 1_000, |_, _, _| panic!("a hook id needs no disk scan"));
+        t.observe(&o, 1_000, &[], |_, _| {
+            panic!("a hook id needs no disk scan")
+        });
         assert_eq!(t.get(pane).map(|s| s.source), Some(IdSource::Hook));
         assert!(!t.wants_disk_scan(pane, 1_000 + DISK_RESCAN_INTERVAL * 10));
     }
@@ -1240,14 +1436,16 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_000,
-            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_A, "D:\\Git\\ymux")],
         );
         // Much later, still the same agent and no new disk scan result.
         let later = 1_000 + 5 * PERSIST_GRANULARITY;
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             later,
-            |_, _, _| None,
+            &[],
+            |_, _| vec![],
         );
         let rec = t.get(pane).expect("still recorded");
         assert_eq!(
@@ -1268,14 +1466,16 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             start,
-            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_A, "D:\\Git\\ymux")],
         );
         assert!(t.take_dirty(), "the first record is a real change");
         for tick in 1..(PERSIST_GRANULARITY / 2) {
             t.observe(
                 &obs(pane, "claude", Some("D:/Git/ymux")),
                 start + tick * 2,
-                |_, _, _| None,
+                &[],
+                |_, _| vec![],
             );
         }
         assert!(
@@ -1285,7 +1485,8 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             start + PERSIST_GRANULARITY,
-            |_, _, _| None,
+            &[],
+            |_, _| vec![],
         );
         assert!(t.take_dirty(), "and the next grid step does");
     }
@@ -1297,7 +1498,8 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_000,
-            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_A, "D:\\Git\\ymux")],
         );
         t.note_agent_exit(pane);
         let rec = t.get(pane).expect("record survives");
@@ -1311,7 +1513,8 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_001,
-            |_, _, _| Some(disk(ID_B, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_B, "D:\\Git\\ymux")],
         );
         assert_eq!(t.get(pane).map(|s| s.session_id.as_str()), Some(ID_B));
         assert!(t.get(pane).is_some_and(|s| s.active));
@@ -1328,14 +1531,16 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_000,
-            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_A, "D:\\Git\\ymux")],
         );
         t.note_agent_exit(pane);
         // The new agent has not written a transcript yet.
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_010,
-            |_, _, _| None,
+            &[],
+            |_, _| vec![],
         );
         let rec = t.get(pane).expect("record kept");
         assert!(!rec.active, "an ended conversation must not come back");
@@ -1354,13 +1559,16 @@ mod tests {
         let mut t = SessionTracker::default();
         let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
         o.hook_session_id = Some(ID_A.to_string());
-        t.observe(&o, 1_000, |_, _, _| panic!("a hook id needs no disk scan"));
+        t.observe(&o, 1_000, &[], |_, _| {
+            panic!("a hook id needs no disk scan")
+        });
         t.note_agent_exit(pane);
         assert!(t.wants_disk_scan(pane, 1_002));
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_002,
-            |_, _, _| Some(disk(ID_B, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_B, "D:\\Git\\ymux")],
         );
         let rec = t.get(pane).expect("recorded");
         assert_eq!(rec.session_id, ID_B);
@@ -1368,50 +1576,243 @@ mod tests {
         assert_eq!(rec.source, IdSource::Disk);
     }
 
-    #[test]
-    fn two_panes_in_one_directory_keep_their_own_sessions_across_rescans() {
-        // The bug this guards: pane A holds X; pane B's claim on X is refused
-        // by the store; then A's own rescan 30 s later returns the newest
-        // transcript in that directory — which by then is B's conversation.
-        let a = Uuid::from_u128(1);
-        let b = Uuid::from_u128(2);
-        let mut t = SessionTracker::default();
-        // The "disk": newest first. The lookup honours `claimed` the way the
-        // real scanner does.
-        let newest_first = [ID_B, ID_A];
-        let pick = |claimed: &HashSet<String>| {
-            newest_first
+    const CWD: &str = "D:\\Work\\proj";
+    const ID_C: &str = "cccccccc-0000-0000-0000-00000000000c";
+    const ID_Y: &str = "99999999-0000-0000-0000-000000000099";
+
+    /// One scan tick over `panes`: each pane sees the others' agent
+    /// processes, plus any `outside` ones, and the same transcripts on disk.
+    fn tick(
+        t: &mut SessionTracker,
+        now: u64,
+        panes: &[(Uuid, PaneProcess)],
+        on_disk: &[crate::agent_scan_disk::DiskSession],
+        outside: &[OtherAgent],
+    ) {
+        for (pane, proc_) in panes {
+            let mut others: Vec<OtherAgent> = panes
                 .iter()
-                .find(|id| !claimed.contains(**id))
-                .map(|id| disk(id, "D:\\Git\\ymux"))
-        };
-
-        let mut now = 1_000;
-        t.observe(&obs(a, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
-            pick(c)
-        });
-        t.observe(&obs(b, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
-            pick(c)
-        });
-        let (first_a, first_b) = (
-            t.get(a).map(|s| s.session_id.clone()),
-            t.get(b).map(|s| s.session_id.clone()),
-        );
-        assert_eq!(first_a.as_deref(), Some(ID_B), "A took the newest");
-        assert_eq!(first_b.as_deref(), Some(ID_A), "B got the next one down");
-
-        // Several rescans later, neither pane has drifted onto the other's.
-        for _ in 0..4 {
-            now += DISK_RESCAN_INTERVAL;
-            t.observe(&obs(a, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
-                pick(c)
-            });
-            t.observe(&obs(b, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
-                pick(c)
-            });
+                .filter(|(p, _)| p != pane)
+                .map(|(_, q)| other(q.pid, q.start_secs, CWD))
+                .collect();
+            others.extend(outside.iter().cloned());
+            let mut o = obs(*pane, "claude", Some(CWD));
+            o.process = Some(proc_.clone());
+            t.observe(&o, now, &others, |_, _| on_disk.to_vec());
         }
-        assert_eq!(t.get(a).map(|s| s.session_id.clone()), first_a);
-        assert_eq!(t.get(b).map(|s| s.session_id.clone()), first_b);
+    }
+
+    fn id_of(t: &SessionTracker, pane: Uuid) -> Option<String> {
+        t.get(pane)
+            .filter(|s| s.active)
+            .map(|s| s.session_id.clone())
+    }
+
+    #[test]
+    fn two_panes_in_one_folder_never_take_each_others_session() {
+        // Hooks off. A starts at 1000, B at 1100; yesterday's conversation is
+        // still on disk. The user prompts in B first (1200), then A (1300).
+        // Every step of the old failure is here: A's first scan runs before
+        // its transcript exists (and must not take yesterday's), and B's is
+        // the newest unclaimed transcript on every later rescan.
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let panes = [
+            (a, process(10, 1_000, &["claude"])),
+            (b, process(20, 1_100, &["claude"])),
+        ];
+        let yesterday = disk_at(ID_Y, CWD, 1_000 - 900);
+        let tb = disk_at(ID_B, CWD, 1_200);
+        let ta = disk_at(ID_A, CWD, 1_300);
+        let mut t = SessionTracker::default();
+        tick(&mut t, 1_002, &panes, std::slice::from_ref(&yesterday), &[]);
+        assert_eq!(id_of(&t, a), None, "yesterday's session is not A's");
+        let mut now = 1_250;
+        tick(&mut t, now, &panes, &[yesterday.clone(), tb.clone()], &[]);
+        for _ in 0..6 {
+            now += DISK_RESCAN_INTERVAL;
+            tick(
+                &mut t,
+                now,
+                &panes,
+                &[yesterday.clone(), tb.clone(), ta.clone()],
+                &[],
+            );
+            assert_ne!(id_of(&t, a).as_deref(), Some(ID_B), "A must never hold B's");
+            assert_ne!(id_of(&t, b).as_deref(), Some(ID_A), "B must never hold A's");
+            assert_ne!(id_of(&t, a).as_deref(), Some(ID_Y));
+        }
+        // Both transcripts began after both processes did, so from timestamps
+        // alone either could be either: no binding beats a wrong one.
+        assert_eq!(id_of(&t, a), None);
+        assert_eq!(id_of(&t, b), None);
+    }
+
+    #[test]
+    fn two_panes_in_one_folder_each_get_their_own_when_it_is_decidable() {
+        // A prompts (1050) before B even starts (1100): A's transcript can
+        // only be A's, and once A is bound, B's is the only one left for B.
+        // B is observed first each tick, so order does not decide it.
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let panes = [
+            (b, process(20, 1_100, &["claude"])),
+            (a, process(10, 1_000, &["claude"])),
+        ];
+        let on_disk = [disk_at(ID_B, CWD, 1_200), disk_at(ID_A, CWD, 1_050)];
+        let mut t = SessionTracker::default();
+        let mut now = 1_300;
+        for _ in 0..3 {
+            tick(&mut t, now, &panes, &on_disk, &[]);
+            now += DISK_RESCAN_INTERVAL;
+        }
+        assert_eq!(id_of(&t, a).as_deref(), Some(ID_A));
+        assert_eq!(id_of(&t, b).as_deref(), Some(ID_B));
+    }
+
+    #[test]
+    fn a_claude_in_an_outside_terminal_is_never_adopted() {
+        let pane = Uuid::from_u128(1);
+        let panes = [(pane, process(10, 1_000, &["claude"]))];
+        for outside_start in [900, 1_100] {
+            let outside = other(77, outside_start, CWD);
+            let mut t = SessionTracker::default();
+            // Only the outside Claude has written anything.
+            tick(
+                &mut t,
+                1_300,
+                &panes,
+                &[disk_at(ID_B, CWD, 1_200)],
+                std::slice::from_ref(&outside),
+            );
+            assert_eq!(id_of(&t, pane), None, "outside started at {outside_start}");
+            // Once the outside process is known to hold ID_B (its own pid
+            // file), the pane's own later transcript is unambiguous.
+            let mut known = outside;
+            known.known_id = Some(ID_B.to_string());
+            tick(
+                &mut t,
+                1_300 + DISK_RESCAN_INTERVAL,
+                &panes,
+                &[disk_at(ID_B, CWD, 1_200), disk_at(ID_A, CWD, 1_250)],
+                &[known],
+            );
+            assert_eq!(id_of(&t, pane).as_deref(), Some(ID_A));
+        }
+    }
+
+    #[test]
+    fn last_launchs_record_is_declined_for_a_process_that_is_not_running_it() {
+        // The pane's record says ID_Y (from the previous launch); what is
+        // running now is a plain `claude` whose own transcript does not exist
+        // yet. ID_Y began long before this process, so it is not its.
+        let pane = Uuid::from_u128(1);
+        let mut store = AgentSessionStore::default();
+        let mut old = session(pane, ID_Y, IdSource::Disk);
+        old.cwd = CWD.to_string();
+        store.put(old);
+        let mut t = SessionTracker::from_store(store);
+        let panes = [(pane, process(10, 100_000, &["claude"]))];
+        tick(&mut t, 100_010, &panes, &[disk_at(ID_Y, CWD, 50_000)], &[]);
+        let rec = t.get(pane).expect("kept");
+        assert!(!rec.active);
+        assert_eq!(
+            outcome_for(Some(rec), "", 100_010, |_| true),
+            ResumeOutcome::None
+        );
+    }
+
+    #[test]
+    fn a_pane_ymux_resumed_is_bound_by_the_processes_own_argv() {
+        // The resumed conversation's transcript began days ago — older than
+        // the process — so only argv can say this process is running it.
+        let pane = Uuid::from_u128(1);
+        let mut store = AgentSessionStore::default();
+        let mut old = session(pane, ID_A, IdSource::Disk);
+        old.cwd = "D:\\Work\\proj".to_string();
+        store.put(old);
+        let mut t = SessionTracker::from_store(store);
+        let panes = [(
+            pane,
+            process(
+                10,
+                100_000,
+                &["claude", "--resume", ID_A, "--dangerously-skip-permissions"],
+            ),
+        )];
+        tick(&mut t, 100_010, &panes, &[disk_at(ID_A, CWD, 10)], &[]);
+        let rec = t.get(pane).expect("kept");
+        assert!(rec.active);
+        assert_eq!(rec.session_id, ID_A);
+        assert_eq!(rec.source, IdSource::Process);
+        assert_eq!(rec.cwd, "D:\\Work\\proj", "the recorded spelling is kept");
+    }
+
+    #[test]
+    fn claudes_pid_file_is_exact_and_may_move_the_pane() {
+        // `/clear` or `/resume` inside Claude switches conversation; the pid
+        // file follows it, and so does the pane.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let panes = [(pane, process(10, 1_000, &["claude"]))];
+        tick(&mut t, 1_100, &panes, &[disk_at(ID_A, CWD, 1_050)], &[]);
+        assert_eq!(id_of(&t, pane).as_deref(), Some(ID_A));
+        let mut o = obs(pane, "claude", Some(CWD));
+        o.process = Some(panes[0].1.clone());
+        o.pid_file_session_id = Some(ID_Y.to_string());
+        t.observe(&o, 1_200, &[], |_, _| panic!("exact ids need no disk"));
+        assert_eq!(id_of(&t, pane).as_deref(), Some(ID_Y));
+        assert_eq!(t.get(pane).map(|s| s.source), Some(IdSource::Process));
+    }
+
+    #[test]
+    fn a_guess_is_never_switched_while_the_same_process_lives() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let panes = [(pane, process(10, 1_000, &["claude"]))];
+        tick(&mut t, 1_100, &panes, &[disk_at(ID_A, CWD, 1_050)], &[]);
+        assert_eq!(id_of(&t, pane).as_deref(), Some(ID_A));
+        assert!(!t.wants_disk_scan(pane, 1_100 + 10 * DISK_RESCAN_INTERVAL));
+        for i in 1..5 {
+            tick(
+                &mut t,
+                1_100 + i * DISK_RESCAN_INTERVAL,
+                &panes,
+                &[disk_at(ID_C, CWD, 1_060), disk_at(ID_A, CWD, 1_050)],
+                &[],
+            );
+        }
+        assert_eq!(id_of(&t, pane).as_deref(), Some(ID_A));
+    }
+
+    #[test]
+    fn a_relaunch_between_two_ticks_ends_the_old_binding() {
+        // The user quit Claude and started a new one within one scan
+        // interval, so the scan never saw the pane without an agent.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        tick(
+            &mut t,
+            1_100,
+            &[(pane, process(10, 1_000, &["claude"]))],
+            &[disk_at(ID_A, CWD, 1_050)],
+            &[],
+        );
+        assert_eq!(id_of(&t, pane).as_deref(), Some(ID_A));
+        tick(
+            &mut t,
+            1_502,
+            &[(pane, process(11, 1_500, &["claude"]))],
+            &[disk_at(ID_A, CWD, 1_050)],
+            &[],
+        );
+        assert_eq!(id_of(&t, pane), None, "the new process has not said yet");
+        tick(
+            &mut t,
+            1_502 + DISK_RESCAN_INTERVAL,
+            &[(pane, process(11, 1_500, &["claude"]))],
+            &[disk_at(ID_A, CWD, 1_050), disk_at(ID_C, CWD, 1_510)],
+            &[],
+        );
+        assert_eq!(id_of(&t, pane).as_deref(), Some(ID_C));
     }
 
     #[test]
@@ -1440,9 +1841,12 @@ mod tests {
             !t.suppresses_scrollback(pane, now),
             "a plain shell pane saves as it always did"
         );
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _, _| {
-            Some(disk(ID_A, r"D:\Git\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            now,
+            &[],
+            |_, _| vec![disk(ID_A, r"D:\Git\ymux")],
+        );
         assert!(t.suppresses_scrollback(pane, now));
         // Quitting the agent hands the pane back to the shell, and the shell
         // gets its scrollback persistence back with it.
@@ -1455,9 +1859,12 @@ mod tests {
         let pane = Uuid::from_u128(1);
         let mut t = SessionTracker::default();
         let now = 10 * PERSIST_GRANULARITY;
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _, _| {
-            Some(disk(ID_A, r"D:\Git\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            now,
+            &[],
+            |_, _| vec![disk(ID_A, r"D:\Git\ymux")],
+        );
         assert!(!t.suppresses_scrollback(pane, now + FRESH_WINDOW.as_secs() + 1));
     }
 
@@ -1468,7 +1875,8 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_000,
-            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+            &[],
+            |_, _| vec![disk(ID_A, "D:\\Git\\ymux")],
         );
         t.forget(pane);
         assert!(t.get(pane).is_none());

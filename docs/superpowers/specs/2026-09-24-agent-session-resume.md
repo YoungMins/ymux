@@ -61,6 +61,18 @@ The disk scan is what makes resume work for a user who never turned agent
 tracking on, which is most users — so it is not a fallback, it is the
 baseline. Hooks are the faster, more precise source when present.
 
+**Amendment (resume fixes): a record is bound to the agent *process*, not to
+"the newest transcript here".** Newest-in-the-folder let two panes swap
+conversations and let a pane adopt a Claude running in another terminal. The
+rule now (`src-tauri/src/agent_binding.rs`), most exact first: the hook id;
+Claude's own `~/.claude/sessions/<pid>.json` (undocumented — believed only for
+the pane agent's pid and a `startedAt` matching that process's start); the
+process's argv (`--resume <id>`, `--session-id <id>`, `codex resume <id>`);
+and only then a transcript whose first recorded `timestamp` is at/after the
+process start, earliest first, and only when no other agent process could have
+written it. A guess is never changed while the same process lives; a new
+process in the pane declines the old record until it is bound itself.
+
 ## 3. The resume command
 
 `resume_argv(agent, session_id)`:

@@ -292,10 +292,15 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
     observe_pane_session(
         app,
         &mut tracker,
-        ev.pane_id,
-        &lead.kind,
-        lead.status,
-        hook_id,
+        PaneSessionInput {
+            pane_id: ev.pane_id,
+            kind: &lead.kind,
+            status: lead.status,
+            hook_session_id: hook_id,
+            process: None,
+            pid_file_session_id: None,
+            others: &[],
+        },
     );
     flush_sessions(&mut tracker);
 }
@@ -353,31 +358,46 @@ pub fn flush_sessions(tracker: &mut crate::agent_sessions::SessionTracker) {
     }
 }
 
+/// What one caller knows about a pane's agent, for [`observe_pane_session`].
+pub struct PaneSessionInput<'a> {
+    pub pane_id: Uuid,
+    pub kind: &'a str,
+    pub status: crate::agents::AgentStatus,
+    pub hook_session_id: Option<String>,
+    /// The agent process the scan found; `None` from the hook listener.
+    pub process: Option<crate::agent_binding::PaneProcess>,
+    /// What Claude's pid file says that process is running, already vetted.
+    pub pid_file_session_id: Option<String>,
+    /// Every other agent process on the machine (empty from the hook
+    /// listener, which never guesses).
+    pub others: &'a [crate::agent_binding::OtherAgent],
+}
+
 /// Feed one pane's current state into the session tracker.
 ///
 /// Shared by the hook listener and the process scan so both write the same
-/// store. The transcript lookup is only reached when the tracker's throttle
-/// allows it, and it is skipped entirely for a pane with no known cwd —
-/// without one there is nothing to match a transcript against.
+/// store. The transcript lookup is only reached while the pane's agent process
+/// is not yet tied to a conversation, and it is skipped entirely for a pane
+/// with no known cwd — without one there is nothing to match against.
 pub fn observe_pane_session(
     app: &AppHandle,
     tracker: &mut crate::agent_sessions::SessionTracker,
-    pane_id: Uuid,
-    kind: &str,
-    status: crate::agents::AgentStatus,
-    hook_session_id: Option<String>,
+    input: PaneSessionInput<'_>,
 ) {
     let obs = crate::agent_sessions::PaneObservation {
-        pane_id,
-        kind: kind.to_string(),
-        cwd: app.state::<AppState>().pty.cwd_for(pane_id),
-        status,
-        hook_session_id,
+        pane_id: input.pane_id,
+        kind: input.kind.to_string(),
+        cwd: app.state::<AppState>().pty.cwd_for(input.pane_id),
+        status: input.status,
+        hook_session_id: input.hook_session_id,
+        process: input.process,
+        pid_file_session_id: input.pid_file_session_id,
     };
     tracker.observe(
         &obs,
         crate::agent_sessions::now_secs(),
-        crate::agent_scan_disk::newest_session,
+        input.others,
+        crate::agent_scan_disk::candidate_sessions,
     );
 }
 
