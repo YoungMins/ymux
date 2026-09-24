@@ -393,31 +393,178 @@ pub(crate) mod imp {
         textfile::decode(&buf[..keep], mtime_ms(&md), total, path)
     }
 
+    /// Save the editor's text, **atomically**: the bytes go to a temp file
+    /// beside the target, are fsynced, and replace the target with one
+    /// rename. A crash, a full disk or a killed process mid-save leaves the
+    /// old file intact — never a truncated one, which a plain `fs::write`
+    /// (truncate, then write) can.
+    ///
+    /// **A symlink** is resolved and its *target* is replaced; the link
+    /// itself is left as it is and now shows the new content. That is what
+    /// the user means by saving the file they opened through the link, and
+    /// what other editors do. Replacing the link with a regular file instead
+    /// would silently cut it from its target (a dotfile manager's links, a
+    /// config shared between machines) — and nothing is written *through*
+    /// the link in the step-2 sense either: no existing file is truncated in
+    /// place, the target is swapped whole like any save. A dangling link is
+    /// refused.
+    ///
+    /// What survives the swap: on Unix the target's permission bits; on
+    /// Windows everything `ReplaceFileW` carries over (ACLs, creation time,
+    /// streams) plus the hidden / system / archive attributes. A read-only
+    /// target is refused with `permission_denied`, as the plain write was.
+    /// Ownership on Unix is not copied (a save by the owner keeps it anyway).
     pub fn write_text(args: &WriteTextArgs) -> YmuxResult<ContentStamp> {
         let path = args.path.as_str();
         let bytes = textfile::encode(&args.text, args.eol, args.bom, path)?;
-        // An existing non-file (a FIFO, a device) would block or misbehave
-        // on write exactly as it would on read.
-        if let Ok(md) = fs::metadata(path) {
-            require_regular(&md, path)?;
-        }
+        let target = save_target(path)?;
+        let existing = match fs::metadata(&target) {
+            Ok(md) => {
+                // An existing non-file (a FIFO, a device) would block or
+                // misbehave on write exactly as it would on read.
+                require_regular(&md, path)?;
+                if md.permissions().readonly() {
+                    return Err(YmuxError::PermissionDenied(format!("{path} is read-only")));
+                }
+                Some(md)
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(YmuxError::from_io(&e, path)),
+        };
 
-        if let Some(expect) = &args.expect {
-            // Compared on the **hash only**, not on the mtime. A formatter
-            // or a `touch` that rewrites identical bytes is not a conflict:
-            // overwriting them loses nothing, and reporting one would make
-            // the editor cry wolf on every agent run that reformatted and
-            // changed nothing. A missing file *is* a conflict — it was
-            // deleted under the buffer.
-            match current_stamp(path)? {
-                Some(on_disk) if on_disk.sha256 == expect.sha256 => {}
-                _ => return Err(YmuxError::Conflict(path.to_string())),
+        let tmp = write_temp_beside(&target, &bytes, existing.as_ref())
+            .map_err(|e| YmuxError::from_io(&e, path))?;
+        let result = (|| {
+            if let Some(expect) = &args.expect {
+                // Checked as late as possible — right before the swap — so
+                // the window in which a concurrent writer can be lost is
+                // the rename itself. Compared on the **hash only**: a
+                // formatter or a `touch` that rewrites identical bytes is
+                // not a conflict, and reporting one would make the editor
+                // cry wolf on every agent run that changed nothing. A
+                // missing file *is* a conflict — it was deleted under the
+                // buffer.
+                match current_stamp(&target, path)? {
+                    Some(on_disk) if on_disk.sha256 == expect.sha256 => {}
+                    _ => return Err(YmuxError::Conflict(path.to_string())),
+                }
+            }
+            replace_file(&tmp, &target, existing.is_some())
+                .map_err(|e| YmuxError::from_io(&e, path))
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result?;
+
+        let md = fs::metadata(&target).map_err(|e| YmuxError::from_io(&e, path))?;
+        Ok(textfile::stamp_of(&bytes, mtime_ms(&md)))
+    }
+
+    /// The file a save to `path` replaces: `path` itself, or the file a
+    /// symlink at `path` resolves to (see [`write_text`]).
+    fn save_target(path: &str) -> YmuxResult<std::path::PathBuf> {
+        match fs::symlink_metadata(path) {
+            Ok(md) if md.file_type().is_symlink() => {
+                fs::canonicalize(path).map_err(|e| YmuxError::from_io(&e, path))
+            }
+            _ => Ok(std::path::PathBuf::from(path)),
+        }
+    }
+
+    /// Write `bytes` to a fresh temp file in `target`'s directory (same
+    /// volume, so the final rename is atomic), fsynced, carrying the
+    /// existing file's permission bits on Unix.
+    fn write_temp_beside(
+        target: &Path,
+        bytes: &[u8],
+        existing: Option<&fs::Metadata>,
+    ) -> io::Result<std::path::PathBuf> {
+        use std::io::Write;
+
+        let dir = match target.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => std::path::PathBuf::from("."),
+        };
+        let name = target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".into());
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let tmp = dir.join(format!(
+            ".{name}.ymux-save-{}-{nanos}.tmp",
+            std::process::id()
+        ));
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        let written = (|| {
+            f.write_all(bytes)?;
+            f.sync_all()?;
+            #[cfg(unix)]
+            if let Some(md) = existing {
+                fs::set_permissions(&tmp, md.permissions())?;
+            }
+            #[cfg(not(unix))]
+            let _ = existing;
+            Ok(())
+        })();
+        drop(f);
+        if let Err(e) = written {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        Ok(tmp)
+    }
+
+    /// Swap `tmp` in for `target` in one step.
+    #[cfg(windows)]
+    fn replace_file(tmp: &Path, target: &Path, target_exists: bool) -> io::Result<()> {
+        use std::os::windows::fs::MetadataExt;
+        use windows::core::{HSTRING, PCWSTR};
+        use windows::Win32::Storage::FileSystem::{
+            ReplaceFileW, SetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES, REPLACE_FILE_FLAGS,
+        };
+
+        if !target_exists {
+            return fs::rename(tmp, target);
+        }
+        // Hidden / system / archive / not-content-indexed. Read-only was
+        // refused before we got here.
+        const KEEP: u32 = 0x2 | 0x4 | 0x20 | 0x2000;
+        let attrs = fs::metadata(target)?.file_attributes() & KEEP;
+        let (t, r) = (HSTRING::from(target), HSTRING::from(tmp));
+        // SAFETY: both strings are live, NUL-terminated wide strings for the
+        // duration of the call; the backup name and reserved pointers are
+        // null, as the API allows.
+        unsafe { ReplaceFileW(&t, &r, PCWSTR::null(), REPLACE_FILE_FLAGS(0), None, None) }
+            .map_err(|e| io::Error::from_raw_os_error(e.code().0 & 0xFFFF))?;
+        if attrs != 0 {
+            // SAFETY: as above.
+            let _ = unsafe {
+                SetFileAttributesW(
+                    &t,
+                    FILE_FLAGS_AND_ATTRIBUTES(fs::metadata(target)?.file_attributes() | attrs),
+                )
+            };
+        }
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    fn replace_file(tmp: &Path, target: &Path, _target_exists: bool) -> io::Result<()> {
+        fs::rename(tmp, target)?;
+        // Make the rename itself durable.
+        if let Some(dir) = target.parent().filter(|d| !d.as_os_str().is_empty()) {
+            if let Ok(d) = fs::File::open(dir) {
+                let _ = d.sync_all();
             }
         }
-
-        fs::write(path, &bytes).map_err(|e| YmuxError::from_io(&e, path))?;
-        let md = fs::metadata(path).map_err(|e| YmuxError::from_io(&e, path))?;
-        Ok(textfile::stamp_of(&bytes, mtime_ms(&md)))
+        Ok(())
     }
 
     /// The first `max` bytes of a file (at most [`MAX_HEAD_BYTES`]), for the
@@ -487,14 +634,14 @@ pub(crate) mod imp {
     }
 
     /// The stamp of the file as it is right now, or `None` if it is gone.
-    fn current_stamp(path: &str) -> YmuxResult<Option<ContentStamp>> {
-        let md = match fs::metadata(path) {
+    fn current_stamp(file: &Path, path: &str) -> YmuxResult<Option<ContentStamp>> {
+        let md = match fs::metadata(file) {
             Ok(md) => md,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(YmuxError::from_io(&e, path)),
         };
         require_regular(&md, path)?;
-        let bytes = fs::read(path).map_err(|e| YmuxError::from_io(&e, path))?;
+        let bytes = fs::read(file).map_err(|e| YmuxError::from_io(&e, path))?;
         Ok(Some(textfile::stamp_of(&bytes, mtime_ms(&md))))
     }
 
@@ -1041,6 +1188,138 @@ mod tests {
         })
         .unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), raw);
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn plain(path: &str, text: &str, expect: Option<ContentStamp>) -> WriteTextArgs {
+        WriteTextArgs {
+            path: path.to_string(),
+            text: text.into(),
+            eol: Eol::Lf,
+            bom: false,
+            expect,
+        }
+    }
+
+    /// The save is a temp-file + rename: it leaves no temp behind, on
+    /// success or on a refused (stale) write.
+    #[test]
+    fn a_save_is_atomic_and_leaves_no_temp_file() {
+        let d = tmp();
+        let p = s(d.path().join("a.txt"));
+        std::fs::write(&p, b"one\n").unwrap();
+        let read = imp::read_text(&p).unwrap();
+        imp::write_text(&plain(&p, "two\n", Some(read.stamp.clone()))).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"two\n");
+        assert_eq!(names_in(d.path()), vec!["a.txt"]);
+
+        // Stale: refused, the file untouched, and still no temp file.
+        let err = imp::write_text(&plain(&p, "three\n", Some(read.stamp))).unwrap_err();
+        assert_eq!(err.kind(), "conflict");
+        assert_eq!(std::fs::read(&p).unwrap(), b"two\n");
+        assert_eq!(names_in(d.path()), vec!["a.txt"]);
+
+        // A new file (no expectation) is created the same way.
+        let q = s(d.path().join("new.txt"));
+        imp::write_text(&plain(&q, "fresh\n", None)).unwrap();
+        assert_eq!(std::fs::read(&q).unwrap(), b"fresh\n");
+        assert_eq!(names_in(d.path()), vec!["a.txt", "new.txt"]);
+    }
+
+    /// A read-only file is refused, as the plain write was, and not replaced
+    /// behind the attribute's back by the rename.
+    #[test]
+    fn a_read_only_file_is_refused() {
+        let d = tmp();
+        let p = s(d.path().join("ro.txt"));
+        std::fs::write(&p, b"keep\n").unwrap();
+        let mut perm = std::fs::metadata(&p).unwrap().permissions();
+        perm.set_readonly(true);
+        std::fs::set_permissions(&p, perm.clone()).unwrap();
+        let err = imp::write_text(&plain(&p, "no\n", None)).unwrap_err();
+        assert_eq!(err.kind(), "permission_denied");
+        assert_eq!(std::fs::read(&p).unwrap(), b"keep\n");
+        assert_eq!(names_in(d.path()), vec!["ro.txt"]);
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+        std::fs::set_permissions(&p, perm).unwrap();
+    }
+
+    /// Saving a file opened through a symlink replaces the link's *target*
+    /// and leaves the link a link (see `write_text`'s doc).
+    #[test]
+    fn saving_through_a_symlink_replaces_the_target_and_keeps_the_link() {
+        let d = tmp();
+        let target = d.path().join("real.txt");
+        std::fs::write(&target, b"old\n").unwrap();
+        let link = d.path().join("link.txt");
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&target, &link).is_ok();
+        if !made {
+            eprintln!("skipped: cannot create a file symlink here (Developer Mode off?)");
+            return;
+        }
+        let read = imp::read_text(&s(link.clone())).unwrap();
+        imp::write_text(&plain(&s(link.clone()), "new\n", Some(read.stamp))).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), b"new\n");
+        assert_eq!(std::fs::read(&link).unwrap(), b"new\n");
+        assert_eq!(names_in(d.path()), vec!["link.txt", "real.txt"]);
+    }
+
+    /// Windows: the hidden attribute survives the swap.
+    #[cfg(windows)]
+    #[test]
+    fn a_hidden_file_stays_hidden_after_a_save() {
+        use std::os::windows::fs::MetadataExt;
+        let d = tmp();
+        let p = s(d.path().join("h.txt"));
+        std::fs::write(&p, b"x\n").unwrap();
+        let ok = std::process::Command::new("attrib")
+            .args(["+h", &p])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("skipped: attrib unavailable");
+            return;
+        }
+        imp::write_text(&plain(&p, "y\n", None)).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"y\n");
+        assert_ne!(
+            std::fs::metadata(&p).unwrap().file_attributes() & 0x2,
+            0,
+            "hidden lost"
+        );
+    }
+
+    /// Unix: the permission bits survive the swap.
+    #[cfg(unix)]
+    #[test]
+    fn permission_bits_survive_a_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmp();
+        let p = s(d.path().join("x.sh"));
+        std::fs::write(&p, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o750)).unwrap();
+        imp::write_text(&plain(&p, "#!/bin/sh\necho\n", None)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
     }
 
     /// The agent case (spec §3.6): the file changed under the buffer, so the
