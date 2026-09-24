@@ -266,8 +266,9 @@ export class WorkspaceManager {
     // invokes `child_webview_focused` with its pane id; Rust re-emits
     // `ymux:child-focused`, which we listen for here. The id comes from
     // the clicked pane itself — no cursor mapping involved, reliable with
-    // any number of browser panes. Requires the `browser-children`
-    // capability so Tauri IPC is exposed in the remote-URL webview.
+    // any number of browser panes. The child gets no capability at all:
+    // Tauri injects `invoke` regardless, and Rust's `guard_embedded_child`
+    // only lets a live `eb-<uuid>` webview report its *own* pane id.
     void tauriListen<string>("ymux:child-focused", (ev) => {
       const id = ev.payload;
       if (!id) return;
