@@ -655,6 +655,12 @@ export class FilesPane implements Pane {
     this.element.classList.toggle("files-pane--narrow", w < 380);
     this.element.classList.toggle("files-pane--tiny", w < 270);
     this.element.classList.toggle("files-pane--wide", !this.opts.docked && w >= 720);
+    // Shown by a path that did not call scheduleFit (a workspace container
+    // un-hidden, say): the size change is the signal, so list now.
+    if (this.stale && this.dir && !this.disposed) {
+      void this.load({ changedDir: true });
+      return;
+    }
     this.renderRows();
   }
 
@@ -1173,7 +1179,6 @@ export class FilesPane implements Pane {
   }
 
   private onPathKey(ev: KeyboardEvent): void {
-    ev.stopPropagation();
     if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === "Escape") {
       ev.preventDefault();
