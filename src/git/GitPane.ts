@@ -409,7 +409,9 @@ export class GitPane implements Pane {
     }
     const gen = ++this.loadGen;
     this.stale = false;
-    if (!opts.quiet) {
+    // A repository already on screen stays there until the answer lands:
+    // following a `cd` must not flash "Reading…" over the log.
+    if (!opts.quiet && this.state.kind !== "ready") {
       this.state = { kind: "loading" };
       this.renderOverlay();
     }

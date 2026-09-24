@@ -23,6 +23,7 @@ import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
 import { FilesPane } from "../files/FilesPane";
 import { baseName } from "../files/fileModel";
 import { EditorPane } from "../editor/EditorPane";
+import { GitPane } from "../git/GitPane";
 import { fileName } from "../editor/editorModel";
 import { closePlan, closeResult, type CloseChoice } from "../editor/closeGuard";
 import type { Pane } from "../layout/Pane";
@@ -538,6 +539,34 @@ export class WorkspaceManager {
         openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
       });
     }
+    if (spec.pane_kind === "git") {
+      return new GitPane({
+        id: spec.id,
+        dir: spec.cwd ?? null,
+        title: spec.title ?? null,
+        ownChrome: groupOfPane(this.active.root, spec.id) === null,
+        onFocus: () => {
+          this.focusedPaneId = spec.id;
+        },
+        onDirChange: (dir) => {
+          this.updatePaneSpec(spec.id, (p) => {
+            p.cwd = dir;
+          });
+          this.refreshTabChrome();
+        },
+        onActivePaneChange: (cb) => this.onActivePaneChange(cb),
+        // Follow the pane the user works in — but only in this pane's own
+        // workspace (a hidden workspace's git pane must not chase the
+        // visible one's terminals), and never itself.
+        followTarget: () => {
+          const id = this.activePaneId();
+          if (!id || id === spec.id) return null;
+          return this.workspaceOfPane(id) === this.workspaceOfPane(spec.id) ? id : null;
+        },
+        worktreeBaseDir: () => this.worktreeBaseDir,
+        openTerminal: (dir) => this.splitTerminalAt(spec.id, dir),
+      });
+    }
     if (spec.pane_kind === "editor") {
       return new EditorPane({
         id: spec.id,
@@ -643,7 +672,12 @@ export class WorkspaceManager {
       // render invisible. Only a group's `update()` ever sets the class, so
       // clearing it for every ungrouped pane is safe and idempotent.
       if (!grouped) pane.element.classList.remove("pane--tab-hidden");
-      if (pane instanceof TerminalPane || pane instanceof FilesPane || pane instanceof EditorPane) {
+      if (
+        pane instanceof TerminalPane ||
+        pane instanceof FilesPane ||
+        pane instanceof EditorPane ||
+        pane instanceof GitPane
+      ) {
         pane.setOwnChrome(!grouped);
       }
     }
@@ -776,6 +810,7 @@ export class WorkspaceManager {
       { label: t("shortcut.splitH"), onSelect: () => void this.splitFocused("horizontal") },
       { label: t("shortcut.splitV"), onSelect: () => void this.splitFocused("vertical") },
       { label: t("files.here"), onSelect: () => void this.splitFocusedFiles("horizontal") },
+      { label: t("git.here"), onSelect: () => void this.splitFocusedGit("horizontal") },
       "separator",
       ...TOOL_MENU.map((tool) => ({
         label: tool.label,
@@ -997,6 +1032,12 @@ export class WorkspaceManager {
     if (spec?.pane_kind === "files") {
       return spec.title || (spec.cwd ? baseName(spec.cwd) : t("files.title"));
     }
+    // A git pane: its repository's folder name (the pane keeps the root in cwd).
+    if (spec?.pane_kind === "git") {
+      const pane = this.findPaneById(paneId);
+      if (pane instanceof GitPane) return pane.label();
+      return spec.title || (spec.cwd ? baseName(spec.cwd) : t("git.title"));
+    }
     // An editor pane: its file's name, marked while it has unsaved edits.
     if (spec?.pane_kind === "editor") {
       const base = spec.title || (spec.file_path ? fileName(spec.file_path) : t("editor.untitled"));
@@ -1133,6 +1174,19 @@ export class WorkspaceManager {
     const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
     spec.pane_kind = "files";
     await this.insertSplit(ws, focusId, direction, spec, "files split failed");
+  }
+
+  /// Split the focused pane and open a git pane on the repository of the
+  /// focused pane's live directory (its OSC 7 cwd, else its stored cwd). The
+  /// git pane then follows the active pane until pinned.
+  async splitFocusedGit(direction: SplitDir): Promise<void> {
+    const ws = this.active;
+    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    if (!focusId) return;
+    const liveCwd = await api.getPaneCwd(focusId).catch(() => null);
+    const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
+    spec.pane_kind = "git";
+    await this.insertSplit(ws, focusId, direction, spec, "git split failed");
   }
 
   /// Split the focused pane and open an empty editor pane in the new slot

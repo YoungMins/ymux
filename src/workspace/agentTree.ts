@@ -90,6 +90,10 @@ export function paneLabel(spec: PaneSpec, labels: TreeLabels): string {
   if (spec.pane_kind === "editor" && spec.file_path) {
     return spec.title || fileName(spec.file_path);
   }
+  // A git pane keeps its repository root in `cwd`: named by that folder.
+  if (spec.pane_kind === "git") {
+    return spec.title || (spec.cwd ? fileName(spec.cwd) : "Git");
+  }
   return spec.title || spec.url || labels.browser;
 }
 

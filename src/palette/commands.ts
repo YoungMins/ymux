@@ -149,6 +149,11 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => void manager.splitFocusedFiles("horizontal"),
     },
     {
+      id: "pane.splitGit",
+      label: () => t("git.splitCommand"),
+      action: () => void manager.splitFocusedGit("horizontal"),
+    },
+    {
       id: "pane.splitEditor",
       label: () => t("editor.split"),
       action: () => void manager.splitFocusedEditor("horizontal"),
