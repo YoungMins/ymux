@@ -59,8 +59,7 @@ ymux/
 │   ├── palette/            # Command Palette (Ctrl+Shift+P)
 │   ├── menu/               # Terminal right-click context menu (ContextMenu.ts)
 │   ├── notes/              # Per-workspace notes overlay (NotesOverlay.ts)
-│   ├── settings/           # Settings panel (⚙): general, syntax colors, shortcuts, config files (SettingsOverlay.ts)
-│   ├── help/               # Orphaned — see CLAUDE.md rule 6, SettingsOverlay.ts replaced its `?` button
+│   ├── settings/           # Settings panel (⚙): general, syntax colors, shortcuts (shortcutList.ts), config files
 │   ├── hotkey/             # HotKeyManager modal (⚙)
 │   ├── statusbar/          # System monitor status bar
 │   ├── ui/                 # Small shared UI primitives (Dialog.ts)
@@ -143,9 +142,14 @@ Update ALL of these (they must match):
 `attachCustomKeyEventHandler` in `TerminalPane.ts` blocks certain keys from reaching xterm so they bubble to ymux's global handler. When adding a new Ctrl+Shift+X shortcut:
 1. Add it to main.ts keydown handler
 2. Add `k === "x"` to the handler's block list in TerminalPane
-3. Add to the Settings panel's shortcut reference (`src/settings/SettingsOverlay.ts`
-   `SHORTCUTS` array) — `src/help/HelpOverlay.ts` is orphaned (nothing mounts it any
-   more; `SettingsOverlay.ts` replaced its `?` button), don't edit it
+3. Add a row to `src/settings/shortcutList.ts`'s `SHORTCUTS` array (rendered
+   by the Settings panel's Shortcuts section, `src/settings/SettingsOverlay.ts`).
+   `shortcutList.test.ts` re-derives the `key ===`/`ev.code ===` literals
+   main.ts's keydown handler matches on and fails if one has no row here —
+   read its header comment for exactly what it does and doesn't catch
+   (`src/help/HelpOverlay.ts`, the old standalone reference this table used
+   to live in, is deleted — nothing has mounted it since `SettingsOverlay.ts`
+   replaced its `?` button)
 4. Add to Command Palette (`commands.ts` builtinCommands)
 5. Add i18n key for the description
 6. Add to README keyboard shortcut tables (3 files)
@@ -379,7 +383,7 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 384, 8 failing on Windows + frontend 582)
+### Test count (Rust 384, 8 failing on Windows + frontend 618)
 
 Measured 2026-09-24 on Windows with `cargo test -p ymux --lib`,
 `cargo test -p ytheme -p yipc -p ypath -p ylauncher` and `npx vitest run`.
@@ -394,7 +398,7 @@ script validates `externalBin` paths even for `cargo test`.)
 | yipc | 7 on Windows (more on Unix) | Protocol serialization, retired message types rejected, server/client, broken pipe |
 | ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
 | ylauncher (`y`) | 11 (5 unit + 6 integration) | `agent-hook` payload packing, the silent no-env no-op, relay to a live server, usage errors (exit 2) for anything else |
-| _frontend_ | 582 (43 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
+| _frontend_ | 618 (44 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
 
 **The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
 `pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,
