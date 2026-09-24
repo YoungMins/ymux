@@ -28,7 +28,7 @@ export interface FileEntry {
 /// astral character (a surrogate pair, 0xD800…) before U+E000–U+FFFF; Rust's
 /// `String` `Ord` is byte order, i.e. code point order. Matching Rust keeps
 /// the listing in exactly the order `fsx::sort_entries` produced.
-function compareCodePoints(a: string, b: string): number {
+export function compareCodePoints(a: string, b: string): number {
   const ia = a[Symbol.iterator]();
   const ib = b[Symbol.iterator]();
   for (;;) {
