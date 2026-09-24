@@ -295,7 +295,7 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
         PaneSessionInput {
             pane_id: ev.pane_id,
             kind: &lead.kind,
-            status: lead.status,
+            status: Some(lead.status),
             hook_session_id: hook_id,
             process: None,
             pid_file_session_id: None,
@@ -386,7 +386,7 @@ pub fn flush_sessions(tracker: &mut crate::agent_sessions::SessionTracker) {
 pub struct PaneSessionInput<'a> {
     pub pane_id: Uuid,
     pub kind: &'a str,
-    pub status: crate::agents::AgentStatus,
+    pub status: Option<crate::agents::AgentStatus>,
     pub hook_session_id: Option<String>,
     /// The agent process the scan found; `None` from the hook listener.
     pub process: Option<crate::agent_binding::PaneProcess>,

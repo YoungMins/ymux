@@ -762,7 +762,10 @@ pub struct PaneObservation {
     /// The pane's live cwd, as OSC 7 last reported it. Without one there is
     /// nothing to match a transcript against.
     pub cwd: Option<String>,
-    pub status: AgentStatus,
+    /// What the agent is doing, when the caller knows (a hook does). The
+    /// process scan only knows the agent is *there* and passes `None`, which
+    /// keeps whatever status the record already has.
+    pub status: Option<AgentStatus>,
     /// The session id a Claude Code hook relayed for this pane, when agent
     /// tracking is on. Exact, so it outranks anything found on disk.
     pub hook_session_id: Option<String>,
@@ -1089,13 +1092,25 @@ impl SessionTracker {
         source: IdSource,
         now: u64,
     ) {
+        // No status from the caller: keep the record's own for this same
+        // conversation, else `working` — the conservative answer for
+        // `interrupted`.
+        let state = obs
+            .status
+            .or_else(|| {
+                self.store
+                    .get(obs.pane_id)
+                    .filter(|s| s.session_id == session_id)
+                    .map(|s| s.state)
+            })
+            .unwrap_or(AgentStatus::Working);
         let changed = self.store.put(AgentSession {
             pane_id: obs.pane_id,
             agent,
             session_id: session_id.to_string(),
             cwd,
-            state: obs.status,
-            interrupted: obs.status != AgentStatus::Done,
+            state,
+            interrupted: state != AgentStatus::Done,
             active: true,
             source,
             updated_at: now - (now % PERSIST_GRANULARITY),
@@ -1821,7 +1836,7 @@ mod tests {
             pane_id: pane,
             kind: kind.to_string(),
             cwd: cwd.map(str::to_string),
-            status: AgentStatus::Working,
+            status: Some(AgentStatus::Working),
             hook_session_id: None,
             process: Some(process(100, 0, &["claude"])),
             pid_file_session_id: None,
@@ -2504,6 +2519,45 @@ mod tests {
             panic!("a fresh record with a live transcript must resume");
         };
         assert_eq!(plan.command, format!("codex resume {ID_A} --model gpt-5"));
+    }
+
+    #[test]
+    fn process_presence_never_overwrites_a_hook_status() {
+        // The scan only knows the agent is there. Reporting `working` every
+        // 2 s flipped a hook's `done` back and forth — and rewrote the store
+        // on every hook event.
+        let pane = Uuid::from_u128(1);
+        let now = 10 * PERSIST_GRANULARITY;
+        let mut t = SessionTracker::default();
+        let mut hook = obs(pane, "claude", Some(CWD));
+        hook.hook_session_id = Some(ID_A.to_string());
+        hook.status = Some(AgentStatus::Done);
+        t.observe(&hook, now, &[], |_, _| vec![]);
+        assert!(t.take_dirty());
+        let mut scan = obs(pane, "claude", Some(CWD));
+        scan.hook_session_id = Some(ID_A.to_string());
+        scan.status = None;
+        for i in 1..10 {
+            t.observe(&scan, now + i * 2, &[], |_, _| vec![]);
+        }
+        let rec = t.get(pane).expect("recorded");
+        assert_eq!(rec.state, AgentStatus::Done);
+        assert!(
+            !rec.interrupted,
+            "a finished turn is not an interrupted one"
+        );
+        assert!(!t.take_dirty(), "presence alone changes nothing");
+        // With no status ever reported, the conservative answer stands.
+        let other_pane = Uuid::from_u128(2);
+        let mut fresh = obs(other_pane, "claude", Some(CWD));
+        fresh.hook_session_id = Some(ID_B.to_string());
+        fresh.status = None;
+        t.observe(&fresh, now, &[], |_, _| vec![]);
+        assert_eq!(
+            t.get(other_pane).map(|s| s.state),
+            Some(AgentStatus::Working)
+        );
+        assert!(t.get(other_pane).is_some_and(|s| s.interrupted));
     }
 
     /// A tracker holding last launch's live record for `pane` (id `ID_A`).

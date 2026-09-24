@@ -429,16 +429,16 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 }
                 for (id, kind, hook_id) in observations {
                     // The scan cannot see what the agent is doing, only that
-                    // it is there; the frontend derives a process lead's
-                    // status from the pane's own machine, and `working` is
-                    // the conservative answer for `interrupted`.
+                    // it is there, so it reports no status: a hook's stays,
+                    // and a record with none starts at `working` (the
+                    // conservative answer for `interrupted`).
                     observe_pane_session(
                         &app,
                         &mut tracker,
                         crate::commands::PaneSessionInput {
                             pane_id: id,
                             kind: &kind,
-                            status: crate::agents::AgentStatus::Working,
+                            status: None,
                             hook_session_id: hook_id,
                             process: pane_agents.get(&id).map(|a| a.process.clone()),
                             pid_file_session_id: pid_file_ids.get(&id).cloned(),
