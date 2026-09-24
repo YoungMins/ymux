@@ -49,6 +49,14 @@ fn main() {
                 ymux_lib::agent_sessions::load(),
             )),
         ))
+        // EVERY command below must start with a guard — `fspath::guard_local`
+        // (ymux's own document only), or `embedded_browser::guard_embedded_child`
+        // for the two listed in `ipc_guard::EMBEDDED_CHILD_COMMANDS`. There is
+        // no ACL behind them: without an `AppManifest` Tauri never checks app
+        // commands, so any page ymux loads can call anything registered here.
+        // `ipc_guard::tests::every_registered_command_starts_with_a_guard`
+        // parses this list and each command's body; adding a line here and a
+        // `#[tauri::command]` must change together. CLAUDE.md rule 16.
         .invoke_handler(tauri::generate_handler![
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
@@ -70,13 +78,7 @@ fn main() {
             ymux_lib::commands::clear_agent_session,
             ymux_lib::commands::paste_clipboard_image,
             // The filesystem / text-file / git surface for the files,
-            // editor and git panes. Every one of these carries
-            // `fspath::guard_local` on its first line; see that function
-            // for why an in-command check is the only gate available.
-            // Deliberately NOT added to any capability file: declaring
-            // app-command permissions requires an `AppManifest`, and
-            // introducing one would switch Tauri's ACL enforcement on for
-            // every command below at once.
+            // editor and git panes.
             ymux_lib::fsops::fs_list_dir,
             ymux_lib::fsops::fs_roots,
             ymux_lib::fsops::fs_home_dir,

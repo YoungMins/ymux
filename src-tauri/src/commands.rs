@@ -7,7 +7,8 @@
 
 use portable_pty::PtySize;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::ipc::Request;
+use tauri::{AppHandle, Emitter, Manager, State, Webview};
 use uuid::Uuid;
 
 use std::path::Path;
@@ -16,6 +17,7 @@ use crate::agent_sessions::{ResumeOutcome, SharedSessions};
 use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
+use crate::fspath::guard_local;
 use crate::git;
 use crate::pty::{PtyManager, SpawnedPane};
 use crate::shell;
@@ -67,7 +69,12 @@ pub struct BootstrapPayload {
 }
 
 #[tauri::command]
-pub fn load_bootstrap(state: State<'_, AppState>) -> YmuxResult<BootstrapPayload> {
+pub fn load_bootstrap(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+) -> YmuxResult<BootstrapPayload> {
+    guard_local(&webview, &request, "load_bootstrap")?;
     // Make sure the cached shell list in `state.config` is populated *before*
     // we snapshot it, so the snapshot the frontend receives carries the
     // shells. Otherwise the frontend's `this.config.shells` would stay empty
@@ -92,7 +99,12 @@ pub fn load_bootstrap(state: State<'_, AppState>) -> YmuxResult<BootstrapPayload
 }
 
 #[tauri::command]
-pub fn detect_shells_cmd(state: State<'_, AppState>) -> YmuxResult<Vec<ShellProfile>> {
+pub fn detect_shells_cmd(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+) -> YmuxResult<Vec<ShellProfile>> {
+    guard_local(&webview, &request, "detect_shells_cmd")?;
     let detected = shell::detect_shells();
     state.config.update(|c| c.shells = detected.clone());
     let _ = state.config.flush_if_dirty();
@@ -100,7 +112,13 @@ pub fn detect_shells_cmd(state: State<'_, AppState>) -> YmuxResult<Vec<ShellProf
 }
 
 #[tauri::command]
-pub fn save_config(state: State<'_, AppState>, config: Config) -> YmuxResult<()> {
+pub fn save_config(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    config: Config,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "save_config")?;
     // Treat the frontend as the source of truth for layouts and the active
     // workspace, but keep `shells` as a backend-owned detection cache. If the
     // frontend ships a non-empty shell list we accept it (e.g. after a
@@ -122,7 +140,13 @@ pub fn save_config(state: State<'_, AppState>, config: Config) -> YmuxResult<()>
 }
 
 #[tauri::command]
-pub fn spawn_pane(state: State<'_, AppState>, args: SpawnArgs) -> YmuxResult<SpawnedPane> {
+pub fn spawn_pane(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    args: SpawnArgs,
+) -> YmuxResult<SpawnedPane> {
+    guard_local(&webview, &request, "spawn_pane")?;
     let profile = match crate::pty::direct_profile(&args.argv, crate::pty::sidecar_dir().as_deref())
     {
         Some(direct) => direct,
@@ -162,12 +186,24 @@ pub fn spawn_pane(state: State<'_, AppState>, args: SpawnArgs) -> YmuxResult<Spa
 }
 
 #[tauri::command]
-pub fn write_pane(state: State<'_, AppState>, args: WriteArgs) -> YmuxResult<()> {
+pub fn write_pane(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    args: WriteArgs,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "write_pane")?;
     state.pty.write(args.id, &args.data)
 }
 
 #[tauri::command]
-pub fn resize_pane(state: State<'_, AppState>, args: ResizeArgs) -> YmuxResult<()> {
+pub fn resize_pane(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    args: ResizeArgs,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "resize_pane")?;
     state.pty.resize(
         args.id,
         PtySize {
@@ -180,12 +216,24 @@ pub fn resize_pane(state: State<'_, AppState>, args: ResizeArgs) -> YmuxResult<(
 }
 
 #[tauri::command]
-pub fn kill_pane(state: State<'_, AppState>, id: Uuid) -> YmuxResult<()> {
+pub fn kill_pane(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "kill_pane")?;
     state.pty.kill(id)
 }
 
 #[tauri::command]
-pub fn set_active_workspace(state: State<'_, AppState>, id: u32) -> YmuxResult<()> {
+pub fn set_active_workspace(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    id: u32,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "set_active_workspace")?;
     state.config.update(|c| c.active_workspace = id);
     let _ = state.config.flush_if_dirty();
     Ok(())
@@ -194,8 +242,14 @@ pub fn set_active_workspace(state: State<'_, AppState>, id: u32) -> YmuxResult<(
 /// Return the most recently reported working directory for a pane, or `None`
 /// if the pane has not yet emitted an OSC 7 sequence.
 #[tauri::command]
-pub fn get_pane_cwd(state: State<'_, AppState>, id: Uuid) -> Option<String> {
-    state.pty.cwd_for(id)
+pub fn get_pane_cwd(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> YmuxResult<Option<String>> {
+    guard_local(&webview, &request, "get_pane_cwd")?;
+    Ok(state.pty.cwd_for(id))
 }
 
 /// Tauri event carrying the full agent snapshot after every registry change.
@@ -267,23 +321,32 @@ pub fn apply_agent_hook(app: &AppHandle, payload: &serde_json::Value) {
 /// already carries can be stripped rather than fighting ours.
 #[tauri::command]
 pub fn get_agent_session(
+    webview: Webview,
+    request: Request<'_>,
     sessions: State<'_, SharedSessions>,
     pane_id: Uuid,
     startup_cmd: Option<String>,
-) -> ResumeOutcome {
+) -> YmuxResult<ResumeOutcome> {
+    guard_local(&webview, &request, "get_agent_session")?;
     let tracker = sessions.0.lock();
-    crate::agent_sessions::outcome_for(
+    Ok(crate::agent_sessions::outcome_for(
         tracker.get(pane_id),
         startup_cmd.as_deref().unwrap_or_default(),
         crate::agent_sessions::now_secs(),
         crate::agent_sessions::transcript_exists,
-    )
+    ))
 }
 
 /// Forget a pane's session entirely. Called when the user closes a pane for
 /// good, mirroring `delete_scrollback`.
 #[tauri::command]
-pub fn clear_agent_session(sessions: State<'_, SharedSessions>, pane_id: Uuid) -> YmuxResult<()> {
+pub fn clear_agent_session(
+    webview: Webview,
+    request: Request<'_>,
+    sessions: State<'_, SharedSessions>,
+    pane_id: Uuid,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "clear_agent_session")?;
     let mut tracker = sessions.0.lock();
     tracker.forget(pane_id);
     flush_sessions(&mut tracker);
@@ -330,8 +393,13 @@ pub fn observe_pane_session(
 
 /// Current agent snapshot, for the frontend's initial render.
 #[tauri::command]
-pub fn get_agents(agents: State<'_, SharedAgents>) -> AgentSnapshot {
-    agents.0.lock().snapshot()
+pub fn get_agents(
+    webview: Webview,
+    request: Request<'_>,
+    agents: State<'_, SharedAgents>,
+) -> YmuxResult<AgentSnapshot> {
+    guard_local(&webview, &request, "get_agents")?;
+    Ok(agents.0.lock().snapshot())
 }
 
 /// Tauri event carrying `pane id -> running-program label` (tab labels).
@@ -346,16 +414,25 @@ pub fn emit_pane_labels(app: &AppHandle, labels: &std::collections::HashMap<Uuid
 /// Latest tab labels, for a frontend that has just mounted.
 #[tauri::command]
 pub fn get_pane_labels(
+    webview: Webview,
+    request: Request<'_>,
     labels: State<'_, crate::agent_scan::SharedLabels>,
-) -> std::collections::HashMap<Uuid, String> {
-    labels.0.lock().clone()
+) -> YmuxResult<std::collections::HashMap<Uuid, String>> {
+    guard_local(&webview, &request, "get_pane_labels")?;
+    Ok(labels.0.lock().clone())
 }
 
 /// Install (`true`) or remove (`false`) ymux's Claude Code hooks, then persist
 /// the setting. The file is written first: if that fails (e.g. unparseable
 /// settings.json) the error reaches the UI and the setting is not flipped.
 #[tauri::command]
-pub fn set_agent_tracking(state: State<'_, AppState>, enabled: bool) -> YmuxResult<()> {
+pub fn set_agent_tracking(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "set_agent_tracking")?;
     crate::agent_hooks::set_enabled(enabled)?;
     state.config.update(|c| c.agent_tracking = enabled);
     state.config.flush()?;
@@ -366,7 +443,8 @@ pub fn set_agent_tracking(state: State<'_, AppState>, enabled: bool) -> YmuxResu
 /// URLs are accepted; anything else is rejected to prevent accidental
 /// execution of arbitrary shell commands via `start` or `xdg-open`.
 #[tauri::command]
-pub fn open_url(url: String) -> YmuxResult<()> {
+pub fn open_url(webview: Webview, request: Request<'_>, url: String) -> YmuxResult<()> {
+    guard_local(&webview, &request, "open_url")?;
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(YmuxError::Other(
             "open_url: only http/https URLs are supported".into(),
@@ -409,19 +487,12 @@ pub fn open_url(url: String) -> YmuxResult<()> {
 /// [`crate::fspath`], where it is unit-tested.
 #[tauri::command]
 pub async fn resolve_paths(
-    webview: tauri::Webview,
+    webview: Webview,
+    request: Request<'_>,
     paths: Vec<String>,
     cwd: Option<String>,
 ) -> YmuxResult<Vec<Option<crate::fspath::ResolvedPath>>> {
-    // `capabilities/browser-children.json` hands `core:default` to every
-    // `eb-*` child webview on http(s) origins, so without this an arbitrary
-    // website open in an embedded browser pane could use this command as a
-    // filesystem oracle.
-    if !crate::fspath::caller_allowed(webview.label()) {
-        return Err(YmuxError::Other(
-            "resolve_paths: only the main webview may resolve local paths".into(),
-        ));
-    }
+    guard_local(&webview, &request, "resolve_paths")?;
     tauri::async_runtime::spawn_blocking(move || crate::fspath::probe_batch(paths, cwd))
         .await
         .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))
@@ -437,12 +508,8 @@ pub async fn resolve_paths(
 /// attacker-influenced, so `ShellExecuteW` running `evil.bat` is not an
 /// acceptable reading of the click. See [`crate::fspath::should_reveal`].
 #[tauri::command]
-pub async fn open_path(webview: tauri::Webview, path: String) -> YmuxResult<()> {
-    if !crate::fspath::caller_allowed(webview.label()) {
-        return Err(YmuxError::Other(
-            "open_path: only the main webview may open local paths".into(),
-        ));
-    }
+pub async fn open_path(webview: Webview, request: Request<'_>, path: String) -> YmuxResult<()> {
+    guard_local(&webview, &request, "open_path")?;
     // The path was vetted by `resolve_paths`, but it made a round trip
     // through the frontend to get here, so it is validated again from
     // scratch rather than trusted.
@@ -464,7 +531,14 @@ pub async fn open_path(webview: tauri::Webview, path: String) -> YmuxResult<()> 
 
 /// Show an OS desktop notification with the given title and body.
 #[tauri::command]
-pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
+pub fn notify(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+    title: String,
+    body: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "notify")?;
     use tauri_plugin_notification::NotificationExt;
     let _ = app.notification().builder().title(title).body(body).show();
     Ok(())
@@ -476,10 +550,13 @@ pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
 /// `desktop`-gated module doesn't even compile).
 #[tauri::command]
 pub fn save_scrollback(
+    webview: Webview,
+    request: Request<'_>,
     sessions: State<'_, SharedSessions>,
     pane_id: String,
     blob: String,
 ) -> YmuxResult<()> {
+    guard_local(&webview, &request, "save_scrollback")?;
     // A pane whose agent is mid-conversation neither restores nor saves
     // (spec §5). Enforced here rather than only in the frontend because the
     // condition is "has a fresh record", not "was resumed at spawn": the
@@ -502,13 +579,23 @@ pub fn save_scrollback(
 /// Load the persisted scrollback for `pane_id`, or an empty string if none
 /// has been saved yet.
 #[tauri::command]
-pub fn load_scrollback(pane_id: String) -> YmuxResult<String> {
+pub fn load_scrollback(
+    webview: Webview,
+    request: Request<'_>,
+    pane_id: String,
+) -> YmuxResult<String> {
+    guard_local(&webview, &request, "load_scrollback")?;
     crate::scrollback::load_blob(&pane_id).map_err(YmuxError::Io)
 }
 
 /// Delete the persisted scrollback for `pane_id`, if any.
 #[tauri::command]
-pub fn delete_scrollback(pane_id: String) -> YmuxResult<()> {
+pub fn delete_scrollback(
+    webview: Webview,
+    request: Request<'_>,
+    pane_id: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "delete_scrollback")?;
     crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io)
 }
 
@@ -522,7 +609,12 @@ pub fn delete_scrollback(pane_id: String) -> YmuxResult<()> {
 /// Deliberately synchronous: it runs on the main thread, which is where both
 /// the Windows OLE clipboard and macOS's `NSPasteboard` want to be touched.
 #[tauri::command]
-pub fn paste_clipboard_image(state: State<'_, AppState>) -> YmuxResult<Option<String>> {
+pub fn paste_clipboard_image(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+) -> YmuxResult<Option<String>> {
+    guard_local(&webview, &request, "paste_clipboard_image")?;
     let Some(png) = crate::clipboard_image::read_clipboard_png().map_err(YmuxError::Io)? else {
         return Ok(None);
     };
@@ -533,13 +625,10 @@ pub fn paste_clipboard_image(state: State<'_, AppState>) -> YmuxResult<Option<St
 }
 
 // ---------------------------------------------------------------------------
-// Git pane commands. Unlike the `git_worktree_*` commands below — which
-// predate the guard and are reached only from ymux's own worktree modal —
-// these carry `guard_local`, because they are part of the new surface
-// spec §1.5 rule 1 covers: they read repository contents and, in
-// `git_checkout`'s case, change the working tree.
+// Git pane commands. Like every other command, each starts with
+// `guard_local` (CLAUDE.md rule 16).
 //
-// All `#[tauri::command(async)]`: `tools/ygit` blocks its render thread on
+// These four are `#[tauri::command(async)]`: `tools/ygit` blocks its render thread on
 // every git call, and a slow repository must not be able to do that to the
 // window.
 // ---------------------------------------------------------------------------
@@ -548,62 +637,66 @@ pub fn paste_clipboard_image(state: State<'_, AppState>) -> YmuxResult<Option<St
 /// containing `cwd`. An empty repository returns an empty list.
 #[tauri::command(async)]
 pub fn git_log(
-    webview: tauri::Webview,
-    request: tauri::ipc::Request<'_>,
+    webview: Webview,
+    request: Request<'_>,
     cwd: String,
     limit: u32,
     skip: u32,
 ) -> YmuxResult<Vec<git::CommitInfo>> {
-    crate::fspath::guard_local(&webview, &request, "git_log")?;
+    guard_local(&webview, &request, "git_log")?;
     git::log(Path::new(&cwd), limit, skip)
 }
 
 /// Local and remote branches, with the current one named.
 #[tauri::command(async)]
 pub fn git_branches(
-    webview: tauri::Webview,
-    request: tauri::ipc::Request<'_>,
+    webview: Webview,
+    request: Request<'_>,
     cwd: String,
 ) -> YmuxResult<git::BranchList> {
-    crate::fspath::guard_local(&webview, &request, "git_branches")?;
+    guard_local(&webview, &request, "git_branches")?;
     git::branches(Path::new(&cwd))
 }
 
 /// Check out `branch`. See [`crate::git::checkout`] for what that runs.
 #[tauri::command(async)]
 pub fn git_checkout(
-    webview: tauri::Webview,
-    request: tauri::ipc::Request<'_>,
+    webview: Webview,
+    request: Request<'_>,
     cwd: String,
     branch: String,
 ) -> YmuxResult<()> {
-    crate::fspath::guard_local(&webview, &request, "git_checkout")?;
+    guard_local(&webview, &request, "git_checkout")?;
     git::checkout(Path::new(&cwd), &branch)
 }
 
 /// Top-level directory of the repository containing `cwd`.
 #[tauri::command(async)]
-pub fn git_repo_root(
-    webview: tauri::Webview,
-    request: tauri::ipc::Request<'_>,
-    cwd: String,
-) -> YmuxResult<String> {
-    crate::fspath::guard_local(&webview, &request, "git_repo_root")?;
+pub fn git_repo_root(webview: Webview, request: Request<'_>, cwd: String) -> YmuxResult<String> {
+    guard_local(&webview, &request, "git_repo_root")?;
     git::repo_root_checked(Path::new(&cwd))
 }
 
 /// Check whether `cwd` sits inside a git repository (main worktree or a
 /// linked worktree). Thin wrapper over [`crate::git::is_git_repo`].
 #[tauri::command]
-pub fn git_is_repo(cwd: String) -> bool {
-    git::is_git_repo(Path::new(&cwd))
+pub fn git_is_repo(webview: Webview, request: Request<'_>, cwd: String) -> YmuxResult<bool> {
+    guard_local(&webview, &request, "git_is_repo")?;
+    Ok(git::is_git_repo(Path::new(&cwd)))
 }
 
 /// Create a new git worktree for `branch`, rooted at the repo containing
 /// `cwd`, under a suggested sibling path derived from `base`. Returns the
 /// created worktree's path.
 #[tauri::command]
-pub fn git_worktree_add(cwd: String, branch: String, base: String) -> YmuxResult<String> {
+pub fn git_worktree_add(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    branch: String,
+    base: String,
+) -> YmuxResult<String> {
+    guard_local(&webview, &request, "git_worktree_add")?;
     let repo = git::repo_root(Path::new(&cwd))?;
     let path = git::suggested_worktree_path(&repo, &branch, &base);
     git::worktree_add(&repo, &branch, &path)?;
@@ -613,13 +706,24 @@ pub fn git_worktree_add(cwd: String, branch: String, base: String) -> YmuxResult
 /// Remove the worktree at `path`. `force` is passed through to `git worktree
 /// remove --force` for worktrees with uncommitted changes.
 #[tauri::command]
-pub fn git_worktree_remove(path: String, force: bool) -> YmuxResult<()> {
+pub fn git_worktree_remove(
+    webview: Webview,
+    request: Request<'_>,
+    path: String,
+    force: bool,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "git_worktree_remove")?;
     git::worktree_remove(Path::new(&path), force)
 }
 
 /// List all worktrees (main + linked) for the repository containing `cwd`.
 #[tauri::command]
-pub fn git_worktree_list(cwd: String) -> YmuxResult<Vec<git::WorktreeEntry>> {
+pub fn git_worktree_list(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+) -> YmuxResult<Vec<git::WorktreeEntry>> {
+    guard_local(&webview, &request, "git_worktree_list")?;
     let repo = git::repo_root(Path::new(&cwd))?;
     git::worktree_list(&repo)
 }

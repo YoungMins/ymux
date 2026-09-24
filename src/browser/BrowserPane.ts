@@ -92,6 +92,12 @@ export class BrowserPane implements Pane {
     // `allow-scripts` lets JS run; `allow-forms` and `allow-popups` cover
     // common dashboard use cases. No `allow-top-navigation` — the iframe must
     // never be able to replace the ymux window itself.
+    //
+    // The sandbox is NOT what keeps this page away from ymux's commands. On
+    // Windows, WebView2 runs Tauri's init scripts in every frame, so the page
+    // gets `__TAURI_INTERNALS__.invoke` whatever the sandbox says (dropping
+    // `allow-scripts` would stop that, and every site with it). The boundary
+    // is `guard_local` in Rust, which refuses this frame by its `Origin`.
     this.iframe.setAttribute(
       "sandbox",
       "allow-scripts allow-same-origin allow-forms allow-popups",
