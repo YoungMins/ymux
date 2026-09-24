@@ -18,11 +18,34 @@ pub struct WorktreeEntry {
     pub branch: String,
 }
 
+/// A `git` invocation in `cwd`, and the only way this module builds one.
+///
+/// On Windows a release ymux is a GUI-subsystem process with no console,
+/// so every console child it spawns gets a *new* console window unless told
+/// otherwise — a black window flashing up on each call. The git pane calls
+/// git on every refresh, window focus and followed `cd`, so without
+/// `CREATE_NO_WINDOW` the flashing is continuous. `tauri dev` builds keep a
+/// console and never show it, which is how it goes unnoticed.
+///
+/// `GIT_OPTIONAL_LOCKS=0` (the env form of `--no-optional-locks`): a pane
+/// that refreshes on focus must not take `index.lock` for a `git status`
+/// stat-cache refresh while the user runs `git commit` in a terminal pane.
+fn git_command(cwd: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(cwd).env("GIT_OPTIONAL_LOCKS", "0");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Run a git subcommand in `cwd`, returning stdout on success or a
 /// `YmuxError::Git` wrapping stderr on failure.
 fn run_git(cwd: &Path, args: &[&str]) -> YmuxResult<String> {
-    let out = Command::new("git")
-        .current_dir(cwd)
+    let out = git_command(cwd)
         .args(args)
         .output()
         .map_err(YmuxError::Io)?;
@@ -38,8 +61,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> YmuxResult<String> {
 
 /// Whether `cwd` is inside a git working tree.
 pub fn is_git_repo(cwd: &Path) -> bool {
-    Command::new("git")
-        .current_dir(cwd)
+    git_command(cwd)
         .args(["rev-parse", "--is-inside-work-tree"])
         .output()
         .map(|o| o.status.success())
@@ -370,8 +392,7 @@ pub const MAX_LOG_LIMIT: u32 = 2000;
 /// `git log` fails outright in a fresh `git init`, which is a normal state
 /// and not an error the pane should show.
 fn has_commits(cwd: &Path) -> bool {
-    Command::new("git")
-        .current_dir(cwd)
+    git_command(cwd)
         .args(["rev-parse", "--quiet", "--verify", "HEAD"])
         .output()
         .map(|o| o.status.success())
