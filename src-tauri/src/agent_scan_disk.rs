@@ -22,6 +22,7 @@
 //! at most [`MAX_CANDIDATES`] files whose mtime is inside the freshness
 //! window — on the machine this was written on, 3 of 847.
 
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -334,6 +335,7 @@ pub fn newest_claude_session(
     projects_root: &Path,
     cwd: &str,
     now: SystemTime,
+    claimed: &HashSet<String>,
 ) -> Option<DiskSession> {
     let mut budget = MAX_DIR_ENTRIES;
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -357,7 +359,7 @@ pub fn newest_claude_session(
             let Some(stem) = c.path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            if !is_valid_session_id(stem) {
+            if !is_valid_session_id(stem) || claimed.contains(stem) {
                 continue;
             }
             let Some(head) = read_head(&c.path, MAX_HEAD_LINES) else {
@@ -395,6 +397,7 @@ pub fn newest_codex_session(
     sessions_root: &Path,
     cwd: &str,
     now: SystemTime,
+    claimed: &HashSet<String>,
 ) -> Option<DiskSession> {
     let mut budget = MAX_DIR_ENTRIES;
     let mut all: Vec<Candidate> = Vec::new();
@@ -431,7 +434,10 @@ pub fn newest_codex_session(
         let Some(meta) = parse_codex_meta(head.trim_end()) else {
             continue;
         };
-        if !codex_is_resumable(&meta) || !ypath::same_path(cwd, &meta.cwd) {
+        if !codex_is_resumable(&meta)
+            || claimed.contains(&meta.id)
+            || !ypath::same_path(cwd, &meta.cwd)
+        {
             continue;
         }
         return Some(DiskSession {
@@ -455,17 +461,115 @@ pub fn codex_sessions_root() -> Option<PathBuf> {
 
 /// Newest resumable session for `agent` in `cwd`, against the real transcript
 /// roots in the user's home directory.
-pub fn newest_session(agent: AgentKind, cwd: &str) -> Option<DiskSession> {
+///
+/// `claimed` holds the session ids other panes already own. Skipping them is
+/// what keeps two panes open in the same directory from converging on one
+/// conversation: without it, a rescan 30 s later would hand pane A the newest
+/// transcript in that directory, which is pane B's.
+pub fn newest_session(
+    agent: AgentKind,
+    cwd: &str,
+    claimed: &HashSet<String>,
+) -> Option<DiskSession> {
     let now = SystemTime::now();
     match agent {
-        AgentKind::Claude => newest_claude_session(&claude_projects_root()?, cwd, now),
-        AgentKind::Codex => newest_codex_session(&codex_sessions_root()?, cwd, now),
+        AgentKind::Claude => newest_claude_session(&claude_projects_root()?, cwd, now, claimed),
+        AgentKind::Codex => newest_codex_session(&codex_sessions_root()?, cwd, now, claimed),
     }
+}
+
+/// Whether the transcript for `session_id` is still on disk.
+///
+/// Deliberately a *search by id*, not a path rebuilt from the record's `cwd`.
+/// Two reasons, one per agent:
+///
+/// * Claude's directory name is derived from the cwd, and the spelling in the
+///   record came from whatever produced it — a hook-borne record carries the
+///   shell's OSC 7 spelling, which from Git Bash is `/d/Git/ymux`, not
+///   `D:\Git\ymux`. Rebuilding the name from that finds nothing.
+/// * Codex's filename embeds a timestamp *before* the id, so there is no path
+///   to rebuild at all; and asking "is this still the newest session here?"
+///   would decline a perfectly good resume as soon as any later Codex run
+///   touched the same directory.
+///
+/// Both walks read directory entries only — 22 project directories here for
+/// Claude, the date tree for Codex — and open nothing.
+pub fn transcript_exists_under(agent: AgentKind, root: &Path, session_id: &str) -> bool {
+    if !is_valid_session_id(session_id) {
+        return false;
+    }
+    let mut budget = MAX_DIR_ENTRIES;
+    match agent {
+        AgentKind::Claude => {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                return false;
+            };
+            for entry in entries.flatten() {
+                if budget == 0 {
+                    return false;
+                }
+                budget -= 1;
+                if entry.path().join(format!("{session_id}.jsonl")).is_file() {
+                    return true;
+                }
+            }
+            false
+        }
+        AgentKind::Codex => {
+            let suffix = format!("-{session_id}.jsonl");
+            let mut level: Vec<PathBuf> = vec![root.to_path_buf()];
+            for depth in 0..4 {
+                let mut next = Vec::new();
+                for dir in &level {
+                    let Ok(entries) = std::fs::read_dir(dir) else {
+                        continue;
+                    };
+                    for entry in entries.flatten() {
+                        if budget == 0 {
+                            return false;
+                        }
+                        budget -= 1;
+                        // `YYYY/MM/DD` are directories; the fourth level is
+                        // the rollout files themselves.
+                        if depth == 3 {
+                            if entry
+                                .file_name()
+                                .to_str()
+                                .is_some_and(|n| n.ends_with(&suffix))
+                            {
+                                return true;
+                            }
+                        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                            next.push(entry.path());
+                        }
+                    }
+                }
+                level = next;
+            }
+            false
+        }
+    }
+}
+
+/// [`transcript_exists_under`] against the real roots in the user's home
+/// directory. A machine with no home directory has no transcripts either, so
+/// nothing is resumable there.
+pub fn transcript_exists(agent: AgentKind, session_id: &str) -> bool {
+    let root = match agent {
+        AgentKind::Claude => claude_projects_root(),
+        AgentKind::Codex => codex_sessions_root(),
+    };
+    root.is_some_and(|r| transcript_exists_under(agent, &r, session_id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No session ids claimed by other panes.
+    fn none() -> HashSet<String> {
+        HashSet::new()
+    }
 
     fn tempdir(tag: &str) -> PathBuf {
         let base = std::env::temp_dir().join(format!(
@@ -660,7 +764,8 @@ mod tests {
         filetime_set(&old, now - Duration::from_secs(3600));
         filetime_set(&new, now - Duration::from_secs(60));
 
-        let found = newest_claude_session(&root, "D:\\Git\\ymux", now).expect("should find one");
+        let found =
+            newest_claude_session(&root, "D:\\Git\\ymux", now, &none()).expect("should find one");
         assert_eq!(found.session_id, "bbbbbbbb-0000-0000-0000-000000000002");
         assert_eq!(found.cwd, "D:\\Git\\ymux");
 
@@ -684,7 +789,10 @@ mod tests {
         write(&desk, &claude_transcript("D:\\Git\\ymux", "claude-desktop"));
         filetime_set(&desk, now - Duration::from_secs(20));
 
-        assert_eq!(newest_claude_session(&root, "D:\\Git\\ymux", now), None);
+        assert_eq!(
+            newest_claude_session(&root, "D:\\Git\\ymux", now, &none()),
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -704,11 +812,11 @@ mod tests {
         filetime_set(&f, now - Duration::from_secs(10));
 
         assert_eq!(
-            newest_claude_session(&root, "D:\\git\\Project\\Gadodaeng-3rd-2", now),
+            newest_claude_session(&root, "D:\\git\\Project\\Gadodaeng-3rd-2", now, &none()),
             None,
             "a different real directory must not match"
         );
-        let found = newest_claude_session(&root, "d:/git/project/gadodaeng_3rd_2", now)
+        let found = newest_claude_session(&root, "d:/git/project/gadodaeng_3rd_2", now, &none())
             .expect("the real one matches, case and separators folded (rule 15)");
         assert_eq!(found.session_id, "eeeeeeee-0000-0000-0000-000000000005");
         let _ = std::fs::remove_dir_all(&root);
@@ -723,7 +831,10 @@ mod tests {
         write(&f, &claude_transcript("D:\\Git\\ymux", "cli"));
         let now = SystemTime::now();
         filetime_set(&f, now - FRESH_WINDOW - Duration::from_secs(60));
-        assert_eq!(newest_claude_session(&root, "D:\\Git\\ymux", now), None);
+        assert_eq!(
+            newest_claude_session(&root, "D:\\Git\\ymux", now, &none()),
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -793,10 +904,12 @@ mod tests {
         );
         filetime_set(&d, now - Duration::from_secs(1));
 
-        let found = newest_codex_session(&root, "D:\\Git\\ymux", now).expect("should find one");
+        let found =
+            newest_codex_session(&root, "D:\\Git\\ymux", now, &none()).expect("should find one");
         assert_eq!(found.session_id, "01a00000-0000-0000-0000-00000000000b");
         // Case and separators fold for a drive path (rule 15).
-        let found2 = newest_codex_session(&root, "d:/git/YMUX", now).expect("same directory");
+        let found2 =
+            newest_codex_session(&root, "d:/git/YMUX", now, &none()).expect("same directory");
         assert_eq!(found2.session_id, found.session_id);
 
         let _ = std::fs::remove_dir_all(&root);
@@ -822,9 +935,123 @@ mod tests {
             .to_string(),
         );
         filetime_set(&f, now - Duration::from_secs(5));
-        assert_eq!(newest_codex_session(&root, "/srv/mine", now), None);
+        assert_eq!(newest_codex_session(&root, "/srv/mine", now, &none()), None);
         // A POSIX path is case-sensitive: `/srv/Other` is a different place.
-        assert_eq!(newest_codex_session(&root, "/srv/Other", now), None);
+        assert_eq!(
+            newest_codex_session(&root, "/srv/Other", now, &none()),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_claimed_transcript_is_skipped_so_two_panes_keep_their_own() {
+        // Two panes in one directory. Without the exclusion the second pane's
+        // rescan returns the same newest transcript the first already holds —
+        // and worse, the *first* pane's next rescan picks up the second's
+        // newer conversation.
+        let root = tempdir("claude-claimed");
+        let proj = root.join("D--Git-ymux");
+        let mine = "aaaaaaaa-0000-0000-0000-000000000001";
+        let theirs = "bbbbbbbb-0000-0000-0000-000000000002";
+        let now = SystemTime::now();
+        for (id, age) in [(mine, 600u64), (theirs, 60)] {
+            let f = proj.join(format!("{id}.jsonl"));
+            write(&f, &claude_transcript("D:\\Git\\ymux", "cli"));
+            filetime_set(&f, now - Duration::from_secs(age));
+        }
+        // Nothing claimed: the newest wins.
+        assert_eq!(
+            newest_claude_session(&root, "D:\\Git\\ymux", now, &none()).map(|d| d.session_id),
+            Some(theirs.to_string())
+        );
+        // With the newest claimed by another pane, this one keeps its own.
+        let claimed: HashSet<String> = [theirs.to_string()].into_iter().collect();
+        assert_eq!(
+            newest_claude_session(&root, "D:\\Git\\ymux", now, &claimed).map(|d| d.session_id),
+            Some(mine.to_string())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn codex_scan_skips_a_claimed_rollout() {
+        let root = tempdir("codex-claimed");
+        let now = SystemTime::now();
+        let mine = "01a00000-0000-0000-0000-00000000001a";
+        let theirs = "01a00000-0000-0000-0000-00000000001b";
+        for (id, age) in [(mine, 600u64), (theirs, 60)] {
+            let f = root
+                .join("2026/09/23")
+                .join(format!("rollout-2026-09-23T10-00-00-{id}.jsonl"));
+            write(
+                &f,
+                &serde_json::json!({
+                    "type": "session_meta",
+                    "payload": { "id": id, "cwd": "D:\\Git\\ymux", "source": "cli" }
+                })
+                .to_string(),
+            );
+            filetime_set(&f, now - Duration::from_secs(age));
+        }
+        let claimed: HashSet<String> = [theirs.to_string()].into_iter().collect();
+        assert_eq!(
+            newest_codex_session(&root, "D:\\Git\\ymux", now, &claimed).map(|d| d.session_id),
+            Some(mine.to_string())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn claude_transcript_is_found_by_id_whatever_the_cwd_was_spelled_like() {
+        // A hook-borne record carries the shell's OSC 7 spelling, which from
+        // Git Bash is `/d/Git/ymux` — mangling *that* gives `-d-Git-ymux`,
+        // a directory that does not exist. Searching by id finds it anyway.
+        let root = tempdir("claude-exists");
+        let id = "aaaaaaaa-0000-0000-0000-00000000000f";
+        write(
+            &root.join("D--Git-ymux").join(format!("{id}.jsonl")),
+            &claude_transcript("D:\\Git\\ymux", "cli"),
+        );
+        assert!(transcript_exists_under(AgentKind::Claude, &root, id));
+        assert!(!transcript_exists_under(
+            AgentKind::Claude,
+            &root,
+            "cccccccc-0000-0000-0000-00000000000f"
+        ));
+        // And it refuses an id that is not safe to build a filename from.
+        assert!(!transcript_exists_under(
+            AgentKind::Claude,
+            &root,
+            "../evil"
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn codex_transcript_is_found_by_id_even_when_a_newer_session_exists() {
+        // The filename embeds a timestamp before the id, so there is no path
+        // to rebuild; and "is this still the newest session here?" would
+        // decline a good resume the moment any later Codex run touched the
+        // same directory.
+        let root = tempdir("codex-exists");
+        let mine = "01a00000-0000-0000-0000-00000000002a";
+        let newer = "01a00000-0000-0000-0000-00000000002b";
+        for (id, day) in [(mine, "2026/09/20"), (newer, "2026/09/23")] {
+            write(
+                &root
+                    .join(day)
+                    .join(format!("rollout-2026-09-20T10-00-00-{id}.jsonl")),
+                "{}",
+            );
+        }
+        assert!(transcript_exists_under(AgentKind::Codex, &root, mine));
+        assert!(transcript_exists_under(AgentKind::Codex, &root, newer));
+        assert!(!transcript_exists_under(
+            AgentKind::Codex,
+            &root,
+            "01a00000-0000-0000-0000-00000000002c"
+        ));
         let _ = std::fs::remove_dir_all(&root);
     }
 

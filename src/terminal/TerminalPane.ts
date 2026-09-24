@@ -584,7 +584,10 @@ export class TerminalPane implements Pane {
         // belongs to, not the pane's saved `cwd`. Claude sessions are
         // project-scoped, so resuming one from anywhere else finds nothing,
         // and the saved cwd may have drifted since the session was recorded.
-        cwd: this.resumePlan?.cwd ?? this.spec.cwd ?? null,
+        // `||`, not `??`: an empty cwd is "unknown", not a directory. The
+        // backend already refuses to build a plan without one, and this is
+        // the belt to that braces.
+        cwd: this.resumePlan?.cwd || this.spec.cwd || null,
         rows,
         cols,
         argv: this.opts.argv,

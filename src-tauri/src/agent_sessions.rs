@@ -16,7 +16,7 @@
 //! the frontend, so it belongs in a backend-owned store beside
 //! [`crate::scrollback`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -552,9 +552,14 @@ impl SessionTracker {
     ///
     /// An agent ymux has no resume story for (Gemini and the rest — spec §8)
     /// is ignored rather than recorded with no way to act on it.
+    /// `lookup` is handed the session ids *other* panes already hold, so it
+    /// can return the newest transcript nobody has claimed. Without that, two
+    /// panes open in the same directory converge: pane B's first claim on the
+    /// newest transcript is refused because pane A holds it, and then A's own
+    /// rescan 30 s later picks up B's newer conversation instead of its own.
     pub fn observe<F>(&mut self, obs: &PaneObservation, now: u64, lookup: F)
     where
-        F: FnOnce(AgentKind, &str) -> Option<crate::agent_scan_disk::DiskSession>,
+        F: FnOnce(AgentKind, &str, &HashSet<String>) -> Option<crate::agent_scan_disk::DiskSession>,
     {
         let Some(agent) = AgentKind::from_kind(&obs.kind) else {
             return;
@@ -588,7 +593,14 @@ impl SessionTracker {
             return;
         };
         self.last_disk_scan.insert(obs.pane_id, now);
-        let Some(found) = lookup(agent, cwd) else {
+        let claimed: HashSet<String> = self
+            .store
+            .sessions
+            .iter()
+            .filter(|(id, _)| **id != obs.pane_id)
+            .map(|(_, s)| s.session_id.clone())
+            .collect();
+        let Some(found) = lookup(agent, cwd, &claimed) else {
             return;
         };
         self.record(
@@ -678,7 +690,11 @@ pub fn plan_for(
     transcript_exists: impl FnOnce(&AgentSession) -> bool,
 ) -> Option<ResumePlan> {
     let s = session?;
-    if !s.is_fresh_at(now) {
+    // An empty cwd means the record was written from a hook before OSC 7 had
+    // reported one. Resuming somewhere arbitrary is worse than not resuming:
+    // Claude sessions are project-scoped, so the wrong directory finds
+    // nothing, and the user gets an error instead of their conversation.
+    if !s.is_fresh_at(now) || s.cwd.is_empty() {
         return None;
     }
     let command = resume_command(s.agent, &s.session_id, startup_cmd)?;
@@ -695,21 +711,11 @@ pub fn plan_for(
 
 /// Whether the transcript naming `session.session_id` is still on disk.
 ///
-/// Claude's file is `<projects>/<mangled cwd>/<id>.jsonl`, a direct lookup.
-/// Codex's filename embeds a timestamp before the id, so it has to be found —
-/// which the bounded scan already does, and the scan is what produced the
-/// record in the first place.
+/// Delegates to a search *by id* rather than a path rebuilt from the record's
+/// `cwd` — see `agent_scan_disk::transcript_exists_under` for why both agents
+/// need that.
 pub fn transcript_exists(session: &AgentSession) -> bool {
-    use crate::agent_scan_disk as scan;
-    match session.agent {
-        AgentKind::Claude => scan::claude_projects_root().is_some_and(|root| {
-            root.join(scan::claude_project_dir_name(&session.cwd))
-                .join(format!("{}.jsonl", session.session_id))
-                .is_file()
-        }),
-        AgentKind::Codex => scan::newest_session(AgentKind::Codex, &session.cwd)
-            .is_some_and(|d| d.session_id == session.session_id),
-    }
+    crate::agent_scan_disk::transcript_exists(session.agent, &session.session_id)
 }
 
 #[cfg(test)]
@@ -1108,7 +1114,7 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             1_000,
-            |_, cwd| {
+            |_, cwd, _| {
                 assert_eq!(cwd, "D:/Git/ymux");
                 Some(disk(ID_A, "D:\\Git\\ymux"))
             },
@@ -1128,9 +1134,11 @@ mod tests {
     fn tracker_skips_an_agent_with_no_resume_story() {
         let pane = Uuid::from_u128(1);
         let mut t = SessionTracker::default();
-        t.observe(&obs(pane, "gemini", Some("D:/Git/ymux")), 1_000, |_, _| {
-            panic!("must not even look on disk for an agent we cannot resume")
-        });
+        t.observe(
+            &obs(pane, "gemini", Some("D:/Git/ymux")),
+            1_000,
+            |_, _, _| panic!("must not even look on disk for an agent we cannot resume"),
+        );
         assert!(t.get(pane).is_none());
     }
 
@@ -1146,7 +1154,9 @@ mod tests {
             if t.wants_disk_scan(pane, now) {
                 calls += 1;
             }
-            t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _| None);
+            t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _, _| {
+                None
+            });
         }
         assert_eq!(calls, 1, "only the first tick may look");
         assert!(
@@ -1161,7 +1171,7 @@ mod tests {
         let mut t = SessionTracker::default();
         let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
         o.hook_session_id = Some(ID_A.to_string());
-        t.observe(&o, 1_000, |_, _| panic!("a hook id needs no disk scan"));
+        t.observe(&o, 1_000, |_, _, _| panic!("a hook id needs no disk scan"));
         assert_eq!(t.get(pane).map(|s| s.source), Some(IdSource::Hook));
         assert!(!t.wants_disk_scan(pane, 1_000 + DISK_RESCAN_INTERVAL * 10));
     }
@@ -1170,14 +1180,18 @@ mod tests {
     fn tracker_refreshes_updated_at_while_the_agent_lives() {
         let pane = Uuid::from_u128(1);
         let mut t = SessionTracker::default();
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_000, |_, _| {
-            Some(disk(ID_A, "D:\\Git\\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_000,
+            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+        );
         // Much later, still the same agent and no new disk scan result.
         let later = 1_000 + 5 * PERSIST_GRANULARITY;
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), later, |_, _| {
-            None
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            later,
+            |_, _, _| None,
+        );
         let rec = t.get(pane).expect("still recorded");
         assert_eq!(
             rec.updated_at,
@@ -1194,15 +1208,17 @@ mod tests {
         let pane = Uuid::from_u128(1);
         let mut t = SessionTracker::default();
         let start = 10 * PERSIST_GRANULARITY;
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), start, |_, _| {
-            Some(disk(ID_A, "D:\\Git\\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            start,
+            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+        );
         assert!(t.take_dirty(), "the first record is a real change");
         for tick in 1..(PERSIST_GRANULARITY / 2) {
             t.observe(
                 &obs(pane, "claude", Some("D:/Git/ymux")),
                 start + tick * 2,
-                |_, _| None,
+                |_, _, _| None,
             );
         }
         assert!(
@@ -1212,7 +1228,7 @@ mod tests {
         t.observe(
             &obs(pane, "claude", Some("D:/Git/ymux")),
             start + PERSIST_GRANULARITY,
-            |_, _| None,
+            |_, _, _| None,
         );
         assert!(t.take_dirty(), "and the next grid step does");
     }
@@ -1221,29 +1237,92 @@ mod tests {
     fn note_agent_exit_declines_without_deleting() {
         let pane = Uuid::from_u128(1);
         let mut t = SessionTracker::default();
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_000, |_, _| {
-            Some(disk(ID_A, "D:\\Git\\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_000,
+            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+        );
         t.note_agent_exit(pane);
         let rec = t.get(pane).expect("record survives");
         assert!(!rec.active);
         assert_eq!(plan_for(Some(rec), "", 1_000, |_| true), None);
         // And the pane can start a fresh conversation afterwards.
         assert!(t.wants_disk_scan(pane, 1_000));
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_001, |_, _| {
-            Some(disk(ID_B, "D:\\Git\\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_001,
+            |_, _, _| Some(disk(ID_B, "D:\\Git\\ymux")),
+        );
         assert_eq!(t.get(pane).map(|s| s.session_id.as_str()), Some(ID_B));
         assert!(t.get(pane).is_some_and(|s| s.active));
+    }
+
+    #[test]
+    fn two_panes_in_one_directory_keep_their_own_sessions_across_rescans() {
+        // The bug this guards: pane A holds X; pane B's claim on X is refused
+        // by the store; then A's own rescan 30 s later returns the newest
+        // transcript in that directory — which by then is B's conversation.
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let mut t = SessionTracker::default();
+        // The "disk": newest first. The lookup honours `claimed` the way the
+        // real scanner does.
+        let newest_first = [ID_B, ID_A];
+        let pick = |claimed: &HashSet<String>| {
+            newest_first
+                .iter()
+                .find(|id| !claimed.contains(**id))
+                .map(|id| disk(id, "D:\\Git\\ymux"))
+        };
+
+        let mut now = 1_000;
+        t.observe(&obs(a, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
+            pick(c)
+        });
+        t.observe(&obs(b, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
+            pick(c)
+        });
+        let (first_a, first_b) = (
+            t.get(a).map(|s| s.session_id.clone()),
+            t.get(b).map(|s| s.session_id.clone()),
+        );
+        assert_eq!(first_a.as_deref(), Some(ID_B), "A took the newest");
+        assert_eq!(first_b.as_deref(), Some(ID_A), "B got the next one down");
+
+        // Several rescans later, neither pane has drifted onto the other's.
+        for _ in 0..4 {
+            now += DISK_RESCAN_INTERVAL;
+            t.observe(&obs(a, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
+                pick(c)
+            });
+            t.observe(&obs(b, "claude", Some("D:/Git/ymux")), now, |_, _, c| {
+                pick(c)
+            });
+        }
+        assert_eq!(t.get(a).map(|s| s.session_id.clone()), first_a);
+        assert_eq!(t.get(b).map(|s| s.session_id.clone()), first_b);
+    }
+
+    #[test]
+    fn a_record_with_no_cwd_is_not_resumable() {
+        // A hook can land before OSC 7 has reported a cwd. Resuming from an
+        // arbitrary directory is worse than not resuming: Claude sessions are
+        // project-scoped, so the user gets an error instead of their
+        // conversation.
+        let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Hook);
+        s.cwd = String::new();
+        assert_eq!(plan_for(Some(&s), "", s.updated_at, |_| true), None);
     }
 
     #[test]
     fn forget_removes_the_record_entirely() {
         let pane = Uuid::from_u128(1);
         let mut t = SessionTracker::default();
-        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_000, |_, _| {
-            Some(disk(ID_A, "D:\\Git\\ymux"))
-        });
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_000,
+            |_, _, _| Some(disk(ID_A, "D:\\Git\\ymux")),
+        );
         t.forget(pane);
         assert!(t.get(pane).is_none());
     }
