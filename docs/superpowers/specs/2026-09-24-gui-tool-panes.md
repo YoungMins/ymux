@@ -12,8 +12,8 @@ terminal". This document does not re-open it; it works out what that costs and
 in what order to pay it.
 
 Scale, for calibration: ~7,200 lines of Rust TUI (ydir 2,791 · ycode 3,067 ·
-ymon 726 · ygit 615) plus 292 lines of launcher come out; four new pane
-implementations and a new backend filesystem/git/metrics surface go in. It is
+ymon 726 · ygit 615) plus 292 lines of launcher come out; three new pane
+implementations and a new backend filesystem/git surface go in. It is
 the largest single change the project has attempted.
 
 **One sidecar survives** — see §3.4. `y` is not only a launcher: it is the
@@ -25,10 +25,10 @@ hook event.
 
 Five sub-projects, in this order:
 
-1. **Backend surface** — filesystem, git and metrics commands. No UI change.
+1. **Backend surface** — filesystem and git commands. No UI change.
 2. **Files pane** (`ydir`) — and the file dock stops hosting a PTY.
 3. **Editor pane** (`ycode`) — and the viewer-tab flow stops spawning one.
-4. **Git pane** (`ygit`) and **Monitor pane** (`ymon`).
+4. **Git pane** (`ygit`).
 5. **Cut-over** — the hook relay, then the sidecars leave the bundle, CI,
    `build-tools.mjs` and the docs.
 
@@ -44,15 +44,15 @@ Five sub-projects, in this order:
 pub enum PaneKind { Terminal, Browser, NativeBrowser, EmbeddedBrowser }
 ```
 
-Four variants are added: `Files`, `Editor`, `Git`, `Monitor`. Serde renders
+Three variants are added: `Files`, `Editor`, `Git`. Serde renders
 them lowercase, matching the existing `native_browser` / `embedded_browser`
-style, so TOML carries `pane_kind = "files" | "editor" | "git" | "monitor"`.
+style, so TOML carries `pane_kind = "files" | "editor" | "git"`.
 
 Adding enum variants is additive and the field already carries
 `#[serde(default, rename = "pane_kind")]` (`model.rs:467`). A config written by
 an older ymux has no new value in it and loads unchanged.
 
-**Why four and not one.** A single `PaneKind::Tool` with a discriminating
+**Why three and not one.** A single `PaneKind::Tool` with a discriminating
 `PaneSpec` field would push the switch from a Rust enum the compiler checks
 into a string nobody checks, and it would make `createPane`'s dispatch
 (`src/workspace/WorkspaceManager.ts:470`) two levels deep instead of one. The
@@ -68,7 +68,6 @@ budget is one field.
 |---|---|---|
 | `files` | the directory shown | **`cwd`** — already exists |
 | `git` | the repo | **`cwd`** — already exists |
-| `monitor` | nothing persistent | — |
 | `editor` | the open file | **new `file_path`** |
 
 ```rust
@@ -88,7 +87,7 @@ The four places (rule 2), plus the test:
 
 1. `src-tauri/src/config/model.rs` — the struct and all three constructors
    (`new_default`, `placeholder`, `new_browser`), plus new `new_files(cwd)`,
-   `new_editor(path)`, `new_git(cwd)`, `new_monitor()`.
+   `new_editor(path)`, `new_git(cwd)`.
 2. `src/types.ts:27` — `PaneSpec.file_path?: string`.
 3. `src/layout/LayoutTree.ts:56` — `nodeToSpec()` manual field copy.
 4. `src/workspace/WorkspaceManager.ts` — `findAndMutatePane()`'s snapshot +
@@ -144,7 +143,7 @@ after the panes ship.
 shared `HotKeyBar` whose buttons write to a PTY, and builds children with
 `ownChrome: false`.
 
-The four GUI panes implement `Pane` (`src/layout/Pane.ts`) exactly as
+The three GUI panes implement `Pane` (`src/layout/Pane.ts`) exactly as
 `BrowserPane` does — `element`, `focus()`, `scheduleFit()`, `spawn()`,
 `dispose(permanent?)` — so `SplitContainer.render()` needs no change; it already
 operates on the interface (`src/layout/SplitContainer.ts:14`).
@@ -159,7 +158,7 @@ Inside a tab group:
   group's title row is the only title.
 - Rule 14 applies unchanged: a GUI pane shown after being hidden still gets
   `scheduleFit()` on the next animation frame. For CodeMirror that is
-  `view.requestMeasure()`; for the files/git/monitor panes it is a no-op, but
+  `view.requestMeasure()`; for the files/git panes it is a no-op, but
   the call site stays uniform.
 
 ### 0.6 Keyboard precedence — decided once, here
@@ -214,7 +213,7 @@ keeps passing on Linux and the parsers stay unit-testable there.
 | `src-tauri/src/textfile.rs` | **no** | `Eol` detection + restoration, BOM handling, `ContentStamp` (mtime + hash), `decode`/`encode`, `MAX_EDIT_BYTES` |
 | `src-tauri/src/fsops.rs` | **desktop** | the filesystem commands (read_dir, read/write, mkdir/rename/copy/move/delete) |
 | `src-tauri/src/git/mod.rs` | **no** (parsers) / **desktop** (commands) | add `parse_log_porcelain`, `parse_branch_list`; `log()`, `branches()`, `checkout()` |
-| `src-tauri/src/sysmonitor.rs` | **desktop** | extend `SystemSnapshot`; add on-demand process list |
+| `src-tauri/src/sysmonitor.rs` | **desktop** | unchanged — no Monitor pane, no new metrics surface |
 
 `fsops.rs` is gated because it takes a `Webview` (see §1.5) and returns through
 `#[tauri::command]`. Its *decisions* — what to list, how to sort, whether a
@@ -325,51 +324,6 @@ the marker-stripping test stays as a regression guard.
 Commit **diffs**, staging, commit, push/pull and stash are out of scope (§9) —
 `ygit` has none of them either.
 
-### 1.4 Metrics
-
-`src-tauri/src/sysmonitor.rs` already samples with `sysinfo` on a 2 s loop and
-emits `app:sysmonitor` (`SystemSnapshot`). It has network throughput and GPU
-adapter enumeration that `ymon` lacks; `ymon` has per-core CPU, swap, a
-process list and 60-sample history that it lacks.
-
-**There is exactly one sampler.** `sysmonitor.rs` is extended; no second
-`System` is created. (`agent_scan.rs` keeps its own, but it refreshes only exe
-and argv via `ProcessRefreshKind::nothing()` — a deliberately narrow refresh
-that must not be widened into a general process source.)
-
-```rust
-struct SystemSnapshot {
-    cpu_usage: f32,
-    cpus: Vec<f32>,              // NEW — per-core
-    ram_total_mb, ram_used_mb, ram_usage,
-    swap_total_mb: u64,          // NEW
-    swap_used_mb: u64,           // NEW
-    gpus, disks, net,            // unchanged
-}
-struct ProcessInfo { pid: u32, name: String, cpu: f32, memory_mb: f64 }
-
-sysmon_processes(sort: ProcSort, limit: u32) -> YmuxResult<Vec<ProcessInfo>>
-```
-
-Per-core and swap are cheap additions to a refresh already happening, and the
-existing status bar ignores fields it does not read. **The process list is not**
-— `refresh_processes` is the expensive part of `refresh_all()`, and paying it
-every 2 s for a pane nobody has open is a regression for every user. So:
-
-- Process refresh runs only while at least one monitor pane is **visible**
-  (`WorkspaceManager.isPaneVisible`, already threaded into `TerminalPane`).
-  The frontend calls `sysmon_set_processes_enabled(bool)`; the loop skips the
-  process refresh when off.
-- **History is frontend-side.** A 60-sample ring of `cpu_usage` and RAM% in the
-  monitor pane's own state, fed by the existing `app:sysmonitor` event. The
-  backend stays stateless, which is what it is today.
-- **Sorting moves to the backend but becomes a choice.** `ymon` hard-codes
-  CPU-descending; `ProcSort` is `{ Cpu, Memory, Name, Pid }` with a direction.
-
-GPU stays as it is: `query_engine_usage()` is a stub returning `Err(())`, so
-`gpus` is empty in practice on every platform. The monitor pane renders the GPU
-section only when the vector is non-empty — no new promise is made.
-
 ### 1.5 Capability scoping — the part that must not be got wrong
 
 This app hosts **remote content**. `src-tauri/capabilities/browser-children.json`
@@ -453,10 +407,6 @@ Each maps to an i18n key in all 13 languages (rule 7). A command never panics;
   `branch_name_strips_every_marker_git_writes`,
   `branch_name_rejects_the_detached_head_pseudo_entry` and
   `branch_name_strips_one_marker_not_a_run` verbatim.
-- `sysmonitor`: snapshot serialises with the new fields; `ProcSort` orders
-  correctly over a fixture vector (pure comparator, extracted so it is testable
-  without touching the machine — `ymon`'s equivalent test calls `App::new()` and
-  polls the real system, which the port does not inherit).
 
 **Rust, desktop, `tempfile`-backed integration (Windows/macOS only):** create /
 rename / copy / move / delete round-trips; `fs_write_text` refuses on a stale
@@ -837,11 +787,11 @@ Deleted here: `crates/yipc`'s `OPEN_FILE_KIND`, `open_file_event`,
 
 ---
 
-## 4. Git pane and Monitor pane
+## 4. Git pane
 
 ### 4.1 Git pane (`ygit` → `PaneKind::Git`)
 
-`tools/ygit/src` is 615 lines and 18 tests, and is the thinnest of the four:
+`tools/ygit/src` is 615 lines and 18 tests, and is the thinnest of the three:
 three git shell-outs, two panels, six keys.
 
 | Feature | v1 | Note |
@@ -863,44 +813,14 @@ Pane follows the active pane's cwd the same way the dock does (reusing
   ported from `graph.rs`'s model (lane index → colour, 6-colour cycle) but
   computed from parent hashes instead of parsed from drawn characters.
 
-### 4.2 Monitor pane (`ymon` → `PaneKind::Monitor`)
-
-`tools/ymon/src` is 726 lines and 11 tests. ymux **already renders the same
-data** in its status bar from the same `sysmonitor.rs`, so this pane is
-mostly presentation over an existing feed.
-
-| Feature | v1 | Note |
-|---|---|---|
-| Overview: CPU / memory / swap gauges + disk table | **keep** | Swap is new to `SystemSnapshot` (§1.4) |
-| CPU tab: history sparkline + per-core bars | **keep** | Per-core is new to `SystemSnapshot`; history moves frontend-side |
-| Memory tab: history sparkline + details | **keep** | |
-| Processes tab: pid / name / cpu / memory, top 200 | **keep, improved** | `ymon` hard-codes CPU-descending and its `scroll_down` is **unbounded** (scrolls past the end into an empty table). v1 has sortable columns and a real scroll clamp |
-| Threshold colouring (≥90 red, ≥70 amber) | **keep** | `pct_color`'s thresholds, now from ytheme's `status_ok/warn/critical` instead of hard-coded literals |
-| **Network throughput** | **add** | `sysmonitor.rs` already computes up/down bytes/sec; `ymon` constructs `Networks`, refreshes it every tick, and **renders nothing** |
-| **GPU** | **conditional** | Rendered only when `gpus` is non-empty, which today it never is: `query_engine_usage()` is a stub. No new promise |
-| Kill process, filter, per-process detail | **defer** | `ymon` has none |
-| 4-tab layout, `1`–`4` jump | **keep** | As a segmented control |
-
-- `src/monitor/MonitorPane.ts` — implements `Pane`; subscribes to
-  `app:sysmonitor`, toggles `sysmon_set_processes_enabled` on visibility.
-- `src/monitor/history.ts` — **pure**. A capped ring (60 samples) with
-  `push`/`values`; ports `ymon`'s `MAX_HISTORY` without its `Vec::remove(0)`.
-- `src/monitor/procModel.ts` — **pure**. Sort comparators and the scroll clamp
-  `ymon` lacks.
-- Chart rendering: inline SVG, no charting library. Sparklines and bars are a
-  polyline and some rects; adding a dependency for that is not worth the bundle.
-
 ### 4.3 Tests
 
 - **vitest, pure:** `graphLanes` — a linear history, a merge, an octopus merge,
   a branch that reappears after a gap, an empty log; lane colours cycle at 6.
-  `history` — cap at 60, order, `push` past the cap. `procModel` — each sort
-  key and direction, stable ties, scroll clamp at the list end (`ymon`'s bug).
 - **Rust:** in §1.7.
 - **Manual (GUI):** checkout from the git pane and confirm terminal panes in
   that repo see the new branch; worktree add then remove; a detached HEAD; a
-  non-repo cwd; monitor pane process list under load; monitor pane hidden in a
-  background workspace stops refreshing processes.
+  non-repo cwd.
 
 ---
 
@@ -912,8 +832,8 @@ something its own replacement does not yet cover.
 ### Step 1 — Backend surface
 
 §1 in full. New: `fsx.rs`, `textfile.rs`, `fsops.rs`, `git/mod.rs` additions,
-`sysmonitor.rs` additions, `error.rs` variants, the webview-label guard, i18n
-keys. Registered in `generate_handler!` and the `default` capability.
+`error.rs` variants, the webview-label guard, i18n keys. Registered in
+`generate_handler!` and the `default` capability. `sysmonitor.rs` is untouched.
 
 **Deleted:** nothing. **Verified:** `cargo check --no-default-features --lib --tests -p ymux`
 passes; the §1.5 Tauri-reachability question is answered in writing.
@@ -940,7 +860,7 @@ decision:
    sizes against §3.2's estimates. Over ~600 KB gzip → trim grammars.
 2. **Hangul spike on macOS** (§3.2 reason 5). A bare CM6 view in `tauri dev`,
    typing `ime.test.ts`'s fixture strings. A failure here has a stated
-   fallback; discovering it after four panes are built does not.
+   fallback; discovering it after three panes are built does not.
 3. **Enumerate the keymap collisions** (§0.6) against `HelpOverlay.ts`'s
    `SHORTCUTS`, and settle the final table.
 
@@ -957,7 +877,7 @@ and the `"ydir-openfile"` tool name.
 `AGENT_HOOK_KIND`. `RegisterCommands` and `PaneSend` are already unused by every
 tool and go too. `IpcClient` survives for the hook relay.
 
-### Step 4 — Git pane + Monitor pane
+### Step 4 — Git pane
 
 §4 in full. **Deleted:** `src/workspace/WorktreeModal.ts` (the 17-line stub the
 git pane replaces).
@@ -1051,7 +971,7 @@ must move together or CI breaks.
   `crates/yversion` line from the version checklist), **rule 13** (delete — it
   documents the `send_to` fan-out that no longer exists), the **project
   structure tree** (drop `tools/`, `crates/yversion`; add `src/files/`,
-  `src/editor/`, `src/git/`, `src/monitor/`), and the **test-count table**
+  `src/editor/`, `src/git/`), and the **test-count table**
   (re-derive; do not guess).
 - `README.md` / `README.ko.md` / `README.ja.md`: remove the CLI tool sections
   and any "available from any terminal" claim; document the panes; update the
@@ -1067,14 +987,15 @@ must move together or CI breaks.
 | Today | After | Where |
 |---|---|---|
 | The file dock runs `ydir --dock` in a PTY, driven by `ChangeDir` over yipc | The dock hosts a `FilesPane`. Same position, collapse, width, `Ctrl+Shift+E`, cwd-following (same `cwdFollow` debounce). Gains rename/create/multi-select/trash; loses the run dialog and the dual-pane toggle (`Tab` now switches preview, as it already does in dock mode) | §2.4 |
-| Pane right-click → yDir / yMon / yCode / yGit types the command into the shell | The same four entries **open panes**: "Files here" / "Editor" / "Git" / "Monitor", each splitting the focused pane and inheriting its cwd. Plus palette commands and `Ctrl+Shift+…` bindings through rule 6's full 6-step checklist | §5 step 6 |
+| Pane right-click → yDir / yMon / yCode / yGit types the command into the shell | The same three surviving entries **open panes**: "Files here" / "Editor" / "Git", each splitting the focused pane and inheriting its cwd. yMon's entry is removed — no pane replaces it. Plus palette commands and `Ctrl+Shift+…` bindings through rule 6's full 6-step checklist | §5 step 6 |
 | yDir Enter on a file → `open-file` over yipc → viewer tab running `ycode <path>` | `FilesPane` calls `openFileInViewerTab` directly; the viewer tab is an `EditorPane`. Reuse is `openFile(path)` — no PTY kill/respawn, so switching files no longer flashes a terminal clear (see the ConPTY memory note) | §3.7 |
 | `ydir` / `ycode` / `ygit` / `ymon` / `y` typed in any terminal, anywhere | **Gone.** The accepted loss. Release notes say so plainly | §5 step 6 |
+| `ymon`'s TUI (overview/CPU/memory/process tabs) | **Gone, with no in-app replacement.** The status bar already shows the same metrics from the same `sysmonitor.rs` (CPU, RAM, network, disk, GPU); the process list is better served by the OS task manager | §5 step 6 |
 | `y mon` / `y code x.rs` shorthand | Gone with the launcher | §5 step 6 |
 | A hand-written `startup_cmd` or `HotKeyDef` running `ycode foo.rs` | Breaks. Not auto-migrated — the strings are arbitrary user data. Release notes call this out | §0.3 |
 | A viewer tab or dock left open at shutdown | Already survives as an ordinary terminal pane today (`argv` is never persisted), so nothing changes at upgrade: it reloads as a shell tab, exactly as it does now. The *next* Enter from the files pane opens a real editor pane | §0.3 |
 | Claude Code hooks pointing at `…/y agent-hook claude --ymux-agent-hook` | Rewritten in place to `…/ymux-hook` on next launch, marker preserved, foreign hooks untouched (rule 12) | §5 step 5 |
-| `%APPDATA%\ymux\theme.toml` themed only ycode's syntax colours | Now themes the editor pane, and the monitor pane's thresholds | §3.2 |
+| `%APPDATA%\ymux\theme.toml` themed only ycode's syntax colours | Now themes the editor pane | §3.2 |
 | Install dir on PATH | Unchanged — `ymux.exe` stays reachable | §5 step 6 |
 | Markdown preview (`Alt+M`) | Gone in v1; deferred, not dropped | §3.1 |
 | ycode's editor sidebar (`Ctrl+B`) | Gone — the file dock and files panes replace it | §3.1 |
@@ -1094,14 +1015,14 @@ shipped.
 
 **Rust (Linux-safe, `--no-default-features`):** `fsx` (sort, hidden, binary
 sniff, `ypath`-backed comparison), `textfile` (EOL, BOM, stamps, caps),
-`git::parse_log_porcelain` + `parse_branch_list`, the `ProcSort` comparator.
+`git::parse_log_porcelain` + `parse_branch_list`.
 This is where the *rules* live, and it is the same ungated-pure-logic pattern
 `agents.rs` and `agent_hooks.rs` already use.
 
 **vitest, no DOM:** `fileModel`, `preview`, `editorModel`, `theme`, `eol`,
-`graphLanes`, `history`, `procModel` — every one written DOM-free by
-construction, matching the discipline that already produced 217 frontend tests
-in a vitest with **no** environment configured.
+`graphLanes` — every one written DOM-free by construction, matching the
+discipline that already produced 217 frontend tests in a vitest with **no**
+environment configured.
 
 **vitest, headless CodeMirror:** `EditorState`, `Transaction`, `EditorSelection`
 and every `@codemirror/commands` and `@codemirror/search` command operate on
@@ -1145,7 +1066,7 @@ Against, and these are decisive:
   and git commands (§1.7). This is new for the project and buys more than jsdom
   would, because the filesystem semantics are where real data loss lives.
 - **Keep and extend the manual GUI checklist.** The repo already does this
-  (spec §3's "Manual (GUI)" list). The four panes each get one, with the Hangul
+  (spec §3's "Manual (GUI)" list). The three panes each get one, with the Hangul
   checklist in §3.8 marked as **must run on macOS** — the same instruction rule
   10 already gives for `macos_shell_integration_reports_live_cwd`.
 - **If browser-level testing is wanted later**, the right tool is
@@ -1192,7 +1113,7 @@ in the commit message; Rust tests for accept and both reject paths; never add
 ymux's commands to `browser-children.json`; do not widen the CSP — which
 §3.2's library choice makes unnecessary.
 
-### 3. Scope — four panes replacing 7,200 lines at once
+### 3. Scope — three panes replacing 7,200 lines at once
 
 The realistic failure is a half-finished branch that cannot ship, or a v1 that
 is worse than the TUIs it replaced and gets reverted.
@@ -1231,15 +1152,13 @@ step — rule 12 says so explicitly.
 
 ### 6. Performance regressions from the new backends
 
-Three candidates: a third `sysinfo` sampler or a full `refresh_processes` every
-2 s for every user; `git log` shelling out on a UI path (`ygit` blocks its
+Two candidates: `git log` shelling out on a UI path (`ygit` blocks its
 render thread doing this); `fs_list_dir` stat-ing every entry in a huge
 directory.
 
-**De-risk:** one sampler, extended, never a second (§1.4); process refresh gated
-on a *visible* monitor pane; all git commands `#[tauri::command(async)]`;
-`fs_list_dir` paginated above a threshold and its result cached per directory
-with focus-based invalidation.
+**De-risk:** all git commands `#[tauri::command(async)]`; `fs_list_dir`
+paginated above a threshold and its result cached per directory with
+focus-based invalidation.
 
 ### 7. Bundle size and load time
 
@@ -1249,8 +1168,7 @@ bootstrapper.
 **De-risk:** measure as the literal first task of step 3 and trim grammars
 against a stated budget (~600 KB gzip total) before writing pane code;
 lazy-load the editor chunk on first editor pane so non-users pay nothing;
-per-language dynamic grammar imports; no charting library for the monitor pane
-(§4.2).
+per-language dynamic grammar imports.
 
 ### 8. Rule-2 field desync
 
@@ -1282,9 +1200,7 @@ pane. Multi-file search and replace. A diff or merge view. Git staging,
 committing, push/pull, stash, tags, blame and rebase. Markdown preview (§3.1 —
 deferred, with a reason). Non-UTF-8 encodings (CP949/EUC-KR) and encoding
 conversion. A filesystem watcher (focus-based polling instead — §3.6).
-Archive browsing, bookmarks and drag-and-drop in the files pane. Killing or
-inspecting processes from the monitor pane. GPU utilisation beyond adapter
-names (the backend probe is a stub and stays one). Any replacement for the
+Archive browsing, bookmarks and drag-and-drop in the files pane. Any replacement for the
 `ydir` / `ycode` / `ygit` / `ymon` / `y` commands outside ymux — that loss is
 the premise of this document, not a problem to solve inside it. Removing the MSI
 PATH registration (§5 step 6 — kept deliberately). Adding jsdom or any DOM test
