@@ -342,6 +342,14 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   it and the startup refresh rewrites the hooks' URL. Debug
   builds (`tauri dev`, sharing the live config) neither persist nor refresh
   unless `YMUX_DEV_AGENT_HOOKS=1`.
+- **A hook's session id is a claim, not a fact.** Anything holding the
+  token can POST any id, and a resumed Claude runs with
+  `--dangerously-skip-permissions` (deliberately, for every Claude resume —
+  don't change that). So `SessionTracker::observe` records a hook-borne id
+  only when the pane's own Claude process vouches for it: the pane is already
+  bound to it, or the scan's process there names it (pid file or argv), or a
+  transcript for it is in the pane's cwd (`ypath::same_path`). Unvouched ids
+  still drive the agent tree's live status; they just never steer a resume.
 - **No `SessionStart`.** Claude Code runs only `command`/`mcp_tool` handlers
   for it (and `Setup`), so the lead and the hook session id first arrive with
   `UserPromptSubmit`; the process scan and transcript fallback cover the gap.

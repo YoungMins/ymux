@@ -767,7 +767,10 @@ pub struct PaneObservation {
     /// keeps whatever status the record already has.
     pub status: Option<AgentStatus>,
     /// The session id a Claude Code hook relayed for this pane, when agent
-    /// tracking is on. Exact, so it outranks anything found on disk.
+    /// tracking is on. Exact once the pane's own agent process vouches for it
+    /// (see [`SessionTracker::observe`]), and then it outranks anything found
+    /// on disk; until then it is ignored here (the agent tree still shows
+    /// it live).
     pub hook_session_id: Option<String>,
     /// The agent process the scan found in the pane. `None` from the hook
     /// listener, which cannot see processes.
@@ -811,6 +814,10 @@ pub struct SessionTracker {
     failed: HashSet<Uuid>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
+    /// Pane id -> when a hook-borne id was last checked against the pane's
+    /// transcripts (epoch seconds), so an id nothing vouches for costs at
+    /// most one disk read per [`DISK_RESCAN_INTERVAL`].
+    last_hook_check: BTreeMap<Uuid, u64>,
 }
 
 /// A resume plan the frontend is carrying out.
@@ -896,6 +903,55 @@ impl SessionTracker {
         }
     }
 
+    /// Whether the pane's own agent process vouches for the hook-borne `id`
+    /// (see [`Self::observe`]). `transcript_has_it` reads the pane's
+    /// transcripts; it is called at most once per [`DISK_RESCAN_INTERVAL`]
+    /// per pane, and only when nothing cheaper settled it.
+    fn hook_id_vouched(
+        &mut self,
+        agent: AgentKind,
+        obs: &PaneObservation,
+        id: &str,
+        now: u64,
+        transcript_has_it: &mut dyn FnMut() -> bool,
+    ) -> bool {
+        let pane = obs.pane_id;
+        // Already tied to this id by an earlier vouched-for observation of
+        // the same process (`observe` has released a binding whose process
+        // is gone before this runs).
+        if self
+            .bindings
+            .get(&pane)
+            .is_some_and(|b| b.session_id.as_deref() == Some(id))
+        {
+            return true;
+        }
+        if agent != AgentKind::Claude {
+            return false;
+        }
+        let Some(process) = obs.process.as_ref() else {
+            return false;
+        };
+        if obs.pid_file_session_id.as_deref() == Some(id)
+            || argv_session_id(agent, &process.argv).as_deref() == Some(id)
+            || process.argv.iter().any(|a| a == id)
+        {
+            return true;
+        }
+        if !obs.cwd.as_deref().is_some_and(|c| !c.is_empty()) {
+            return false;
+        }
+        if self
+            .last_hook_check
+            .get(&pane)
+            .is_some_and(|last| now.saturating_sub(*last) < DISK_RESCAN_INTERVAL)
+        {
+            return false;
+        }
+        self.last_hook_check.insert(pane, now);
+        transcript_has_it()
+    }
+
     /// Fold one observation into the store.
     ///
     /// The record for a pane is always about the agent *process* running in
@@ -905,7 +961,13 @@ impl SessionTracker {
     ///   is declined until the new process is tied to a conversation — which
     ///   may well be the same one, when it was started with `--resume <id>`.
     /// * An exact id (hook, Claude's pid file, argv) is taken as given and may
-    ///   move the pane to a new conversation (`/clear`, `/resume`).
+    ///   move the pane to a new conversation (`/clear`, `/resume`) — but a
+    ///   hook's id only once the pane's own Claude process vouches for it:
+    ///   the pane is already bound to that id, or the scan sees a Claude
+    ///   process there whose pid file or argv names it, or whose pane cwd
+    ///   holds that transcript (`ypath::same_path` on its recorded cwd). Any
+    ///   process with the hook token can POST any id, and the resume it
+    ///   would steer runs with `--dangerously-skip-permissions`.
     /// * Otherwise transcripts are read, through `lookup`, only while the
     ///   process is unbound, and a guess is made only when it is unambiguous
     ///   ([`crate::agent_binding::guess_transcript`]). Once made it is never
@@ -941,11 +1003,30 @@ impl SessionTracker {
             .map(PaneProcess::key)
             .or_else(|| self.bindings.get(&pane).map(|b| b.process));
 
-        // Exact ids: the hook, Claude's pid file, the process's own argv.
-        let exact = obs
+        // At most one transcript read per observation, shared by the hook
+        // check below and the guess further down.
+        let mut lookup = Some(lookup);
+        let mut looked: Option<Vec<crate::agent_scan_disk::DiskSession>> = None;
+        let hook_id = obs
             .hook_session_id
-            .clone()
+            .as_deref()
             .filter(|s| is_valid_session_id(s))
+            .filter(|id| {
+                self.hook_id_vouched(agent, obs, id, now, &mut || {
+                    let cwd = obs.cwd.as_deref().unwrap_or_default();
+                    let found = lookup.take().map(|f| f(agent, cwd)).unwrap_or_default();
+                    let hit = found
+                        .iter()
+                        .any(|d| d.session_id == *id && ypath::same_path(&d.cwd, cwd));
+                    looked = Some(found);
+                    hit
+                })
+            })
+            .map(str::to_string);
+
+        // Exact ids: the (vouched-for) hook, Claude's pid file, the
+        // process's own argv.
+        let exact = hook_id
             .map(|s| (s, IdSource::Hook))
             .or_else(|| {
                 obs.pid_file_session_id
@@ -1071,7 +1152,10 @@ impl SessionTracker {
                 o
             })
             .collect();
-        let candidates = lookup(agent, cwd);
+        let candidates = match looked {
+            Some(c) => c,
+            None => lookup.take().map(|f| f(agent, cwd)).unwrap_or_default(),
+        };
         let Some(found) = guess_transcript(agent, cwd, process, &candidates, &claimed, &others)
         else {
             return;
@@ -2083,6 +2167,7 @@ mod tests {
         let mut t = SessionTracker::default();
         let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
         o.hook_session_id = Some(ID_A.to_string());
+        o.pid_file_session_id = Some(ID_A.to_string()); // vouches for it
         t.observe(&o, 1_000, &[], |_, _| {
             panic!("a hook id needs no disk scan")
         });
@@ -2220,6 +2305,7 @@ mod tests {
         let mut t = SessionTracker::default();
         let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
         o.hook_session_id = Some(ID_A.to_string());
+        o.pid_file_session_id = Some(ID_A.to_string()); // vouches for it
         t.observe(&o, 1_000, &[], |_, _| {
             panic!("a hook id needs no disk scan")
         });
@@ -2615,6 +2701,7 @@ mod tests {
         let mut t = SessionTracker::default();
         let mut hook = obs(pane, "claude", Some(CWD));
         hook.hook_session_id = Some(ID_A.to_string());
+        hook.pid_file_session_id = Some(ID_A.to_string()); // vouches for it
         hook.status = Some(AgentStatus::Done);
         t.observe(&hook, now, &[], |_, _| vec![]);
         assert!(t.take_dirty());
@@ -2635,6 +2722,7 @@ mod tests {
         let other_pane = Uuid::from_u128(2);
         let mut fresh = obs(other_pane, "claude", Some(CWD));
         fresh.hook_session_id = Some(ID_B.to_string());
+        fresh.pid_file_session_id = Some(ID_B.to_string());
         fresh.status = None;
         t.observe(&fresh, now, &[], |_, _| vec![]);
         assert_eq!(
@@ -2822,12 +2910,120 @@ mod tests {
             let mut o = obs(pane, "claude", Some(CWD));
             o.process = Some(process(10, now + 3, &["claude"]));
             if via_hook {
+                // Vouched for by the pane's transcript (no pid file yet).
                 o.hook_session_id = Some(ID_A.to_string());
             } else {
                 o.pid_file_session_id = Some(ID_A.to_string());
             }
-            t.observe(&o, now + 3 + RESUME_CONFIRM_MIN_UPTIME, &[], |_, _| vec![]);
+            t.observe(&o, now + 3 + RESUME_CONFIRM_MIN_UPTIME, &[], |_, _| {
+                vec![disk_at(ID_A, CWD, now - 50_000)]
+            });
             assert_eq!(t.take_confirmed(), vec![pane], "via_hook={via_hook}");
         }
+    }
+
+    // ---- A hook-borne session id must be corroborated by the pane's own
+    // agent process before it can steer a resume (security review M3). Any
+    // process holding the token can POST any id; the resume that follows
+    // runs with --dangerously-skip-permissions.
+
+    const HOOK_CWD: &str = "D:\\Work\\proj";
+
+    fn hook_obs(pane: Uuid, id: &str) -> PaneObservation {
+        let mut o = obs(pane, "claude", Some(HOOK_CWD));
+        o.hook_session_id = Some(id.to_string());
+        o
+    }
+
+    #[test]
+    fn a_forged_hook_id_is_not_recorded() {
+        // The id names a transcript somewhere else entirely; the pane's
+        // process has no pid file entry or argv naming it.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(&hook_obs(pane, ID_B), 1_000, &[], |_, _| {
+            vec![disk(ID_A, HOOK_CWD)]
+        });
+        assert_ne!(t.get(pane).map(|s| s.session_id.as_str()), Some(ID_B));
+    }
+
+    #[test]
+    fn a_hook_id_from_another_cwd_is_not_recorded() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(&hook_obs(pane, ID_B), 1_000, &[], |_, _| {
+            vec![disk(ID_B, "D:\\Elsewhere")]
+        });
+        // (The stub's other-cwd candidate may still feed the *guess*, which
+        // the real lookup never would; what matters is the hook didn't win.)
+        assert_ne!(t.get(pane).map(|s| s.source), Some(IdSource::Hook));
+    }
+
+    #[test]
+    fn a_hook_id_without_a_process_to_vouch_for_it_is_not_recorded() {
+        // The hook listener's own observation: no process, no binding yet.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let mut o = hook_obs(pane, ID_A);
+        o.process = None;
+        t.observe(&o, 1_000, &[], |_, _| vec![disk(ID_A, HOOK_CWD)]);
+        assert!(t.get(pane).is_none());
+    }
+
+    #[test]
+    fn a_hook_id_is_accepted_when_the_process_vouches_for_it() {
+        type Vouch = fn(&mut PaneObservation);
+        let cases: [(&str, Vouch); 3] = [
+            ("pid file", |o| {
+                o.pid_file_session_id = Some(ID_A.to_string())
+            }),
+            ("argv", |o| {
+                o.process = Some(process(100, 0, &["claude", "--resume", ID_A]))
+            }),
+            ("transcript cwd", |_| {}),
+        ];
+        for (name, vouch) in cases {
+            let pane = Uuid::from_u128(1);
+            let mut t = SessionTracker::default();
+            let mut o = hook_obs(pane, ID_A);
+            vouch(&mut o);
+            t.observe(&o, 1_000, &[], |_, _| vec![disk(ID_A, HOOK_CWD)]);
+            let rec = t.get(pane).unwrap_or_else(|| panic!("{name}: recorded"));
+            assert_eq!(rec.session_id, ID_A, "{name}");
+            assert_eq!(rec.source, IdSource::Hook, "{name}");
+        }
+    }
+
+    #[test]
+    fn once_vouched_for_the_hook_id_keeps_flowing_without_a_process() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let mut scan = hook_obs(pane, ID_A);
+        scan.pid_file_session_id = Some(ID_A.to_string());
+        t.observe(&scan, 1_000, &[], |_, _| vec![]);
+        let mut hook = hook_obs(pane, ID_A);
+        hook.process = None;
+        hook.status = Some(AgentStatus::Done);
+        t.observe(&hook, 1_002, &[], |_, _| panic!("already vouched for"));
+        assert_eq!(t.get(pane).map(|s| s.state), Some(AgentStatus::Done));
+        // A different id from the hook alone is not taken over it.
+        let mut switch = hook_obs(pane, ID_B);
+        switch.process = None;
+        t.observe(&switch, 1_004, &[], |_, _| vec![disk(ID_B, HOOK_CWD)]);
+        assert_eq!(t.get(pane).map(|s| s.session_id.as_str()), Some(ID_A));
+    }
+
+    #[test]
+    fn an_unvouched_hook_id_reads_the_disk_at_most_once_per_interval() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let mut calls = 0;
+        for i in 0..5 {
+            t.observe(&hook_obs(pane, ID_B), 1_000 + i, &[], |_, _| {
+                calls += 1;
+                vec![]
+            });
+        }
+        assert_eq!(calls, 1);
     }
 }
