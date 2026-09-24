@@ -234,7 +234,9 @@ macOS 에서는 아래의 모든 `Ctrl` 이 `Cmd` 로 바뀝니다. 그래야 `C
 | `Ctrl+Alt+N`                   | `Cmd+Opt+N`        | 현재 워크스페이스 노트 토글         |
 | `Ctrl+Shift+E`                 | `Cmd+Shift+E`      | 파일 도크(yDir) 토글                |
 | `Ctrl+V`                       | `Cmd+V`            | 클립보드 텍스트 붙여넣기 (이미지 → 임시 파일 경로) |
-| `Ctrl+F`                       | `Cmd+F`            | 터미널 스크롤백 검색                |
+| `Ctrl+F`                       | `Cmd+F`            | 터미널 스크롤백 검색 (편집기 창에서는 찾기 / 바꾸기) |
+| `Ctrl+S`                       | `Cmd+S`            | 파일 저장 (편집기 창)               |
+| `Ctrl+G`                       | `Cmd+G`            | 줄로 이동 (편집기 창)               |
 | `Ctrl++` / `Ctrl+-`            | `Cmd++` / `Cmd+-`  | 터미널 글자 크기 확대 / 축소        |
 | `Ctrl+0`                       | `Cmd+0`            | 터미널 글자 크기 초기화             |
 | `Ctrl+Tab`                     | `Ctrl+Tab`         | 다음 pane으로 포커스 이동           |
