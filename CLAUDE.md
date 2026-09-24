@@ -33,7 +33,10 @@ ymux/
 │   ├── types.ts            # TypeScript mirror of Rust models
 │   ├── i18n/i18n.ts        # 13-language translations
 │   ├── ipc/bridge.ts       # Tauri IPC wrappers
-│   ├── filedock/           # Right-side yDir file dock (FileDock, cwdFollow, dockModel)
+│   ├── filedock/           # Right-side file dock hosting a FilesPane (FileDock, cwdFollow, dockModel)
+│   ├── files/              # Files pane (FilesPane, fileModel, preview, clipboard)
+│   ├── editor/             # Editor pane (EditorPane, CodeMirror 6 setup, eol, theme)
+│   ├── git/                # Git pane (GitPane, graphLanes, worktreeFlow)
 │   ├── workspace/          # WorkspaceManager + WorkspaceBar + agentTree (workspace panel tree)
 │   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt)
 │   ├── browser/            # BrowserPane (iframe) + NativeBrowserPane
@@ -45,17 +48,12 @@ ymux/
 │   └── update/             # Update banner
 ├── crates/
 │   ├── ytheme/             # Shared theme library
-│   ├── yipc/               # Inter-tool IPC protocol
-│   ├── yversion/           # Shared VERSION const (tool footers)
+│   ├── yipc/               # Host <-> `y` IPC (server, Hello/Event/Ack, client)
 │   └── ypath/              # Path comparison keys (NFC + syntax-based case folding)
 ├── tools/
-│   ├── ymon/               # System monitor TUI
-│   ├── ydir/               # File manager TUI
-│   ├── ycode/              # Code editor TUI
-│   ├── ygit/               # Git log + branch TUI
-│   └── ylauncher/          # `y` launcher CLI
+│   └── ylauncher/          # `y` — the Claude Code hook relay (the only sidecar)
 ├── scripts/
-│   └── build-tools.mjs     # Build + stage sidecar binaries
+│   └── build-tools.mjs     # Build + stage the `y` sidecar
 └── .github/workflows/
     └── release.yml          # CI: test + build + release
 ```
@@ -67,7 +65,7 @@ pnpm install                 # Install frontend deps
 pnpm tauri dev               # Run in dev mode (hot reload)
 pnpm tauri build             # MSI on Windows, .app + .dmg on macOS
 cargo test --workspace       # ⚠ Don't use on Linux — pulls GTK
-cargo test -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit
+cargo test -p ytheme -p yipc -p ypath -p ylauncher
 cargo test --no-default-features --lib -p ymux
 cargo check --no-default-features --lib --tests -p ymux  # Linux safe
 cargo fmt --all              # Format entire workspace
@@ -105,7 +103,7 @@ TS copies for `file_path`; extend it (or clone it) for a new field.
 
 ### 4. CI Sidecar Files
 
-Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. If you add new sidecar binaries, update:
+Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. Today there is exactly one sidecar, `y` (package `ylauncher`, see rule 13). If you add or remove one, update:
 - `src-tauri/tauri.conf.json` → `bundle.externalBin`
 - `.github/workflows/release.yml` → dummy file creation loop
 - `scripts/build-tools.mjs` → TOOLS array
@@ -116,7 +114,6 @@ Update ALL of these (they must match):
 - `src-tauri/Cargo.toml` → `version`
 - `src-tauri/tauri.conf.json` → `version`
 - `package.json` → `version`
-- `crates/yversion/src/lib.rs` → `VERSION` const (footer of ymon/ydir/ycode/ygit reads this)
 - `README.md` / `README.ko.md` / `README.ja.md` → badge URL
 - Run `cargo check` to regenerate `Cargo.lock`
 
@@ -189,7 +186,7 @@ Two shipping platforms, one codebase. What differs, and where:
 | Icon | `icons/icon.ico` | `icons/icon.icns` |
 | Shells | cmd / PowerShell / pwsh / Git Bash / WSL | `$SHELL` + zsh / bash / fish |
 | OSC 7 hook | PROMPT / `--rcfile` | zsh `ZDOTDIR` shim, bash `--rcfile` |
-| CLI on PATH | MSI writes the install dir into PATH | documented `~/.zshrc` export |
+| CLI on PATH | MSI writes the install dir into PATH (for `ymux`) | nothing — no bundled CLI is meant to be typed |
 | Signing | none needed | ad-hoc (`APPLE_SIGNING_IDENTITY: '-'`), not notarized |
 
 **The zsh shim is the subtle part.** zsh gives an external launcher exactly one
@@ -246,19 +243,28 @@ marker must come back byte-for-byte. If you touch this file, run the
 tests before anything else — they exist specifically to catch an edit that
 silently reorders or eats someone else's hook.
 
-### 13. yipc `send_to` fans out to every client under a tool name
+### 13. `y` is the Claude Code hook relay — its name and path are load-bearing
 
-`IpcServer::send_to(tool, msg)` delivers `msg` to *every* connected client that
-sent `Hello { tool, .. }` under that name — there is no per-connection
-addressing. The file dock's yDir therefore registers **two** separate
-connections under **two** different tool names: `"ydir"` (which the host's
-`ChangeDir` pushes target) and `"ydir-openfile"` (the outbound link that sends
-`open-file` events to the host). If the outbound link registered as `"ydir"`
-too, a `ChangeDir` push would land in a socket that link never reads, sit
-until the host's `WRITE_TIMEOUT` (200 ms) killed the connection, and quietly
-break cwd-following. Adding a new host↔tool channel on yipc means picking a
-tool name nothing else answers to, not reusing an existing one "because it's
-the same process."
+The `y*` TUI tools are gone (they are GUI panes now), but the `y` binary
+stays, shrunk to one job: `y agent-hook <agent>` reads a hook payload on stdin
+and forwards it to ymux over yipc (`tools/ylauncher/src/agent_hook.rs`).
+`agent_hooks::install_hooks` writes its **absolute path** into every tracking
+user's `~/.claude/settings.json`, and Claude Code runs it on every hook event.
+So:
+
+- **Don't rename or move it.** A new name or location leaves every tracking
+  user's hooks calling a missing executable until the upgraded ymux first
+  launches and `install_hooks` refreshes the path (the marker-based refresh
+  from rule 12). Keeping the path fixed is why the TUI cut-over could ship in
+  one release (spec `docs/superpowers/specs/2026-09-24-gui-tool-panes.md`,
+  Step 5 amendment).
+- **It must stay invisible to Claude Code**: print nothing on stdout, always
+  exit 0, return at once without `YMUX_PANE_ID`/`YMUX_IPC`, wait at most
+  300 ms for the host's `Ack`. The `CARGO_BIN_EXE_y` tests in
+  `tools/ylauncher/tests/` pin this. Anything other than `agent-hook` is a
+  usage error (stderr, exit 2) — there are no launcher subcommands any more.
+- yipc is reduced to what this needs: the server, `Hello`/`Event`/`Ack`,
+  `AGENT_HOOK_KIND`, `IpcClient`. Traffic is tool → host only.
 
 ### 14. A tab shown after being hidden needs a refit *and* a viewport resync
 
@@ -277,10 +283,10 @@ previously-hidden pane element (not just the tab strip) needs the same
 
 Paths reach ymux from producers that spell them differently: a shell's OSC 7
 payload, `git worktree list --porcelain` (forward slashes and git's own
-drive-letter case, even on Windows), a TOML config file, a yipc `ChangeDir`
-message, the filesystem itself. Byte equality between any two of those is
-wrong in at least three ways, and each one shows up as "yDir keeps jumping
-back to row 0":
+drive-letter case, even on Windows), a TOML config file, the filesystem
+itself. Byte equality between any two of those is
+wrong in at least three ways, and each one shows up as "the file dock keeps
+jumping back to row 0":
 
 - **Composition.** macOS reports decomposed (NFD) filenames. The same `한글`
   directory is different bytes depending on which side produced it.
@@ -294,7 +300,7 @@ back to row 0":
 `ypath::same_path(a, b)` / `ypath::comparison_key(p)` encode all three.
 The key is **lossy and for comparison only** — never open it, store it in the
 config, or hand it to `git`; keep the raw string for that. Applied today in
-`pty::osc7::CwdChange`, `git/mod.rs`'s worktree tests, and ydir's `same_dir`
+`pty::osc7::CwdChange`, `git/mod.rs`'s worktree tests, and `fsx::same_file`
 (where it sits *before* `canonicalize`, which still catches symlinks, 8.3
 names and genuinely case-insensitive volumes but costs syscalls and cannot
 answer for a path that no longer exists).
@@ -350,23 +356,19 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 323, 8 failing on Windows + frontend 217)
+### Test count (Rust 382, 8 failing on Windows + frontend 574)
 
-Measured 2026-09-20 on Windows with `cargo test --workspace --no-fail-fast` and
-`npx vitest run`.
+Measured 2026-09-24 on Windows with `cargo test -p ymux --lib`,
+`cargo test -p ytheme -p yipc -p ypath -p ylauncher` and `npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 152 (8 fail on Windows) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
-| ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
-| yipc | 14 | Protocol serialization incl. `ChangeDir`/`open-file`, server/client, multi-client, `send_to` fan-out and timeout, broken pipe |
+| ymux_lib | 349 (338 pass, 8 fail on Windows, 3 ignored; 314 without `desktop`) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code hook settings merge (`agent_hooks.rs`) |
+| ytheme | 6 | Theme TOML round-trip, hex parsing, defaults |
+| yipc | 7 on Windows (more on Unix) | Protocol serialization, retired message types rejected, server/client, broken pipe |
 | ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
-| ymon | 11 | App state, tab cycling, scroll, memory values, process sort |
-| ydir | 33 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog, dock mode (`--dock`, `PendingDir`, `follow_host`, `open_file_link`), `same_dir` respellings |
-| ycode | 69 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
-| ygit | 18 | Porcelain log/worktree parsing, worktree add/remove round-trip, `git branch` marker stripping (`* `/`+ `) and detached-HEAD pseudo-entries |
-| ylauncher (`y`) | 10 (7 unit + 3 integration) | Tool discovery, PATH scanning, `agent-hook` payload packing and the no-env no-op |
-| _frontend_ | 217 | vitest: layout tree, pane tabs (`tabs.test.ts`), agent tree model, file dock (`cwdFollow` incl. NFC dedupe, `dockModel`), bottom-anchored prompt (`bottomAnchor.test.ts`, incl. real-xterm-buffer cases), pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
+| ylauncher (`y`) | 11 (5 unit + 6 integration) | `agent-hook` payload packing, the silent no-env no-op, relay to a live server, usage errors (exit 2) for anything else |
+| _frontend_ | 574 (43 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
 
 **The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
 `pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,
@@ -417,7 +419,7 @@ git push origin v0.8.4
 
 CI automatically:
 1. Runs tests on Linux (fast fail)
-2. Builds the MSI on Windows (with sidecar tools) **and creates the release** —
+2. Builds the MSI on Windows (with the `y` sidecar) **and creates the release** —
    it goes first precisely so exactly one job ever creates it
 3. Builds the arm64 `.dmg` on macOS and uploads it onto that release
 4. Rewrites the release body with install info + auto-generated notes
