@@ -156,12 +156,17 @@ export class PathProbeCache {
 
     if (wanted.length > 0) {
       const cwd = this.cwd;
-      // A rejected probe (IPC error, backend timeout) is "no link", not a
-      // thrown error: the caller must always get an answer, or xterm's hover
-      // never resolves and the row is stuck without links.
-      const batch = this.probe(wanted, cwd).catch((): ProbeResult[] => []);
+      // A rejected probe (IPC error, backend timeout, every backend probe
+      // worker busy) is "no link", not a thrown error: the caller must
+      // always get an answer, or xterm's hover never resolves and the row is
+      // stuck without links. But it is also *not* an answer, so nothing from
+      // it is cached — the next hover asks again.
+      const batch = this.probe(wanted, cwd).then(
+        (results) => ({ ok: true, results }),
+        () => ({ ok: false, results: [] as ProbeResult[] }),
+      );
       for (const [i, text] of wanted.entries()) {
-        const one: Promise<ProbeResult> = batch.then((results) => {
+        const one: Promise<ProbeResult> = batch.then(({ ok, results }) => {
           const r = results[i] ?? null;
           // Only retract the in-flight marker if it is still ours; a cwd
           // change clears the map and a later probe may hold the slot.
@@ -169,7 +174,7 @@ export class PathProbeCache {
           // An answer computed against a cwd the pane has since left is
           // worthless — and caching it would outlive the invalidation that
           // was supposed to throw it away.
-          if (this.cwd === cwd) this.store(text, r);
+          if (ok && this.cwd === cwd) this.store(text, r);
           return r;
         });
         this.inflight.set(text, one);

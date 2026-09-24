@@ -45,6 +45,7 @@
 //! `^`, `%` or a quote is inert.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Only the app's own main webview may call a `guard_local` command.
 ///
@@ -905,19 +906,64 @@ pub fn probe_one(raw: &str, cwd: Option<&str>) -> Option<ResolvedPath> {
     })
 }
 
+/// Most probe workers alive at once, stuck or not.
+///
+/// A share is never probed any more ([`resolve_local`]), so the SMB hang on
+/// hover is gone for UNC paths. What remains is a **mapped or `subst`'d
+/// drive letter** whose server has gone away: `Z:\x` is syntactically local,
+/// and `symlink_metadata` on it can block for tens of seconds with no way to
+/// cancel. Each hover used to leave one more thread blocked there. With the
+/// cap, at most this many are ever stuck; while they are, new batches get
+/// "no links" immediately, and links come back when the OS call returns.
+pub const MAX_PROBE_WORKERS: usize = 4;
+
+static PROBE_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+/// One of the [`MAX_PROBE_WORKERS`] slots. Released on drop — which, for a
+/// worker thread, is when the thread finishes, however long that takes.
+struct WorkerSlot(&'static AtomicUsize);
+
+impl WorkerSlot {
+    fn acquire(counter: &'static AtomicUsize) -> Option<Self> {
+        let prev = counter.fetch_add(1, Ordering::SeqCst);
+        if prev >= MAX_PROBE_WORKERS {
+            counter.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Self(counter))
+    }
+}
+
+impl Drop for WorkerSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Resolve a batch, giving up on the whole batch after [`PROBE_TIMEOUT`].
 ///
 /// The timeout runs on a detached worker rather than around each path: a
 /// dead network drive blocks in `metadata` with no way to cancel it, so the
-/// only thing that can be bounded is how long the *caller* waits. The output
+/// only thing that can be bounded is how long the *caller* waits — and, via
+/// [`MAX_PROBE_WORKERS`], how many such workers can pile up. The output
 /// always has exactly `raws.len()` entries so the frontend's index mapping
 /// holds whatever happened.
-pub fn probe_batch(raws: Vec<String>, cwd: Option<String>) -> Vec<Option<ResolvedPath>> {
+///
+/// An `Err` means "no answer" (every worker busy, or the timeout hit), which
+/// the frontend must not cache the way it caches "does not exist".
+pub fn probe_batch(
+    raws: Vec<String>,
+    cwd: Option<String>,
+) -> Result<Vec<Option<ResolvedPath>>, String> {
     let want = raws.len();
+    let Some(slot) = WorkerSlot::acquire(&PROBE_WORKERS) else {
+        return Err("every path probe is busy (a drive is not responding)".into());
+    };
     let batch: Vec<String> = raws.into_iter().take(MAX_BATCH).collect();
-    let taken = batch.len();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        // Held for the thread's whole life, released even if it panics.
+        let _slot = slot;
         let probed: Vec<Option<ResolvedPath>> = batch
             .iter()
             .map(|raw| probe_one(raw, cwd.as_deref()))
@@ -927,9 +973,9 @@ pub fn probe_batch(raws: Vec<String>, cwd: Option<String>) -> Vec<Option<Resolve
     });
     let mut out = rx
         .recv_timeout(PROBE_TIMEOUT)
-        .unwrap_or_else(|_| vec![None; taken]);
+        .map_err(|_| "path probe timed out".to_string())?;
     out.resize(want, None);
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1326,7 +1372,10 @@ mod tests {
 
     /// Every spelling of "a share" and "a device" found for this fix,
     /// classified by what Win32 does with it — not by what Rust's `Path`
-    /// parser says. Measured on Windows 11 / Rust 1.97:
+    /// parser says. Measured on Windows 11 / Rust 1.97 with
+    /// `std::fs::metadata` against `\\localhost\c$\Windows` as a stand-in
+    /// share: every row below marked "share" really reached it. (`/??/…` and
+    /// `\??/…` fail with ERROR_INVALID_NAME, but are refused anyway.)
     ///
     /// | spelling               | Rust `Path` says              | Win32 does                  |
     /// |------------------------|-------------------------------|-----------------------------|
@@ -1884,15 +1933,34 @@ mod tests {
         let got = probe_batch(
             vec!["and/or".into(), "".into(), "n/a".into()],
             Some("/definitely/not/here".into()),
-        );
+        )
+        .unwrap();
         assert_eq!(got.len(), 3);
         assert!(got.iter().all(|r| r.is_none()));
+    }
+
+    /// A worker stuck on a dead mapped drive holds its slot until the OS
+    /// call returns; once every slot is held, new batches are answered "no
+    /// links" at once instead of piling up another blocked thread each.
+    #[test]
+    fn probe_workers_are_capped_and_slots_come_back() {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let held: Vec<WorkerSlot> = (0..MAX_PROBE_WORKERS)
+            .map(|_| WorkerSlot::acquire(&COUNTER).expect("free slot"))
+            .collect();
+        assert!(WorkerSlot::acquire(&COUNTER).is_none());
+        assert_eq!(COUNTER.load(Ordering::SeqCst), MAX_PROBE_WORKERS);
+        drop(held);
+        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
+        assert!(WorkerSlot::acquire(&COUNTER).is_some());
+        // The slot above was a temporary and has already been returned.
+        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn probe_batch_pads_past_the_cap() {
         let raws: Vec<String> = (0..MAX_BATCH + 5).map(|i| format!("d{i}/f")).collect();
         let want = raws.len();
-        assert_eq!(probe_batch(raws, None).len(), want);
+        assert_eq!(probe_batch(raws, None).unwrap().len(), want);
     }
 }

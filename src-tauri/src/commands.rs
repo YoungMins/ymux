@@ -483,8 +483,12 @@ pub async fn resolve_paths(
     cwd: Option<String>,
 ) -> YmuxResult<Vec<Option<crate::fspath::ResolvedPath>>> {
     guard_local(&webview, &request, "resolve_paths")?;
+    // An `Err` from the probe ("busy" / "timed out") is surfaced as an IPC
+    // rejection, which `PathProbeCache` treats as "no answer" and does not
+    // cache — unlike a `None`, which means "does not exist".
     tauri::async_runtime::spawn_blocking(move || crate::fspath::probe_batch(paths, cwd))
         .await
+        .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))?
         .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))
 }
 

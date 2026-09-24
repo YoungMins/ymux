@@ -202,6 +202,25 @@ describe("PathProbeCache", () => {
     await expect(cache.resolve([cand("a/1")])).resolves.toEqual(new Map());
   });
 
+  // The backend rejects when it gives up — a probe timeout, or every probe
+  // worker stuck on a dead network drive. That is "unknown", not "not a
+  // file": caching it would erase the row's links until the next `cd`.
+  it("does not cache the answers of a failed probe", async () => {
+    let fail = true;
+    let calls = 0;
+    const cache = new PathProbeCache(async (texts) => {
+      calls++;
+      if (fail) throw new Error("probe busy");
+      return texts.map((t) => ({ absolute: `/repo/${t}`, is_dir: false }));
+    });
+    await cache.resolve([cand("a/1")]);
+    expect(cache.peek("a/1")).toBeUndefined();
+    fail = false;
+    const got = await cache.resolve([cand("a/1")]);
+    expect(calls).toBe(2);
+    expect(got.get("a/1")).toEqual({ absolute: "/repo/a/1", is_dir: false });
+  });
+
   it("evicts least-recently-used entries past the limit", async () => {
     const { fn } = fakeProbe([]);
     const cache = new PathProbeCache(fn, 3);
