@@ -47,7 +47,8 @@ class FileDock {
   /// Bumped on every follow re-subscription, so a slow, superseded one
   /// unlistens itself instead of leaking.
   private followGen = 0;
-  private readonly follow = new CwdFollow((dir) => this.pane.navigate(dir));
+  /// `follow`, not `navigate`: held while the user is typing in the list.
+  private readonly follow = new CwdFollow((dir) => this.pane.follow(dir));
 
   constructor(private readonly manager: WorkspaceManager) {
     this.element = document.createElement("div");

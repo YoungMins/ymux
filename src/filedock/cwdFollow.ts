@@ -1,8 +1,8 @@
-// Decides when the file dock's yDir should change directory. It watches two
-// inputs, "the active pane changed" and "a pane reported a new cwd", and
-// emits the active pane's dir. Emission is debounced, so a burst of `cd`s
-// (or fast pane cycling) produces a single ChangeDir, and deduplicated
-// against the last dir actually sent. Pure: no DOM, no IPC.
+// Decides when the file dock's files pane should change directory. It
+// watches two inputs, "the active pane changed" and "a pane reported a new
+// cwd", and emits the active pane's dir. Emission is debounced, so a burst
+// of `cd`s (or fast pane cycling) produces a single navigation, and
+// deduplicated against the last dir actually sent. Pure: no DOM, no IPC.
 
 export const FOLLOW_DEBOUNCE_MS = 200;
 
@@ -12,7 +12,7 @@ export const FOLLOW_DEBOUNCE_MS = 200;
 /// NFC, because macOS hands back decomposed filenames: the same Korean
 /// directory arrives composed from a shell's own OSC 7 payload and
 /// decomposed from a path the filesystem produced, and an undeduped pair
-/// re-navigates yDir for nothing.
+/// re-navigates the dock for nothing.
 ///
 /// Deliberately *only* NFC, unlike the Rust `ypath::comparison_key` this
 /// mirrors. Case and separator folding is a property of the path's syntax,
@@ -46,7 +46,7 @@ export class CwdFollow {
     this.schedule(cwd);
   }
 
-  /// A new yDir started in `dir`. Treat it as already sent and drop
+  /// The dock's pane was opened on `dir`. Treat it as already sent and drop
   /// anything pending.
   reset(dir: string | null): void {
     this.cancel();
@@ -64,7 +64,7 @@ export class CwdFollow {
       const key = dedupeKey(next);
       if (key === this.lastSentKey) return;
       this.lastSentKey = key;
-      // `next`, not `key`: yDir has to open this, not compare it.
+      // `next`, not `key`: the pane has to open this, not compare it.
       this.send(next);
     }, FOLLOW_DEBOUNCE_MS);
   }
