@@ -7,6 +7,7 @@ import "./bootGuard";
 import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { formatDroppedPaths } from "./terminal/dropPaths";
 import { forwardedKeyInit } from "./browser/forwardedKeys";
 import { api, onAgentsChanged, onPaneLabels } from "./ipc/bridge";
@@ -278,9 +279,10 @@ async function main(): Promise<void> {
   // actions (Reload, Inspect, Back) that mean nothing in a terminal
   // multiplexer. Terminal panes put their own menu up in its place; text
   // inputs keep the native one, where cut/copy/paste on a field is exactly
-  // what the user is reaching for.
+  // what the user is reaching for — and so does the editor pane's text
+  // (CodeMirror's `.cm-content`), for the same reason.
   document.addEventListener("contextmenu", (ev) => {
-    if ((ev.target as HTMLElement | null)?.closest("input, textarea")) return;
+    if ((ev.target as HTMLElement | null)?.closest("input, textarea, .cm-content")) return;
     ev.preventDefault();
   });
 
@@ -309,7 +311,50 @@ async function main(): Promise<void> {
   // with its buffer, so that first notch can't jump to the top of the
   // scrollback (see terminal/viewportSync.ts).
   window.addEventListener("focus", () => manager.refitActive());
-  window.addEventListener("beforeunload", () => {
+  // The unsaved-changes guard on the way out (spec §3.5): the window's close
+  // button, Alt+F4, the taskbar's "Close window" — every way the window is
+  // asked to close arrives here. Registering this listener is what makes
+  // Tauri hold the close until the handler returns, and `onCloseRequested`
+  // then destroys the window itself unless we `preventDefault()`
+  // (`core:window:allow-destroy` in capabilities/default.json).
+  //
+  // Any failure in the guard lets the window close: a bug here must never
+  // leave the user with a window they cannot close. The editors' local
+  // drafts are the safety net for that case.
+  let windowClosing = false;
+  let closeAsked = false;
+  void getCurrentWindow()
+    .onCloseRequested(async (ev) => {
+      if (closeAsked) {
+        // A second click on × while the prompt is up.
+        ev.preventDefault();
+        return;
+      }
+      closeAsked = true;
+      let ok = true;
+      try {
+        ok = await manager.confirmCloseAll();
+      } catch (e) {
+        console.error("close guard failed; closing anyway", e);
+        ok = true;
+      } finally {
+        closeAsked = false;
+      }
+      if (!ok) {
+        ev.preventDefault();
+        return;
+      }
+      windowClosing = true;
+    })
+    .catch((e) => console.warn("close-requested listener failed:", e));
+
+  window.addEventListener("beforeunload", (ev) => {
+    // A reload with unsaved editors: let the webview ask. Not on the real
+    // close, which the guard above has already settled.
+    if (!windowClosing && manager.hasUnsavedEditors()) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
     void manager.flush();
   });
 }

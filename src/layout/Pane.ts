@@ -21,4 +21,9 @@ export interface Pane {
   /// state keyed by pane id (e.g. TerminalPane's scrollback file) use it to
   /// delete that state only on a true permanent close.
   dispose(permanent?: boolean): void;
+  /// The unsaved-changes veto (spec §3.5). Resolves false to cancel the
+  /// close. Absent means "always closable"; only EditorPane implements it.
+  /// Every caller that disposes a pane for good MUST await it first —
+  /// `dispose()` itself cannot say no.
+  canClose?(): Promise<boolean>;
 }

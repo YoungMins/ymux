@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for ymux. Grants core IPC + event APIs.",
+  "description": "Default capability for ymux. Grants core IPC + event APIs, and window destroy for the unsaved-changes close guard (main.ts onCloseRequested destroys the window once the guard allows it).",
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "notification:default"
   ]
 }
