@@ -75,7 +75,7 @@ export interface DocLike {
 /// Is the buffer different from what was last loaded or saved?
 ///
 /// Content, not history: typing a character and deleting it again is
-/// clean, and so is undoing back to the saved text — the bug ycode has
+/// clean, and so is undoing back to the saved text — the bug ycode had
 /// (its `undo` sets `dirty = true` unconditionally). The length check
 /// first keeps a keystroke in an 8 MB file from comparing 8 MB.
 export function isDocDirty(saved: DocLike, current: DocLike): boolean {

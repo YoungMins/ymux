@@ -71,16 +71,6 @@ import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
 
-/// Companion tools offered in the terminal right-click menu. These ship as
-/// sidecars next to ymux.exe and the installer puts that directory on PATH,
-/// so the command is all that's needed. Names are proper nouns — not i18n'd.
-const TOOL_MENU: { label: string; command: string }[] = [
-  { label: "yDir", command: "ydir" },
-  { label: "yMon", command: "ymon" },
-  { label: "yCode", command: "ycode" },
-  { label: "yGit", command: "ygit" },
-];
-
 export class WorkspaceManager {
   private config: Config;
   private shells: ShellProfile[];
@@ -491,10 +481,7 @@ export class WorkspaceManager {
   /// Build either a terminal or browser pane based on `spec.pane_kind`. All
   /// focus / hotkey / url change callbacks are wired so the manager can react
   /// to state changes without needing to know the pane subclass.
-  /// `argv` runs a program directly instead of the spec's shell. Its last
-  /// callers (the viewer tab's `ycode`, the dock's `ydir`) are GUI panes
-  /// now; the parameter goes in the cut-over step (spec §5 step 6).
-  private createPane(spec: PaneSpec, argv?: string[]): Pane {
+  private createPane(spec: PaneSpec): Pane {
     if (spec.pane_kind === "browser") {
       return new BrowserPane({
         spec,
@@ -600,7 +587,6 @@ export class WorkspaceManager {
     const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
     return new TerminalPane({
       spec: finalSpec,
-      argv,
       ownChrome: groupOfPane(this.active.root, spec.id) === null,
       fontSize: this.fontSize,
       onFocus: () => {
@@ -793,11 +779,8 @@ export class WorkspaceManager {
     return this.shells[0]?.name ?? name;
   }
 
-  /// Build and open the terminal right-click menu for `paneId`.
-  ///
-  /// The companion tools run *in the clicked pane*, the same way the HotKey
-  /// bar submits a command — they are ordinary CLIs on PATH, so this is the
-  /// shortest path from "I want yDir" to having it, and Ctrl+C backs out.
+  /// Build and open the terminal right-click menu for `paneId`. The files,
+  /// editor and git entries split the clicked pane and inherit its cwd.
   private showPaneContextMenu(paneId: Uuid, ev: MouseEvent): void {
     const pane = this.findPaneById(paneId);
     if (!(pane instanceof TerminalPane)) return;
@@ -817,12 +800,8 @@ export class WorkspaceManager {
       { label: t("shortcut.splitH"), onSelect: () => void this.splitFocused("horizontal") },
       { label: t("shortcut.splitV"), onSelect: () => void this.splitFocused("vertical") },
       { label: t("files.here"), onSelect: () => void this.splitFocusedFiles("horizontal") },
+      { label: t("editor.split"), onSelect: () => void this.splitFocusedEditor("horizontal") },
       { label: t("git.here"), onSelect: () => void this.splitFocusedGit("horizontal") },
-      "separator",
-      ...TOOL_MENU.map((tool) => ({
-        label: tool.label,
-        onSelect: () => pane.runCommand(tool.command),
-      })),
     ];
     showContextMenu(ev.clientX, ev.clientY, entries);
   }

@@ -17,7 +17,7 @@ describe("tabLabel", () => {
   });
 
   it("uses the running program when there is no title", () => {
-    expect(tabLabel({ ...base, process: "ycode: main.rs" })).toBe("ycode: main.rs");
+    expect(tabLabel({ ...base, process: "vim" })).toBe("vim");
   });
 
   it("falls back to the shell name when nothing is running under it", () => {

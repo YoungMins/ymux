@@ -1,7 +1,7 @@
 // In-app settings panel modeled on WinUI 3 — left sidebar with section
 // names, right pane for content. Replaces the old `?` Help button. Holds
-// the language picker, keyboard reference, tool reference, yCode syntax
-// color editor, and quick-open links for the underlying config files.
+// the language picker, keyboard reference, the editor pane's syntax color
+// editor, and quick-open links for the underlying config files.
 
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -14,11 +14,6 @@ import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
 
 interface ShortcutEntry {
   keys: string;
-  tKey: string;
-}
-
-interface ToolEntry {
-  cmd: string;
   tKey: string;
 }
 
@@ -43,14 +38,6 @@ const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+V", tKey: "shortcut.paste" },
 ];
 
-const TOOLS: ToolEntry[] = [
-  { cmd: "y", tKey: "help.toolY" },
-  { cmd: "ydir", tKey: "help.toolYDir" },
-  { cmd: "ymon", tKey: "help.toolYMon" },
-  { cmd: "ycode", tKey: "help.toolYCode" },
-  { cmd: "ygit", tKey: "help.toolYGit" },
-];
-
 const SYNTAX_FIELDS: SyntaxField[] = [
   { key: "keyword", tKey: "settings.syntax.keyword" },
   { key: "string", tKey: "settings.syntax.string" },
@@ -66,7 +53,6 @@ const SECTIONS: { id: SettingsSection; tKey: string; icon: string }[] = [
   { id: "general", tKey: "settings.section.general", icon: "⚙" },
   { id: "syntax", tKey: "settings.section.syntax", icon: "✦" },
   { id: "shortcuts", tKey: "settings.section.shortcuts", icon: "⌨" },
-  { id: "tools", tKey: "settings.section.tools", icon: "▤" },
   { id: "config", tKey: "settings.section.config", icon: "📁" },
 ];
 
@@ -171,9 +157,6 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
         break;
       case "shortcuts":
         renderShortcuts(section);
-        break;
-      case "tools":
-        renderTools(section);
         break;
       case "config":
         renderConfig(section);
@@ -523,30 +506,6 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
       const tdD = document.createElement("td");
       tdD.className = "desc";
       tdD.textContent = t(s.tKey);
-      tr.appendChild(tdD);
-      table.appendChild(tr);
-    }
-    host.appendChild(table);
-  }
-
-  // ── Section: Tools ──────────────────────────────────────────────────
-  function renderTools(host: HTMLElement): void {
-    const h = document.createElement("h3");
-    h.textContent = t("settings.tools.heading");
-    host.appendChild(h);
-    const table = document.createElement("table");
-    table.className = "settings-table";
-    for (const tool of TOOLS) {
-      const tr = document.createElement("tr");
-      const tdC = document.createElement("td");
-      tdC.className = "keys";
-      const kbd = document.createElement("kbd");
-      kbd.textContent = tool.cmd;
-      tdC.appendChild(kbd);
-      tr.appendChild(tdC);
-      const tdD = document.createElement("td");
-      tdD.className = "desc";
-      tdD.textContent = t(tool.tKey);
       tr.appendChild(tdD);
       table.appendChild(tr);
     }
