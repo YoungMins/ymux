@@ -1527,6 +1527,26 @@ body,
   border-color: var(--accent);
 }
 
+/* The in-place rename box. Sized to the button it replaces so opening an
+   edit never nudges the row, and `user-select: text` because the whole panel
+   is `user-select: none` — without it the name can't be drag-selected. */
+.workspace-panel__ws-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+  box-sizing: border-box;
+  user-select: text;
+}
+
 /* Agent status tint across the whole row — replaces the old 5px `ws-dot`,
    which was too small to read at a glance. The colour is the highest-priority
    pane status in that workspace (attention > running > done > idle), from
