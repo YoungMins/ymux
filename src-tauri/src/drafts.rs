@@ -75,6 +75,33 @@ fn delete_under(base: &Path, pane_id: &str) -> io::Result<()> {
     }
 }
 
+fn list_under(base: &Path) -> io::Result<Vec<String>> {
+    let iter = match std::fs::read_dir(base) {
+        Ok(it) => it,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut ids = Vec::new();
+    for entry in iter.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // `<id>.json` only: a `<id>.json.tmp` is a write in progress (or an
+        // interrupted one), not a draft.
+        let Some(id) = name.strip_suffix(".json") else {
+            continue;
+        };
+        if !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            ids.push(id.to_string());
+        }
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+/// The pane ids that have a draft on disk (the startup sweep's input).
+pub fn list() -> io::Result<Vec<String>> {
+    list_under(&drafts_dir())
+}
+
 /// Write `blob` as `pane_id`'s draft, replacing any previous one.
 pub fn save(pane_id: &str, blob: &str) -> io::Result<()> {
     save_under(&drafts_dir(), pane_id, blob)
@@ -122,6 +149,23 @@ mod tests {
         assert_eq!(names, vec![format!("{ID}.json")]);
         delete_under(&base, ID).unwrap();
         assert_eq!(load_under(&base, ID).unwrap(), "");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn list_reports_draft_ids_and_ignores_temp_and_foreign_files() {
+        let base = tempdir();
+        assert!(list_under(&base.join("absent")).unwrap().is_empty());
+        let other = "11111111-2222-3333-4444-555555555555";
+        save_under(&base, ID, "{}").unwrap();
+        save_under(&base, other, "{}").unwrap();
+        std::fs::write(base.join(format!("{ID}.json.tmp")), "x").unwrap();
+        std::fs::write(base.join("notes.txt"), "x").unwrap();
+        std::fs::write(base.join("not an id.json"), "x").unwrap();
+        assert_eq!(
+            list_under(&base).unwrap(),
+            vec![ID.to_string(), other.to_string()]
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

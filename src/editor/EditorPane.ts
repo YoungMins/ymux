@@ -46,8 +46,8 @@ import {
   type LangId,
 } from "./editorModel";
 import { closeDecision, closeResult, type CloseChoice } from "./closeGuard";
-import { eolLabel, needsEolWarning, type Eol } from "./eol";
-import { draftOffer, encodeDraft, parseDraft, type Draft } from "./draft";
+import { eolLabel, needsEolWarning, saveEol, type Eol } from "./eol";
+import { draftDisposition, draftWriteFailure, encodeDraft, parseDraft, type DiskView, type Draft } from "./draft";
 
 export interface EditorPaneOptions {
   id: Uuid;
@@ -157,15 +157,26 @@ export class EditorPane implements Pane {
   /// the same change does not re-prompt on every focus.
   private dismissedSha: string | null = null;
   private banner: Banner | null = null;
-  /// A recovered draft offered and not yet answered (Restore / Discard). Its
-  /// own banner row, above any other, and until answered nothing — an edit,
-  /// a save, an agent's rewrite reloading the buffer — may overwrite or
-  /// delete the draft file (`draftFileAction`).
-  private pendingDraft: Draft | null = null;
+  /// A recovered draft offered and not yet answered. Its own banner row,
+  /// above any other, and until answered nothing — an edit, a save, an
+  /// agent's rewrite reloading the buffer, closing the pane — may overwrite
+  /// or delete the draft file (`draftFileAction`, `closeState`). `restore`
+  /// puts it into the loaded buffer; `rescue` writes it to a file the user
+  /// picks, for when the buffer cannot take it (the read failed, or the file
+  /// is read-only now).
+  private pendingDraft: { draft: Draft; mode: "restore" | "rescue" } | null = null;
+  /// The pane has looked for its draft (spawn's first load, success or not).
+  /// Until then a draft on disk is one nobody has been offered: it is never
+  /// overwritten or deleted.
+  private draftChecked = false;
+  /// Looking for the draft failed (IO): leave whatever is there alone.
+  private draftUnreadable = false;
+  /// The last draft write was refused as over the cap (already told).
+  private draftNetOff = false;
   /// Non-null while the pane cannot show an editable file.
   private problem: { text: string; retry: boolean } | null = null;
   private loadGen = 0;
-  private spawned = false;
+  private spawned: Promise<void> | null = null;
   private saving = false;
   private polling = false;
   private lastPoll = 0;
@@ -275,10 +286,20 @@ export class EditorPane implements Pane {
   }
 
   async spawn(): Promise<void> {
-    if (this.spawned) return;
-    this.spawned = true;
-    if (this.path) await this.load(this.path, { offerDraft: true });
-    else this.renderChrome();
+    if (!this.spawned) {
+      this.spawned = (async () => {
+        // The draft is looked for whatever the load does: a pane whose file
+        // is gone is exactly the one whose draft is the only copy.
+        if (this.path) await this.load(this.path, { offerDraft: true });
+        else this.renderChrome();
+        this.draftChecked = true;
+      })();
+    }
+    return this.spawned;
+  }
+
+  private draftUnanswered(): boolean {
+    return this.pendingDraft !== null || !this.draftChecked || this.draftUnreadable;
   }
 
   dispose(permanent = false): void {
@@ -290,13 +311,18 @@ export class EditorPane implements Pane {
       this.draftTimer = null;
       // Not permanent (a shutdown path): the pending draft is the whole
       // point of drafts, so write it now rather than lose the last 2 s.
-      if (!permanent && draftFileAction(this.pendingDraft !== null, this.dirty) === "write") {
-        this.writeDraft();
+      if (!permanent && draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") {
+        void this.writeDraft();
       }
     }
     // Permanent: the user closed this pane after the guard let it go —
-    // there is nothing left to recover into.
-    if (permanent) void api.deleteEditorDraft(this.id).catch(() => {});
+    // there is nothing left to recover into. Unless the pane never got as
+    // far as looking for its draft: one nobody was offered is not deleted
+    // here (the startup sweep removes it once its pane is gone from the
+    // config).
+    if (permanent && this.draftChecked && !this.draftUnreadable) {
+      void api.deleteEditorDraft(this.id).catch(() => {});
+    }
     for (const c of this.cleanups) c();
     this.handle?.destroy();
     this.handle = null;
@@ -350,6 +376,9 @@ export class EditorPane implements Pane {
   async discardDraft(): Promise<void> {
     if (this.draftTimer !== null) clearTimeout(this.draftTimer);
     this.draftTimer = null;
+    // A draft nobody was offered (not looked for yet, or unreadable) is not
+    // this call's to delete; an offered one being discarded is.
+    if (!this.pendingDraft && (!this.draftChecked || this.draftUnreadable)) return;
     this.draftOnDisk = false;
     if (this.pendingDraft) {
       this.pendingDraft = null;
@@ -363,8 +392,16 @@ export class EditorPane implements Pane {
   /// Show `path` in this pane (the viewer tab's reuse, spec §3.7). Asks
   /// before replacing a dirty buffer; resolves false if the user kept it.
   async openFile(path: string): Promise<boolean> {
-    const decision = openFileDecision(this.path || null, this.isDirty(), path);
-    if (decision === "focus" && this.file) {
+    // Let the first load finish looking for a draft before deciding: a draft
+    // not yet offered must count as unsaved work, not be discarded unseen.
+    await this.spawn();
+    const decision = openFileDecision(this.path || null, this.isDirty(), path, this.file !== null);
+    if (decision === "focus") {
+      this.focus();
+      return true;
+    }
+    if (decision === "retry") {
+      await this.load(this.path, { offerDraft: true });
       this.focus();
       return true;
     }
@@ -472,7 +509,7 @@ export class EditorPane implements Pane {
     // Saved: the draft has nothing left to protect. (Typing during the
     // write left the buffer dirty; its draft stays. A pending recovered
     // draft is not this buffer's and is left for the user to answer.)
-    if (draftFileAction(this.pendingDraft !== null, this.dirty) === "delete") void this.discardDraft();
+    if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "delete") void this.discardDraft();
     this.say(t("editor.saved"));
     return true;
   }
@@ -569,6 +606,7 @@ export class EditorPane implements Pane {
       this.say("");
       this.renderChrome();
       this.opts.onDirtyChange?.();
+      if (o.offerDraft) await this.offerDraft(path, null, gen);
       return;
     }
     let h: EditorHandle;
@@ -578,6 +616,7 @@ export class EditorPane implements Pane {
       if (gen !== this.loadGen || this.disposed) return;
       this.problem = { text: String(e), retry: true };
       this.renderChrome();
+      if (o.offerDraft) await this.offerDraft(path, null, gen);
       return;
     }
     if (gen !== this.loadGen || this.disposed) return;
@@ -594,7 +633,7 @@ export class EditorPane implements Pane {
     else if (needsEolWarning(tf.eol)) this.setBanner({ kind: "mixedEol" });
     this.renderChrome();
     this.opts.onDirtyChange?.();
-    if (o.offerDraft && !tf.truncated) await this.offerDraft(path, tf.text, gen);
+    if (o.offerDraft) await this.offerDraft(path, { text: tf.text, editable: !tf.truncated }, gen);
   }
 
   /// Re-read the file, dropping the buffer. Keeps the cursor line.
@@ -625,7 +664,7 @@ export class EditorPane implements Pane {
     this.setBanner(truncated ? { kind: "readOnly" } : null);
     // An agent's rewrite reloading a clean buffer must not take a pending
     // recovered draft with it.
-    if (draftFileAction(this.pendingDraft !== null, false) === "delete") void this.discardDraft();
+    if (draftFileAction(this.draftUnanswered(), false) === "delete") void this.discardDraft();
     this.renderChrome();
     this.opts.onDirtyChange?.();
   }
@@ -656,6 +695,9 @@ export class EditorPane implements Pane {
           this.setBanner({ kind: "deleted" });
           this.renderChrome();
           this.opts.onDirtyChange?.();
+          // The buffer just became the only copy: draft it now, not on the
+          // next keystroke.
+          if (draftFileAction(this.draftUnanswered(), this.dirty, true) === "write") void this.writeDraft();
         }
         return;
       }
@@ -691,7 +733,7 @@ export class EditorPane implements Pane {
 
   private onDocChange(): void {
     this.refreshDirty();
-    const action = draftFileAction(this.pendingDraft !== null, this.dirty);
+    const action = draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk);
     if (action === "write") this.scheduleDraft();
     else if (action === "delete" && (this.draftOnDisk || this.draftTimer !== null)) {
       void this.discardDraft();
@@ -712,14 +754,26 @@ export class EditorPane implements Pane {
     if (this.draftTimer !== null) clearTimeout(this.draftTimer);
     this.draftTimer = window.setTimeout(() => {
       this.draftTimer = null;
-      if (draftFileAction(this.pendingDraft !== null, this.dirty) === "write") this.writeDraft();
+      if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) === "write") void this.writeDraft();
     }, DRAFT_DELAY_MS);
   }
 
-  private writeDraft(): void {
+  /// Write the draft now if one is waiting in its debounce (the window is
+  /// closing without the guard's answer, or the page is unloading).
+  flushDraft(): Promise<void> {
+    if (this.draftTimer === null) return Promise.resolve();
+    clearTimeout(this.draftTimer);
+    this.draftTimer = null;
+    if (draftFileAction(this.draftUnanswered(), this.dirty, this.deletedOnDisk) !== "write") {
+      return Promise.resolve();
+    }
+    return this.writeDraft();
+  }
+
+  private writeDraft(): Promise<void> {
     const h = this.handle;
     const f = this.file;
-    if (!h || !f || !this.path || this.pendingDraft) return;
+    if (!h || !f || !this.path || this.pendingDraft) return Promise.resolve();
     const draft: Draft = {
       v: 1,
       path: this.path,
@@ -730,23 +784,96 @@ export class EditorPane implements Pane {
       savedAt: Date.now(),
     };
     this.draftOnDisk = true;
-    void api.saveEditorDraft(this.id, encodeDraft(draft)).catch((e) => {
-      console.warn("editor: draft save failed", e);
-    });
+    return api.saveEditorDraft(this.id, encodeDraft(draft)).then(
+      () => {
+        this.draftNetOff = false;
+      },
+      (e) => {
+        console.warn("editor: draft save failed", e);
+        if (draftWriteFailure(errorKind(e)) === "netOff" && !this.draftNetOff) {
+          // Once per episode, and it stays on the status line: the user has
+          // to know this file's unsaved edits have no crash protection.
+          this.draftNetOff = true;
+          this.say(fill(t("editor.draftTooLarge"), { name: this.displayName() }), true);
+        }
+      },
+    );
   }
 
-  private async offerDraft(path: string, diskText: string, gen: number): Promise<void> {
-    const blob = await api.loadEditorDraft(this.id).catch(() => "");
+  /// Look for this pane's draft and offer it. `disk` is what the load found:
+  /// `null` when the read failed, which is when the draft matters most.
+  private async offerDraft(path: string, disk: DiskView | null, gen: number): Promise<void> {
+    let blob: string;
+    try {
+      blob = await api.loadEditorDraft(this.id);
+    } catch (e) {
+      // Could not even look: treat whatever is there as unoffered, so no
+      // path in this session deletes or overwrites it.
+      console.warn("editor: draft read failed", e);
+      this.draftUnreadable = true;
+      return;
+    }
     if (gen !== this.loadGen || this.disposed) return;
     const draft = parseDraft(blob);
-    if (draftOffer(draft, path, diskText) === "offer" && draft) {
+    const disposition = draftDisposition(draft, path, disk);
+    if (draft && (disposition === "restore" || disposition === "rescue")) {
       this.draftOnDisk = true;
-      this.pendingDraft = draft;
+      this.pendingDraft = { draft, mode: disposition };
       this.renderBanner();
       this.renderChrome();
       this.opts.onDirtyChange?.();
-    } else if (blob) {
-      void api.deleteEditorDraft(this.id).catch(() => {});
+    } else {
+      if (this.pendingDraft) {
+        this.pendingDraft = null;
+        this.renderBanner();
+        this.renderChrome();
+        this.opts.onDirtyChange?.();
+      }
+      // Identical to the disk (nothing to lose), or not a draft at all.
+      if (blob) void api.deleteEditorDraft(this.id).catch(() => {});
+    }
+  }
+
+  /// Write a draft the buffer cannot take (`rescue`) to a file the user
+  /// picks — by default its own path, recreating a deleted file. Never
+  /// overwrites an existing file without asking. On success the pane opens
+  /// that file if it had nothing usable open.
+  private async rescueDraft(draft: Draft): Promise<void> {
+    const typed = await askText(t("editor.saveDraftAs"), draft.path);
+    if (typed === null || !typed.trim()) return;
+    const target = typed.trim();
+    const exists = await fsApi.stat(target).then(
+      () => true,
+      (e) => errorKind(e) !== "not_found",
+    );
+    if (exists) {
+      const ok = await askConfirm(fill(t("editor.overwriteFile"), { name: fileName(target) }), t("editor.overwrite"));
+      if (!ok) return;
+    }
+    try {
+      await fsApi.writeText({
+        path: target,
+        text: draft.text,
+        eol: saveEol(draft.eol),
+        bom: draft.bom,
+        expect: null,
+      });
+    } catch (e) {
+      this.say(`${fileName(target)}: ${describeFsError(e)}`, true);
+      return;
+    }
+    if (this.disposed) return;
+    this.pendingDraft = null;
+    this.draftOnDisk = false;
+    await api.deleteEditorDraft(this.id).catch(() => {});
+    this.say(fill(t("editor.savedCopy"), { name: fileName(target) }));
+    this.renderBanner();
+    this.renderChrome();
+    this.opts.onDirtyChange?.();
+    if (!this.file || this.file.readOnly) {
+      this.path = target;
+      this.opts.onPathChange?.(target);
+      await this.load(target, { offerDraft: false });
     }
   }
 
@@ -764,6 +891,7 @@ export class EditorPane implements Pane {
     h.replaceAll(draft.text);
     this.refreshDirty();
     this.renderChrome();
+    this.opts.onDirtyChange?.();
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -801,9 +929,27 @@ export class EditorPane implements Pane {
     };
     if (draft) {
       const r = row(true);
-      r.text.textContent = t("editor.draftFound");
-      r.button("editor.discard", () => void this.discardDraft());
-      r.button("editor.restore", () => this.restoreDraft(draft), true);
+      if (draft.mode === "restore") {
+        r.text.textContent = t("editor.draftFound");
+        r.button("editor.discard", () => void this.discardDraft());
+        r.button("editor.restore", () => this.restoreDraft(draft.draft), true);
+      } else {
+        // The buffer cannot take it: the draft is the only copy of those
+        // edits, so Discard asks, and Save as… is the way out.
+        // A draft for another file names that file in full: it is not the
+        // one this pane shows.
+        const foreign = draft.draft.path.normalize("NFC") !== this.path.normalize("NFC");
+        r.text.textContent = fill(t("editor.draftRescue"), {
+          name: foreign ? draft.draft.path : fileName(draft.draft.path),
+        });
+        r.text.title = draft.draft.path;
+        r.button("editor.discard", () => {
+          void askConfirm(t("editor.discardDraftConfirm"), t("editor.discard")).then((ok) => {
+            if (ok) void this.discardDraft();
+          });
+        });
+        r.button("editor.saveDraftAsButton", () => void this.rescueDraft(draft.draft), true);
+      }
     }
     if (!b) return;
     const name = this.displayName();
@@ -880,7 +1026,9 @@ export class EditorPane implements Pane {
       head.textContent = fill(t("editor.cantOpen"), { name: this.displayName() });
       const why = document.createElement("p");
       why.textContent = this.problem.text;
-      if (this.problem.retry) btn("files.retry", () => void this.load(this.path, { offerDraft: false }));
+      // Retry looks for the draft again: a load that now succeeds offers it
+      // for Restore instead of letting the first keystroke overwrite it.
+      if (this.problem.retry) btn("files.retry", () => void this.load(this.path, { offerDraft: true }));
       btn("editor.openFile", () => void this.promptOpen());
       this.overlay.append(head, why, row);
       return;

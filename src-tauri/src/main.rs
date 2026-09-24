@@ -77,6 +77,7 @@ fn main() {
             ymux_lib::commands::save_editor_draft,
             ymux_lib::commands::load_editor_draft,
             ymux_lib::commands::delete_editor_draft,
+            ymux_lib::commands::list_editor_drafts,
             ymux_lib::commands::get_agent_session,
             ymux_lib::commands::clear_agent_session,
             ymux_lib::commands::paste_clipboard_image,

@@ -363,13 +363,17 @@ export const api = {
     call("delete_scrollback", { paneId: id }),
 
   /// An editor pane's local draft of unsaved content. `src/editor/draft.ts`
-  /// owns the format; `src-tauri/src/drafts.rs` stores it opaquely.
+  /// owns the format; `src-tauri/src/drafts.rs` stores it opaquely. Rejects
+  /// with a `YmuxCallError` so `too_large` (over the cap) is distinguishable.
   saveEditorDraft: (id: Uuid, blob: string): Promise<void> =>
-    call("save_editor_draft", { paneId: id, blob }),
+    callKind("save_editor_draft", { paneId: id, blob }),
 
   loadEditorDraft: (id: Uuid): Promise<string> => call("load_editor_draft", { paneId: id }),
 
   deleteEditorDraft: (id: Uuid): Promise<void> => call("delete_editor_draft", { paneId: id }),
+
+  /// Pane ids with a draft on disk (the startup sweep).
+  listEditorDrafts: (): Promise<Uuid[]> => call("list_editor_drafts"),
 
   /// If the OS clipboard holds an image, save it as a PNG and return that
   /// file's path; `null` means there is no image and the caller should paste

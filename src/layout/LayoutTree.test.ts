@@ -166,9 +166,13 @@ describe("editor_file_path_survives_save_load", () => {
   }
 
   it("paneNode -> nodeToSpec keeps file_path and the editor kind", () => {
-    const spec = editorSpec("D:\작업\src\main.rs");
+    const path = "D:\\작업\\src\\main.rs";
+    // The literal must really hold backslashes (an unescaped "\작" silently
+    // drops them and the test would pass on a path with none).
+    expect(path.split("\\")).toHaveLength(4);
+    const spec = editorSpec(path);
     const back = nodeToSpec(paneNode(spec) as LayoutNode & { kind: "pane" });
-    expect(back.file_path).toBe("D:\작업\src\main.rs");
+    expect(back.file_path).toBe(path);
     expect(back.pane_kind).toBe("editor");
   });
 

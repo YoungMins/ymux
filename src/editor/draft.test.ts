@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draftOffer, encodeDraft, parseDraft, type Draft } from "./draft";
+import { coldDraftEntry, draftDisposition, draftWriteFailure, encodeDraft, orphanDraftIds, parseDraft, type Draft } from "./draft";
 
 const draft: Draft = {
   v: 1,
@@ -27,19 +27,75 @@ describe("draft encode/parse", () => {
   });
 });
 
-describe("draftOffer", () => {
-  it("offers a draft of this file whose text differs from disk", () => {
-    expect(draftOffer(draft, "C:\\w\\main.rs", "fn main() {}\n")).toBe("offer");
+describe("draftWriteFailure", () => {
+  it("reports the safety net off for an over-cap draft, and nothing else", () => {
+    expect(draftWriteFailure("too_large")).toBe("netOff");
+    expect(draftWriteFailure("other")).toBe("transient");
+    expect(draftWriteFailure("permission_denied")).toBe("transient");
+  });
+});
+
+describe("orphanDraftIds", () => {
+  const a = "0b9c2c3e-1f2a-4b5c-8d9e-0a1b2c3d4e5f";
+  const b = "11111111-2222-3333-4444-555555555555";
+
+  it("lists only drafts whose pane is gone from the config", () => {
+    expect(orphanDraftIds([a, b], [a])).toEqual([b]);
   });
 
-  it("drops a draft identical to disk, of another file, or missing", () => {
-    expect(draftOffer(draft, "C:\\w\\main.rs", draft.text)).toBe("drop");
-    expect(draftOffer(draft, "C:\\w\\other.rs", "x")).toBe("drop");
-    expect(draftOffer(null, "C:\\w\\main.rs", "x")).toBe("drop");
+  it("keeps a live pane's draft, whatever the case of its id", () => {
+    expect(orphanDraftIds([a.toUpperCase()], [a])).toEqual([]);
+  });
+
+  it("with no panes at all, everything is an orphan; with no drafts, nothing", () => {
+    expect(orphanDraftIds([a], [])).toEqual([a]);
+    expect(orphanDraftIds([], [a])).toEqual([]);
+  });
+});
+
+describe("coldDraftEntry", () => {
+  it("lists a never-mounted pane's draft by file name, as unsaved and not savable", () => {
+    expect(coldDraftEntry(encodeDraft(draft))).toEqual({ name: "main.rs", dirty: true, hasPath: false });
+  });
+
+  it("is null for no draft or a corrupt one", () => {
+    expect(coldDraftEntry("")).toBeNull();
+    expect(coldDraftEntry("{")).toBeNull();
+  });
+});
+
+describe("draftDisposition", () => {
+  const disk = (text: string) => ({ text, editable: true });
+
+  it("offers Restore for a draft of this file whose text differs from disk", () => {
+    expect(draftDisposition(draft, "C:\\w\\main.rs", disk("fn main() {}\n"))).toBe("restore");
+  });
+
+  it("drops a draft identical to disk; reports none when there is none", () => {
+    expect(draftDisposition(draft, "C:\\w\\main.rs", disk(draft.text))).toBe("drop");
+    expect(draftDisposition(null, "C:\\w\\main.rs", disk("x"))).toBe("none");
+  });
+
+  it("rescues — never drops — a draft whose file could not be read", () => {
+    // Deleted, renamed, locked by AV, no longer text: the draft is the only copy.
+    expect(draftDisposition(draft, "C:\\w\\main.rs", null)).toBe("rescue");
+  });
+
+  it("rescues a draft whose file is now read-only (grew past the cap)", () => {
+    expect(draftDisposition(draft, "C:\\w\\main.rs", { text: "x", editable: false })).toBe("rescue");
+    // Even when the head happens to match: the buffer cannot take it.
+    expect(draftDisposition(draft, "C:\\w\\main.rs", { text: draft.text, editable: false })).toBe(
+      "rescue",
+    );
   });
 
   it("matches the path across NFC/NFD", () => {
     const d = { ...draft, path: "/w/한글.md".normalize("NFD") };
-    expect(draftOffer(d, "/w/한글.md", "other")).toBe("offer");
+    expect(draftDisposition(d, "/w/한글.md", disk("other"))).toBe("restore");
+  });
+
+  it("rescues a draft for another file instead of deleting it", () => {
+    expect(draftDisposition(draft, "C:\\w\\other.rs", disk("x"))).toBe("rescue");
+    expect(draftDisposition(draft, "C:\\w\\other.rs", null)).toBe("rescue");
   });
 });

@@ -610,6 +610,15 @@ pub fn save_editor_draft(
     blob: String,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "save_editor_draft")?;
+    // Its own kind, so the pane can tell the user the safety net is off for
+    // this file rather than failing silently.
+    if blob.len() > crate::drafts::MAX_DRAFT_BYTES {
+        return Err(YmuxError::TooLarge(format!(
+            "draft of {} bytes is over the {} byte cap",
+            blob.len(),
+            crate::drafts::MAX_DRAFT_BYTES
+        )));
+    }
     crate::drafts::save(&pane_id, &blob).map_err(YmuxError::Io)
 }
 
@@ -622,6 +631,14 @@ pub fn load_editor_draft(
 ) -> YmuxResult<String> {
     guard_local(&webview, &request, "load_editor_draft")?;
     crate::drafts::load(&pane_id).map_err(YmuxError::Io)
+}
+
+/// The pane ids that have an editor draft on disk, for the startup sweep
+/// that removes drafts whose pane no longer exists anywhere in the config.
+#[tauri::command]
+pub fn list_editor_drafts(webview: Webview, request: Request<'_>) -> YmuxResult<Vec<String>> {
+    guard_local(&webview, &request, "list_editor_drafts")?;
+    crate::drafts::list().map_err(YmuxError::Io)
 }
 
 /// Forget an editor pane's draft, if any.
