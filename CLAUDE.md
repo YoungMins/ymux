@@ -326,7 +326,15 @@ Enforced by `ipc_guard::tests::every_registered_command_starts_with_a_guard`
 and each command body — it runs under `cargo test --no-default-features --lib -p ymux`.
 Don't "fix" this by adding an `AppManifest` or putting ymux commands in a
 capability file: that switches ACL enforcement on for every command at once.
-`eb-*` webviews deliberately have no capability at all.
+`eb-*` webviews deliberately have no capability at all — Tauri injects
+`invoke` into every webview regardless, so none is needed.
+
+Two things `guard_local` cannot see, handled elsewhere: ymux's own page
+framed inside a browser pane (refused by CSP `frame-ancestors 'none'` and
+`src/bootGuard.ts`, which must stay `main.ts`'s first import), and what a
+forwarded keystroke *means* (`ipc_guard::forwarded_shortcut_key` /
+`src/browser/forwardedKeys.ts` — an exact table, key derived from code,
+never close-pane).
 
 ## TDD / Testing
 
