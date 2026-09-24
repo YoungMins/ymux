@@ -483,8 +483,12 @@ pub async fn resolve_paths(
     cwd: Option<String>,
 ) -> YmuxResult<Vec<Option<crate::fspath::ResolvedPath>>> {
     guard_local(&webview, &request, "resolve_paths")?;
+    // An `Err` from the probe ("busy" / "timed out") is surfaced as an IPC
+    // rejection, which `PathProbeCache` treats as "no answer" and does not
+    // cache — unlike a `None`, which means "does not exist".
     tauri::async_runtime::spawn_blocking(move || crate::fspath::probe_batch(paths, cwd))
         .await
+        .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))?
         .map_err(|e| YmuxError::Other(format!("resolve_paths: {e}")))
 }
 
@@ -492,11 +496,12 @@ pub async fn resolve_paths(
 /// Windows, `open` on macOS, both via `opener`. Neither builds a command
 /// line, so `&`, `^`, `%` and quotes in a filename are inert.
 ///
-/// A directory opens in the file manager. An executable or script is
-/// *revealed* in the file manager rather than launched: clicking a path in
-/// terminal output means "show me this", and terminal output is
-/// attacker-influenced, so `ShellExecuteW` running `evil.bat` is not an
-/// acceptable reading of the click. See [`crate::fspath::should_reveal`].
+/// A directory opens in the file manager. Only an allowlist of document
+/// types is opened with its program; everything else is *revealed* in the
+/// file manager rather than launched: clicking a path in terminal output
+/// means "show me this", and terminal output is attacker-influenced, so
+/// `ShellExecuteW` running `evil.bat` is not an acceptable reading of the
+/// click. See [`crate::fspath::should_reveal`].
 #[tauri::command]
 pub async fn open_path(webview: Webview, request: Request<'_>, path: String) -> YmuxResult<()> {
     guard_local(&webview, &request, "open_path")?;
@@ -505,10 +510,24 @@ pub async fn open_path(webview: Webview, request: Request<'_>, path: String) -> 
     // scratch rather than trusted.
     crate::fspath::validate_open(&path).map_err(YmuxError::Other)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let p = Path::new(&path);
-        let meta = std::fs::metadata(p)
+        // Same gate as the hover probe: no share, no device, and every
+        // symlink/junction classified before it is followed. A terminal link
+        // never names a share (the probe refuses them), so this refuses
+        // nothing a link could produce — it keeps a replayed or stale path
+        // from reaching SMB through a `metadata` call here.
+        let resolved = crate::fspath::resolve_local(Path::new(&path))
             .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
-        let result = if crate::fspath::should_reveal(p, meta.is_dir()) {
+        // A junction's target comes back verbatim (`\\?\C:\…`), which
+        // `ShellExecuteW` does not reliably accept.
+        let resolved = crate::fspath::strip_verbatim(&resolved);
+        let p = resolved.as_path();
+        let meta = std::fs::symlink_metadata(p)
+            .map_err(|e| YmuxError::Other(format!("open_path: {path}: {e}")))?;
+        // Judged on the resolved name, so a `notes.md` symlink to `evil.bat`
+        // is judged as `evil.bat`. An allowlist: anything not a known
+        // document type is revealed.
+        let reveal = crate::fspath::should_reveal(p, meta.is_dir(), crate::fspath::exec_bit(&meta));
+        let result = if reveal {
             opener::reveal(p)
         } else {
             opener::open(p)

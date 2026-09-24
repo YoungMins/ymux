@@ -32,10 +32,10 @@
 //!    argv, a program name or a shell string; no `Command` is built.
 //!    [`fs_open_default`] is the only path that reaches the OS handler at
 //!    all, and it goes through [`crate::fspath::validate_open`] and
-//!    [`crate::fspath::should_reveal`], which reveal an executable, a
-//!    script, a shortcut or a macOS bundle in the file manager instead of
-//!    launching it. That is a denylist and cannot be complete, which is
-//!    why it is the single chokepoint.
+//!    [`crate::fspath::should_reveal`], which opens only an allowlist of
+//!    document types and reveals everything else — executables, scripts,
+//!    shortcuts, macOS bundles, anything with an execute bit — in the file
+//!    manager instead of launching it.
 //!
 //! Every command is `#[tauri::command(async)]` so it runs off the main
 //! thread: a dead network drive blocks `metadata` for tens of seconds and
@@ -656,9 +656,11 @@ pub(crate) mod imp {
         crate::fspath::validate_open(path).map_err(YmuxError::Other)?;
         let p = Path::new(path);
         let md = fs::metadata(p).map_err(|e| YmuxError::from_io(&e, path))?;
-        // The whole point: an `.exe`, `.bat`, `.lnk` or `.app` is shown in
-        // the file manager, never executed. See `fspath::should_reveal`.
-        let result = if crate::fspath::should_reveal(p, md.is_dir()) {
+        // The whole point: only known document types are opened; an `.exe`,
+        // `.bat`, `.py`, `.lnk` or `.app` is shown in the file manager,
+        // never executed. See `fspath::should_reveal`.
+        let reveal = crate::fspath::should_reveal(p, md.is_dir(), crate::fspath::exec_bit(&md));
+        let result = if reveal {
             opener::reveal(p)
         } else {
             opener::open(p)
@@ -1566,11 +1568,20 @@ mod tests {
     #[test]
     fn open_default_reveals_an_executable_rather_than_running_it() {
         let d = tmp();
-        for name in ["payload.bat", "payload.exe", "payload.ps1", "shortcut.lnk"] {
+        for name in [
+            "payload.bat",
+            "payload.exe",
+            "payload.ps1",
+            "shortcut.lnk",
+            "payload.py",
+            "payload.sh",
+            "x.settingcontent-ms",
+        ] {
             let p = d.path().join(name);
             std::fs::write(&p, b"echo pwned").unwrap();
+            let md = std::fs::metadata(&p).unwrap();
             assert!(
-                crate::fspath::should_reveal(&p, false),
+                crate::fspath::should_reveal(&p, false, crate::fspath::exec_bit(&md)),
                 "{name} must be revealed, never opened"
             );
         }
