@@ -16,6 +16,7 @@ pub mod error;
 // policy and reveal-vs-open rules are the parts worth testing, and they run
 // under `cargo test --no-default-features --lib -p ymux` on Linux CI.
 pub mod fspath;
+pub mod fsx;
 pub mod git;
 pub mod paste_images;
 pub mod pty;
