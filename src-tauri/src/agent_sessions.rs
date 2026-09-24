@@ -141,17 +141,38 @@ pub fn is_valid_session_id(id: &str) -> bool {
 /// Never the "most recent" forms (`claude -c`, `codex resume --last`): an
 /// explicit id is the only selector that cannot resume the wrong conversation
 /// (spec §3).
+///
+/// A resumed Claude session also comes back in permission-bypass mode, so the
+/// user picks the conversation up where they left it instead of re-approving
+/// everything they had already approved. `claude --help` on this machine
+/// documents the flag as `--dangerously-skip-permissions  Bypass all
+/// permission checks.`, which is the mode those transcripts record as
+/// `"permissionMode":"bypassPermissions"`.
+///
+/// Claude only. `codex --help` does document an equivalent
+/// (`--dangerously-bypass-approvals-and-sandbox`), but it *also* turns off the
+/// sandbox, which is a materially different promise from skipping approval
+/// prompts — so it stays out until someone asks for it.
 pub fn resume_argv(agent: AgentKind, session_id: &str) -> Option<Vec<String>> {
     if !is_valid_session_id(session_id) {
         return None;
     }
     Some(match agent {
-        AgentKind::Claude => vec!["claude".into(), "--resume".into(), session_id.to_string()],
+        AgentKind::Claude => vec![
+            "claude".into(),
+            "--resume".into(),
+            session_id.to_string(),
+            CLAUDE_SKIP_PERMISSIONS.into(),
+        ],
         AgentKind::Codex => {
             vec!["codex".into(), "resume".into(), session_id.to_string()]
         }
     })
 }
+
+/// The flag that brings a resumed Claude session back without permission
+/// prompts. Verbatim from `claude --help` on this machine.
+pub const CLAUDE_SKIP_PERMISSIONS: &str = "--dangerously-skip-permissions";
 
 /// Strip any conversation selector already present in a saved `startup_cmd`,
 /// returning the command with only its non-selector arguments left.
@@ -163,6 +184,10 @@ pub fn resume_argv(agent: AgentKind, session_id: &str) -> Option<Vec<String>> {
 ///
 /// Token-aware rather than a regex over the raw string, so `claude --resume
 /// "my session"` loses both tokens and `echo --resume` is left untouched.
+///
+/// It also drops any flag [`resume_argv`] supplies itself, so a user whose
+/// startup command already carries `--dangerously-skip-permissions` gets it
+/// once, not twice.
 pub fn strip_selector(startup_cmd: &str, agent: AgentKind) -> Option<Vec<String>> {
     let tokens = shell_split(startup_cmd);
     let first = tokens.first()?;
@@ -194,7 +219,10 @@ pub fn strip_selector(startup_cmd: &str, agent: AgentKind) -> Option<Vec<String>
     while i < rest.len() {
         let t = rest[i].as_str();
         let drop_with_value = matches!(t, "--resume" | "-r" | "--teleport" | "--from-pr");
-        let drop_alone = matches!(t, "-c" | "--continue" | "--last" | "--fork");
+        let drop_alone = matches!(
+            t,
+            "-c" | "--continue" | "--last" | "--fork" | CLAUDE_SKIP_PERMISSIONS
+        );
         if drop_with_value {
             i += 1;
             // Its value is optional for every one of these flags, so only eat
@@ -414,6 +442,253 @@ pub fn save(store: &AgentSessionStore) -> std::io::Result<()> {
     save_to(&store_path(), store)
 }
 
+// ---------------------------------------------------------------------------
+// Tracker: turning scan ticks and hook events into store records
+// ---------------------------------------------------------------------------
+
+/// How often a pane's transcripts are re-read once a record already exists.
+///
+/// The process scan runs every 2 s; a disk scan on every tick would open files
+/// for every pane forever. A session id does not change while its conversation
+/// is alive, so re-reading is only about noticing that the user started a
+/// *new* conversation in the same pane.
+pub const DISK_RESCAN_INTERVAL: u64 = 30;
+
+/// What one scan tick knows about a pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneObservation {
+    pub pane_id: Uuid,
+    /// The registry's `kind` string for the agent seen in this pane.
+    pub kind: String,
+    /// The pane's live cwd, as OSC 7 last reported it. Without one there is
+    /// nothing to match a transcript against.
+    pub cwd: Option<String>,
+    pub status: AgentStatus,
+    /// The session id a Claude Code hook relayed for this pane, when agent
+    /// tracking is on. Exact, so it outranks anything found on disk.
+    pub hook_session_id: Option<String>,
+}
+
+/// The store plus the bookkeeping that keeps the disk scan bounded.
+///
+/// Holds no Tauri types and opens no files itself — the transcript lookup is
+/// passed in, so its tests drive it with a stub instead of the developer's
+/// real `~/.claude`.
+#[derive(Debug, Default)]
+pub struct SessionTracker {
+    store: AgentSessionStore,
+    /// Pane id -> when its transcripts were last read (epoch seconds).
+    last_disk_scan: BTreeMap<Uuid, u64>,
+    /// A record changed since the last `take_dirty`.
+    dirty: bool,
+}
+
+impl SessionTracker {
+    pub fn from_store(store: AgentSessionStore) -> Self {
+        Self {
+            store,
+            ..Default::default()
+        }
+    }
+
+    pub fn store(&self) -> &AgentSessionStore {
+        &self.store
+    }
+
+    pub fn get(&self, pane_id: Uuid) -> Option<&AgentSession> {
+        self.store.get(pane_id)
+    }
+
+    /// Whether anything changed since this was last called, clearing the flag.
+    /// The caller uses it to skip a disk write on an idle tick.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    /// Whether `pane_id`'s transcripts should be read on this tick.
+    ///
+    /// Yes when nothing is known about the pane yet, and after that only once
+    /// every [`DISK_RESCAN_INTERVAL`]. A pane whose id came from a hook is
+    /// never re-scanned: the agent already told us, exactly.
+    pub fn wants_disk_scan(&self, pane_id: Uuid, now: u64) -> bool {
+        if self
+            .store
+            .get(pane_id)
+            .is_some_and(|s| s.source == IdSource::Hook)
+        {
+            return false;
+        }
+        match self.last_disk_scan.get(&pane_id) {
+            None => true,
+            Some(last) => now.saturating_sub(*last) >= DISK_RESCAN_INTERVAL,
+        }
+    }
+
+    /// Fold one observation into the store, reading transcripts through
+    /// `lookup` only when [`SessionTracker::wants_disk_scan`] allows it.
+    ///
+    /// An agent ymux has no resume story for (Gemini and the rest — spec §8)
+    /// is ignored rather than recorded with no way to act on it.
+    pub fn observe<F>(&mut self, obs: &PaneObservation, now: u64, lookup: F)
+    where
+        F: FnOnce(AgentKind, &str) -> Option<crate::agent_scan_disk::DiskSession>,
+    {
+        let Some(agent) = AgentKind::from_kind(&obs.kind) else {
+            return;
+        };
+        // A hook-borne id is the agent naming itself: take it and stop.
+        if let Some(id) = obs.hook_session_id.as_deref().filter(|s| !s.is_empty()) {
+            let cwd = obs
+                .cwd
+                .clone()
+                .or_else(|| self.store.get(obs.pane_id).map(|s| s.cwd.clone()))
+                .unwrap_or_default();
+            self.record(agent, obs, id, cwd, IdSource::Hook, now);
+            return;
+        }
+        // Refresh an existing record in place: `updated_at` means "when ymux
+        // last saw this agent alive", which is what the 24 h window measures.
+        if let Some(existing) = self.store.get(obs.pane_id) {
+            if existing.agent == agent {
+                let (id, cwd, source) = (
+                    existing.session_id.clone(),
+                    existing.cwd.clone(),
+                    existing.source,
+                );
+                self.record(agent, obs, &id, cwd, source, now);
+            }
+        }
+        if !self.wants_disk_scan(obs.pane_id, now) {
+            return;
+        }
+        let Some(cwd) = obs.cwd.as_deref().filter(|c| !c.is_empty()) else {
+            return;
+        };
+        self.last_disk_scan.insert(obs.pane_id, now);
+        let Some(found) = lookup(agent, cwd) else {
+            return;
+        };
+        self.record(
+            agent,
+            obs,
+            &found.session_id,
+            found.cwd,
+            IdSource::Disk,
+            now,
+        );
+    }
+
+    fn record(
+        &mut self,
+        agent: AgentKind,
+        obs: &PaneObservation,
+        session_id: &str,
+        cwd: String,
+        source: IdSource,
+        now: u64,
+    ) {
+        let changed = self.store.put(AgentSession {
+            pane_id: obs.pane_id,
+            agent,
+            session_id: session_id.to_string(),
+            cwd,
+            state: obs.status,
+            interrupted: obs.status != AgentStatus::Done,
+            active: true,
+            source,
+            updated_at: now,
+        });
+        self.dirty |= changed;
+    }
+
+    /// The agent in `pane_id` is gone while the pane itself lives on — the
+    /// user quit it. Stop offering to resume that conversation, but keep the
+    /// record ("decline, don't delete", spec §4).
+    ///
+    /// Deliberately *not* called when a pane disappears: at app shutdown every
+    /// PTY dies at once, and treating that as "the user quit the agent" would
+    /// erase exactly the records the next launch needs.
+    pub fn note_agent_exit(&mut self, pane_id: Uuid) {
+        self.dirty |= self.store.deactivate(pane_id);
+        self.last_disk_scan.remove(&pane_id);
+    }
+
+    /// The user closed the pane for good. Mirrors `delete_scrollback`.
+    pub fn forget(&mut self, pane_id: Uuid) {
+        self.dirty |= self.store.remove(pane_id);
+        self.last_disk_scan.remove(&pane_id);
+    }
+}
+
+/// Tauri-managed handle: `app.manage(SharedSessions::default())`.
+#[derive(Default)]
+pub struct SharedSessions(pub parking_lot::Mutex<SessionTracker>);
+
+/// What the frontend needs in order to choose resume over scrollback replay
+/// (spec §4). Serialized by `get_agent_session`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResumePlan {
+    /// The agent's kind string, for the banner.
+    pub agent: String,
+    /// The full command line to type into the pane's shell.
+    pub command: String,
+    /// The directory the resumed pane must be spawned in. Claude sessions are
+    /// project-scoped, so resuming one from the wrong cwd finds nothing —
+    /// and the pane's own saved `cwd` may since have drifted.
+    pub cwd: String,
+    /// How long ago ymux last saw this session, in seconds — the banner's
+    /// "3 hours ago".
+    pub age_secs: u64,
+}
+
+/// Build the resume plan for one pane, or `None` when the pane should start
+/// normally with its own `startup_cmd` and its replayed scrollback.
+///
+/// Three things must hold (spec §4): the record is fresh and still active, its
+/// session id is safe to type into a shell, and the transcript it names still
+/// exists — a conversation the agent itself has pruned cannot be resumed, and
+/// `claude --resume <gone>` would only error into the user's face.
+pub fn plan_for(
+    session: Option<&AgentSession>,
+    startup_cmd: &str,
+    now: u64,
+    transcript_exists: impl FnOnce(&AgentSession) -> bool,
+) -> Option<ResumePlan> {
+    let s = session?;
+    if !s.is_fresh_at(now) {
+        return None;
+    }
+    let command = resume_command(s.agent, &s.session_id, startup_cmd)?;
+    if !transcript_exists(s) {
+        return None;
+    }
+    Some(ResumePlan {
+        agent: s.agent.as_str().to_string(),
+        command,
+        cwd: s.cwd.clone(),
+        age_secs: now.saturating_sub(s.updated_at),
+    })
+}
+
+/// Whether the transcript naming `session.session_id` is still on disk.
+///
+/// Claude's file is `<projects>/<mangled cwd>/<id>.jsonl`, a direct lookup.
+/// Codex's filename embeds a timestamp before the id, so it has to be found —
+/// which the bounded scan already does, and the scan is what produced the
+/// record in the first place.
+pub fn transcript_exists(session: &AgentSession) -> bool {
+    use crate::agent_scan_disk as scan;
+    match session.agent {
+        AgentKind::Claude => scan::claude_projects_root().is_some_and(|root| {
+            root.join(scan::claude_project_dir_name(&session.cwd))
+                .join(format!("{}.jsonl", session.session_id))
+                .is_file()
+        }),
+        AgentKind::Codex => scan::newest_session(AgentKind::Codex, &session.cwd)
+            .is_some_and(|d| d.session_id == session.session_id),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +718,7 @@ mod tests {
                 "claude".to_string(),
                 "--resume".to_string(),
                 "20aebce7-f8e2-4582-b480-bf1ae90d7a0b".to_string(),
+                CLAUDE_SKIP_PERMISSIONS.to_string(),
             ])
         );
         assert_eq!(
@@ -573,12 +849,12 @@ mod tests {
     fn resume_command_merges_with_startup_cmd() {
         assert_eq!(
             resume_command(AgentKind::Claude, "abc-123", "claude -c --model opus"),
-            Some("claude --resume abc-123 --model opus".to_string())
+            Some("claude --resume abc-123 --dangerously-skip-permissions --model opus".to_string())
         );
         // Unrelated startup command: use the bare resume, don't mangle theirs.
         assert_eq!(
             resume_command(AgentKind::Claude, "abc-123", "npm run dev"),
-            Some("claude --resume abc-123".to_string())
+            Some("claude --resume abc-123 --dangerously-skip-permissions".to_string())
         );
         assert_eq!(
             resume_command(AgentKind::Codex, "abc-123", "codex resume --last"),
@@ -587,7 +863,7 @@ mod tests {
         // The user's own spelling of the program survives.
         assert_eq!(
             resume_command(AgentKind::Claude, "abc-123", "C:\\bin\\claude.exe -c"),
-            Some("C:\\bin\\claude.exe --resume abc-123".to_string())
+            Some("C:\\bin\\claude.exe --resume abc-123 --dangerously-skip-permissions".to_string())
         );
     }
 
@@ -714,5 +990,237 @@ mod tests {
         assert_eq!(AgentKind::from_kind("gemini"), None);
         assert_eq!(AgentKind::Claude.as_str(), "claude");
         assert_eq!(AgentKind::Codex.as_str(), "codex");
+    }
+
+    fn obs(pane: Uuid, kind: &str, cwd: Option<&str>) -> PaneObservation {
+        PaneObservation {
+            pane_id: pane,
+            kind: kind.to_string(),
+            cwd: cwd.map(str::to_string),
+            status: AgentStatus::Working,
+            hook_session_id: None,
+        }
+    }
+
+    fn disk(id: &str, cwd: &str) -> crate::agent_scan_disk::DiskSession {
+        crate::agent_scan_disk::DiskSession {
+            session_id: id.to_string(),
+            cwd: cwd.to_string(),
+            modified: SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    const ID_A: &str = "aaaaaaaa-0000-0000-0000-00000000000a";
+    const ID_B: &str = "bbbbbbbb-0000-0000-0000-00000000000b";
+
+    #[test]
+    fn a_resumed_claude_session_skips_permission_prompts() {
+        // `claude --help` on this machine: `--dangerously-skip-permissions
+        // Bypass all permission checks.` The resumed conversation comes back
+        // in the mode the user left it in rather than re-asking for approvals
+        // they already gave.
+        let argv = resume_argv(AgentKind::Claude, ID_A).expect("valid id");
+        assert_eq!(
+            argv,
+            vec![
+                "claude".to_string(),
+                "--resume".to_string(),
+                ID_A.to_string(),
+                "--dangerously-skip-permissions".to_string(),
+            ]
+        );
+        assert_eq!(
+            argv.iter()
+                .filter(|a| *a == CLAUDE_SKIP_PERMISSIONS)
+                .count(),
+            1,
+            "exactly once"
+        );
+        // Codex documents `--dangerously-bypass-approvals-and-sandbox`, but
+        // that also disables the sandbox — a different promise. Left out.
+        let codex = resume_argv(AgentKind::Codex, ID_A).expect("valid id");
+        assert!(!codex.iter().any(|a| a.starts_with("--dangerously")));
+    }
+
+    #[test]
+    fn the_permission_flag_is_not_duplicated_from_startup_cmd() {
+        // The user's own startup command already carries it.
+        let cmd = resume_command(
+            AgentKind::Claude,
+            ID_A,
+            "claude -c --dangerously-skip-permissions --model opus",
+        )
+        .expect("valid id");
+        assert_eq!(
+            cmd.matches(CLAUDE_SKIP_PERMISSIONS).count(),
+            1,
+            "{cmd} must carry the flag exactly once"
+        );
+        assert_eq!(
+            cmd,
+            format!("claude --resume {ID_A} --dangerously-skip-permissions --model opus")
+        );
+        // And `strip_selector` is where that happens, so it is visible there.
+        assert_eq!(
+            strip_selector("claude --dangerously-skip-permissions", AgentKind::Claude),
+            Some(vec!["claude".to_string()])
+        );
+    }
+
+    #[test]
+    fn tracker_records_a_disk_scanned_session() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(
+            &obs(pane, "claude", Some("D:/Git/ymux")),
+            1_000,
+            |_, cwd| {
+                assert_eq!(cwd, "D:/Git/ymux");
+                Some(disk(ID_A, "D:\\Git\\ymux"))
+            },
+        );
+        let rec = t.get(pane).expect("recorded");
+        assert_eq!(rec.session_id, ID_A);
+        // The transcript's own spelling is kept, not the pane's (rule 15: the
+        // key is for comparison, the raw string is what names the directory).
+        assert_eq!(rec.cwd, "D:\\Git\\ymux");
+        assert_eq!(rec.source, IdSource::Disk);
+        assert!(rec.interrupted, "status was `working`, not `done`");
+        assert!(t.take_dirty());
+        assert!(!t.take_dirty(), "the flag clears");
+    }
+
+    #[test]
+    fn tracker_skips_an_agent_with_no_resume_story() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(&obs(pane, "gemini", Some("D:/Git/ymux")), 1_000, |_, _| {
+            panic!("must not even look on disk for an agent we cannot resume")
+        });
+        assert!(t.get(pane).is_none());
+    }
+
+    #[test]
+    fn tracker_throttles_the_disk_scan() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let mut calls = 0;
+        // Nothing found: the pane stays unknown, but the scan is still
+        // throttled or every 2 s tick would re-read the transcript tree.
+        for tick in 0..5u64 {
+            let now = 1_000 + tick * 2;
+            if t.wants_disk_scan(pane, now) {
+                calls += 1;
+            }
+            t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _| None);
+        }
+        assert_eq!(calls, 1, "only the first tick may look");
+        assert!(
+            t.wants_disk_scan(pane, 1_000 + DISK_RESCAN_INTERVAL),
+            "and again after the interval"
+        );
+    }
+
+    #[test]
+    fn tracker_never_rescans_a_hook_sourced_pane() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
+        o.hook_session_id = Some(ID_A.to_string());
+        t.observe(&o, 1_000, |_, _| panic!("a hook id needs no disk scan"));
+        assert_eq!(t.get(pane).map(|s| s.source), Some(IdSource::Hook));
+        assert!(!t.wants_disk_scan(pane, 1_000 + DISK_RESCAN_INTERVAL * 10));
+    }
+
+    #[test]
+    fn tracker_refreshes_updated_at_while_the_agent_lives() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_000, |_, _| {
+            Some(disk(ID_A, "D:\\Git\\ymux"))
+        });
+        // Much later, still the same agent and no new disk scan result.
+        let later = 1_000 + DISK_RESCAN_INTERVAL;
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), later, |_, _| {
+            None
+        });
+        let rec = t.get(pane).expect("still recorded");
+        assert_eq!(rec.updated_at, later, "the 24h window measures liveness");
+        assert_eq!(rec.session_id, ID_A);
+    }
+
+    #[test]
+    fn note_agent_exit_declines_without_deleting() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_000, |_, _| {
+            Some(disk(ID_A, "D:\\Git\\ymux"))
+        });
+        t.note_agent_exit(pane);
+        let rec = t.get(pane).expect("record survives");
+        assert!(!rec.active);
+        assert_eq!(plan_for(Some(rec), "", 1_000, |_| true), None);
+        // And the pane can start a fresh conversation afterwards.
+        assert!(t.wants_disk_scan(pane, 1_000));
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_001, |_, _| {
+            Some(disk(ID_B, "D:\\Git\\ymux"))
+        });
+        assert_eq!(t.get(pane).map(|s| s.session_id.as_str()), Some(ID_B));
+        assert!(t.get(pane).is_some_and(|s| s.active));
+    }
+
+    #[test]
+    fn forget_removes_the_record_entirely() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), 1_000, |_, _| {
+            Some(disk(ID_A, "D:\\Git\\ymux"))
+        });
+        t.forget(pane);
+        assert!(t.get(pane).is_none());
+    }
+
+    #[test]
+    fn plan_for_requires_fresh_active_and_present() {
+        let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Disk);
+        s.agent = AgentKind::Claude;
+        let now = s.updated_at + 3 * 3600;
+        let plan = plan_for(Some(&s), "", now, |_| true).expect("resumable");
+        assert_eq!(plan.agent, "claude");
+        assert_eq!(plan.age_secs, 3 * 3600);
+        assert_eq!(plan.cwd, "D:\\Git\\ymux");
+        assert_eq!(
+            plan.command,
+            format!("claude --resume {ID_A} --dangerously-skip-permissions")
+        );
+
+        // Stale.
+        assert_eq!(
+            plan_for(
+                Some(&s),
+                "",
+                s.updated_at + FRESH_WINDOW.as_secs() + 1,
+                |_| true
+            ),
+            None
+        );
+        // Transcript pruned by the agent itself.
+        assert_eq!(plan_for(Some(&s), "", now, |_| false), None);
+        // No record at all.
+        assert_eq!(plan_for(None, "", now, |_| true), None);
+    }
+
+    #[test]
+    fn plan_for_merges_the_panes_own_startup_cmd() {
+        let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Disk);
+        s.agent = AgentKind::Codex;
+        let plan = plan_for(
+            Some(&s),
+            "codex resume --last --model gpt-5",
+            s.updated_at,
+            |_| true,
+        )
+        .expect("resumable");
+        assert_eq!(plan.command, format!("codex resume {ID_A} --model gpt-5"));
     }
 }

@@ -86,6 +86,10 @@ struct PaneState {
     /// A hook reported `SessionEnd`: don't resurrect a process lead from a
     /// CLI that is still shutting down. Cleared by the next hook event.
     ended: bool,
+    /// The agent's own session id, as the last hook for this pane reported
+    /// it. Empty until a hook arrives — the process scan cannot know it, and
+    /// `crate::agent_sessions` falls back to reading the CLI's transcripts.
+    session_id: String,
 }
 
 #[derive(Debug, Default)]
@@ -140,6 +144,13 @@ impl AgentRegistry {
         let st = self.panes.entry(ev.pane_id).or_default();
         // Any hook other than SessionEnd means a live session again.
         st.ended = ev.event == "SessionEnd";
+        // Every hook carries the id; keep the newest non-empty one. A
+        // `/clear` or a fresh `claude` in the same pane arrives as a new
+        // `SessionStart` with a new id, and overwriting is exactly right —
+        // the old conversation is no longer what is on screen.
+        if !ev.session_id.is_empty() {
+            st.session_id = ev.session_id.clone();
+        }
         match ev.event.as_str() {
             "SessionStart" => {
                 st.agents.subagents.clear();
@@ -181,6 +192,31 @@ impl AgentRegistry {
         self.snapshot() != before
     }
 
+    /// The session id the Claude Code hooks reported for `pane_id`, if any.
+    /// Exact, unlike the transcript scan, so it wins wherever both exist.
+    pub fn hook_session_id(&self, pane_id: Uuid) -> Option<&str> {
+        self.panes
+            .get(&pane_id)
+            .map(|s| s.session_id.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Panes where the agent process is gone but the pane itself is still
+    /// open — the user quit the agent rather than closing the terminal.
+    ///
+    /// Same condition `apply_scan`'s `retain` uses, exposed separately so the
+    /// caller can act on it *before* the state is dropped. Deliberately only
+    /// panes still in `live`: at app shutdown every PTY dies at once, and
+    /// reading that as "the user quit the agent" would deactivate exactly the
+    /// records the next launch needs.
+    pub fn exited_panes(&self, live: &HashSet<Uuid>, found: &HashMap<Uuid, String>) -> Vec<Uuid> {
+        self.panes
+            .iter()
+            .filter(|(id, st)| st.process_seen && live.contains(id) && !found.contains_key(id))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Apply one process scan. `live`: every pane with a running PTY.
     /// `found`: panes where an agent process was seen, with its kind.
     /// Returns whether the snapshot changed.
@@ -190,6 +226,9 @@ impl AgentRegistry {
         // process has exited (hook-fed and process-fed alike).
         self.panes
             .retain(|id, st| live.contains(id) && (found.contains_key(id) || !st.process_seen));
+        // Anything dropped here for lack of a process took its hook-borne
+        // session id with it; the store keeps its own copy (see
+        // `SessionTracker::note_agent_exit`), so nothing is lost.
         for (id, kind) in found {
             if !live.contains(id) {
                 continue;
@@ -497,5 +536,60 @@ mod tests {
                 "subagents": [{ "id": "a1", "agent_type": "Explore", "status": "working" }]
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod session_id_tests {
+    use super::*;
+
+    fn hook(pane: Uuid, event: &str, session_id: &str) -> HookEvent {
+        HookEvent {
+            pane_id: pane,
+            agent: "claude".into(),
+            event: event.into(),
+            session_id: session_id.into(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+        }
+    }
+
+    #[test]
+    fn hooks_carry_the_session_id_through() {
+        let pane = Uuid::from_u128(1);
+        let mut reg = AgentRegistry::default();
+        assert_eq!(reg.hook_session_id(pane), None);
+        reg.apply_hook(&hook(pane, "SessionStart", "sess-one"));
+        assert_eq!(reg.hook_session_id(pane), Some("sess-one"));
+        // A hook that omits the id must not erase the one we have.
+        reg.apply_hook(&hook(pane, "UserPromptSubmit", ""));
+        assert_eq!(reg.hook_session_id(pane), Some("sess-one"));
+        // A new conversation in the same pane replaces it.
+        reg.apply_hook(&hook(pane, "SessionStart", "sess-two"));
+        assert_eq!(reg.hook_session_id(pane), Some("sess-two"));
+    }
+
+    #[test]
+    fn exited_panes_names_a_quit_agent_but_not_a_closed_pane() {
+        let quit = Uuid::from_u128(1);
+        let closed = Uuid::from_u128(2);
+        let mut reg = AgentRegistry::default();
+        let live: HashSet<Uuid> = [quit, closed].into_iter().collect();
+        let found: HashMap<Uuid, String> =
+            [(quit, "claude".to_string()), (closed, "claude".to_string())]
+                .into_iter()
+                .collect();
+        reg.apply_scan(&live, &found);
+        assert!(reg.exited_panes(&live, &found).is_empty());
+
+        // The agent in `quit` exited; its pane is still open.
+        let found2: HashMap<Uuid, String> = [(closed, "claude".to_string())].into_iter().collect();
+        assert_eq!(reg.exited_panes(&live, &found2), vec![quit]);
+
+        // Closing the whole app: every pane leaves `live` at once, and none
+        // of them counts as "the user quit the agent".
+        let nothing = HashSet::new();
+        assert!(reg.exited_panes(&nothing, &HashMap::new()).is_empty());
     }
 }
