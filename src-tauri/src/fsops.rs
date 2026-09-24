@@ -190,6 +190,16 @@ fn copy_tree(from: &Path, to: &Path, overwrite: bool) -> YmuxResult<()> {
         if !overwrite && to.exists() {
             return Err(YmuxError::AlreadyExists(to.to_string_lossy().into_owned()));
         }
+        // `fs::copy` onto a symlink follows it and truncates the link's
+        // *target* — some other file the user never chose to overwrite.
+        // Replace the link itself instead: remove it, then copy.
+        if overwrite
+            && fs::symlink_metadata(to)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+        {
+            delete_one(to)?;
+        }
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| YmuxError::from_io(&e, &parent.to_string_lossy()))?;
@@ -948,6 +958,47 @@ mod tests {
         }
 
         assert!(imp::copy(&s(link), &s(d.path().join("out.txt")), false).is_err());
+    }
+
+    /// `fs::copy` onto a symlink follows it and truncates the *target*. An
+    /// overwriting copy or move must replace the link itself, and leave the
+    /// file it pointed at byte-for-byte alone.
+    #[test]
+    fn overwriting_a_symlink_replaces_the_link_never_its_target() {
+        let d = tmp();
+        let target = d.path().join("precious.txt");
+        std::fs::write(&target, b"do not touch").unwrap();
+        let link = d.path().join("link.txt");
+
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&target, &link).is_ok();
+        if !made {
+            eprintln!("skipped: cannot create a file symlink here (Developer Mode off?)");
+            return;
+        }
+
+        let src = d.path().join("new.txt");
+        std::fs::write(&src, b"new content").unwrap();
+        imp::copy(&s(src.clone()), &s(link.clone()), true).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"do not touch");
+        assert!(!std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&link).unwrap(), b"new content");
+
+        // The cross-device move fallback copies through `copy_tree` too;
+        // drive it directly with a fresh link.
+        std::fs::remove_file(&link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        super::copy_tree(&src, &link, true).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"do not touch");
+        assert_eq!(std::fs::read(&link).unwrap(), b"new content");
     }
 
     #[test]

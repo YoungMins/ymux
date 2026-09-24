@@ -211,9 +211,11 @@ export function uniqueName(name: string, isDir: boolean, taken: Iterable<string>
 /// Only a file may replace a file. Replacing a directory would have to
 /// either merge (surprising) or delete the old tree first (destructive, and
 /// `fs_move` cannot do it atomically), so the pane refuses and offers "keep
-/// both" instead.
+/// both" instead. A symlink is never replaced either: a copy onto it writes
+/// through to the link's *target*, which is some other file entirely (the
+/// backend also removes a link before overwriting, as a second line).
 export function canReplace(srcIsDir: boolean, dest: FileEntry | undefined): boolean {
-  return !!dest && !srcIsDir && !dest.is_dir;
+  return !!dest && !srcIsDir && !dest.is_dir && !dest.is_symlink;
 }
 
 export function resolveOverwrite(

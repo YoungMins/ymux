@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyHidden,
   baseName,
+  canReplace,
   crumbs,
   extendTo,
   findConflict,
@@ -219,6 +220,17 @@ describe("overwrite resolution", () => {
       name: "Dir (2)",
       overwrite: false,
     });
+  });
+
+  it("never replaces onto a symlink: that would write through to its target", () => {
+    const link = { ...f("foo.txt"), is_symlink: true };
+    expect(canReplace(false, link)).toBe(false);
+    expect(resolveOverwrite("foo.txt", false, link, "replace", taken)).toEqual({
+      action: "write",
+      name: "foo (3).txt",
+      overwrite: false,
+    });
+    expect(canReplace(false, f("foo.txt"))).toBe(true);
   });
 
   it("keep-both renames and skip skips", () => {
