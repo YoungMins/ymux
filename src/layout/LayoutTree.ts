@@ -52,6 +52,7 @@ export function paneNode(spec: PaneSpec): LayoutNode {
     hotkeys: spec.hotkeys ?? [],
     bg_color: spec.bg_color ?? "",
     worktree_path: spec.worktree_path ?? "",
+    file_path: spec.file_path ?? "",
   };
 }
 
@@ -68,6 +69,7 @@ export function nodeToSpec(node: LayoutNode & { kind: "pane" }): PaneSpec {
     hotkeys: (node.hotkeys ?? []) as HotKeyDef[],
     bg_color: node.bg_color ?? "",
     worktree_path: node.worktree_path ?? "",
+    file_path: node.file_path ?? "",
   };
 }
 
@@ -281,6 +283,61 @@ export function findPane(root: LayoutNode, id: Uuid): PaneSpec | null {
     if (node.kind === "pane" && node.id === id) found = nodeToSpec(node);
   });
   return found;
+}
+
+/// Walk `root` in place, apply `patch` to the pane whose id matches `id`, and
+/// return true on success. The tree's shape is not altered. Mirrors Rust's
+/// `LayoutNode::find_pane_mut`.
+///
+/// Every `PaneSpec` field is copied out and back by hand — CLAUDE.md rule 2's
+/// fourth place. A field missing from either half silently reverts on the
+/// next edit; `LayoutTree.test.ts` round-trips every field through here.
+export function findAndMutatePane(
+  root: LayoutNode,
+  id: Uuid,
+  patch: (spec: PaneSpec) => void,
+): boolean {
+  if (root.kind === "pane") {
+    if (root.id === id) {
+      const snapshot: PaneSpec = {
+        id: root.id,
+        title: root.title,
+        shell: root.shell,
+        cwd: root.cwd,
+        startup_cmd: root.startup_cmd,
+        env: root.env,
+        pane_kind: root.pane_kind ?? "terminal",
+        url: root.url ?? null,
+        hotkeys: root.hotkeys ?? [],
+        bg_color: root.bg_color ?? "",
+        worktree_path: root.worktree_path ?? "",
+        file_path: root.file_path ?? "",
+      };
+      patch(snapshot);
+      root.title = snapshot.title;
+      root.shell = snapshot.shell;
+      root.cwd = snapshot.cwd;
+      root.startup_cmd = snapshot.startup_cmd;
+      root.env = snapshot.env;
+      root.pane_kind = snapshot.pane_kind;
+      root.url = snapshot.url;
+      root.hotkeys = snapshot.hotkeys;
+      root.bg_color = snapshot.bg_color;
+      root.worktree_path = snapshot.worktree_path;
+      root.file_path = snapshot.file_path;
+      return true;
+    }
+    return false;
+  }
+  if (root.kind === "split") {
+    return findAndMutatePane(root.a, id, patch) || findAndMutatePane(root.b, id, patch);
+  }
+  if (root.kind === "tabs") {
+    for (const c of root.children) {
+      if (findAndMutatePane(c, id, patch)) return true;
+    }
+  }
+  return false;
 }
 
 function walk(node: LayoutNode, visit: (n: LayoutNode) => void): void {

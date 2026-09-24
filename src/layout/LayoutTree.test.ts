@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  findAndMutatePane,
+  findPane,
   newPane,
   paneNode,
   panes,
@@ -8,7 +10,7 @@ import {
   nodeToSpec,
   worktreePaths,
 } from "./LayoutTree";
-import type { LayoutNode } from "../types";
+import type { LayoutNode, PaneSpec } from "../types";
 
 describe("paneNode / splitPane field persistence", () => {
   it("paneNode -> nodeToSpec round-trips worktree_path and bg_color", () => {
@@ -148,5 +150,66 @@ describe("removePane in a tab group", () => {
 
   it("returns the same reference when the pane is not in the group", () => {
     expect(removePane(group, newPane("fish").id)).toBe(group);
+  });
+});
+
+// Rule 2 / spec risk 8: every PaneSpec field is copied by hand in three places
+// on this side (paneNode, nodeToSpec, findAndMutatePane). A TOML round-trip
+// alone never caught the historical misses — this walks the frontend path a
+// field actually takes between a pane edit and save_config.
+describe("editor_file_path_survives_save_load", () => {
+  function editorSpec(path: string): PaneSpec {
+    const spec = newPane("", null);
+    spec.pane_kind = "editor";
+    spec.file_path = path;
+    return spec;
+  }
+
+  it("paneNode -> nodeToSpec keeps file_path and the editor kind", () => {
+    const spec = editorSpec("D:\작업\src\main.rs");
+    const back = nodeToSpec(paneNode(spec) as LayoutNode & { kind: "pane" });
+    expect(back.file_path).toBe("D:\작업\src\main.rs");
+    expect(back.pane_kind).toBe("editor");
+  });
+
+  it("findAndMutatePane writes file_path back and keeps every other field", () => {
+    const spec = editorSpec("/w/a.ts");
+    spec.title = "t";
+    spec.bg_color = "#010203";
+    spec.worktree_path = "/wt";
+    const root = splitPane(paneNode(newPane("bash")), "nope", "horizontal", spec);
+    const tree = splitPane(root, (root as { id: string }).id, "vertical", spec);
+    expect(findAndMutatePane(tree, spec.id, (p) => (p.file_path = "/w/b.ts"))).toBe(true);
+    const got = findPane(tree, spec.id)!;
+    expect(got.file_path).toBe("/w/b.ts");
+    expect(got.title).toBe("t");
+    expect(got.bg_color).toBe("#010203");
+    expect(got.worktree_path).toBe("/wt");
+    expect(got.pane_kind).toBe("editor");
+  });
+
+  it("an unrelated patch does not drop file_path", () => {
+    const spec = editorSpec("/w/keep.md");
+    const tree = paneNode(spec);
+    findAndMutatePane(tree, spec.id, (p) => (p.title = "renamed"));
+    expect(findPane(tree, spec.id)!.file_path).toBe("/w/keep.md");
+  });
+
+  it("survives a JSON round-trip of the tree inside tabs (the save_config payload)", () => {
+    const spec = editorSpec("/w/in-tabs.rs");
+    const tree: LayoutNode = {
+      kind: "tabs",
+      id: "g1",
+      active: 1,
+      children: [paneNode(newPane("bash")), paneNode(spec)],
+    };
+    const loaded = JSON.parse(JSON.stringify(tree)) as LayoutNode;
+    expect(panes(loaded).find((p) => p.id === spec.id)?.file_path).toBe("/w/in-tabs.rs");
+  });
+
+  it("a pane written before file_path existed reads back as empty, not undefined", () => {
+    const node = paneNode(newPane("bash")) as LayoutNode & { kind: "pane" };
+    delete (node as { file_path?: string }).file_path;
+    expect(nodeToSpec(node).file_path).toBe("");
   });
 });

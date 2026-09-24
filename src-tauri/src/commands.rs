@@ -171,6 +171,7 @@ pub fn spawn_pane(
         hotkeys: Vec::new(),
         bg_color: String::new(),
         worktree_path: String::new(),
+        file_path: String::new(),
     };
 
     state.pty.spawn(

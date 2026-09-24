@@ -24,6 +24,7 @@ import { FilesPane } from "../files/FilesPane";
 import { baseName } from "../files/fileModel";
 import type { Pane } from "../layout/Pane";
 import {
+  findAndMutatePane,
   findPane,
   newPane,
   paneNode,
@@ -1741,52 +1742,3 @@ export { clampFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE, DEFAULT_FONT_SIZE } from "
 // Needed to satisfy `import type { LayoutNode }` at the top-level in other
 // files that import from this module.
 export type { LayoutNode };
-
-/// Walk `root` in place, apply `patch` to the pane whose id matches `id`, and
-/// return true on success. The tree's shape is not altered. Mirrors Rust's
-/// `LayoutNode::find_pane_mut`.
-function findAndMutatePane(
-  root: LayoutNode,
-  id: Uuid,
-  patch: (spec: PaneSpec) => void,
-): boolean {
-  if (root.kind === "pane") {
-    if (root.id === id) {
-      const snapshot: PaneSpec = {
-        id: root.id,
-        title: root.title,
-        shell: root.shell,
-        cwd: root.cwd,
-        startup_cmd: root.startup_cmd,
-        env: root.env,
-        pane_kind: root.pane_kind ?? "terminal",
-        url: root.url ?? null,
-        hotkeys: root.hotkeys ?? [],
-        bg_color: root.bg_color ?? "",
-        worktree_path: root.worktree_path ?? "",
-      };
-      patch(snapshot);
-      root.title = snapshot.title;
-      root.shell = snapshot.shell;
-      root.cwd = snapshot.cwd;
-      root.startup_cmd = snapshot.startup_cmd;
-      root.env = snapshot.env;
-      root.pane_kind = snapshot.pane_kind;
-      root.url = snapshot.url;
-      root.hotkeys = snapshot.hotkeys;
-      root.bg_color = snapshot.bg_color;
-      root.worktree_path = snapshot.worktree_path;
-      return true;
-    }
-    return false;
-  }
-  if (root.kind === "split") {
-    return findAndMutatePane(root.a, id, patch) || findAndMutatePane(root.b, id, patch);
-  }
-  if (root.kind === "tabs") {
-    for (const c of root.children) {
-      if (findAndMutatePane(c, id, patch)) return true;
-    }
-  }
-  return false;
-}

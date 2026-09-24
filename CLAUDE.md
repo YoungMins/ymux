@@ -90,10 +90,12 @@ When adding a new field to `PaneSpec`, you MUST update **ALL 4 PLACES**:
 
 1. **Rust model** — `src-tauri/src/config/model.rs` → `PaneSpec` struct + all constructors
 2. **TypeScript type** — `src/types.ts` → `PaneSpec` interface
-3. **`nodeToSpec()`** — `src/layout/LayoutTree.ts:56` → manual field copy
-4. **`findAndMutatePane()`** — `src/workspace/WorkspaceManager.ts:603` → snapshot + write-back
+3. **`nodeToSpec()`** and **`paneNode()`** — `src/layout/LayoutTree.ts` → manual field copies (both directions)
+4. **`findAndMutatePane()`** — `src/layout/LayoutTree.ts` → snapshot + write-back
 
 Missing any of these causes the field to silently disappear during save/load.
+`LayoutTree.test.ts`'s `editor_file_path_survives_save_load` walks all three
+TS copies for `file_path`; extend it (or clone it) for a new field.
 
 ### 3. TOML Serialization Gotcha
 

@@ -437,6 +437,9 @@ pub enum PaneKind {
     /// A GUI file manager rendered by the frontend (`src/files/FilesPane.ts`).
     /// It has no PTY. The directory it shows is the pane's `cwd`.
     Files,
+    /// A text editor rendered by the frontend (`src/editor/EditorPane.ts`).
+    /// It has no PTY. The file it has open is the pane's `file_path`.
+    Editor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -482,6 +485,13 @@ pub struct PaneSpec {
     /// Holds the worktree directory; used to offer cleanup when the pane closes.
     #[serde(default)]
     pub worktree_path: String,
+    /// Absolute path of the file an `Editor` pane has open. Empty = untitled
+    /// (an editor pane restored with no file shows its empty state).
+    /// A `String`, not an `Option<String>`: rule 3 — `Option<T>` inside a
+    /// `#[serde(tag = "kind")]` tagged enum does not round-trip through TOML,
+    /// and `PaneSpec` is flattened into `LayoutNode::Pane`.
+    #[serde(default)]
+    pub file_path: String,
 }
 
 impl PaneSpec {
@@ -498,6 +508,7 @@ impl PaneSpec {
             hotkeys: Vec::new(),
             bg_color: String::new(),
             worktree_path: String::new(),
+            file_path: String::new(),
         }
     }
 
@@ -516,6 +527,7 @@ impl PaneSpec {
             hotkeys: Vec::new(),
             bg_color: String::new(),
             worktree_path: String::new(),
+            file_path: String::new(),
         }
     }
 
@@ -532,6 +544,7 @@ impl PaneSpec {
             hotkeys: Vec::new(),
             bg_color: String::new(),
             worktree_path: String::new(),
+            file_path: String::new(),
         }
     }
 
@@ -541,6 +554,15 @@ impl PaneSpec {
         Self {
             pane_kind: PaneKind::Files,
             cwd,
+            ..Self::new_default()
+        }
+    }
+
+    /// An editor pane with `path` open (empty = untitled).
+    pub fn new_editor(path: impl Into<String>) -> Self {
+        Self {
+            pane_kind: PaneKind::Editor,
+            file_path: path.into(),
             ..Self::new_default()
         }
     }
@@ -583,6 +605,7 @@ mod tests {
             hotkeys: Vec::new(),
             bg_color: String::new(),
             worktree_path: String::new(),
+            file_path: String::new(),
         })
     }
 
@@ -940,6 +963,7 @@ mod tests {
                         hotkeys: vec![],
                         bg_color: String::new(),
                         worktree_path: String::new(),
+                        file_path: String::new(),
                     })),
                     b: Box::new(LayoutNode::Pane(PaneSpec {
                         id: b,
@@ -953,6 +977,7 @@ mod tests {
                         hotkeys: vec![],
                         bg_color: String::new(),
                         worktree_path: String::new(),
+                        file_path: String::new(),
                     })),
                 },
             }],
@@ -1212,6 +1237,7 @@ shell = "PowerShell 7"
             }],
             bg_color: "#1a2b3c".to_string(),
             worktree_path: "C:\\wt\\agent-1".to_string(),
+            file_path: "C:\\src\\작업\\main.rs".to_string(),
         };
         let config = Config {
             version: CONFIG_VERSION,
@@ -1246,6 +1272,57 @@ shell = "PowerShell 7"
         assert!(loaded_spec.hotkeys[0].batch);
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
         assert_eq!(loaded_spec.worktree_path, "C:\\wt\\agent-1");
+        assert_eq!(loaded_spec.file_path, "C:\\src\\작업\\main.rs");
+    }
+
+    /// An editor pane keeps its kind and its file through TOML, nested in a
+    /// split *and* in a tab group — rule 3's two tagged-enum shapes. The
+    /// file is the editor pane's only persisted state (spec §0.2); losing it
+    /// reopens the pane empty.
+    #[test]
+    fn editor_pane_kind_and_file_path_roundtrip_nested() {
+        let split = PaneSpec::new_editor("D:\\작업\\src\\lib.rs");
+        let in_tabs = PaneSpec::new_editor("/home/me/notes.md");
+        let untitled = PaneSpec::new_editor("");
+        let mut config = Config::default();
+        config.workspaces[0].root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Pane(split.clone())),
+            b: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 1,
+                children: vec![
+                    LayoutNode::Pane(PaneSpec::new_default()),
+                    LayoutNode::Pane(in_tabs.clone()),
+                    LayoutNode::Pane(untitled.clone()),
+                ],
+            }),
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(toml_str.contains("pane_kind = \"editor\""), "{toml_str}");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        let find = |id: Uuid| *panes.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(find(split.id).pane_kind, PaneKind::Editor);
+        assert_eq!(find(split.id).file_path, "D:\\작업\\src\\lib.rs");
+        assert_eq!(find(in_tabs.id).pane_kind, PaneKind::Editor);
+        assert_eq!(find(in_tabs.id).file_path, "/home/me/notes.md");
+        assert_eq!(find(untitled.id).file_path, "");
+    }
+
+    /// A config written before `file_path` existed loads with it empty.
+    #[test]
+    fn file_path_defaults_to_empty_for_old_configs() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let stripped: String = toml_str
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("file_path"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let loaded: Config = toml::from_str(&stripped).expect("deserialize");
+        assert_eq!(loaded.workspaces[0].panes()[0].file_path, "");
     }
 
     /// A files pane keeps its kind and its directory (`cwd`) through TOML,
