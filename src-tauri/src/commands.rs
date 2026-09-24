@@ -351,13 +351,10 @@ pub fn get_agent_session(
         now,
         crate::agent_sessions::transcript_exists,
     );
-    // The frontend types the command next. Until the scan sees the resumed
-    // agent running, the pane's old scrollback stays on disk.
-    if matches!(outcome, ResumeOutcome::Resume { .. }) {
-        if let Some(r) = &record {
-            sessions.0.lock().begin_resume(pane_id, &r.session_id, now);
-        }
-    }
+    // A resume: the frontend types the command next, and until the scan sees
+    // the resumed agent running the pane's old scrollback stays on disk. A
+    // transcript that is gone: the record is declined now.
+    sessions.0.lock().note_outcome(pane_id, &outcome, now);
     Ok(outcome)
 }
 

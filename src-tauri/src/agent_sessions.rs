@@ -806,6 +806,9 @@ pub struct SessionTracker {
     pending: BTreeMap<Uuid, PendingResume>,
     /// Panes whose resume was just confirmed, for the caller to act on.
     confirmed: Vec<Uuid>,
+    /// Panes whose resume failed this run. Their old scrollback is what the
+    /// next launch restores, so nothing may overwrite it until then.
+    failed: HashSet<Uuid>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
 }
@@ -823,6 +826,12 @@ struct PendingResume {
 /// not typed again on every launch. Generous: the shell has to start, run
 /// its profile, and then start the agent, and the scan only looks every 2 s.
 pub const RESUME_CONFIRM_WINDOW: u64 = 90;
+
+/// How long a resumed agent must have been running before a sighting of it
+/// confirms the resume. `claude --resume <id>` for a conversation it cannot
+/// load prints an error and exits within a second or two — long enough for
+/// one 2 s scan tick to see it.
+pub const RESUME_CONFIRM_MIN_UPTIME: u64 = 10;
 
 /// What `save_scrollback` should do with a pane's blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -962,9 +971,12 @@ impl SessionTracker {
                 .or_else(|| existing.map(|s| s.cwd.clone()))
                 .unwrap_or_default();
             self.record(agent, obs, &id, cwd, source, now);
-            // Only an exact id confirms a resume: the resumed transcript
-            // began before the process did, so a guess never could.
-            if self.pending.get(&pane).is_some_and(|p| p.session_id == id) {
+            // Only an exact id confirms a resume (the resumed transcript
+            // began before the process did, so a guess never could), and
+            // only once the process has outlived a resume that fails fast.
+            let settled =
+                key.is_some_and(|k| now.saturating_sub(k.start_secs) >= RESUME_CONFIRM_MIN_UPTIME);
+            if settled && self.pending.get(&pane).is_some_and(|p| p.session_id == id) {
                 self.pending.remove(&pane);
                 self.confirmed.push(pane);
             }
@@ -1158,8 +1170,28 @@ impl SessionTracker {
             ScrollbackAction::Skip
         } else if self.suppresses_scrollback(pane_id, now) {
             ScrollbackAction::Delete
+        } else if self.failed.contains(&pane_id) {
+            ScrollbackAction::Skip
         } else {
             ScrollbackAction::Save
+        }
+    }
+
+    /// Act on the outcome `get_agent_session` is handing the frontend: a
+    /// resume starts its confirmation window, and a session whose transcript
+    /// is gone is declined now — left active, it would keep the pane's
+    /// scrollback deleted for a day and repeat the banner every launch.
+    pub fn note_outcome(&mut self, pane_id: Uuid, outcome: &ResumeOutcome, now: u64) {
+        match outcome {
+            ResumeOutcome::Resume { .. } => {
+                if let Some(id) = self.store.get(pane_id).map(|s| s.session_id.clone()) {
+                    self.begin_resume(pane_id, &id, now);
+                }
+            }
+            ResumeOutcome::Missing { .. } => {
+                self.dirty |= self.store.deactivate(pane_id);
+            }
+            ResumeOutcome::None => {}
         }
     }
 
@@ -1188,6 +1220,7 @@ impl SessionTracker {
             .collect();
         for pane in expired {
             self.pending.remove(&pane);
+            self.failed.insert(pane);
             self.dirty |= self.store.deactivate(pane);
         }
     }
@@ -1217,6 +1250,7 @@ impl SessionTracker {
         self.last_disk_scan.remove(&pane_id);
         self.bindings.remove(&pane_id);
         self.pending.remove(&pane_id);
+        self.failed.remove(&pane_id);
     }
 }
 
@@ -2661,24 +2695,33 @@ mod tests {
         // In flight: nothing is written, and nothing is deleted.
         assert_eq!(t.scrollback_action(pane, now + 5), ScrollbackAction::Skip);
         assert!(t.take_confirmed().is_empty());
-        // The scan sees the resumed agent, by its own argv.
+        // The scan sees the resumed agent, by its own argv — but a `claude
+        // --resume` that errors out lives a second or two, so one early
+        // sighting does not confirm yet.
+        let resumed = [(
+            pane,
+            process(
+                10,
+                now + 3,
+                &["claude", "--resume", ID_A, CLAUDE_SKIP_PERMISSIONS],
+            ),
+        )];
+        tick(&mut t, now + 6, &resumed, &[], &[]);
+        assert!(t.take_confirmed().is_empty(), "too early to tell");
+        assert_eq!(t.scrollback_action(pane, now + 6), ScrollbackAction::Skip);
         tick(
             &mut t,
-            now + 6,
-            &[(
-                pane,
-                process(
-                    10,
-                    now + 3,
-                    &["claude", "--resume", ID_A, CLAUDE_SKIP_PERMISSIONS],
-                ),
-            )],
+            now + 3 + RESUME_CONFIRM_MIN_UPTIME,
+            &resumed,
             &[],
             &[],
         );
         assert_eq!(t.take_confirmed(), vec![pane], "now the old blob can go");
         assert!(t.take_confirmed().is_empty(), "once");
-        assert_eq!(t.scrollback_action(pane, now + 6), ScrollbackAction::Delete);
+        assert_eq!(
+            t.scrollback_action(pane, now + 20),
+            ScrollbackAction::Delete
+        );
         t.expire_pending(now + 10 * RESUME_CONFIRM_WINDOW);
         assert!(
             t.get(pane).is_some_and(|s| s.active),
@@ -2711,10 +2754,44 @@ mod tests {
             outcome_for(Some(rec), "", ShellFamily::Posix, now + 200, |_| true),
             ResumeOutcome::None
         );
-        // The pane is a shell again, and saves like one — its old blob was
-        // never deleted, so the next launch restores it.
-        assert_eq!(t.scrollback_action(pane, now + 200), ScrollbackAction::Save);
+        // Its old blob was never deleted, and nothing may overwrite it for
+        // the rest of this run either: a save now would replace the history
+        // the next launch is meant to restore with just this run's screen.
+        assert_eq!(t.scrollback_action(pane, now + 200), ScrollbackAction::Skip);
         assert!(t.take_dirty());
+        // A new agent in the pane that does get bound is a live agent pane.
+        tick(
+            &mut t,
+            now + 300,
+            &[(pane, process(11, now + 250, &["claude", "--resume", ID_B]))],
+            &[],
+            &[],
+        );
+        assert_eq!(
+            t.scrollback_action(pane, now + 300),
+            ScrollbackAction::Delete
+        );
+    }
+
+    #[test]
+    fn a_session_whose_transcript_is_gone_is_declined_at_once() {
+        // Otherwise the record stays fresh, `save_scrollback` keeps deleting
+        // the pane's blob for a day, and the banner repeats every launch.
+        let pane = Uuid::from_u128(1);
+        let now = 100_000;
+        let mut t = tracker_with_last_launch(pane, now);
+        let missing = ResumeOutcome::Missing {
+            agent: "claude".into(),
+        };
+        t.note_outcome(pane, &missing, now);
+        assert!(t.get(pane).is_some_and(|s| !s.active));
+        assert_eq!(t.scrollback_action(pane, now), ScrollbackAction::Save);
+        // And a resume outcome starts the pending window.
+        let mut t = tracker_with_last_launch(pane, now);
+        let rec = t.get(pane).cloned();
+        let resume = outcome_for(rec.as_ref(), "", ShellFamily::Posix, now, |_| true);
+        t.note_outcome(pane, &resume, now);
+        assert_eq!(t.scrollback_action(pane, now), ScrollbackAction::Skip);
     }
 
     #[test]
@@ -2749,7 +2826,7 @@ mod tests {
             } else {
                 o.pid_file_session_id = Some(ID_A.to_string());
             }
-            t.observe(&o, now + 6, &[], |_, _| vec![]);
+            t.observe(&o, now + 3 + RESUME_CONFIRM_MIN_UPTIME, &[], |_, _| vec![]);
             assert_eq!(t.take_confirmed(), vec![pane], "via_hook={via_hook}");
         }
     }
