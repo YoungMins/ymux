@@ -302,6 +302,32 @@ dedupes on `normalize("NFC")` only, because the Rust side has already applied
 the full rule before any cwd is emitted, and a second, differently-opinionated
 case rule in TS is the one way to make the two layers disagree.
 
+### 16. Every `#[tauri::command]` starts with its guard
+
+ymux's commands have **no ACL**: `build.rs` has no `AppManifest`, so Tauri
+never checks capabilities for app commands, and every page ymux loads can
+`invoke` them — an `eb-*` embedded browser always, and on Windows even a
+`browser` pane's iframe (WebView2 injects the invoke key into subframes).
+Without a guard, a website can call `spawn_pane` or `write_pane` — RCE.
+
+So the first statement of every command is one of:
+
+- `guard_local(&webview, &request, "<name>")?` (`src-tauri/src/fspath.rs`)
+  — label `main` **and** an `Origin` derived from config. The default.
+- `guard_embedded_child(&webview, &registry, "<name>")?`
+  (`embedded_browser.rs`) — only for the commands in
+  `ipc_guard::EMBEDDED_CHILD_COMMANDS` (today `child_webview_focused`,
+  `forward_keystroke`). Anything on that list is callable by any website;
+  it must take its identity from the caller's label and validate every
+  argument. Don't add to it.
+
+Enforced by `ipc_guard::tests::every_registered_command_starts_with_a_guard`
+(`src-tauri/src/ipc_guard.rs`), which parses `main.rs`'s `generate_handler!`
+and each command body — it runs under `cargo test --no-default-features --lib -p ymux`.
+Don't "fix" this by adding an `AppManifest` or putting ymux commands in a
+capability file: that switches ACL enforcement on for every command at once.
+`eb-*` webviews deliberately have no capability at all.
+
 ## TDD / Testing
 
 ### Quick run
