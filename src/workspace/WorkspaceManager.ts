@@ -24,7 +24,8 @@ import { FilesPane } from "../files/FilesPane";
 import { baseName } from "../files/fileModel";
 import { EditorPane } from "../editor/EditorPane";
 import { fileName } from "../editor/editorModel";
-import { closePlan, closeResult, type CloseChoice } from "../editor/closeGuard";
+import { closePlan, closeResult, type Closable, type CloseChoice } from "../editor/closeGuard";
+import { coldDraftEntry, orphanDraftIds } from "../editor/draft";
 import type { Pane } from "../layout/Pane";
 import {
   findAndMutatePane,
@@ -293,6 +294,7 @@ export class WorkspaceManager {
     }).catch((e) => console.warn("listen ymux:child-focused failed:", e));
 
     await this.activate(this.activeId);
+    void this.sweepOrphanDrafts();
   }
 
   /// Switch to workspace `id`, creating it lazily if it doesn't exist yet.
@@ -413,7 +415,12 @@ export class WorkspaceManager {
     const editors = [...(this.paneCaches.get(id)?.values() ?? [])].filter(
       (p): p is EditorPane => p instanceof EditorPane,
     );
-    if (!(await this.confirmCloseEditors(editors))) return;
+    // A workspace never opened this session has no live panes, but its
+    // editor panes can still have drafts on disk: list them too, and delete
+    // them only once the user has said to.
+    const cold = this.hydrated.has(id) ? [] : await this.coldDrafts(id);
+    if (!(await this.confirmCloseEditors(editors, cold.map((c) => c.entry)))) return;
+    await Promise.all(cold.map((c) => api.deleteEditorDraft(c.paneId).catch(() => {})));
     // Re-resolved after the await: the list may have changed meanwhile.
     if (this.config.workspaces.length <= 1) return;
     const idx = this.config.workspaces.findIndex((w) => w.id === id);
@@ -1284,15 +1291,19 @@ export class WorkspaceManager {
   /// The close guard for several editors at once (a workspace, the window):
   /// one prompt listing every unsaved file (closeGuard.closePlan). A single
   /// dirty editor asks with its own prompt. Resolves true to go ahead.
-  private async confirmCloseEditors(editors: EditorPane[]): Promise<boolean> {
-    const plan = closePlan(
+  /// `cold` lists drafts of editor panes that were never mounted (a
+  /// workspace deleted before it was opened): listed as unsaved, never
+  /// savable from here.
+  private async confirmCloseEditors(editors: EditorPane[], cold: Closable[] = []): Promise<boolean> {
+    const plan = closePlan([
       // `hasPath` here means "Save can protect it" (a pending recovered
       // draft cannot be saved from a close prompt).
-      editors.map((e) => ({ name: e.displayName(), dirty: e.isDirty(), hasPath: e.canSaveOnClose() })),
-    );
+      ...editors.map((e) => ({ name: e.displayName(), dirty: e.isDirty(), hasPath: e.canSaveOnClose() })),
+      ...cold,
+    ]);
     if (plan.kind === "close") return true;
     const dirty = editors.filter((e) => e.isDirty());
-    if (dirty.length === 1) return dirty[0].canClose();
+    if (dirty.length === 1 && cold.length === 0) return dirty[0].canClose();
     const labels: Record<CloseChoice, string> = {
       save: t("editor.saveAll"),
       discard: t("editor.dontSave"),
@@ -1315,6 +1326,31 @@ export class WorkspaceManager {
       if (!ok) break;
     }
     return closeResult(answer, saved);
+  }
+
+  /// Drafts of the editor panes in workspace `wsId`'s layout, read without
+  /// mounting anything (for a workspace that was never opened).
+  private async coldDrafts(wsId: number): Promise<{ paneId: Uuid; entry: Closable }[]> {
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    if (!ws) return [];
+    const out: { paneId: Uuid; entry: Closable }[] = [];
+    for (const spec of panes(ws.root)) {
+      if (spec.pane_kind !== "editor") continue;
+      const entry = coldDraftEntry(await api.loadEditorDraft(spec.id).catch(() => ""));
+      if (entry) out.push({ paneId: spec.id, entry });
+    }
+    return out;
+  }
+
+  /// Startup sweep: delete drafts whose pane id exists nowhere in the config
+  /// (closed before its draft was looked for, or the config edited by hand).
+  /// A draft of any pane still in the config — opened or not — survives.
+  private async sweepOrphanDrafts(): Promise<void> {
+    const ids = await api.listEditorDrafts().catch(() => [] as Uuid[]);
+    const live = this.config.workspaces.flatMap((w) => panes(w.root).map((p) => p.id));
+    for (const id of orphanDraftIds(ids, live)) {
+      await api.deleteEditorDraft(id).catch(() => {});
+    }
   }
 
   /// The window is closing (main.ts's `onCloseRequested`). Every editor in

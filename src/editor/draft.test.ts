@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draftDisposition, encodeDraft, parseDraft, type Draft } from "./draft";
+import { coldDraftEntry, draftDisposition, encodeDraft, orphanDraftIds, parseDraft, type Draft } from "./draft";
 
 const draft: Draft = {
   v: 1,
@@ -24,6 +24,35 @@ describe("draft encode/parse", () => {
     expect(parseDraft(JSON.stringify({ ...draft, eol: "weird" }))).toBeNull();
     expect(parseDraft(JSON.stringify({ ...draft, base: null }))).toBeNull();
     expect(parseDraft(JSON.stringify({ ...draft, text: 3 }))).toBeNull();
+  });
+});
+
+describe("orphanDraftIds", () => {
+  const a = "0b9c2c3e-1f2a-4b5c-8d9e-0a1b2c3d4e5f";
+  const b = "11111111-2222-3333-4444-555555555555";
+
+  it("lists only drafts whose pane is gone from the config", () => {
+    expect(orphanDraftIds([a, b], [a])).toEqual([b]);
+  });
+
+  it("keeps a live pane's draft, whatever the case of its id", () => {
+    expect(orphanDraftIds([a.toUpperCase()], [a])).toEqual([]);
+  });
+
+  it("with no panes at all, everything is an orphan; with no drafts, nothing", () => {
+    expect(orphanDraftIds([a], [])).toEqual([a]);
+    expect(orphanDraftIds([], [a])).toEqual([]);
+  });
+});
+
+describe("coldDraftEntry", () => {
+  it("lists a never-mounted pane's draft by file name, as unsaved and not savable", () => {
+    expect(coldDraftEntry(encodeDraft(draft))).toEqual({ name: "main.rs", dirty: true, hasPath: false });
+  });
+
+  it("is null for no draft or a corrupt one", () => {
+    expect(coldDraftEntry("")).toBeNull();
+    expect(coldDraftEntry("{")).toBeNull();
   });
 });
 

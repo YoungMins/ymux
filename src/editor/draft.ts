@@ -72,6 +72,24 @@ export function parseDraft(blob: string): Draft | null {
   };
 }
 
+/// The startup sweep: drafts whose pane id exists nowhere in the config (the
+/// pane was closed, its workspace deleted, the config edited by hand). A
+/// draft of a pane that is still in the config — hydrated or not — is kept.
+export function orphanDraftIds(draftIds: readonly string[], livePaneIds: Iterable<string>): string[] {
+  const live = new Set([...livePaneIds].map((id) => id.toLowerCase()));
+  return draftIds.filter((id) => !live.has(id.toLowerCase()));
+}
+
+/// What a close prompt lists for a draft of a pane that was never mounted
+/// (a workspace deleted before it was ever opened): its file name, as unsaved
+/// work that Save cannot protect. `null` for no draft or a corrupt one.
+export function coldDraftEntry(blob: string): { name: string; dirty: true; hasPath: false } | null {
+  const d = parseDraft(blob);
+  if (!d) return null;
+  const cut = Math.max(d.path.lastIndexOf("/"), d.path.lastIndexOf("\\"));
+  return { name: cut >= 0 ? d.path.slice(cut + 1) : d.path, dirty: true, hasPath: false };
+}
+
 /// What the pane's load found on disk, for the draft decision. `null` = the
 /// read failed (the file is gone, renamed, locked, no longer text).
 export interface DiskView {

@@ -624,6 +624,14 @@ pub fn load_editor_draft(
     crate::drafts::load(&pane_id).map_err(YmuxError::Io)
 }
 
+/// The pane ids that have an editor draft on disk, for the startup sweep
+/// that removes drafts whose pane no longer exists anywhere in the config.
+#[tauri::command]
+pub fn list_editor_drafts(webview: Webview, request: Request<'_>) -> YmuxResult<Vec<String>> {
+    guard_local(&webview, &request, "list_editor_drafts")?;
+    crate::drafts::list().map_err(YmuxError::Io)
+}
+
 /// Forget an editor pane's draft, if any.
 #[tauri::command]
 pub fn delete_editor_draft(

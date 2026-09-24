@@ -371,6 +371,9 @@ export const api = {
 
   deleteEditorDraft: (id: Uuid): Promise<void> => call("delete_editor_draft", { paneId: id }),
 
+  /// Pane ids with a draft on disk (the startup sweep).
+  listEditorDrafts: (): Promise<Uuid[]> => call("list_editor_drafts"),
+
   /// If the OS clipboard holds an image, save it as a PNG and return that
   /// file's path; `null` means there is no image and the caller should paste
   /// text instead. Rejects when an image was found but could not be saved.
