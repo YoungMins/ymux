@@ -38,6 +38,13 @@ pub mod clipboard_image;
 #[cfg(feature = "desktop")]
 pub mod commands;
 
+// Filesystem command surface for the files and editor panes. Desktop-only
+// because every command takes a `Webview` + `ipc::Request` (the `guard_local`
+// gate) and returns through the Tauri IPC. The decisions it makes live in
+// the ungated `fsx`/`textfile`.
+#[cfg(feature = "desktop")]
+pub mod fsops;
+
 // Update checker. Feature-gated the same way as `commands` because it emits
 // Tauri events and pulls `reqwest` — both only relevant in the desktop build.
 #[cfg(feature = "desktop")]

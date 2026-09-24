@@ -403,16 +403,30 @@ const RUNNABLE_EXTENSIONS: &[&str] = &[
     "pkg",
     "mpkg",
     "term",
+    // ClickOnce application reference: opening one downloads and runs.
+    "appref-ms",
 ];
 
 /// Should this path be revealed in the file manager instead of opened?
 ///
-/// Directories are opened (that *is* "show it in the file manager"); files
-/// whose extension would execute are revealed.
-pub fn should_reveal(path: &Path, is_dir: bool) -> bool {
-    if is_dir {
-        return false;
-    }
+/// Files whose extension would execute are revealed; plain directories are
+/// opened, because that *is* "show it in the file manager".
+///
+/// The extension is checked **before** `is_dir`, and that order is
+/// load-bearing: a macOS `.app` (and `.pkg`, `.workflow`, `.mpkg`) is a
+/// *directory*, so an `is_dir` early return would send it to `opener::open`
+/// — which is `open Foo.app`, i.e. launch the application. A directory that
+/// merely happens to be named `foo.exe` gets revealed instead of opened,
+/// which is harmless.
+///
+/// This is a denylist and so cannot be complete: a new script host with a
+/// new extension, or a file type the user has associated with an
+/// interpreter, is not covered. It is the reason nothing on the filesystem
+/// command surface calls `opener::open` without going through here.
+pub fn should_reveal(path: &Path, _is_dir: bool) -> bool {
+    // `_is_dir` is no longer consulted, but stays in the signature so the
+    // caller keeps paying for the `metadata` call it needs anyway and so
+    // this is a drop-in for the previous behaviour.
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| {
@@ -791,9 +805,27 @@ mod tests {
             "a.app",
             "a.command",
             "a.msi",
+            "a.appref-ms",
         ] {
             assert!(should_reveal(Path::new(name), false), "{name}");
         }
+    }
+
+    /// A macOS `.app` (and `.pkg`, `.workflow`, `.mpkg`) is a **directory**.
+    /// An `is_dir` early return therefore sent it to `opener::open`, which
+    /// is `open Foo.app` — launching the application. The extension has to
+    /// be consulted before `is_dir`, so this pins the order.
+    #[test]
+    fn a_bundle_is_a_directory_and_must_still_be_revealed() {
+        for name in ["Foo.app", "Installer.pkg", "x.mpkg", "y.workflow"] {
+            assert!(
+                should_reveal(Path::new(name), true),
+                "{name} is a directory that would otherwise be launched"
+            );
+        }
+        // An ordinary directory still opens in the file manager.
+        assert!(!should_reveal(Path::new("/srv/project"), true));
+        assert!(!should_reveal(Path::new("notes.txt"), false));
     }
 
     #[test]
@@ -808,9 +840,11 @@ mod tests {
         ] {
             assert!(!should_reveal(Path::new(name), false), "{name}");
         }
-        // A directory *is* the file-manager case, so it opens.
+        // A plain directory *is* the file-manager case, so it opens.
         assert!(!should_reveal(Path::new("scripts"), true));
-        assert!(!should_reveal(Path::new("bundle.app"), true));
+        // `bundle.app` used to be asserted here as "opens", which was the
+        // bug: on macOS a `.app` is a directory and `open Foo.app` launches
+        // it. See `a_bundle_is_a_directory_and_must_still_be_revealed`.
     }
 
     #[test]
