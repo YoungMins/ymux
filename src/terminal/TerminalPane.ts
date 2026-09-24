@@ -509,6 +509,13 @@ export class TerminalPane implements Pane {
       plan: this.resumePlan,
       persistEnabled: this.opts.persistScrollback?.() ?? false,
     });
+    if (action.kind === "resume") {
+      // The blob this pane last wrote is a picture of the conversation we
+      // are about to continue for real. Drop it now, or a later launch that
+      // declines the resume (stale record, transcript pruned) would replay
+      // that dead screen (spec §5).
+      void api.deleteScrollback(this.id).catch(() => {});
+    }
 
     // Restore prior scrollback (if persistence is enabled and a save exists)
     // BEFORE the live PTY listener is registered below, so replayed history

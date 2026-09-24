@@ -648,6 +648,21 @@ impl SessionTracker {
         self.last_disk_scan.remove(&pane_id);
     }
 
+    /// Whether `pane_id` should stop persisting its scrollback (spec §5).
+    ///
+    /// True for any pane with a fresh, active record — *not* only one that
+    /// was resumed at spawn. A pane running Claude for the first time has a
+    /// fresh record but was not resumed, and if it kept saving, the blob it
+    /// wrote would sit on disk unread (the next launch resumes and skips it)
+    /// until the record went stale or the user quit the agent — and would
+    /// then be replayed, putting a dead Claude screen back on the display
+    /// this feature exists to clear.
+    pub fn suppresses_scrollback(&self, pane_id: Uuid, now: u64) -> bool {
+        self.store
+            .get(pane_id)
+            .is_some_and(|s| s.is_fresh_at(now) && !s.cwd.is_empty())
+    }
+
     /// The user closed the pane for good. Mirrors `delete_scrollback`.
     pub fn forget(&mut self, pane_id: Uuid) {
         self.dirty |= self.store.remove(pane_id);
@@ -1312,6 +1327,39 @@ mod tests {
         let mut s = session(Uuid::from_u128(1), ID_A, IdSource::Hook);
         s.cwd = String::new();
         assert_eq!(plan_for(Some(&s), "", s.updated_at, |_| true), None);
+    }
+
+    #[test]
+    fn a_pane_with_a_live_agent_stops_persisting_scrollback() {
+        // Spec §5, and the half that is easy to miss: the condition is "has a
+        // fresh record", not "was resumed at spawn". The very first Claude
+        // session in a pane is not resumed and must still stop saving.
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let now = 10 * PERSIST_GRANULARITY;
+        assert!(
+            !t.suppresses_scrollback(pane, now),
+            "a plain shell pane saves as it always did"
+        );
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _, _| {
+            Some(disk(ID_A, r"D:\Git\ymux"))
+        });
+        assert!(t.suppresses_scrollback(pane, now));
+        // Quitting the agent hands the pane back to the shell, and the shell
+        // gets its scrollback persistence back with it.
+        t.note_agent_exit(pane);
+        assert!(!t.suppresses_scrollback(pane, now));
+    }
+
+    #[test]
+    fn a_stale_record_does_not_suppress_scrollback() {
+        let pane = Uuid::from_u128(1);
+        let mut t = SessionTracker::default();
+        let now = 10 * PERSIST_GRANULARITY;
+        t.observe(&obs(pane, "claude", Some("D:/Git/ymux")), now, |_, _, _| {
+            Some(disk(ID_A, r"D:\Git\ymux"))
+        });
+        assert!(!t.suppresses_scrollback(pane, now + FRESH_WINDOW.as_secs() + 1));
     }
 
     #[test]

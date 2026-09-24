@@ -475,7 +475,27 @@ pub fn notify(app: AppHandle, title: String, body: String) -> YmuxResult<()> {
 /// can be unit-tested without a running webview (and on Linux CI, where this
 /// `desktop`-gated module doesn't even compile).
 #[tauri::command]
-pub fn save_scrollback(pane_id: String, blob: String) -> YmuxResult<()> {
+pub fn save_scrollback(
+    sessions: State<'_, SharedSessions>,
+    pane_id: String,
+    blob: String,
+) -> YmuxResult<()> {
+    // A pane whose agent is mid-conversation neither restores nor saves
+    // (spec §5). Enforced here rather than only in the frontend because the
+    // condition is "has a fresh record", not "was resumed at spawn": the
+    // *first* Claude session in a pane is not resumed, and a blob it wrote
+    // would sit unread until the record went stale and then be replayed —
+    // putting back exactly the dead screen this feature removes. Any blob
+    // already on disk goes with it.
+    let suppressed = Uuid::parse_str(&pane_id).is_ok_and(|id| {
+        sessions
+            .0
+            .lock()
+            .suppresses_scrollback(id, crate::agent_sessions::now_secs())
+    });
+    if suppressed {
+        return crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io);
+    }
     crate::scrollback::save_blob(&pane_id, &blob).map_err(YmuxError::Io)
 }
 
