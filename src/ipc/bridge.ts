@@ -25,10 +25,6 @@ export interface SpawnArgs {
   cwd?: string | null;
   rows: number;
   cols: number;
-  /// Run this program directly instead of `shell` (see `SpawnArgs.argv` in
-  /// commands.rs). No caller since the viewer tab became an editor pane;
-  /// removed with the sidecars (spec §5 step 6).
-  argv?: string[];
 }
 
 export interface ResizeArgs {
@@ -419,12 +415,12 @@ export const api = {
   clearAgentSession: (id: Uuid): Promise<void> =>
     call("clear_agent_session", { paneId: id }),
 
-  /// Load the shared ymux/yCode color palette from `<config_dir>/theme.toml`.
+  /// Load the ymux color palette from `<config_dir>/theme.toml`.
   /// Returns the default Night Owl-inspired palette if no file exists yet.
   loadSyntaxTheme: (): Promise<YTheme> => call("load_syntax_theme"),
 
-  /// Persist the palette back to `theme.toml`. Every y* TUI tool re-reads
-  /// it on next launch — no live reload yet.
+  /// Persist the palette back to `theme.toml`. The editor pane reads it once
+  /// per session — no live reload yet.
   saveSyntaxTheme: (theme: YTheme): Promise<void> =>
     call("save_syntax_theme", { theme }),
 

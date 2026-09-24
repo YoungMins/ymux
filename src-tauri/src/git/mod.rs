@@ -309,9 +309,8 @@ const RS: char = '\u{1e}';
 
 /// The `--format` string [`parse_log_porcelain`] expects.
 ///
-/// `tools/ygit` runs `git log --graph --oneline --decorate` and parses the
-/// *drawn ASCII graph* back out with a lane colouriser
-/// (`tools/ygit/src/graph.rs`). The GUI does not inherit that: a machine
+/// The retired `ygit` TUI ran `git log --graph --oneline --decorate` and
+/// parsed the *drawn ASCII graph* back out with a lane colouriser. The GUI does not inherit that: a machine
 /// format plus parent hashes is strictly more information and has no
 /// escaping hazards.
 ///
@@ -374,7 +373,7 @@ pub fn parse_log_porcelain(out: &str) -> Vec<CommitInfo> {
 
 /// Strip the two-column marker `git branch` writes in front of a name.
 ///
-/// Ported verbatim from `tools/ygit/src/app.rs`. It strips exactly *one*
+/// Ported verbatim from the retired `ygit` TUI. It strips exactly *one*
 /// marker — `* ` (current), `+ ` (checked out in another worktree) or two
 /// spaces — and rejects the `(HEAD detached at …)` pseudo-entry, which is
 /// prose and not a branch anyone can check out.
@@ -533,7 +532,7 @@ pub fn checkout(cwd: &Path, branch: &str) -> YmuxResult<()> {
     if !is_git_repo(cwd) {
         return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
     }
-    // The trailing `--` is ygit's (`tools/ygit/src/app.rs`): it ends the
+    // The trailing `--` is the retired `ygit` TUI's: it ends the
     // revision list, so a branch whose name is also a file in the tree is
     // still read as the branch, never as "restore this file".
     run_git(cwd, &["checkout", branch, "--"]).map(|_| ())
@@ -850,7 +849,7 @@ mod tests {
         assert_eq!(list.local, vec!["main"]);
     }
 
-    // The next three are `tools/ygit/src/app.rs`'s tests, kept verbatim as a
+    // The next three are the retired `ygit` TUI's tests, kept verbatim as a
     // regression guard on the marker stripping even though `BRANCH_FORMAT`
     // no longer produces those spellings.
     const REAL_BRANCH_OUTPUT: &[&str] = &["  master", "* 기능/한글브랜치", "+ 워크트리브랜치"];

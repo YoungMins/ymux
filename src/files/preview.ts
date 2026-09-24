@@ -1,7 +1,7 @@
 // Pure preview model for the files pane: given the head of a file (bytes) or
 // the head of a directory (names), decide what the preview says. The caps
-// and the UTF-8 rule are ported from `tools/ydir/src/preview.rs` so the pane
-// and the TUI it replaces make the same decisions:
+// and the UTF-8 rule are ported from the retired ydir TUI's preview so the
+// pane and the TUI it replaced make the same decisions:
 //
 //  - read at most 64 KiB, keep at most 200 lines, name at most 200 entries;
 //  - a NUL in the first 8 KiB means binary — the same window as the backend's

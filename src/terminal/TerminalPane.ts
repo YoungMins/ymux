@@ -78,9 +78,6 @@ export interface TerminalPaneOptions {
   /// `persistScrollback`). Absent means off, so a standalone pane renders
   /// exactly like plain xterm.
   bottomAnchor?: () => boolean;
-  /// Run this program directly instead of the spec's shell. Its exit is the
-  /// pane's exit (`onExit`). The file dock uses it to host `ydir`.
-  argv?: string[];
   /// Render this pane without its own title row and hotkey bar. Tabs use it:
   /// a `PaneGroup` draws one shared title + hotkey bar above the strip and
   /// binds them to the active tab (spec §4). Absent or `true` leaves every
@@ -605,7 +602,6 @@ export class TerminalPane implements Pane {
         cwd: this.resumePlan?.cwd || this.spec.cwd || null,
         rows,
         cols,
-        argv: this.opts.argv,
       });
       this.spawned = true;
 
@@ -722,16 +718,6 @@ export class TerminalPane implements Pane {
   /// included.
   async paste(): Promise<void> {
     await this.pasteClipboard();
-  }
-
-  /// Submit `cmd` to the shell as if the user had typed it and pressed Enter.
-  /// Tells the status machine first: this write bypasses xterm's `onData`, so
-  /// without it the pane would stay `idle` while the command runs (the same
-  /// gap the HotKey bar and `startup_cmd` had).
-  runCommand(cmd: string): void {
-    if (!this.spawned) return;
-    this.statusMachine.onSubmit(Date.now());
-    void api.writePane(this.id, ENCODER.encode(`${cmd}\r`));
   }
 
   /// Toggle the search bar. Once shown, pressing Enter calls `findNext`,

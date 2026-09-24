@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   WiX v3 fragment that adds the ymux install directory to the system PATH.
-  This makes ymux, ymon, ydir, ycode, and y available from any terminal
-  immediately after MSI installation (no manual PATH editing).
+  This makes `ymux` available from any terminal immediately after MSI
+  installation (no manual PATH editing). The only other binary in that
+  directory is `y`, the Claude Code hook relay, which Claude Code invokes by
+  absolute path and so does not need PATH. Kept deliberately when the TUI
+  tools were retired: dropping an MSI Environment component across a major
+  upgrade is its own regression surface.
 
   Tauri's WiX bundler merges any .wxs files found in src-tauri/wix/ into
   the generated installer.

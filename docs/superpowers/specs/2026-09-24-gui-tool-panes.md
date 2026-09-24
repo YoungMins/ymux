@@ -16,12 +16,13 @@ ymon 726 · ygit 615) plus 292 lines of launcher come out; three new pane
 implementations and a new backend filesystem/git surface go in. It is
 the largest single change the project has attempted.
 
-**One sidecar survives** — see §3.4. `y` is not only a launcher: it is the
+**One sidecar survives** — see §5 Step 5. `y` is not only a launcher: it is the
 relay that carries Claude Code hook events into the agent tree, and the
 absolute path to it is written into every tracking user's
 `~/.claude/settings.json`. Dropping it without a replacement breaks the agent
 tree *and* leaves those users' Claude Code invoking a missing binary on every
-hook event.
+hook event. *(As implemented: `y` keeps its name and path and shrinks to the
+hook relay alone — see the Step 5 amendment.)*
 
 Five sub-projects, in this order:
 
@@ -884,6 +885,24 @@ git pane replaces).
 
 ### Step 5 — The hook relay *(ships as its own release)*
 
+> **Amended at implementation (2026-09-24): `y` is kept, not replaced.** The
+> user wanted steps 5 and 6 shipped in one push, and the two-release plan below
+> exists only because the hook binary's *path* changes. So the path does not
+> change: the binary stays `y`, the sidecar stays `binaries/y`, and
+> `tools/ylauncher` shrinks to the hook relay alone — `agent_hook.rs` untouched
+> (same 300 ms bounded `Ack` wait; prints nothing, always exits 0, returns at
+> once without `YMUX_PANE_ID`/`YMUX_IPC`; same unit and `CARGO_BIN_EXE_y`
+> integration tests), with the launcher's tool table, PATH scanning, help and
+> `--version` deleted, and its unused `ytheme` dependency dropped. Any
+> invocation other than `y agent-hook …` prints one usage line on stderr and
+> exits 2 (tested). Because every tracking user's `settings.json` already
+> points at `…/y`, there is nothing to migrate: `agent_hooks.rs` is unchanged,
+> `y_sidecar_path()` keeps resolving `y{.exe}` beside the running executable,
+> and `install_refreshes_the_y_path` plus the marker logic hold as they are. No
+> `tools/yhook`, no `ymux-hook`, no interim release carrying both binaries.
+> Cost: a crate named `ylauncher` that no longer launches anything — cosmetic,
+> and cheaper than a path migration. The original plan follows for the record.
+
 The blocker on deleting `y`. `agent_hooks::hook_command` (`agent_hooks.rs:36`)
 writes `"<abs path>/y" agent-hook claude --ymux-agent-hook` into every tracking
 user's `~/.claude/settings.json`. Delete `y` and those users' Claude Code
@@ -914,6 +933,12 @@ writing the socket directly* — no portable way to do a bounded Ack wait, and i
 would have to be re-derived for cmd, PowerShell, bash and zsh.
 
 ### Step 6 — Cut-over *(one commit; rule 4 makes it atomic)*
+
+> **Amended with Step 5:** read `ymux-hook` below as `y` and `yhook` as
+> `ylauncher`. `tools/ylauncher/` is **kept** (as the hook relay), so
+> `externalBin` stays `["binaries/y"]`, `build-tools.mjs` stays
+> `[{ pkg: "ylauncher", bin: "y" }]`, the CI dummy loop is `for tool in y`,
+> and the `-p` lists keep `ylauncher`.
 
 Rule 4: Tauri's build script validates `externalBin` paths even during
 `cargo check`, so `tauri.conf.json`, `build-tools.mjs` and the CI dummy loop
@@ -977,8 +1002,9 @@ must move together or CI breaks.
   and any "available from any terminal" claim; document the panes; update the
   keyboard tables (rule 6).
 - Version bump per rule 5 — **now four files, not five** (`yversion` is gone).
-- Release notes must state plainly: **the `ydir` / `ycode` / `ygit` / `ymon` /
-  `y` commands no longer exist.**
+- Release notes must state plainly: **the `ydir` / `ycode` / `ygit` / `ymon`
+  commands no longer exist**, and `y` survives only as the Claude Code hook
+  relay (`y mon`, `y code …` etc. are gone).
 
 ---
 
@@ -994,7 +1020,7 @@ must move together or CI breaks.
 | `y mon` / `y code x.rs` shorthand | Gone with the launcher | §5 step 6 |
 | A hand-written `startup_cmd` or `HotKeyDef` running `ycode foo.rs` | Breaks. Not auto-migrated — the strings are arbitrary user data. Release notes call this out | §0.3 |
 | A viewer tab or dock left open at shutdown | Already survives as an ordinary terminal pane today (`argv` is never persisted), so nothing changes at upgrade: it reloads as a shell tab, exactly as it does now. The *next* Enter from the files pane opens a real editor pane | §0.3 |
-| Claude Code hooks pointing at `…/y agent-hook claude --ymux-agent-hook` | Rewritten in place to `…/ymux-hook` on next launch, marker preserved, foreign hooks untouched (rule 12) | §5 step 5 |
+| Claude Code hooks pointing at `…/y agent-hook claude --ymux-agent-hook` | Unchanged — `y` survives as the hook relay at the same path, so nothing is rewritten (Step 5 amendment) | §5 step 5 |
 | `%APPDATA%\ymux\theme.toml` themed only ycode's syntax colours | Now themes the editor pane | §3.2 |
 | Install dir on PATH | Unchanged — `ymux.exe` stays reachable | §5 step 6 |
 | Markdown preview (`Alt+M`) | Gone in v1; deferred, not dropped | §3.1 |
@@ -1149,6 +1175,10 @@ only step 6 removes `y`. The `--ymux-agent-hook` marker is preserved so
 `install_preserves_foreign_hooks_and_key_order` /
 `uninstall_restores_foreign_settings_exactly` run before anything else in that
 step — rule 12 says so explicitly.
+
+**As implemented:** retired rather than mitigated — `y` stays at the same path
+as the hook relay (Step 5 amendment), so no user's `settings.json` changes and
+there is no non-consecutive-upgrade window.
 
 ### 6. Performance regressions from the new backends
 

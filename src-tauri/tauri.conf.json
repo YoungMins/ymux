@@ -39,11 +39,7 @@
       "icons/icon.png"
     ],
     "externalBin": [
-      "binaries/ymon",
-      "binaries/ydir",
-      "binaries/ycode",
-      "binaries/y",
-      "binaries/ygit"
+      "binaries/y"
     ],
     "windows": {
       "webviewInstallMode": {

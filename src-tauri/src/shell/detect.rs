@@ -754,8 +754,8 @@ case ";${PROMPT_COMMAND:-};" in
 esac
 "#;
 
-    /// `<config_dir>/ymux`, created on demand. Shared with `theme.toml` and
-    /// the rest of the y* family via `ytheme::config_dir`.
+    /// `<config_dir>/ymux`, created on demand. Shared with `theme.toml` via
+    /// `ytheme::config_dir`.
     fn ymux_dir() -> Option<PathBuf> {
         let dir = dirs::config_dir()?.join("ymux");
         if let Err(e) = std::fs::create_dir_all(&dir) {

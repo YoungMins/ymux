@@ -2,9 +2,9 @@
 //!
 //! Two responsibilities:
 //!   1. Load / save the shared `ytheme::Theme` so the frontend can let users
-//!      edit yCode's syntax colors (and the broader palette) without opening
-//!      a text editor. The theme is written to `<config_dir>/theme.toml`,
-//!      which every y* TUI tool re-reads on next launch.
+//!      edit the editor pane's syntax colors (and the broader palette)
+//!      without opening a text editor. The theme is written to
+//!      `<config_dir>/theme.toml`.
 //!   2. Open the theme file or the ymux config directory with the OS
 //!      default app, for power users who want raw TOML editing or backup.
 //!

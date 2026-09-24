@@ -112,7 +112,7 @@ impl<'a> ProcTree<'a> {
     }
 
     /// The deepest descendant of `root_pid` (exclusive): a shell that reached
-    /// `ycode` through a wrapper reports `ycode`, not the wrapper. Breadth
+    /// `vim` through a wrapper reports `vim`, not the wrapper. Breadth
     /// first, so a tie at the same depth resolves to the lowest pid (children
     /// are pid-sorted in `new`). Cycle-safe against PID reuse, like
     /// `agent_under`.
@@ -138,67 +138,23 @@ impl<'a> ProcTree<'a> {
 
     /// The tab label for the shell `root_pid`, or `None` for a bare shell.
     ///
-    /// A *known* program wins over depth: a working agent constantly spawns
+    /// A known agent wins over depth, labelled by its kind (so `node` running
+    /// the claude-code CLI reads `claude`): a working agent constantly spawns
     /// and reaps helpers (`rg`, `node`, `bash`), so labelling the deepest
     /// descendant made a busy `claude` flicker through its children's names.
-    /// Only when nothing under the shell is recognised does the old
-    /// deepest-descendant rule apply, which is what still names a `vim` under
-    /// a wrapper.
+    /// Only when no agent is under the shell does the old deepest-descendant
+    /// rule apply, which is what still names a `vim` under a wrapper.
     pub fn label_under(&self, root_pid: u32) -> Option<String> {
-        self.known_label_under(root_pid)
+        self.agent_under(root_pid)
+            .map(str::to_string)
             .or_else(|| self.deepest_under(root_pid).map(proc_label))
-    }
-
-    /// Breadth-first from `root_pid` (exclusive) for the nearest process we
-    /// label by name: a known agent (labelled by its kind, so `node` running
-    /// the claude-code CLI reads `claude`) or one of [`FILE_ARG_EXES`], whose
-    /// own label carries the file it opened. Nearest-wins and cycle-safety
-    /// match [`Self::agent_under`].
-    fn known_label_under(&self, root_pid: u32) -> Option<String> {
-        let mut seen: HashSet<u32> = HashSet::from([root_pid]);
-        let mut queue: VecDeque<u32> = VecDeque::from([root_pid]);
-        while let Some(pid) = queue.pop_front() {
-            for child in self.children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
-                if !seen.insert(child.pid) {
-                    continue;
-                }
-                if let Some(kind) = match_agent(&child.exe_stem, &child.argv) {
-                    return Some(kind.to_string());
-                }
-                if FILE_ARG_EXES.contains(&child.exe_stem.to_ascii_lowercase().as_str()) {
-                    return Some(proc_label(child));
-                }
-                queue.push_back(child.pid);
-            }
-        }
-        None
     }
 }
 
-/// Executables whose first path-like argument belongs in the label, because
-/// the file *is* what the pane is showing.
-const FILE_ARG_EXES: &[&str] = &["ycode"];
-
-/// How a running process is labelled on a tab: its executable stem, plus the
-/// file it opened for the editors in [`FILE_ARG_EXES`] (`ycode: main.rs`).
+/// How a running process is labelled on a tab: its lower-cased executable
+/// stem.
 pub fn proc_label(entry: &ProcEntry) -> String {
-    let stem = entry.exe_stem.to_ascii_lowercase();
-    if !FILE_ARG_EXES.contains(&stem.as_str()) {
-        return stem;
-    }
-    // First non-flag argument after the program itself, reduced to its file
-    // name so a long absolute path can't blow up the strip.
-    let file = entry
-        .argv
-        .iter()
-        .skip(1)
-        .find(|a| !a.starts_with('-'))
-        .and_then(|a| a.replace('\\', "/").rsplit('/').next().map(str::to_string))
-        .filter(|f| !f.is_empty());
-    match file {
-        Some(f) => format!("{stem}: {f}"),
-        None => stem,
-    }
+    entry.exe_stem.to_ascii_lowercase()
 }
 
 /// `pane id -> label` for every pane whose shell has at least one descendant.
@@ -515,34 +471,6 @@ mod tests {
     }
 
     #[test]
-    fn proc_label_reports_ycodes_file_argument() {
-        assert_eq!(
-            proc_label(&proc(1, None, "ycode", &["ycode", "/home/x/src/main.rs"])),
-            "ycode: main.rs"
-        );
-        assert_eq!(
-            proc_label(&proc(
-                1,
-                None,
-                "ycode",
-                &["ycode", r"D:\Git\ymux\src\app.ts"]
-            )),
-            "ycode: app.ts"
-        );
-        // Flags before the path are skipped; a bare `ycode` stays bare.
-        assert_eq!(
-            proc_label(&proc(
-                1,
-                None,
-                "ycode",
-                &["ycode", "--readonly", "notes.md"]
-            )),
-            "ycode: notes.md"
-        );
-        assert_eq!(proc_label(&proc(1, None, "ycode", &["ycode"])), "ycode");
-    }
-
-    #[test]
     fn deepest_under_walks_past_wrappers_to_the_leaf() {
         // shell(10) -> cmd(11) -> node(12): the innermost process is the one
         // the user is looking at, so that is what the tab is called.
@@ -580,14 +508,14 @@ mod tests {
         let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let procs = vec![
             proc(10, Some(1), "bash", &[]),
-            proc(11, Some(10), "ycode", &["ycode", "/w/README.md"]),
+            proc(11, Some(10), "vim", &["vim", "/w/README.md"]),
             proc(20, Some(1), "pwsh", &[]),
             proc(30, Some(1), "zsh", &[]),
             proc(31, Some(30), "claude", &["claude"]),
         ];
         let shells: HashMap<Uuid, u32> = [(a, 10), (b, 20), (c, 30)].into_iter().collect();
         let found = scan_labels(&shells, &procs);
-        assert_eq!(found.get(&a).map(String::as_str), Some("ycode: README.md"));
+        assert_eq!(found.get(&a).map(String::as_str), Some("vim"));
         assert!(!found.contains_key(&b), "a bare shell reports no label");
         assert_eq!(found.get(&c).map(String::as_str), Some("claude"));
     }
@@ -613,25 +541,8 @@ mod tests {
     }
 
     #[test]
-    fn label_keeps_the_editor_file_when_the_editor_has_children() {
-        // `ycode: <file>` is the whole point of FILE_ARG_EXES, and ycode
-        // shelling out (git, a formatter) must not rename the tab.
-        let procs = vec![
-            proc(10, Some(1), "bash", &[]),
-            proc(11, Some(10), "ycode", &["ycode", "/w/src/main.rs"]),
-            proc(12, Some(11), "git", &["git", "diff"]),
-        ];
-        let id = Uuid::new_v4();
-        let shells: HashMap<Uuid, u32> = [(id, 10)].into_iter().collect();
-        assert_eq!(
-            scan_labels(&shells, &procs).get(&id).map(String::as_str),
-            Some("ycode: main.rs"),
-        );
-    }
-
-    #[test]
     fn label_falls_back_to_the_deepest_descendant_without_a_known_program() {
-        // Nothing here is an agent or an editor we label specially, so the
+        // Nothing here is a known agent, so the
         // old deepest-wins rule still names the tab after what the user is
         // actually looking at.
         let procs = vec![

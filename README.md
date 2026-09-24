@@ -33,7 +33,7 @@ on macOS), and numbered workspaces that each remember their own layout.
 Download `ymux_*_x64_en-US.msi` from
 [Releases](https://github.com/YoungMins/ymux/releases) and run it. The installer
 bundles a WebView2 bootstrapper and adds the install directory to `PATH`, so
-`ymux`, `ymon`, `ydir`, `ycode`, `ygit`, and `y` work from any terminal.
+`ymux` can be launched from any terminal.
 
 ### macOS (Apple Silicon, macOS 11+)
 
@@ -47,17 +47,6 @@ quarantine flag once:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/ymux.app
-```
-
-Inside ymux, `ymon`, `ydir`, `ycode`, `ygit` and `y` work straight away — the
-app puts its own directory on the `PATH` of every pane it opens, because macOS
-gives an installer no way to register one.
-
-To use them from **other** terminals (Terminal.app, iTerm, an editor's shell),
-add that directory to your `~/.zshrc` yourself:
-
-```sh
-export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
 ```
 
 ## Features
@@ -114,13 +103,12 @@ export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
   > (e.g. github.com, google.com) will not load. It's designed for development
   > use — local dev servers, Storybook, internal dashboards, API docs,
   > localhost previews, etc. — not general web browsing.
-- **File dock**: `Ctrl+Shift+E` toggles a collapsible right-side panel running
-  `ydir`, which follows the active pane's working directory as you `cd`
-  around. Press Enter on a file there to open it in a reused viewer tab
-  instead of leaving the dock. In the dock yDir drops the two-panel layout
-  for one file list with a preview of the selected file or folder beneath
-  it; `Tab` shows and hides the preview. Drag the dock's left edge to
-  resize it.
+- **File dock**: `Ctrl+Shift+E` toggles a collapsible right-side files pane
+  that follows the active pane's working directory as you `cd` around.
+  Press Enter on a file there to open it in a reused editor tab instead of
+  leaving the dock. A preview of the selected file or folder sits beneath
+  the list; `Tab` shows and hides it. Drag the dock's left edge to resize
+  it.
 - **Pane zoom**: `Ctrl+Shift+Z` hides every other pane so you can focus.
   Press again to restore the split.
 - **Scrollback search**: `Ctrl+F` opens a find bar on the focused terminal.
@@ -142,9 +130,9 @@ export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
 - **Clickable URLs**: `Ctrl+Click` on any `http://` or `https://` link inside
   a terminal opens it in your default browser.
 - **Settings panel (⚙)**: WinUI 3-style modal with a left sidebar (General,
-  Syntax Colors, Shortcuts, Tools, Config Files) and right content pane.
-  Pick the language, edit yCode's syntax color palette with live color
-  pickers, browse the built-in shortcut/tool reference, or jump straight
+  Syntax Colors, Shortcuts, Config Files) and right content pane.
+  Pick the language, edit the editor pane's syntax color palette with
+  color pickers, browse the built-in shortcut reference, or jump straight
   to the underlying `theme.toml` in your default editor.
 - **Command palette**: `Ctrl+Shift+P` opens a VS Code-style searchable
   command overlay. Fuzzy-match any built-in action by name or keybinding.
@@ -165,22 +153,25 @@ export PATH="/Applications/ymux.app/Contents/MacOS:$PATH"
   Français, العربية, Português, Русский, Türkçe, Deutsch, Tiếng Việt.
   Switch from the language selector in the bottom-right status bar.
 - **MSI installer with PATH**: the MSI adds the install directory to the
-  system PATH, so `ymux`, `ymon`, `ydir`, `ycode`, `ygit`, and `y` are immediately
-  available from any terminal after install.
+  system PATH, so `ymux` is available from any terminal right after install.
 - **Lightweight**: Tauri binary + WebView2. Installer target < 10 MB.
 
-### Companion TUI tools
+### Tool panes
 
-Standalone binaries that run inside any ymux terminal pane. Install them
-alongside ymux or use the `y` launcher (`y mon`, `y dir`, `y code`, `y git`).
+Files, editor and git views are panes rendered by ymux itself, alongside
+terminals and browsers. Open one from a terminal's right-click menu (it splits
+that pane and inherits its working directory) or from the command palette.
 
-| Tool | Command | Description |
-|------|---------|-------------|
-| **ymon** | `ymon` | htop/btop-style system monitor (CPU, memory, disk, processes) |
-| **ydir** | `ydir` | Dual-pane file manager — navigate, copy/move/delete, run executables with args dialog |
-| **ycode** | `ycode <file>` | TUI code editor — syntax highlighting (~200 languages incl. Svelte), `Ctrl+B` file-tree sidebar with dirty-buffer prompt, undo/redo, search, goto, Esc exit dialog, full CJK/emoji support |
-| **ygit** | `ygit` | Git log & branch viewer — colored commit graph, branch list, checkout |
-| **y** | `y help` | Launcher that lists and dispatches all y* tools |
+| Pane | Opens with | What it does |
+|------|-----------|--------------|
+| **Files** | Right-click → *Files here*, the file dock | Browse, preview, rename, create, copy/move, delete to trash |
+| **Editor** | Right-click → *Split: editor pane*, Enter on a file | Syntax-highlighted text editor with save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard |
+| **Git** | Right-click → *Git here* | Commit graph, branch list and checkout, worktree add/remove |
+
+The standalone `ydir` / `ycode` / `ygit` / `ymon` commands and the `y` launcher
+no longer exist. The install directory still holds a small `y` binary: it is
+the relay Claude Code hooks call to feed the agent tree, not a command to run
+by hand.
 
 ## Development
 
@@ -204,8 +195,8 @@ be developed there; the desktop app itself is not shipped for Linux.
 `config.toml` stores workspaces, layouts, and cached shell profiles. It is
 rewritten on every structural change (debounced) and on app close.
 
-`theme.toml` stores the shared color palette read by every y* tool (yMux UI,
-yCode syntax highlighting, etc.). Edit it with the **Settings → Syntax Colors**
+`theme.toml` stores the color palette, including the editor pane's syntax
+highlighting colors. Edit it with the **Settings → Syntax Colors**
 picker, or open the file directly via **Settings → Config Files → Open**.
 
 Both live in the ymux config directory:
@@ -238,7 +229,7 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |
 | `Ctrl+Alt+N`                | `Cmd+Opt+N`        | Toggle notes for active workspace    |
-| `Ctrl+Shift+E`              | `Cmd+Shift+E`      | Toggle file dock (yDir)              |
+| `Ctrl+Shift+E`              | `Cmd+Shift+E`      | Toggle file dock                     |
 | `Ctrl+V`                    | `Cmd+V`            | Paste clipboard text (image → temp-file path) |
 | `Ctrl+F`                    | `Cmd+F`            | Search terminal scrollback (find / replace in an editor pane) |
 | `Ctrl+S`                    | `Cmd+S`            | Save the file (editor pane)          |
@@ -251,13 +242,13 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Click` on a URL       | `Cmd+Click`        | Open link in default browser         |
 | Double-click workspace button | —                | Rename workspace                     |
 | Drag a workspace row        | —                  | Reorder workspaces                   |
-| Right-click in a terminal   | —                  | Context menu — copy/paste, split, launch a y* tool |
+| Right-click in a terminal   | —                  | Context menu — copy/paste, split, open a files / editor / git pane |
 | `⚙` button (toolbar)        | —                  | Open Settings (palette, shortcuts, syntax colors, config files) |
 
 > **Tip:** the `⚙` button in the top-right corner of the toolbar opens the
 > Settings modal — a WinUI 3-style sidebar/content layout where you can
-> switch the display language, edit yCode's syntax highlighting palette
-> with color pickers, and one-click open the underlying `theme.toml`
+> switch the display language, edit the editor pane's syntax highlighting
+> palette with color pickers, and one-click open the underlying `theme.toml`
 > config file.
 
 ## Status

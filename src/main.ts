@@ -249,7 +249,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // Ctrl+Shift+E toggle the yDir file dock.
+    // Ctrl+Shift+E toggle the file dock.
     if (mod && ev.shiftKey && !ev.altKey && (key === "E" || key === "e")) {
       ev.preventDefault();
       toggleFileDock();

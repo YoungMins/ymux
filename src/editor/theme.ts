@@ -10,7 +10,7 @@
 //    `@lezer/highlight` tags one-to-one.
 //
 // Imports `@lezer/highlight` (a value), so only the lazy editor chunk may
-// import this module. ycode's `hex()` panics on a malformed colour; this
+// import this module. ycode's `hex()` panicked on a malformed colour; this
 // falls back to the default instead — a typo in theme.toml must not take the
 // editor down.
 

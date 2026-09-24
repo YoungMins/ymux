@@ -7,11 +7,6 @@ interface ShortcutEntry {
   tKey: string;
 }
 
-interface ToolEntry {
-  cmd: string;
-  tKey: string;
-}
-
 const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+Alt+1 … 9", tKey: "shortcut.switchWs" },
   { keys: "Ctrl+Shift+H",   tKey: "shortcut.splitH" },
@@ -37,14 +32,6 @@ const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+V",         tKey: "shortcut.paste" },
   { keys: "Dbl-click WS", tKey: "shortcut.renameWs" },
   { keys: "?",              tKey: "shortcut.helpToggle" },
-];
-
-const TOOLS: ToolEntry[] = [
-  { cmd: "y",     tKey: "help.toolY" },
-  { cmd: "ydir",  tKey: "help.toolYDir" },
-  { cmd: "ymon",  tKey: "help.toolYMon" },
-  { cmd: "ycode", tKey: "help.toolYCode" },
-  { cmd: "ygit",  tKey: "help.toolYGit" },
 ];
 
 export function mountHelpButton(parent: HTMLElement): () => void {
@@ -134,46 +121,7 @@ export function mountHelpButton(parent: HTMLElement): () => void {
       table.appendChild(tr);
     }
 
-    const columns = document.createElement("div");
-    columns.className = "help-modal__columns";
-
-    const leftCol = document.createElement("div");
-    leftCol.className = "help-modal__col";
-    leftCol.appendChild(table);
-    columns.appendChild(leftCol);
-
-    const rightCol = document.createElement("div");
-    rightCol.className = "help-modal__col";
-
-    const toolsTitle = document.createElement("h3");
-    toolsTitle.className = "help-modal__section-title";
-    toolsTitle.textContent = t("help.toolsTitle");
-    rightCol.appendChild(toolsTitle);
-
-    const toolsTable = document.createElement("table");
-    toolsTable.className = "help-modal__table";
-
-    for (const tool of TOOLS) {
-      const tr = document.createElement("tr");
-
-      const tdCmd = document.createElement("td");
-      tdCmd.className = "help-modal__keys";
-      const kbd = document.createElement("kbd");
-      kbd.textContent = tool.cmd;
-      tdCmd.appendChild(kbd);
-
-      const tdDesc = document.createElement("td");
-      tdDesc.className = "help-modal__desc";
-      tdDesc.textContent = t(tool.tKey);
-
-      tr.appendChild(tdCmd);
-      tr.appendChild(tdDesc);
-      toolsTable.appendChild(tr);
-    }
-
-    rightCol.appendChild(toolsTable);
-    columns.appendChild(rightCol);
-    modal.appendChild(columns);
+    modal.appendChild(table);
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "help-modal__close";

@@ -41,14 +41,12 @@ ymux/
 │   └── update/             # Update banner
 ├── crates/
 │   ├── ytheme/             # Shared theme library
-│   └── yipc/               # Inter-tool IPC protocol
+│   ├── yipc/               # Host <-> `y` IPC (server, Hello/Event/Ack, client)
+│   └── ypath/              # Path comparison keys
 ├── tools/
-│   ├── ymon/               # System monitor TUI
-│   ├── ydir/               # File manager TUI
-│   ├── ycode/              # Code editor TUI
-│   └── ylauncher/          # `y` launcher CLI
+│   └── ylauncher/          # `y` — the Claude Code hook relay (the only sidecar)
 ├── scripts/
-│   └── build-tools.mjs     # Build + stage sidecar binaries
+│   └── build-tools.mjs     # Build + stage the `y` sidecar
 └── .github/workflows/
     └── release.yml          # CI: test + build + release
 ```
@@ -60,7 +58,7 @@ pnpm install                 # Install frontend deps
 pnpm tauri dev               # Run in dev mode (hot reload)
 pnpm tauri build             # MSI on Windows, .app + .dmg on macOS
 cargo test --workspace       # ⚠ Don't use on Linux — pulls GTK
-cargo test -p ytheme -p yipc -p ymon -p ydir -p ycode -p ylauncher
+cargo test -p ytheme -p yipc -p ypath -p ylauncher
 cargo test --no-default-features --lib -p ymux
 cargo check --no-default-features --lib --tests -p ymux  # Linux safe
 cargo fmt --all              # Format entire workspace
@@ -96,7 +94,7 @@ Missing any of these causes the field to silently disappear during save/load.
 
 ### 4. CI Sidecar Files
 
-Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. If you add new sidecar binaries, update:
+Tauri's build script validates `externalBin` paths even during `cargo check`. The CI workflow creates dummy empty files before the desktop check step. Today there is exactly one sidecar, `y` (the Claude Code hook relay). If you add or remove one, update:
 - `src-tauri/tauri.conf.json` → `bundle.externalBin`
 - `.github/workflows/release.yml` → dummy file creation loop
 - `scripts/build-tools.mjs` → TOOLS array
@@ -107,7 +105,6 @@ Update ALL of these (they must match):
 - `src-tauri/Cargo.toml` → `version`
 - `src-tauri/tauri.conf.json` → `version`
 - `package.json` → `version`
-- `crates/yversion/src/lib.rs` → `VERSION` const (footer of ymon/ydir/ycode/ygit reads this)
 - `README.md` / `README.ko.md` / `README.ja.md` → badge URL
 - Run `cargo check` to regenerate `Cargo.lock`
 
@@ -228,13 +225,10 @@ bash scripts/test.sh
 | ymux_lib | 68 | Config model + TOML round-trip, PTY, OSC 7, shell detect, macOS shell integration, updater, sysmonitor |
 | ytheme | 7 | Theme TOML round-trip, hex parsing, defaults |
 | yipc | 10 | Protocol serialization, server/client, multi-client, broken pipe |
-| ymon | 11 | App state, tab cycling, scroll, memory values, process sort |
-| ydir | 19 | File listing, navigation, copy/paste/delete, hidden, exec detection, run dialog |
-| ycode | 69 | Buffer ops, undo/redo, cursor, commands, CJK, exit dialog |
-| ylauncher | 4 | Tool discovery, PATH scanning |
+| ylauncher (`y`) | 11 | `agent-hook` payload packing, the silent no-env no-op, usage errors |
 | _frontend_ | 63 | vitest: layout tree, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping |
 
-`ygit` has no tests yet. Counts drift — re-derive with
+Counts drift — re-derive with
 `cargo test -p <crate>` rather than trusting this table.
 
 ### TDD workflow for new features
@@ -275,7 +269,7 @@ git push origin v0.8.4
 
 CI automatically:
 1. Runs tests on Linux (fast fail)
-2. Builds the MSI on Windows (with sidecar tools) **and creates the release** —
+2. Builds the MSI on Windows (with the `y` sidecar) **and creates the release** —
    it goes first precisely so exactly one job ever creates it
 3. Builds the arm64 `.dmg` on macOS and uploads it onto that release
 4. Rewrites the release body with install info + auto-generated notes

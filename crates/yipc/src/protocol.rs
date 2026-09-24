@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn roundtrip_hello() {
         let msg = IpcMessage::Hello {
-            tool: "ymon".into(),
+            tool: "y".into(),
             pane_id: "abc-123".into(),
         };
         let line = msg.to_line().unwrap();
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(msg, decoded);
     }
 
-    /// A message type this build no longer knows (an old `ydir` sending
+    /// A message type this build no longer knows (an old tool sending
     /// `RegisterCommands`) is a parse error, not a panic.
     #[test]
     fn a_retired_message_type_fails_to_parse() {

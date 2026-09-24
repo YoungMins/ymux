@@ -16,16 +16,16 @@ echo "=== vitest (frontend unit tests) ==="
 pnpm exec vitest run
 
 echo ""
-echo "=== cargo clippy (tools + shared crates) ==="
-cargo clippy -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit -- -D warnings
+echo "=== cargo clippy (y hook relay + shared crates) ==="
+cargo clippy -p ytheme -p yipc -p ypath -p ylauncher -- -D warnings
 
 echo ""
 echo "=== cargo clippy (ymux lib, no desktop) ==="
 cargo clippy --no-default-features --lib --tests -p ymux -- -D warnings
 
 echo ""
-echo "=== cargo test (tools + shared crates) ==="
-cargo test -p ytheme -p yipc -p ypath -p ymon -p ydir -p ycode -p ylauncher -p ygit
+echo "=== cargo test (y hook relay + shared crates) ==="
+cargo test -p ytheme -p yipc -p ypath -p ylauncher
 
 echo ""
 echo "=== cargo test (ymux lib, no desktop) ==="

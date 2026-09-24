@@ -485,31 +485,6 @@ body,
   vertical-align: middle;
 }
 
-.help-modal__columns {
-  display: flex;
-  gap: 28px;
-  align-items: flex-start;
-}
-
-.help-modal__col {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.help-modal__section-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
-}
-
 .help-modal__close {
   align-self: flex-end;
   background: var(--bg);
@@ -2787,8 +2762,8 @@ body,
    The files pane's parts again — 22px bordered buttons, the bordered --bg
    box, the 11px status line, the 2px accent cursor bar — so the three GUI
    panes read as one family. The git pane's own thing is the graph: lane
-   lines run unbroken from row to row, in ygit's six lane colours
-   (tools/ygit/src/graph.rs: yellow, cyan, green, magenta, blue, red),
+   lines run unbroken from row to row, in the retired ygit TUI's six lane
+   colours (yellow, cyan, green, magenta, blue, red),
    retuned for this background. HEAD's node is the one filled, haloed dot.
 --------------------------------------------------------------------------- */
 .git-pane {

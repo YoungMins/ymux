@@ -62,7 +62,7 @@ describe("CwdFollow", () => {
   });
 
   it("reset() treats the given dir as already sent", () => {
-    // A freshly (re)started ydir already opened in this dir.
+    // The dock's files pane already opened in this dir.
     follow.reset("/start");
     follow.activePaneChanged("a", "/start");
     vi.advanceTimersByTime(FOLLOW_DEBOUNCE_MS);
@@ -85,7 +85,7 @@ describe("CwdFollow", () => {
   });
 
   it("sends the dir as the pane spelled it, not the normalized key", () => {
-    // yDir has to open what it is given, so the decomposed spelling must
+    // The files pane has to open what it is given, so the decomposed spelling must
     // survive when it is the first thing seen.
     follow.activePaneChanged("a", `/Users/u/${NFD}`);
     vi.advanceTimersByTime(FOLLOW_DEBOUNCE_MS);

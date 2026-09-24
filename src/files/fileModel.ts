@@ -47,7 +47,7 @@ export function compareCodePoints(a: string, b: string): number {
 }
 
 /// Directories first, then by lower-cased name — `fsx::sort_entries`'s rule,
-/// which is `tools/ydir`'s, so the pane lists in the order users already
+/// which was the retired ydir TUI's, so the pane lists in the order users already
 /// have. Returns a new array. The lower-cased keys are computed once, not
 /// per comparison.
 export function sortEntries(entries: readonly FileEntry[]): FileEntry[] {

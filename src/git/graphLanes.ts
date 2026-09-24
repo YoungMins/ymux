@@ -1,7 +1,7 @@
 // The git pane's commit graph, as pure data (spec §4.1).
 //
-// `tools/ygit` drew `git log --graph`'s ASCII art and coloured it back by
-// column (`tools/ygit/src/graph.rs`). The pane computes the same picture from
+// The retired ygit TUI drew `git log --graph`'s ASCII art and coloured it
+// back by column. The pane computes the same picture from
 // parent hashes instead: each row gets the lane its commit sits in and the
 // line segments crossing the row's upper half (from the row above into the
 // node) and lower half (from the node toward the parents below). The DOM

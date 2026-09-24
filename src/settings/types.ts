@@ -1,6 +1,6 @@
 // TypeScript mirror of `ytheme::Theme` (Rust). Every color is an
-// `#rrggbb` hex string. Optional syntax-color section drives yCode's
-// highlighter; everything else is reserved for future yMux theming.
+// `#rrggbb` hex string. Optional syntax-color section drives the editor
+// pane's highlighter; everything else is reserved for future yMux theming.
 
 export interface SyntaxColors {
   keyword: string;
@@ -36,5 +36,4 @@ export type SettingsSection =
   | "general"
   | "syntax"
   | "shortcuts"
-  | "tools"
   | "config";

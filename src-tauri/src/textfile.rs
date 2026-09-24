@@ -4,9 +4,9 @@
 //!
 //! ## What this exists to prevent
 //!
-//! `tools/ycode` is UTF-8 only, splits on `str::lines()` — which folds CRLF
-//! away and cannot tell a final newline from its absence — and drops the
-//! trailing newline on save (`tools/ycode/src/buffer.rs`). On a
+//! The retired `ycode` TUI was UTF-8 only, split on `str::lines()` — which folds CRLF
+//! away and cannot tell a final newline from its absence — and dropped the
+//! trailing newline on save. On a
 //! Windows-first app that is a file-corrupting bug set, not a rough edge:
 //! opening a CRLF file and pressing save rewrites every line of it. The GUI
 //! editor must not inherit any of it, so the rules are here, with tests,
@@ -172,7 +172,7 @@ pub fn restore_eol(s: &str, eol: Eol) -> String {
 /// Returns [`YmuxError::NotUtf8`] rather than lossy-decoding. When the read
 /// was capped, an incomplete UTF-8 sequence at the very end is dropped — the
 /// cap cut a character in half, which is not the file's fault and must not
-/// be reported as invalid (the same rule `tools/ydir`'s preview applies).
+/// be reported as invalid (the same rule the retired `ydir` TUI's preview applied).
 pub fn decode(bytes: &[u8], modified_ms: u64, total_len: u64, path: &str) -> YmuxResult<TextFile> {
     let stamp = stamp_of(bytes, modified_ms);
     let truncated = total_len > bytes.len() as u64 || bytes.len() > MAX_EDIT_BYTES;
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(detect_eol(""), Eol::None);
     }
 
-    /// The bug ycode has: a CRLF file must come back out as a CRLF file,
+    /// The bug ycode had: a CRLF file must come back out as a CRLF file,
     /// byte for byte, so saving an untouched file is a no-op diff.
     #[test]
     fn crlf_round_trips_byte_for_byte() {

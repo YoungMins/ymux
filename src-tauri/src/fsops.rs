@@ -109,7 +109,7 @@ fn mtime_ms(md: &fs::Metadata) -> u64 {
 
 /// Is this entry hidden by the OS, as opposed to by its name?
 ///
-/// Windows has a hidden *attribute* that `tools/ydir` ignores; honouring it
+/// Windows has a hidden *attribute* that the retired `ydir` TUI ignored; honouring it
 /// is one of the few places the pane is deliberately better than the TUI it
 /// replaces.
 #[cfg(windows)]
@@ -587,7 +587,7 @@ pub(crate) mod imp {
     /// The head of a directory for the preview: names and kinds only, no
     /// per-entry `stat`, walking at most [`MAX_PEEK_SCAN`] entries so a
     /// cursor resting on `node_modules` costs the same as on any folder.
-    /// Counts entries *walked*, not kept, as `tools/ydir`'s preview did.
+    /// Counts entries *walked*, not kept, as the retired `ydir` TUI's preview did.
     pub fn peek_dir(path: &str, show_hidden: bool) -> YmuxResult<DirPeek> {
         let mut entries = Vec::new();
         let mut more = false;
