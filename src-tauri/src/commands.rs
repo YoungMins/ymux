@@ -600,6 +600,41 @@ pub fn delete_scrollback(
     crate::scrollback::delete_blob(&pane_id).map_err(YmuxError::Io)
 }
 
+/// Persist an editor pane's draft of unsaved content (spec §3.5). The blob
+/// is opaque here; see [`crate::drafts`].
+#[tauri::command]
+pub fn save_editor_draft(
+    webview: Webview,
+    request: Request<'_>,
+    pane_id: String,
+    blob: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "save_editor_draft")?;
+    crate::drafts::save(&pane_id, &blob).map_err(YmuxError::Io)
+}
+
+/// An editor pane's draft, or an empty string if it has none.
+#[tauri::command]
+pub fn load_editor_draft(
+    webview: Webview,
+    request: Request<'_>,
+    pane_id: String,
+) -> YmuxResult<String> {
+    guard_local(&webview, &request, "load_editor_draft")?;
+    crate::drafts::load(&pane_id).map_err(YmuxError::Io)
+}
+
+/// Forget an editor pane's draft, if any.
+#[tauri::command]
+pub fn delete_editor_draft(
+    webview: Webview,
+    request: Request<'_>,
+    pane_id: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "delete_editor_draft")?;
+    crate::drafts::delete(&pane_id).map_err(YmuxError::Io)
+}
+
 /// If the system clipboard holds an image, save it to the paste-images dir as
 /// a PNG (pruning images older than the configured retention window first) and
 /// return its absolute path, so the frontend can type that path into the PTY.

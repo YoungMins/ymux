@@ -17,6 +17,7 @@ import type {
 import type { YTheme, ConfigPathKind } from "../settings/types";
 import type { ResumeOutcome } from "../terminal/resumePlan";
 import type { FileEntry } from "../files/fileModel";
+import type { Eol } from "../editor/eol";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -112,6 +113,32 @@ async function callKind<T>(cmd: string, args?: Record<string, unknown>): Promise
   }
 }
 
+/// `textfile::ContentStamp`: a file's mtime and the SHA-256 of its bytes.
+export interface ContentStamp {
+  modified_ms: number;
+  sha256: string;
+}
+
+/// `textfile::TextFile`.
+export interface TextFile {
+  text: string;
+  eol: Eol;
+  bom: boolean;
+  stamp: ContentStamp;
+  /// Over `MAX_EDIT_BYTES`: `text` is only the head, and the editor opens
+  /// read-only.
+  truncated: boolean;
+}
+
+/// `fsops::WriteTextArgs`.
+export interface WriteTextArgs {
+  path: string;
+  text: string;
+  eol: Eol;
+  bom: boolean;
+  expect: ContentStamp | null;
+}
+
 /// A bounded directory look for the preview (`fsops::DirPeek`).
 export interface DirPeek {
   entries: { name: string; is_dir: boolean }[];
@@ -143,6 +170,13 @@ export const fsApi = {
   },
   peekDir: (path: string, showHidden: boolean): Promise<DirPeek> =>
     callKind("fs_peek_dir", { path, showHidden }),
+  /// A text file for the editor: `\n`-only text, its line ending, BOM and
+  /// content stamp (`textfile::TextFile`). Rejects `not_utf8` for binary or
+  /// non-UTF-8 content, never lossy-decodes.
+  readText: (path: string): Promise<TextFile> => callKind("fs_read_text", { path }),
+  /// Write `text` back with `eol`/`bom` restored. With `expect`, refuses with
+  /// kind `conflict` unless the file on disk still hashes to that stamp.
+  writeText: (args: WriteTextArgs): Promise<ContentStamp> => callKind("fs_write_text", { args }),
   reveal: (path: string): Promise<void> => callKind("fs_reveal", { path }),
   /// Open with the OS default app; executables are revealed, never run.
   openDefault: (path: string): Promise<void> => callKind("fs_open_default", { path }),
@@ -326,6 +360,15 @@ export const api = {
   /// Delete the persisted scrollback for a pane, if any.
   deleteScrollback: (id: Uuid): Promise<void> =>
     call("delete_scrollback", { paneId: id }),
+
+  /// An editor pane's local draft of unsaved content. `src/editor/draft.ts`
+  /// owns the format; `src-tauri/src/drafts.rs` stores it opaquely.
+  saveEditorDraft: (id: Uuid, blob: string): Promise<void> =>
+    call("save_editor_draft", { paneId: id, blob }),
+
+  loadEditorDraft: (id: Uuid): Promise<string> => call("load_editor_draft", { paneId: id }),
+
+  deleteEditorDraft: (id: Uuid): Promise<void> => call("delete_editor_draft", { paneId: id }),
 
   /// If the OS clipboard holds an image, save it as a PNG and return that
   /// file's path; `null` means there is no image and the caller should paste
