@@ -182,6 +182,11 @@ export function mountWorkspacePanel(
   /// because its indices feed `moveWorkspace`, and a press inside a
   /// `.workspace-panel__row` would start a workspace drag.
   const childHosts = new Map<number, HTMLElement>();
+  /// Per-workspace wrapper around the row *and* its child host, so the active
+  /// workspace can be outlined as one region. It is only a box: the drag
+  /// pointerdown stays on the row, so a press on a pane/agent row inside a
+  /// block never starts a workspace reorder.
+  const blocks = new Map<number, HTMLElement>();
   const carets = new Map<number, HTMLButtonElement>();
   let expanded: ExpandedMap = readExpanded();
 
@@ -210,11 +215,20 @@ export function mountWorkspacePanel(
   /// destroyed, and so a second double-click can't open two at once.
   let endEdit: ((commit: boolean) => void) | null = null;
 
+  /// The block wrapping a workspace row — its parent, always, since
+  /// `rebuild()` builds the two together. The drop line is drawn on the
+  /// *block* so it lands in the gap between workspaces instead of inside one
+  /// (and, at the end of the list, below a workspace's children rather than
+  /// between the workspace and its own children).
+  function blockOf(row: HTMLElement): HTMLElement | null {
+    return row.parentElement;
+  }
+
   function clearDropMarkers(): void {
     for (const r of rows) {
-      r.classList.remove(
-        "workspace-panel__row--drop-above",
-        "workspace-panel__row--drop-below",
+      blockOf(r)?.classList.remove(
+        "workspace-panel__block--drop-above",
+        "workspace-panel__block--drop-below",
       );
     }
   }
@@ -230,9 +244,13 @@ export function mountWorkspacePanel(
     drag.insertBefore = insertIndexFromMidpoints(midpoints, y);
     clearDropMarkers();
     if (drag.insertBefore < rows.length) {
-      rows[drag.insertBefore].classList.add("workspace-panel__row--drop-above");
+      blockOf(rows[drag.insertBefore])?.classList.add(
+        "workspace-panel__block--drop-above",
+      );
     } else if (rows.length > 0) {
-      rows[rows.length - 1].classList.add("workspace-panel__row--drop-below");
+      blockOf(rows[rows.length - 1])?.classList.add(
+        "workspace-panel__block--drop-below",
+      );
     }
   }
 
@@ -534,6 +552,7 @@ export function mountWorkspacePanel(
     endEdit?.(false);
     buttons.clear();
     editors.clear();
+    blocks.clear();
     noteButtons.clear();
     childHosts.clear();
     carets.clear();
@@ -542,13 +561,19 @@ export function mountWorkspacePanel(
     // Render in `config.workspaces` order — that array *is* the user's order,
     // set by drag-to-reorder and persisted by TOML's `[[workspaces]]`.
     for (const ws of manager.workspaces) {
+      const block = document.createElement("div");
+      block.className = "workspace-panel__block";
       const row = makeRow(ws.id);
+      // `rows` stays workspace-rows-only — its indices feed `moveWorkspace`
+      // and its boxes feed the drop-target midpoints.
       rows.push(row);
-      list.appendChild(row);
+      block.appendChild(row);
       const children = document.createElement("div");
       children.className = "workspace-panel__children";
       childHosts.set(ws.id, children);
-      list.appendChild(children);
+      block.appendChild(children);
+      blocks.set(ws.id, block);
+      list.appendChild(block);
     }
     highlight();
     renderTree();
@@ -557,7 +582,13 @@ export function mountWorkspacePanel(
   function highlight(): void {
     for (const [id, btn] of buttons) {
       const status = manager.workspaceStatus(id);
-      btn.classList.toggle("workspace-panel__ws--active", id === manager.activeIdValue);
+      const active = id === manager.activeIdValue;
+      btn.classList.toggle("workspace-panel__ws--active", active);
+      // The outline belongs to the whole block (row + pane/tab/agent rows), so
+      // the active workspace reads as one region. Driven from here so every
+      // path that re-highlights — click, Ctrl+Alt+N, panel toggle via
+      // refreshWorkspacePanel — keeps it in sync.
+      blocks.get(id)?.classList.toggle("workspace-panel__block--active", active);
       btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
       // The whole row is tinted by status (idle = no tint); CSS keys off this.
       btn.dataset.status = status;
