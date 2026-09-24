@@ -6303,24 +6303,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
-name = "yipc"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "uuid",
-]
-
-[[package]]
-name = "ylauncher"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "yipc",
-]
-
-[[package]]
 name = "ymux"
 version = "0.11.0"
 dependencies = [
@@ -6351,7 +6333,6 @@ dependencies = [
  "url",
  "uuid",
  "windows 0.56.0",
- "yipc",
  "ypath",
  "ytheme",
 ]

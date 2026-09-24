@@ -83,10 +83,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # reason `ypath` and `png` are unconditional.
 url = "2"
 
-# Pane-to-pane IPC. Desktop-only because the server requires the Tauri
-# AppHandle to emit events to the frontend.
-yipc = { path = "../crates/yipc", optional = true }
-
 # OS desktop notifications, exposed to the frontend via the `notify` command.
 # Desktop-only because it wraps a native Tauri plugin.
 tauri-plugin-notification = { version = "2", optional = true }
@@ -130,7 +126,7 @@ windows = { version = "0.56", features = [
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:yipc", "dep:tauri-plugin-notification", "dep:arboard", "dep:trash"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:tauri-plugin-notification", "dep:arboard", "dep:trash"]
 
 [profile.release]
 lto = true
