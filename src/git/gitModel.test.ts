@@ -7,6 +7,7 @@ import {
   checkoutRisk,
   clip,
   confirmationStillHolds,
+  focusRefreshDue,
   formatCommitDate,
   refChips,
   removePlan,
@@ -247,6 +248,16 @@ describe("confirmationStillHolds", () => {
 
   it("breaks when the worktree can no longer be removed at all", () => {
     expect(confirmationStillHolds(shown, { kind: "blocked", reason: "locked" })).toBe(false);
+  });
+});
+
+describe("focusRefreshDue", () => {
+  it("refreshes on focus at most once per interval, never over a running load", () => {
+    expect(focusRefreshDue(10_000, null, false)).toBe(true);
+    expect(focusRefreshDue(10_000, 9_500, false)).toBe(false);
+    expect(focusRefreshDue(10_000, 9_000, false)).toBe(true);
+    expect(focusRefreshDue(10_000, null, true)).toBe(false);
+    expect(focusRefreshDue(10_000, 9_900, false, 50)).toBe(true);
   });
 });
 

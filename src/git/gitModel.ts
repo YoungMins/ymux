@@ -192,6 +192,22 @@ export function confirmationStillHolds(shown: RemovePlan, fresh: RemovePlan): bo
   );
 }
 
+/// Shortest gap between two refreshes triggered by window focus.
+export const FOCUS_REFRESH_MS = 1000;
+
+/// Should a window-focus event reload the pane? Not while a load is still
+/// running (each one is several git spawns), and at most once per
+/// `minMs` — alt-tabbing back and forth must not queue a git storm.
+export function focusRefreshDue(
+  now: number,
+  last: number | null,
+  inFlight: boolean,
+  minMs = FOCUS_REFRESH_MS,
+): boolean {
+  if (inFlight) return false;
+  return last === null || now - last >= minMs;
+}
+
 // ── Status codes ──────────────────────────────────────────────────────────
 
 export type ChangeKind =

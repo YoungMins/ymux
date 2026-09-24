@@ -37,6 +37,7 @@ import {
   branchItems,
   checkoutPlan,
   checkoutRisk,
+  focusRefreshDue,
   formatCommitDate,
   refChips,
   type BranchItem,
@@ -176,6 +177,9 @@ export class GitPane implements Pane {
   private scrollTop = 0;
   private rowPool: RowEls[] = [];
   private busy = false;
+  /// Loads started and not yet finished (window-focus refreshes skip then).
+  private loadsInFlight = 0;
+  private lastFocusRefresh: number | null = null;
   private statusTimer: number | null = null;
   private disposed = false;
   private readonly cleanups: (() => void)[] = [];
@@ -261,7 +265,11 @@ export class GitPane implements Pane {
     this.follow.reset(this.dir);
 
     const onWinFocus = () => {
-      if (this.isShown() && !this.busy && this.root) void this.load({ quiet: true });
+      if (!this.isShown() || this.busy || !this.root) return;
+      const now = performance.now();
+      if (!focusRefreshDue(now, this.lastFocusRefresh, this.loadsInFlight > 0)) return;
+      this.lastFocusRefresh = now;
+      void this.load({ quiet: true });
     };
     window.addEventListener("focus", onWinFocus);
     this.cleanups.push(() => window.removeEventListener("focus", onWinFocus));
@@ -405,6 +413,15 @@ export class GitPane implements Pane {
   /// takes a generation), so a slow repository can never paint over the one
   /// the user moved on to.
   private async load(opts: { quiet?: boolean } = {}): Promise<void> {
+    this.loadsInFlight++;
+    try {
+      await this.loadNow(opts);
+    } finally {
+      this.loadsInFlight--;
+    }
+  }
+
+  private async loadNow(opts: { quiet?: boolean }): Promise<void> {
     const dir = this.dir;
     if (!dir || this.disposed) {
       this.state = { kind: "idle" };
