@@ -87,12 +87,14 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   sight you also get an OS notification and a short beep (toggleable in
   Settings).
 - **Agent session resume**: restart ymux while a pane is running Claude Code
-  or Codex, and that pane resumes the same conversation (`claude --resume
-  <id> --dangerously-skip-permissions` / `codex resume <id>`) instead of
-  just replaying a picture of the old scrollback. Works even without agent
+  or Codex, and that pane resumes the same conversation instead of just
+  replaying a picture of the old scrollback — `claude --resume <id>
+  --dangerously-skip-permissions` (always added, so you're not re-approving
+  everything you already approved) or `codex resume <id>`. Eligible for up
+  to 24 h after the session was last active. Works even without agent
   tracking turned on — it reads the CLI's own transcripts from disk to find
-  the session id. Shell panes are unaffected and keep restoring scrollback
-  as before.
+  the session id. Shell-only panes are unaffected and keep restoring
+  scrollback as before.
 - **Agent tree**: the workspace panel lists every pane (and tab) under its
   workspace, with the coding agents running in it — Claude Code sessions and
   their subagents (via hooks), plus Codex, Gemini, aider, and other CLIs (via
@@ -181,9 +183,9 @@ that pane and inherits its working directory) or from the command palette.
 
 | Pane | Opens with | What it does |
 |------|-----------|--------------|
-| **Files** | Right-click → *Files here*, the file dock | Browse, preview, rename, create, copy/move, delete to trash |
-| **Editor** | Right-click → *Split: editor pane*, Enter on a file | Syntax-highlighted text editor with save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard |
-| **Git** | Right-click → *Git here* | Commit graph, branch list and checkout, worktree add/remove |
+| **Files** | Right-click → *Files here*, the file dock | Browse, preview, rename, create, multi-select, copy/move, overwrite prompts, delete to trash (with confirmation) |
+| **Editor** | Right-click → *Split: editor pane*, Enter on a file | Syntax-highlighted text editor with save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard, crash-safety drafts, external-change detection |
+| **Git** | Right-click → *Git here* | Commit graph, branch list and checkout, worktree add/remove (with confirmation) |
 
 The standalone `ydir` / `ycode` / `ygit` / `ymon` commands and the `y` launcher
 no longer exist. The install directory still holds a small `y` binary: it is
@@ -257,7 +259,7 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+Tab`            | `Ctrl+Shift+Tab`   | Focus previous pane                  |
 | `Ctrl+Alt+1` .. `Ctrl+Alt+9` | `Cmd+1` .. `Cmd+9` | Switch workspace                    |
 | `Ctrl+Click` on a URL/path  | `Cmd+Click`        | Open link, or a printed file path, with the OS default program |
-| Double-click workspace button | —                | Rename workspace                     |
+| Double-click workspace name  | —                  | Rename workspace                     |
 | Drag a workspace row        | —                  | Reorder workspaces                   |
 | Right-click in a terminal   | —                  | Context menu — copy/paste, split, open a files / editor / git pane |
 | `⚙` button (toolbar)        | —                  | Open Settings (palette, shortcuts, syntax colors, config files) |
