@@ -53,12 +53,24 @@ const md = new Marked({
   },
 });
 
+const LANGUAGE_CLASS = /^language-[\w+-]+$/;
+
 let purifier: ReturnType<typeof DOMPurify> | null = null;
 
 /// A private DOMPurify instance, so its hooks touch nothing else.
 function purify(): ReturnType<typeof DOMPurify> {
   if (purifier) return purifier;
   const p = DOMPurify(window);
+  // No author classes: a README must not borrow ymux's own CSS to paint
+  // fake UI. The one survivor is marked's `language-*` on `<code>`; any
+  // other token in the same attribute is dropped, and an attribute left
+  // empty goes entirely.
+  p.addHook("uponSanitizeAttribute", (node, data) => {
+    if (data.attrName !== "class") return;
+    const kept = node.tagName === "CODE" ? data.attrValue.split(/\s+/).filter((c) => LANGUAGE_CLASS.test(c)) : [];
+    if (kept.length === 0) data.keepAttr = false;
+    else data.attrValue = kept.join(" ");
+  });
   p.addHook("afterSanitizeAttributes", (node) => {
     // Task-list checkboxes are a view, not a form.
     if (node.tagName === "INPUT") node.setAttribute("disabled", "");

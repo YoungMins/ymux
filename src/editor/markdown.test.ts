@@ -64,6 +64,28 @@ describe("renderMarkdown sanitising", () => {
     expect(a.hasAttribute("style")).toBe(false);
   });
 
+  it("strips author classes so ymux's own CSS cannot paint fake UI", () => {
+    const el = dom(renderMarkdown('<div class="editor__overlay">x</div><span class="files__btn">y</span>'));
+    expect(el.querySelector("div")!.hasAttribute("class")).toBe(false);
+    expect(el.querySelector("span")!.hasAttribute("class")).toBe(false);
+  });
+
+  it("keeps marked's language-* class on fenced code", () => {
+    const el = dom(renderMarkdown("```ts\nconst x = 1;\n```"));
+    expect(el.querySelector("code")!.getAttribute("class")).toBe("language-ts");
+  });
+
+  it("mixed class on <code> keeps only the language-* token", () => {
+    const el = dom(renderMarkdown('<code class="language-ts files__btn">x</code>'));
+    expect(el.querySelector("code")!.getAttribute("class")).toBe("language-ts");
+  });
+
+  it("language-* survives on <code> only, and only when well-formed", () => {
+    const el = dom(renderMarkdown('<pre class="language-ts">a</pre><code class="language-a:b">b</code>'));
+    expect(el.querySelector("pre")!.hasAttribute("class")).toBe(false);
+    expect(el.querySelector("code")!.hasAttribute("class")).toBe(false);
+  });
+
   it("prefixes author ids so they cannot clobber globals", () => {
     const el = dom(renderMarkdown('<div id="location">x</div>'));
     expect(el.querySelector("div")!.id).toBe("user-content-location");

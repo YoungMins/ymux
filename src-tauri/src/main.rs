@@ -147,6 +147,7 @@ fn main() {
             ymux_lib::commands::set_agent_tracking,
         ])
         .plugin(tauri_plugin_notification::init())
+        .plugin(ymux_lib::fspath::navigation_guard_plugin())
         .setup(|app| {
             // Claude Code hook receiver. Its per-run token goes into every
             // PTY spawned from here on, so only a Claude running inside one

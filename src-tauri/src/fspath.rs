@@ -97,9 +97,9 @@ pub fn caller_allowed(label: &str) -> bool {
 /// would trivially equal the app origin and the guard would pass. Tauri's
 /// own `is_local_url` compares against the configured app URL for the same
 /// reason. (Today `BrowserPane`'s iframe carries a `sandbox` without
-/// `allow-top-navigation` and no navigation handler exists, so the
-/// navigation is not reachable — the guard simply does not depend on that
-/// staying true.)
+/// `allow-top-navigation`, and [`navigation_guard_plugin`] refuses a main
+/// navigation to a foreign origin on Windows, so the navigation is not
+/// reachable — the guard simply does not depend on that staying true.)
 ///
 /// Fails closed. A missing header, `null` (a sandboxed or `data:` frame), an
 /// unparseable value or a host-only near-miss such as
@@ -167,6 +167,91 @@ fn same_origin(origin: &str, app_url: &str) -> bool {
     got.scheme().eq_ignore_ascii_case(want.scheme())
         && got_host.eq_ignore_ascii_case(want_host)
         && got.port_or_known_default() == want.port_or_known_default()
+}
+
+/// Which navigations the platform's navigation hook reports, which decides
+/// how strict [`main_navigation_allowed`] can afford to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavigationHookScope {
+    /// Only the top-level document's navigations. WebView2: wry subscribes
+    /// `ICoreWebView2::add_NavigationStarting` (`wry-0.54.4`
+    /// `src/webview2/mod.rs:675`), which is top-level only; iframe
+    /// navigations go to `FrameNavigationStarting`, which wry never
+    /// subscribes, so a `browser` pane's iframe is never seen.
+    MainFrameOnly,
+    /// Every frame's navigations, with nothing saying which frame. WKWebView:
+    /// `decidePolicyForNavigationAction` fires for subframes too and wry's
+    /// `navigation_policy` (`src/wkwebview/navigation.rs:50`) passes only the
+    /// request URL, never `targetFrame`.
+    AllFrames,
+}
+
+impl NavigationHookScope {
+    /// The scope of the webview engine this build runs on.
+    pub const fn current() -> Self {
+        if cfg!(windows) {
+            Self::MainFrameOnly
+        } else {
+            Self::AllFrames
+        }
+    }
+}
+
+/// May the `main` webview navigate to `url`?
+///
+/// A backstop behind the Markdown preview and the rest of the frontend,
+/// which never navigate the main document on purpose: if one ever did, the
+/// page landed on would run with label `main`. [`guard_local`] still
+/// refuses its commands (its origin is not local), but that page could
+/// still draw a convincing ymux. So only ymux's own origin and
+/// `about:blank` are allowed.
+///
+/// Under [`NavigationHookScope::AllFrames`] (macOS) a `browser` pane's
+/// iframe navigations arrive here indistinguishable from the top level, so
+/// `http`/`https` must stay allowed or the browser pane breaks; only other
+/// schemes (`file:`, `data:`, `javascript:`, custom ones) are refused there.
+pub fn main_navigation_allowed<S: AsRef<str>>(
+    url: &str,
+    scope: NavigationHookScope,
+    allowed: &[S],
+) -> bool {
+    if url.trim().eq_ignore_ascii_case("about:blank") || origin_is_local(Some(url), allowed) {
+        return true;
+    }
+    match scope {
+        NavigationHookScope::MainFrameOnly => false,
+        NavigationHookScope::AllFrames => url::Url::parse(url)
+            .map(|u| matches!(u.scheme(), "http" | "https"))
+            .unwrap_or(false),
+    }
+}
+
+/// Tauri plugin that applies [`main_navigation_allowed`] to the `main`
+/// webview. Every other webview (`eb-*` embedded browsers, `browser-*`
+/// windows) is passed through untouched: browsing anywhere is their job.
+///
+/// New windows need no hook: with no `on_new_window` handler wry refuses
+/// every `window.open` / `target=_blank` request (`wry-0.54.4`
+/// `src/webview2/mod.rs:785` `SetHandled(true)`; macOS
+/// `src/wkwebview/class/wry_web_view_ui_delegate.rs:259` returns `None`).
+#[cfg(feature = "desktop")]
+pub fn navigation_guard_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new("ymux-nav-guard")
+        .on_navigation(|webview, url| {
+            if !caller_allowed(webview.label()) {
+                return true;
+            }
+            let ok = main_navigation_allowed(
+                url.as_str(),
+                NavigationHookScope::current(),
+                &allowed_origins(webview),
+            );
+            if !ok {
+                tracing::warn!(url = %url, "blocked navigation of the main webview");
+            }
+            ok
+        })
+        .build()
 }
 
 /// Which of Tauri's two IPC transports delivered a request.
@@ -1001,6 +1086,92 @@ mod tests {
         "http://tauri.localhost/",
         "http://localhost:1420/",
     ];
+
+    #[test]
+    fn main_navigation_allows_own_origin_and_about_blank_in_either_scope() {
+        use NavigationHookScope::*;
+        for scope in [MainFrameOnly, AllFrames] {
+            for url in [
+                "http://tauri.localhost/",
+                "http://tauri.localhost/index.html#x",
+                "tauri://localhost/",
+                "http://localhost:1420/src/main.ts?t=1",
+                "about:blank",
+                "ABOUT:BLANK",
+            ] {
+                assert!(
+                    main_navigation_allowed(url, scope, APP_URLS),
+                    "{scope:?} {url}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn main_navigation_refuses_foreign_web_origins_when_only_the_top_level_is_seen() {
+        for url in [
+            "https://evil.example/",
+            "http://tauri.localhost.evil.com/",
+            "http://localhost:1421/",
+            "https://tauri.localhost/",
+            "http://127.0.0.1:1420/",
+        ] {
+            assert!(
+                !main_navigation_allowed(url, NavigationHookScope::MainFrameOnly, APP_URLS),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn main_navigation_keeps_iframe_web_browsing_when_frames_are_indistinguishable() {
+        // macOS: a browser pane's iframe navigations reach the same hook.
+        for url in ["https://example.com/page", "http://example.org:8080/"] {
+            assert!(main_navigation_allowed(
+                url,
+                NavigationHookScope::AllFrames,
+                APP_URLS
+            ));
+        }
+    }
+
+    #[test]
+    fn main_navigation_refuses_non_web_schemes_in_either_scope() {
+        use NavigationHookScope::*;
+        for scope in [MainFrameOnly, AllFrames] {
+            for url in [
+                "file:///C:/Users/x/evil.html",
+                "data:text/html,<script>1</script>",
+                "javascript:alert(1)",
+                "about:srcdoc",
+                "about:blank#x",
+                "ms-settings:privacy",
+                "blob:http://tauri.localhost/0000",
+                "",
+                "not a url",
+            ] {
+                assert!(
+                    !main_navigation_allowed(url, scope, APP_URLS),
+                    "{scope:?} {url}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn main_navigation_with_no_allowed_origins_fails_closed() {
+        let none: &[&str] = &[];
+        assert!(!main_navigation_allowed(
+            "http://tauri.localhost/",
+            NavigationHookScope::MainFrameOnly,
+            none
+        ));
+        assert!(main_navigation_allowed(
+            "about:blank",
+            NavigationHookScope::MainFrameOnly,
+            none
+        ));
+    }
 
     #[test]
     fn origin_accepts_ymuxs_own_document() {
