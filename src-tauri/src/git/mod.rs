@@ -165,13 +165,20 @@ pub fn worktree_remove(path: &Path, force: bool) -> YmuxResult<()> {
 pub fn worktree_list(repo: &Path) -> YmuxResult<Vec<WorktreeEntry>> {
     let out = run_git(repo, &["worktree", "list", "--porcelain"])?;
     let mut list = parse_worktree_porcelain(&out);
-    mark_current(&mut list, &repo.to_string_lossy());
+    // Ask git for the root rather than trusting the caller's spelling of
+    // it. git reports worktree paths with symlinks resolved, and a shell's
+    // `$PWD` often isn't: on macOS every temp dir is `/var/…` while git says
+    // `/private/var/…`, and a user's `~/dev -> /Volumes/…` does the same.
+    // `ypath` compares spellings, not inodes, so both sides must be git's.
+    let root = repo_root(repo)?;
+    mark_current(&mut list, &root.to_string_lossy());
     Ok(list)
 }
 
-/// Flag the entry that is `root` — git's own `--show-toplevel` answer for
-/// the pane's directory. The two are both git's spelling in practice, but
-/// "in practice" is exactly what rule 15 forbids relying on.
+/// Flag the entry that is `root`, which must be git's own `--show-toplevel`
+/// answer — [`worktree_list`] fetches it — so both sides are git's spelling.
+/// `ypath::same_path` still does the comparing (rule 15): git's drive-letter
+/// case and separators aren't guaranteed to match its own earlier output.
 pub fn mark_current(list: &mut [WorktreeEntry], root: &str) {
     for e in list.iter_mut() {
         e.current = ypath::same_path(&e.path, root);
@@ -1043,6 +1050,22 @@ branch refs/heads/lockedish
 
     /// `current` crosses the spellings rule 15 is about: git's forward
     /// slashes and drive case against a backslashed path.
+    #[test]
+    fn worktree_list_finds_current_from_a_path_git_spells_differently() {
+        if !git_available() {
+            return;
+        }
+        // A subdirectory is the portable stand-in for macOS's `/var` ->
+        // `/private/var`: the path handed in is not git's spelling of the
+        // root, and the current worktree must still be recognised.
+        let repo = init_test_repo("spelled");
+        let sub = repo.join("한글 하위");
+        std::fs::create_dir_all(&sub).unwrap();
+        let wts = worktree_list(&sub).unwrap();
+        assert_eq!(wts.len(), 1);
+        assert!(wts[0].main && wts[0].current, "{wts:?}");
+    }
+
     #[test]
     fn mark_current_compares_paths_by_key_not_bytes() {
         let mut list = parse_worktree_porcelain(
