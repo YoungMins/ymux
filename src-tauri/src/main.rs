@@ -1,12 +1,147 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager, RunEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{AppHandle, Manager, RunEvent};
 use ymux_lib::agent_scan::start_agent_scan;
 use ymux_lib::commands::{start_pty_event_pump, AppState};
 use ymux_lib::config::ConfigStore;
 use ymux_lib::pty::PtyManager;
 use ymux_lib::sysmonitor::start_sysmonitor;
 use ymux_lib::updater::start_update_checker;
+
+/// Set once the final save below has run, so the second of
+/// `ExitRequested` / `Exit` does nothing.
+static FINAL_FLUSH_DONE: AtomicBool = AtomicBool::new(false);
+
+/// Close the browser webviews, record every pane's cwd, stop the PTYs and
+/// write the config -- once. It runs from `RunEvent::ExitRequested` (the last
+/// window closed) and again from `RunEvent::Exit`, because on macOS Quit from
+/// the Dock, logout and shutdown go straight through tao's
+/// `applicationWillTerminate` to `Exit` and never raise `ExitRequested`.
+fn final_flush(app_handle: &AppHandle) {
+    if FINAL_FLUSH_DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    // Close any child browser webviews first so they don't
+    // block the window close.
+    for (label, wv) in app_handle.webview_windows() {
+        if label.starts_with("browser-") {
+            let _ = wv.close();
+        }
+    }
+    // Close embedded browser child webviews (eb-* labels).
+    // These are Webview instances, not WebviewWindows, so they
+    // don't appear in webview_windows() and need separate cleanup.
+    let registry = app_handle.state::<ymux_lib::embedded_browser::EmbeddedBrowserRegistry>();
+    if let Ok(labels) = registry.labels.lock() {
+        for label in labels.iter() {
+            if let Some(wv) = app_handle.get_webview(label) {
+                let _ = wv.close();
+            }
+        }
+    }
+
+    let state = app_handle.state::<AppState>();
+    let cwds = state.pty.cwds_snapshot();
+    state.config.update(|c| c.patch_cwds(&cwds));
+    state.pty.shutdown_all();
+    if let Err(e) = state.config.flush() {
+        tracing::warn!(error = %e, "final config flush failed");
+    }
+}
+
+/// The menu id of ymux's own macOS Quit item (see `macos_menu`).
+#[cfg(target_os = "macos")]
+const QUIT_MENU_ID: &str = "ymux-quit";
+
+/// Set when the Quit item asked the main window to close, so that window's
+/// destruction ends the app even if a native browser window is still open.
+#[cfg(target_os = "macos")]
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Tauri's default macOS menu (`Menu::default`), minus the two items that end
+/// ymux behind the frontend's back:
+///
+/// - **Quit (Cmd+Q)** is a predefined item that calls `terminate:` directly,
+///   skipping the unsaved-editor prompt. It is replaced by a plain item
+///   whose handler closes the main window instead -- exactly what the red
+///   close button does, so the same `onCloseRequested` guard in `main.ts`
+///   runs (prompt -> destroy -> `ExitRequested` -> `final_flush`).
+/// - **Close Window (Cmd+W)** closes ymux's only window, i.e. quits. It is
+///   left out (with the File submenu that held it), so Cmd+W reaches the
+///   webview like any other key.
+///
+/// Edit keeps the predefined items: WKWebView's copy/paste/undo key
+/// equivalents only work through them.
+#[cfg(target_os = "macos")]
+fn macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let pkg = app.package_info();
+    let about = AboutMetadata {
+        name: Some(pkg.name.clone()),
+        version: Some(pkg.version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app.config().bundle.publisher.clone().map(|p| vec![p]),
+        ..Default::default()
+    };
+    let quit = MenuItem::with_id(
+        app,
+        QUIT_MENU_ID,
+        format!("Quit {}", pkg.name),
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                pkg.name.clone(),
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, None, Some(about))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::services(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::show_all(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &quit,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[&PredefinedMenuItem::fullscreen(app, None)?],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Window",
+                true,
+                &[
+                    &PredefinedMenuItem::minimize(app, None)?,
+                    &PredefinedMenuItem::maximize(app, None)?,
+                ],
+            )?,
+        ],
+    )
+}
 
 fn main() {
     tracing_subscriber::fmt()
@@ -57,7 +192,7 @@ fn main() {
     // helper macros it expands into (`__cmd__<name>`) resolve through the
     // `ymux_lib::commands` module they were defined in. Importing the names
     // via `use` is not enough — macros are not re-exported by `use`.
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(state)
         .manage(eb_registry)
         .manage(ymux_lib::agents::SharedAgents::default())
@@ -147,7 +282,27 @@ fn main() {
             ymux_lib::commands::set_agent_tracking,
         ])
         .plugin(tauri_plugin_notification::init())
-        .plugin(ymux_lib::fspath::navigation_guard_plugin())
+        .plugin(ymux_lib::fspath::navigation_guard_plugin());
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(macos_menu).on_menu_event(|app, event| {
+        if event.id() != QUIT_MENU_ID {
+            return;
+        }
+        // Close, not destroy: `close()` raises CloseRequested, which the
+        // frontend's guard answers (and holds while its prompt is up; a
+        // second Cmd+Q meanwhile is swallowed there). Without a main window
+        // there is nothing to guard.
+        match app.get_webview_window("main") {
+            Some(w) => {
+                QUIT_REQUESTED.store(true, Ordering::SeqCst);
+                if w.close().is_err() {
+                    app.exit(0);
+                }
+            }
+            None => app.exit(0),
+        }
+    });
+    builder
         .setup(|app| {
             // Claude Code hook receiver. Its per-run token goes into every
             // PTY spawned from here on, so only a Claude running inside one
@@ -213,35 +368,16 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let RunEvent::ExitRequested { .. } = event {
-                // Close any child browser webviews first so they don't
-                // block the window close.
-                for (label, wv) in app_handle.webview_windows() {
-                    if label.starts_with("browser-") {
-                        let _ = wv.close();
-                    }
-                }
-                // Close embedded browser child webviews (eb-* labels).
-                // These are Webview instances, not WebviewWindows, so they
-                // don't appear in webview_windows() and need separate cleanup.
-                let registry =
-                    app_handle.state::<ymux_lib::embedded_browser::EmbeddedBrowserRegistry>();
-                if let Ok(labels) = registry.labels.lock() {
-                    for label in labels.iter() {
-                        if let Some(wv) = app_handle.get_webview(label) {
-                            let _ = wv.close();
-                        }
-                    }
-                }
-
-                let state = app_handle.state::<AppState>();
-                let cwds = state.pty.cwds_snapshot();
-                state.config.update(|c| c.patch_cwds(&cwds));
-                state.pty.shutdown_all();
-                if let Err(e) = state.config.flush() {
-                    tracing::warn!(error = %e, "final config flush failed");
-                }
-            }
+        .run(|app_handle, event| match event {
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => final_flush(app_handle),
+            // The Quit item closed the main window and the guard let it go:
+            // quit, even if a native browser window would keep the app alive.
+            #[cfg(target_os = "macos")]
+            RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } if label == "main" && QUIT_REQUESTED.load(Ordering::SeqCst) => app_handle.exit(0),
+            _ => {}
         });
 }
