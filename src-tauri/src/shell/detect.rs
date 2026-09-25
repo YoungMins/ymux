@@ -24,6 +24,24 @@ pub fn detect_shells() -> Vec<ShellProfile> {
     }
 }
 
+/// Rewrite the shell-integration files (zsh `ZDOTDIR` shim, bash `--rcfile`,
+/// POSIX `$ENV` script) without re-detecting shells. Profiles persisted in
+/// the config point at these files by path, so an upgraded ymux must refresh
+/// their contents at startup or keep running the old version's scripts.
+/// Failures are logged by the writers and otherwise ignored.
+pub fn refresh_shell_integration() {
+    #[cfg(windows)]
+    {
+        let _ = windows_detect::ensure_bash_rcfile();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = unix_detect::ensure_zsh_shim();
+        let _ = unix_detect::ensure_bash_rcfile();
+        let _ = unix_detect::ensure_posix_env_file();
+    }
+}
+
 /// Return true if the path exists and is a regular file.
 fn is_file(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
@@ -170,7 +188,7 @@ esac
     /// Write (or refresh) the bash rcfile next to the main config and return
     /// its absolute path. Errors are logged and swallowed — Git Bash just
     /// won't have cwd tracking in that case.
-    fn ensure_bash_rcfile() -> Option<PathBuf> {
+    pub(super) fn ensure_bash_rcfile() -> Option<PathBuf> {
         let dir = dirs::config_dir()?.join("ymux");
         if let Err(e) = std::fs::create_dir_all(&dir) {
             tracing::warn!(error = %e, "failed to create ymux config dir for bash rcfile");
@@ -656,47 +674,51 @@ esac
     }
 }
 
-#[cfg(not(windows))]
-mod unix_detect {
-    use super::{is_file, which, Path, PathBuf, ShellProfile};
-
+/// The macOS/unix shell-integration scripts. They live outside `unix_detect`
+/// (which only compiles off Windows) so the snapshot tests below run on every
+/// host, including the Windows dev machine.
+#[cfg_attr(windows, allow(dead_code))]
+mod unix_scripts {
     /// Directory name (below the ymux config dir) holding the zsh startup-file
     /// shim. zsh only offers one injection point for a non-interactive caller
     /// — `ZDOTDIR` — and it swaps out *all* of `.zshenv` / `.zprofile` /
     /// `.zshrc` / `.zlogin` at once. So the shim has to re-source each of the
     /// user's real counterparts itself, or launching a pane would silently
     /// drop their aliases, `PATH` edits, and prompt.
-    const ZSH_SHIM_DIR: &str = "zsh-init";
+    pub(super) const ZSH_SHIM_DIR: &str = "zsh-init";
 
     /// `.zshenv` — the first file zsh reads, for every kind of shell.
     ///
     /// `YMUX_USER_ZDOTDIR` is seeded by the spawned profile's env (see
-    /// [`zsh_profile`]) so a user who already sets `ZDOTDIR` keeps their own
-    /// dotfile location. After sourcing their `.zshenv` we force `ZDOTDIR`
-    /// back to the shim, because zsh re-reads it before *each* remaining
-    /// startup file and their `.zshenv` may well have pointed it elsewhere.
-    const ZSH_ZSHENV: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+    /// `unix_detect::zsh_profile`): the user's own `ZDOTDIR`, or empty when
+    /// they had none. Every user file is sourced with `ZDOTDIR` handed back to
+    /// that value, so their `${ZDOTDIR:-$HOME}` idioms resolve exactly as in
+    /// Terminal.app — and whatever `ZDOTDIR` their file leaves behind is
+    /// adopted as the new "user" value, as zsh itself would. Afterwards
+    /// `ZDOTDIR` points back at the shim, because zsh re-reads it before
+    /// *each* remaining startup file.
+    pub(super) const ZSH_ZSHENV: &str = r#"# ymux shell integration — auto-generated, safe to delete.
 #
 # ymux starts zsh with ZDOTDIR pointing here so it can install an OSC 7
 # "current directory" hook without editing your dotfiles. Each file in this
-# directory sources its real counterpart first, so your own configuration
-# still applies exactly as it would in Terminal.app.
+# directory sources its real counterpart first — with ZDOTDIR set back to
+# your own value while it runs — so your configuration still applies exactly
+# as it would in Terminal.app.
 YMUX_SHIM_ZDOTDIR="${ZDOTDIR:-$HOME}"
-: "${YMUX_USER_ZDOTDIR:=$HOME}"
-[ -f "$YMUX_USER_ZDOTDIR/.zshenv" ] && . "$YMUX_USER_ZDOTDIR/.zshenv"
-# Their .zshenv may set ZDOTDIR for their own layout; adopt it as the "user"
-# location, then point zsh back at the shim for the rest of startup.
-if [ -n "$ZDOTDIR" ] && [ "$ZDOTDIR" != "$YMUX_SHIM_ZDOTDIR" ]; then
-    YMUX_USER_ZDOTDIR="$ZDOTDIR"
-fi
-ZDOTDIR="$YMUX_SHIM_ZDOTDIR"
+YMUX_USER_ZDOTDIR="${YMUX_USER_ZDOTDIR-}"
+if [ -n "$YMUX_USER_ZDOTDIR" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+[ -f "${ZDOTDIR:-$HOME}/.zshenv" ] && . "${ZDOTDIR:-$HOME}/.zshenv"
+YMUX_USER_ZDOTDIR="${ZDOTDIR-}"
+export ZDOTDIR="$YMUX_SHIM_ZDOTDIR"
 "#;
 
     /// `.zprofile` — login shells only. ymux spawns login shells on macOS so
     /// `/usr/libexec/path_helper` runs and `PATH` matches Terminal.app's.
-    const ZSH_ZPROFILE: &str = r#"# ymux shell integration — auto-generated, safe to delete.
-[ -f "$YMUX_USER_ZDOTDIR/.zprofile" ] && . "$YMUX_USER_ZDOTDIR/.zprofile"
-ZDOTDIR="${YMUX_SHIM_ZDOTDIR:-$ZDOTDIR}"
+    pub(super) const ZSH_ZPROFILE: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+if [ -n "$YMUX_USER_ZDOTDIR" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+[ -f "${ZDOTDIR:-$HOME}/.zprofile" ] && . "${ZDOTDIR:-$HOME}/.zprofile"
+YMUX_USER_ZDOTDIR="${ZDOTDIR-}"
+export ZDOTDIR="$YMUX_SHIM_ZDOTDIR"
 "#;
 
     /// `.zshrc` — interactive shells. Sources the user's rc first so their
@@ -704,11 +726,22 @@ ZDOTDIR="${YMUX_SHIM_ZDOTDIR:-$ZDOTDIR}"
     /// `precmd` hook. Appending matters: a prompt framework that assigns to
     /// `precmd_functions` wholesale (starship, p10k) would otherwise drop us.
     ///
-    /// The final `ZDOTDIR` restore hands the user's own value back before
-    /// they get a prompt, so anything they run later — including a nested
-    /// zsh — sees what they configured rather than ymux's shim.
-    const ZSH_ZSHRC: &str = r#"# ymux shell integration — auto-generated, safe to delete.
-[ -f "$YMUX_USER_ZDOTDIR/.zshrc" ] && . "$YMUX_USER_ZDOTDIR/.zshrc"
+    /// `/etc/zshrc` runs just before this file with `ZDOTDIR` still on the
+    /// shim, and its unguarded `HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history` would
+    /// put the user's history inside the shim dir. So a `HISTFILE` under the
+    /// shim is moved to the user's location — before their `.zshrc` (so it
+    /// sees the right value) and again after it.
+    ///
+    /// The final `ZDOTDIR` restore hands the user's own value back (unset if
+    /// they had none) before they get a prompt: zsh then reads `/etc/zlogin`
+    /// and their `.zlogin` natively, and anything they run later — including
+    /// a nested zsh — sees what they configured rather than ymux's shim.
+    pub(super) const ZSH_ZSHRC: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+case "${HISTFILE-}" in "$YMUX_SHIM_ZDOTDIR"/*) HISTFILE="${YMUX_USER_ZDOTDIR:-$HOME}/.zsh_history" ;; esac
+if [ -n "$YMUX_USER_ZDOTDIR" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+[ -f "${ZDOTDIR:-$HOME}/.zshrc" ] && . "${ZDOTDIR:-$HOME}/.zshrc"
+YMUX_USER_ZDOTDIR="${ZDOTDIR-}"
+case "${HISTFILE-}" in "$YMUX_SHIM_ZDOTDIR"/*) HISTFILE="${YMUX_USER_ZDOTDIR:-$HOME}/.zsh_history" ;; esac
 _ymux_osc7() {
     printf '\033]7;file://%s%s\033\\' "${HOST:-localhost}" "$PWD"
 }
@@ -718,32 +751,43 @@ else
     precmd_functions+=(_ymux_osc7)
 fi
 _ymux_osc7
-ZDOTDIR="${YMUX_USER_ZDOTDIR:-$HOME}"
+if [ -n "$YMUX_USER_ZDOTDIR" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+unset YMUX_USER_ZDOTDIR YMUX_SHIM_ZDOTDIR
 "#;
 
-    /// `.zlogin` — read after `.zshrc`. By then `.zshrc` has usually restored
+    /// `.zlogin` — read after `.zshrc`. By then `.zshrc` has restored
     /// `ZDOTDIR`, so zsh reads the user's own `.zlogin` directly and this file
     /// is never used. It exists for the login-but-not-interactive case, where
-    /// `.zshrc` never ran and `ZDOTDIR` still points at the shim.
-    const ZSH_ZLOGIN: &str = r#"# ymux shell integration — auto-generated, safe to delete.
-[ -f "${YMUX_USER_ZDOTDIR:-$HOME}/.zlogin" ] && . "${YMUX_USER_ZDOTDIR:-$HOME}/.zlogin"
+    /// `.zshrc` never ran and `ZDOTDIR` still points at the shim; it ends
+    /// startup the same way `.zshrc` does.
+    pub(super) const ZSH_ZLOGIN: &str = r#"# ymux shell integration — auto-generated, safe to delete.
+if [ -n "${YMUX_USER_ZDOTDIR-}" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi
+[ -f "${ZDOTDIR:-$HOME}/.zlogin" ] && . "${ZDOTDIR:-$HOME}/.zlogin"
+unset YMUX_USER_ZDOTDIR YMUX_SHIM_ZDOTDIR
 "#;
 
     /// Bash init snippet, written to a temp rcfile and passed via `--rcfile`.
     ///
     /// `--rcfile` is only honoured for interactive *non-login* shells, so the
-    /// profile spawns bash without `-l` and this file sources the login files
-    /// itself — otherwise a macOS user would lose everything in
-    /// `~/.bash_profile`. This mirrors the Git Bash rcfile on Windows, minus
-    /// the MSYS drive-letter rewriting, which has no meaning here.
-    const BASH_OSC7_RCFILE: &str = r#"# ymux OSC 7 cwd reporter — auto-generated, safe to delete.
+    /// profile spawns bash without `-l` and this file replays a login shell's
+    /// startup itself: `/etc/profile` first (on macOS that runs
+    /// `path_helper`, without which `PATH` lacks `/etc/paths` and differs
+    /// from Terminal.app's), then the first of `~/.bash_profile`,
+    /// `~/.bash_login`, `~/.profile` — exactly bash's login order.
+    /// `~/.bashrc` is deliberately not forced on top: a login shell doesn't
+    /// read it either, and most `~/.bash_profile`s already source it, so
+    /// forcing it would run it twice (duplicate `PATH` edits, hooks, prompt).
+    ///
+    /// Unix only: the Windows Git Bash rcfile (`windows_detect`) keeps its own
+    /// behaviour.
+    pub(super) const BASH_OSC7_RCFILE: &str = r#"# ymux OSC 7 cwd reporter — auto-generated, safe to delete.
+[ -r /etc/profile ] && . /etc/profile
 if [ -f "$HOME/.bash_profile" ]; then
     . "$HOME/.bash_profile"
+elif [ -f "$HOME/.bash_login" ]; then
+    . "$HOME/.bash_login"
 elif [ -f "$HOME/.profile" ]; then
     . "$HOME/.profile"
-fi
-if [ -f "$HOME/.bashrc" ]; then
-    . "$HOME/.bashrc"
 fi
 _ymux_osc7() {
     printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-localhost}" "$PWD"
@@ -753,6 +797,14 @@ case ";${PROMPT_COMMAND:-};" in
     *) PROMPT_COMMAND="_ymux_osc7;${PROMPT_COMMAND:-}" ;;
 esac
 "#;
+}
+
+#[cfg(not(windows))]
+mod unix_detect {
+    use super::unix_scripts::{
+        BASH_OSC7_RCFILE, ZSH_SHIM_DIR, ZSH_ZLOGIN, ZSH_ZPROFILE, ZSH_ZSHENV, ZSH_ZSHRC,
+    };
+    use super::{is_file, which, Path, PathBuf, ShellProfile};
 
     /// `<config_dir>/ymux`, created on demand. Shared with `theme.toml` via
     /// `ytheme::config_dir`.
@@ -768,7 +820,7 @@ esac
     /// Write (or refresh) the four zsh shim files and return the directory to
     /// hand zsh as `ZDOTDIR`. Errors are logged and swallowed — a pane still
     /// opens without cwd tracking, which beats refusing to spawn a shell.
-    fn ensure_zsh_shim() -> Option<PathBuf> {
+    pub(super) fn ensure_zsh_shim() -> Option<PathBuf> {
         let dir = ymux_dir()?.join(ZSH_SHIM_DIR);
         if let Err(e) = std::fs::create_dir_all(&dir) {
             tracing::warn!(error = %e, "failed to create zsh shim dir");
@@ -789,7 +841,7 @@ esac
     }
 
     /// Write (or refresh) the bash rcfile and return its absolute path.
-    fn ensure_bash_rcfile() -> Option<PathBuf> {
+    pub(super) fn ensure_bash_rcfile() -> Option<PathBuf> {
         let path = ymux_dir()?.join("bash-init.sh");
         if let Err(e) = std::fs::write(&path, BASH_OSC7_RCFILE) {
             tracing::warn!(error = %e, "failed to write bash rcfile");
@@ -818,7 +870,7 @@ _ymux_osc7
 "#;
 
     /// Write (or refresh) the POSIX `$ENV` script and return its path.
-    fn ensure_posix_env_file() -> Option<PathBuf> {
+    pub(super) fn ensure_posix_env_file() -> Option<PathBuf> {
         let path = ymux_dir()?.join("posix-init.sh");
         if let Err(e) = std::fs::write(&path, POSIX_ENV_INIT) {
             tracing::warn!(error = %e, "failed to write posix env file");
@@ -832,15 +884,16 @@ _ymux_osc7
         let mut env = Vec::new();
         if let Some(shim) = ensure_zsh_shim() {
             // Preserve a ZDOTDIR the user already exported, so the shim knows
-            // where their real dotfiles live.
+            // where their real dotfiles live. Always set — empty means "none",
+            // so the shim unsets ZDOTDIR again at the end of startup instead
+            // of trusting a stale value inherited from ymux's own env.
+            let shim_str = shim.display().to_string();
             let user_zdotdir = std::env::var("ZDOTDIR")
                 .ok()
-                .filter(|v| !v.is_empty())
-                .or_else(|| dirs::home_dir().map(|h| h.display().to_string()));
-            if let Some(u) = user_zdotdir {
-                env.push(("YMUX_USER_ZDOTDIR".to_string(), u));
-            }
-            env.push(("ZDOTDIR".to_string(), shim.display().to_string()));
+                .filter(|v| !v.is_empty() && *v != shim_str)
+                .unwrap_or_default();
+            env.push(("YMUX_USER_ZDOTDIR".to_string(), user_zdotdir));
+            env.push(("ZDOTDIR".to_string(), shim_str));
         }
         ShellProfile {
             name,
@@ -1253,5 +1306,130 @@ mod tests {
             );
         }
         assert!(checked > 0, "no Windows shell was available to verify");
+    }
+
+    /// Index of the first line of `script` containing `needle`, so tests can
+    /// assert ordering without pinning the exact text.
+    fn line_of(script: &str, needle: &str) -> usize {
+        script
+            .lines()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} not found in:\n{script}"))
+    }
+
+    /// Hand ZDOTDIR back to the user's value (unset when they had none).
+    const ZDOTDIR_TO_USER: &str = r#"if [ -n "$YMUX_USER_ZDOTDIR" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi"#;
+    const ZDOTDIR_TO_SHIM: &str = r#"export ZDOTDIR="$YMUX_SHIM_ZDOTDIR""#;
+    const ADOPT_USER_ZDOTDIR: &str = r#"YMUX_USER_ZDOTDIR="${ZDOTDIR-}""#;
+
+    /// Every user startup file must run with ZDOTDIR set to the *user's*
+    /// value, not the shim — otherwise `${ZDOTDIR:-$HOME}` in their dotfiles
+    /// points into ymux's dir — and zsh must be pointed back at the shim
+    /// afterwards so it still reads the next shim file.
+    #[test]
+    fn zsh_shim_sources_user_files_with_the_users_zdotdir() {
+        use unix_scripts::{ZSH_ZPROFILE, ZSH_ZSHENV, ZSH_ZSHRC};
+        for (script, file) in [
+            (ZSH_ZSHENV, ".zshenv"),
+            (ZSH_ZPROFILE, ".zprofile"),
+            (ZSH_ZSHRC, ".zshrc"),
+        ] {
+            let source = format!(r#". "${{ZDOTDIR:-$HOME}}/{file}""#);
+            let to_user = line_of(script, ZDOTDIR_TO_USER);
+            let sourced = line_of(script, &source);
+            let adopt = line_of(script, ADOPT_USER_ZDOTDIR);
+            assert!(
+                to_user < sourced && sourced < adopt,
+                "{file}: ZDOTDIR must be the user's while their file runs, then adopted:\n{script}"
+            );
+            // Nothing sources a user file from the shim dir or from a
+            // hard-coded $YMUX_USER_ZDOTDIR path any more.
+            assert!(
+                !script.contains(r#". "$YMUX_USER_ZDOTDIR/"#),
+                "{file}:\n{script}"
+            );
+        }
+        // .zshenv and .zprofile hand zsh back to the shim afterwards.
+        for script in [ZSH_ZSHENV, ZSH_ZPROFILE] {
+            assert!(
+                line_of(script, ADOPT_USER_ZDOTDIR) < line_of(script, ZDOTDIR_TO_SHIM),
+                "{script}"
+            );
+        }
+        // .zshenv records the shim dir before touching ZDOTDIR.
+        assert!(
+            line_of(ZSH_ZSHENV, r#"YMUX_SHIM_ZDOTDIR="${ZDOTDIR:-$HOME}""#)
+                < line_of(ZSH_ZSHENV, ZDOTDIR_TO_USER)
+        );
+    }
+
+    /// macOS `/etc/zshrc` runs between the shim's .zprofile and .zshrc with
+    /// ZDOTDIR on the shim, so its `HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history`
+    /// lands inside the shim dir. The shim .zshrc moves it back — before the
+    /// user's .zshrc and after it — and only when it points into the shim.
+    #[test]
+    fn zsh_shim_moves_histfile_out_of_the_shim_dir() {
+        let script = unix_scripts::ZSH_ZSHRC;
+        let fix = r#"case "${HISTFILE-}" in "$YMUX_SHIM_ZDOTDIR"/*) HISTFILE="${YMUX_USER_ZDOTDIR:-$HOME}/.zsh_history" ;; esac"#;
+        let fixes: Vec<usize> = script
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| *l == fix)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(fixes.len(), 2, "expected the HISTFILE fix twice:\n{script}");
+        let sourced = line_of(script, r#". "${ZDOTDIR:-$HOME}/.zshrc""#);
+        assert!(fixes[0] < sourced && sourced < fixes[1], "{script}");
+        assert!(fixes[1] < line_of(script, "add-zsh-hook precmd _ymux_osc7"));
+    }
+
+    /// Startup ends with ZDOTDIR restored to the user's value (or unset) and
+    /// ymux's bookkeeping variables gone, so nested zsh processes behave
+    /// normally. The OSC 7 hook is installed before that.
+    #[test]
+    fn zsh_shim_restores_zdotdir_at_the_end_of_startup() {
+        use unix_scripts::{ZSH_ZLOGIN, ZSH_ZSHRC};
+        let cleanup = "unset YMUX_USER_ZDOTDIR YMUX_SHIM_ZDOTDIR";
+        for script in [ZSH_ZSHRC, ZSH_ZLOGIN] {
+            let lines: Vec<&str> = script.lines().collect();
+            assert_eq!(lines.last().copied(), Some(cleanup), "{script}");
+            // The last ZDOTDIR assignment hands it to the user (or unsets it).
+            let last_export = lines
+                .iter()
+                .rev()
+                .find(|l| l.contains("export ZDOTDIR="))
+                .expect("a ZDOTDIR restore");
+            assert!(
+                last_export
+                    .contains("then export ZDOTDIR=\"$YMUX_USER_ZDOTDIR\"; else unset ZDOTDIR; fi"),
+                "{script}"
+            );
+            assert!(!script.contains(ZDOTDIR_TO_SHIM), "{script}");
+        }
+        assert!(
+            line_of(ZSH_ZSHRC, "_ymux_osc7() {") < line_of(ZSH_ZSHRC, cleanup),
+            "the OSC 7 hook must still be installed"
+        );
+        assert!(ZSH_ZLOGIN.contains(r#". "${ZDOTDIR:-$HOME}/.zlogin""#));
+    }
+
+    /// The unix bash rcfile replays a login shell: /etc/profile (path_helper
+    /// on macOS) first, then the first of the three login files, then ymux's
+    /// hook — and never forces ~/.bashrc on top, which most .bash_profiles
+    /// already source.
+    #[test]
+    fn unix_bash_rcfile_replays_a_login_shell() {
+        let rc = unix_scripts::BASH_OSC7_RCFILE;
+        let etc = line_of(rc, "[ -r /etc/profile ] && . /etc/profile");
+        let bp = line_of(rc, r#"if [ -f "$HOME/.bash_profile" ]; then"#);
+        let bl = line_of(rc, r#"elif [ -f "$HOME/.bash_login" ]; then"#);
+        let pr = line_of(rc, r#"elif [ -f "$HOME/.profile" ]; then"#);
+        let hook = line_of(rc, "_ymux_osc7() {");
+        assert!(etc < bp && bp < bl && bl < pr && pr < hook, "{rc}");
+        assert!(
+            !rc.contains(".bashrc"),
+            "must not source ~/.bashrc twice:\n{rc}"
+        );
+        assert!(rc.contains(r#"PROMPT_COMMAND="_ymux_osc7;${PROMPT_COMMAND:-}""#));
     }
 }

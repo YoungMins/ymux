@@ -82,6 +82,80 @@ fn poll_exit(child: &Weak<Mutex<Box<dyn Child + Send + Sync>>>) -> Result<Option
     }
 }
 
+/// The `LANG` to give a child whose inherited environment names no locale,
+/// or `None` when `LANG`, `LC_ALL` or `LC_CTYPE` is already set (non-empty).
+///
+/// `apple_locale` is the macOS `AppleLocale` preference (`ko_KR`,
+/// `en_US@rg=krzzzz`, `zh-Hans_CN`, ...). It becomes `<lang>_<REGION>.UTF-8`
+/// when `locale_exists` says that locale is installed, otherwise the
+/// universally present `en_US.UTF-8` — what matters most is the UTF-8 charset.
+/// Pure so it can be tested on any host.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn fallback_lang(
+    env: impl Fn(&str) -> Option<String>,
+    apple_locale: Option<&str>,
+    locale_exists: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let set = |k: &str| env(k).is_some_and(|v| !v.is_empty());
+    if set("LANG") || set("LC_ALL") || set("LC_CTYPE") {
+        return None;
+    }
+    let candidate = apple_locale.and_then(|raw| {
+        // Drop `@` modifiers (`@rg=...`, `@calendar=...`) and a script
+        // subtag (`zh-Hans_CN` → `zh_CN`), which POSIX locale names lack.
+        let base = raw.trim().split('@').next().unwrap_or("");
+        let (lang, region) = base.split_once('_')?;
+        let lang = lang.split('-').next().unwrap_or("");
+        let valid = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphabetic());
+        if !valid(lang) || !valid(region) {
+            return None;
+        }
+        Some(format!("{lang}_{region}.UTF-8"))
+    });
+    Some(match candidate {
+        Some(c) if locale_exists(&c) => c,
+        _ => "en_US.UTF-8".to_string(),
+    })
+}
+
+/// The user's macOS `AppleLocale`, read once via `defaults` with a short
+/// timeout so a wedged `cfprefsd` can never stall a pane spawn.
+#[cfg(target_os = "macos")]
+fn apple_locale() -> Option<String> {
+    static CACHE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            use std::process::{Command, Stdio};
+            let mut child = Command::new("/usr/bin/defaults")
+                .args(["read", "-g", "AppleLocale"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let deadline = std::time::Instant::now() + Duration::from_millis(500);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) if status.success() => break,
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Ok(Some(_)) => return None,
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return None;
+                    }
+                }
+            }
+            let mut out = String::new();
+            child.stdout.take()?.read_to_string(&mut out).ok()?;
+            let out = out.trim();
+            (!out.is_empty()).then(|| out.to_string())
+        })
+        .clone()
+}
+
 /// Handle to a single running PTY. `stdout` bytes from the child are pushed
 /// into a caller-provided `mpsc::Sender` on a dedicated reader thread — the
 /// Tauri layer forwards them to the frontend via an event channel.
@@ -152,6 +226,22 @@ impl PtySession {
         {
             cmd.env("TERM", "xterm-256color");
             cmd.env("COLORTERM", "truecolor");
+        }
+        // Identify ourselves the way every other emulator does, so TUIs can
+        // feature-gate on it. Harmless on Windows, where nothing else sets it.
+        cmd.env("TERM_PROGRAM", "ymux");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // A Finder-launched `.app` inherits no locale at all, so the shell
+        // runs in the C locale: multibyte input (Korean IME backspace) and
+        // non-ASCII filenames come out mangled. Terminal.app sets `LANG`
+        // from the user's region; do the same unless something already did.
+        #[cfg(target_os = "macos")]
+        if let Some(lang) = fallback_lang(
+            |k| std::env::var(k).ok(),
+            apple_locale().as_deref(),
+            |l| std::path::Path::new("/usr/share/locale").join(l).is_dir(),
+        ) {
+            cmd.env("LANG", lang);
         }
 
         // Fall back to the home directory when the pane has no usable cwd —
@@ -360,6 +450,70 @@ impl Drop for PtySession {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn fallback_lang_leaves_an_inherited_locale_alone() {
+        let any = |_: &str| true;
+        for var in ["LANG", "LC_ALL", "LC_CTYPE"] {
+            assert_eq!(
+                fallback_lang(env_of(&[(var, "fr_FR.UTF-8")]), Some("ko_KR"), any),
+                None,
+                "{var} set"
+            );
+        }
+        // An empty value is as good as unset.
+        assert_eq!(
+            fallback_lang(env_of(&[("LANG", "")]), Some("ko_KR"), any),
+            Some("ko_KR.UTF-8".into())
+        );
+    }
+
+    #[test]
+    fn fallback_lang_uses_the_apple_locale_when_installed() {
+        let installed = |l: &str| l == "ko_KR.UTF-8" || l == "zh_CN.UTF-8";
+        let none = env_of(&[]);
+        assert_eq!(
+            fallback_lang(&none, Some("ko_KR"), installed),
+            Some("ko_KR.UTF-8".into())
+        );
+        assert_eq!(
+            fallback_lang(&none, Some("ko_KR@rg=krzzzz\n"), installed),
+            Some("ko_KR.UTF-8".into())
+        );
+        assert_eq!(
+            fallback_lang(&none, Some("zh-Hans_CN"), installed),
+            Some("zh_CN.UTF-8".into())
+        );
+    }
+
+    #[test]
+    fn fallback_lang_falls_back_to_en_us_utf8() {
+        let installed = |l: &str| l == "ko_KR.UTF-8";
+        let none = env_of(&[]);
+        for apple in [
+            None,
+            Some(""),
+            Some("en_KR"), // region without a matching locale
+            Some("ko"),    // no region
+            Some("x y_Z"),
+            Some("../etc_passwd"),
+        ] {
+            assert_eq!(
+                fallback_lang(&none, apple, installed),
+                Some("en_US.UTF-8".into()),
+                "{apple:?}"
+            );
+        }
+    }
 
     #[cfg(unix)]
     #[test]
@@ -573,6 +727,29 @@ mod tests {
                 .unwrap_or(false)
         };
 
+        // Reproduce a Finder launch's environment for the locale check: no
+        // LANG/LC_* at all, so the pane only gets UTF-8 from ymux's fallback.
+        for var in ["LANG", "LC_ALL", "LC_CTYPE"] {
+            std::env::remove_var(var);
+        }
+        // What launchd hands a Finder-launched app.
+        const STRIPPED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+        // A `/etc/paths` entry that stripped PATH lacks, so
+        // finding it in a bash pane proves the rcfile ran /etc/profile.
+        let etc_paths_entry = std::fs::read_to_string("/etc/paths").ok().and_then(|s| {
+            s.lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !STRIPPED_PATH.split(':').any(|p| p == *l))
+                .map(str::to_string)
+        });
+        // The value printed for `ymux-<key>=[...]`. The probe commands never
+        // spell a tag out literally, so the terminal's echo of them can't match.
+        let probe = |text: &str, key: &str| -> Option<String> {
+            let tag = format!("ymux-{key}=[");
+            let rest = &text[text.find(&tag)? + tag.len()..];
+            Some(rest[..rest.find(']')?].to_string())
+        };
+
         for profile in crate::shell::detect_shells() {
             // Every macOS profile carries a shell integration: zsh via
             // ZDOTDIR, bash via --rcfile, POSIX shells via $ENV, and fish
@@ -589,7 +766,12 @@ mod tests {
                 "{} has no shell integration, so it can never report a cwd",
                 profile.name
             );
-            let spec = PaneSpec::new_default();
+            let is_zsh = profile.executable.ends_with("/zsh");
+            let is_bash = profile.executable.ends_with("/bash");
+            let mut spec = PaneSpec::new_default();
+            if is_bash {
+                spec.env.push(("PATH".into(), STRIPPED_PATH.into()));
+            }
             let (tx, rx) = mpsc::channel();
             let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
             let session = PtySession::spawn(
@@ -625,14 +807,65 @@ mod tests {
                     }
                 }
             }
-            let _ = session.write(b"exit\n");
-
             assert!(
                 got.is_some(),
                 "{} did not report /tmp via OSC 7 (last seen: {:?})",
                 profile.name,
                 cwds.lock().get(&spec.id).cloned()
             );
+
+            // Startup-environment probes. Plain `printf` / pipes only, so the
+            // same line works in zsh, bash, sh and fish. Every tag is built
+            // from pieces (`ymux-%s=[`, `ymux-` + `&charmap=[`), so only the
+            // commands' output — never the terminal's echo of them — has it.
+            session
+                .write(
+                    b"printf 'ymux-%s=[%s]\\n' hist \"$HISTFILE\" zdotdir \"$ZDOTDIR\" path \"$PATH\"; \
+                      locale charmap | sed 's/^/ymux-/; s/^ymux-/&charmap=[/; s/$/]/'; \
+                      printf 'ymux-%s\\n' probe-done\n",
+                )
+                .expect("write");
+            let text = capture_until(&rx, "ymux-probe-done");
+            let _ = session.write(b"exit\n");
+
+            assert_eq!(
+                probe(&text, "charmap").as_deref(),
+                Some("UTF-8"),
+                "{}: `locale charmap` is not UTF-8 — LANG fallback missing: {text:?}",
+                profile.name
+            );
+            if is_zsh {
+                let shim = profile
+                    .env
+                    .iter()
+                    .find(|(k, _)| k == "ZDOTDIR")
+                    .map(|(_, v)| v.clone())
+                    .expect("zsh profile sets ZDOTDIR");
+                let hist = probe(&text, "hist")
+                    .unwrap_or_else(|| panic!("{}: no HISTFILE probe: {text:?}", profile.name));
+                assert!(
+                    !hist.starts_with(&shim),
+                    "{}: HISTFILE {hist:?} is inside the zsh-init shim {shim:?}",
+                    profile.name
+                );
+                let zdotdir = probe(&text, "zdotdir").unwrap_or_default();
+                assert!(
+                    !zdotdir.starts_with(&shim),
+                    "{}: ZDOTDIR still points at the shim after startup: {zdotdir:?}",
+                    profile.name
+                );
+            }
+            if is_bash {
+                if let Some(entry) = &etc_paths_entry {
+                    let path = probe(&text, "path")
+                        .unwrap_or_else(|| panic!("{}: no PATH probe: {text:?}", profile.name));
+                    assert!(
+                        path.split(':').any(|p| p == entry),
+                        "{}: PATH {path:?} lacks /etc/paths entry {entry:?} — /etc/profile not sourced",
+                        profile.name
+                    );
+                }
+            }
         }
     }
 

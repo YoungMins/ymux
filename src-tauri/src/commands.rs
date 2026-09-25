@@ -81,6 +81,11 @@ pub fn load_bootstrap(
             let detected = shell::detect_shells();
             state.config.update(|c| c.shells = detected);
             let _ = state.config.flush_if_dirty();
+        } else {
+            // Detection writes the zsh shim / bash rcfiles; with a cached
+            // list it never runs, so rewrite them here or a fixed shim
+            // would never reach an existing install.
+            shell::refresh_shell_integration();
         }
     }
     // Pin every terminal pane's "" shell sentinel to the current default, so
