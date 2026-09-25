@@ -2489,6 +2489,12 @@ body,
   font-size: 11px;
 }
 
+/* .files__btn's display: inline-flex would beat the hidden attribute
+   (the markdown preview toggle on a non-markdown file). */
+.editor__bar .files__btn[hidden] {
+  display: none;
+}
+
 .editor__bar .files__btn:disabled {
   opacity: 0.4;
   cursor: default;
@@ -2585,6 +2591,158 @@ body,
 .editor__host > .cm-editor {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* Markdown preview (markdown.ts renders + sanitises; EditorPane toggles it
+   against .editor__host). Children are capped at ~900px, centred. */
+.editor__preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 24px 32px;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  outline: none;
+}
+
+.editor__preview[hidden] {
+  display: none;
+}
+
+.editor__preview > * {
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.editor__preview > :first-child {
+  margin-top: 0;
+}
+
+.editor__preview h1,
+.editor__preview h2,
+.editor__preview h3,
+.editor__preview h4,
+.editor__preview h5,
+.editor__preview h6 {
+  margin-top: 1.4em;
+  margin-bottom: 0.5em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.editor__preview h1,
+.editor__preview h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor__preview h1 { font-size: 1.9em; }
+.editor__preview h2 { font-size: 1.5em; }
+.editor__preview h3 { font-size: 1.25em; }
+.editor__preview h4 { font-size: 1.05em; }
+.editor__preview h5 { font-size: 0.95em; }
+.editor__preview h6 { font-size: 0.9em; color: var(--fg-muted); }
+
+.editor__preview p,
+.editor__preview ul,
+.editor__preview ol,
+.editor__preview blockquote,
+.editor__preview pre,
+.editor__preview table {
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+
+.editor__preview ul,
+.editor__preview ol {
+  padding-left: 2em;
+}
+
+.editor__preview li + li {
+  margin-top: 0.25em;
+}
+
+.editor__preview li > input[type="checkbox"] {
+  margin: 0 0.4em 0 -1.4em;
+  vertical-align: middle;
+}
+
+.editor__preview li:has(> input[type="checkbox"]) {
+  list-style: none;
+}
+
+.editor__preview a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.editor__preview a:hover {
+  text-decoration: underline;
+}
+
+.editor__preview blockquote {
+  padding: 0 1em;
+  color: var(--fg-muted);
+  border-left: 3px solid var(--border);
+}
+
+.editor__preview code {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.15em 0.35em;
+  background: var(--bg-alt);
+  border-radius: 3px;
+}
+
+.editor__preview pre {
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  line-height: 1.45;
+}
+
+.editor__preview pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.88em;
+  white-space: pre;
+}
+
+.editor__preview table {
+  display: block;
+  width: max-content;
+  max-width: min(100%, 900px);
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.editor__preview th,
+.editor__preview td {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+}
+
+.editor__preview th {
+  background: var(--bg-alt);
+  font-weight: 600;
+}
+
+.editor__preview hr {
+  height: 0;
+  margin: 1.5em auto;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.editor__preview img {
+  max-width: 100%;
 }
 
 .editor__overlay {

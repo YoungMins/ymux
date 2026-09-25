@@ -1986,6 +1986,18 @@ const strings: Translations = {
     fr: "Rechercher et remplacer", ar: "بحث واستبدال", pt: "Localizar e substituir",
     ru: "Найти и заменить", tr: "Bul ve değiştir", de: "Suchen und ersetzen", vi: "Tìm và thay thế",
   },
+  "editor.preview": {
+    en: "Preview", ko: "미리 보기", ja: "プレビュー",
+    zh: "预览", hi: "पूर्वावलोकन", es: "Vista previa",
+    fr: "Aperçu", ar: "معاينة", pt: "Pré-visualizar",
+    ru: "Просмотр", tr: "Önizleme", de: "Vorschau", vi: "Xem trước",
+  },
+  "editor.edit": {
+    en: "Edit", ko: "편집", ja: "編集",
+    zh: "编辑", hi: "संपादित करें", es: "Editar",
+    fr: "Modifier", ar: "تحرير", pt: "Editar",
+    ru: "Редактировать", tr: "Düzenle", de: "Bearbeiten", vi: "Chỉnh sửa",
+  },
   "editor.saved": {
     en: "Saved", ko: "저장했습니다", ja: "保存しました",
     zh: "已保存", hi: "सहेजा गया", es: "Guardado",

@@ -28,7 +28,7 @@ import type { SyntaxColors } from "../settings/types";
 import type { EditorHandle } from "./cmSetup";
 import { api, errorKind, fsApi, type ContentStamp } from "../ipc/bridge";
 import { t, onLangChange } from "../i18n/i18n";
-import { IS_MAC, shortcutLabel } from "../platform";
+import { IS_MAC, hasMod, shortcutLabel } from "../platform";
 import { askChoice, askConfirm, askText } from "../ui/Dialog";
 import { describeFsError } from "../files/FilesPane";
 import {
@@ -85,6 +85,18 @@ interface Loaded {
 }
 
 let syntaxPromise: Promise<SyntaxColors | null> | null = null;
+let markdownPromise: Promise<typeof import("./markdown")> | null = null;
+
+/// The markdown renderer (marked + DOMPurify), loaded on first preview.
+function loadMarkdown(): Promise<typeof import("./markdown")> {
+  if (!markdownPromise) {
+    markdownPromise = import("./markdown").catch((e) => {
+      markdownPromise = null;
+      throw e;
+    });
+  }
+  return markdownPromise;
+}
 
 /// The user's ytheme syntax palette, loaded once per session.
 function loadSyntax(): Promise<SyntaxColors | null> {
@@ -119,6 +131,8 @@ const ICON = {
   save: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h8.5l2.5 2.5v8.5h-11z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M5 2.5v3.5h5.5V2.5M5 13.5V9.5h6v4" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>',
   undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4 2.5 7l3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 7h6.5a3.5 3.5 0 0 1 0 7H7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
   redo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 7H6.5a3.5 3.5 0 0 0 0 7H9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  preview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
+  edit: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3-8 8H2.5v-3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 4l3 3" stroke="currentColor" stroke-width="1.2"/></svg>',
   find: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.2 10.2 13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
 };
 
@@ -133,6 +147,8 @@ export class EditorPane implements Pane {
   private readonly bannerEl: HTMLElement;
   private readonly body: HTMLElement;
   private readonly host: HTMLElement;
+  /// Rendered markdown (sanitised). Shown instead of `host` while previewing.
+  private readonly preview: HTMLElement;
   private readonly overlay: HTMLElement;
   private readonly statusMsg: HTMLElement;
   private readonly statusPos: HTMLElement;
@@ -140,6 +156,7 @@ export class EditorPane implements Pane {
   private readonly statusLang: HTMLElement;
   private readonly buttons: { el: HTMLButtonElement; key: string; chord?: string }[] = [];
   private readonly saveBtn: HTMLButtonElement;
+  private readonly previewBtn: HTMLButtonElement;
 
   private path: string;
   private title: string | null;
@@ -186,6 +203,13 @@ export class EditorPane implements Pane {
   private draftOnDisk = false;
   private statusTimer: number | null = null;
   private disposed = false;
+  /// Markdown file shown rendered rather than in CodeMirror. Pane memory
+  /// only: every (re)open of a markdown file starts in preview.
+  private previewing = false;
+  private previewGen = 0;
+  /// The preview's last user scroll position (an un-hide zeroes it).
+  private previewScroll = 0;
+  private md: typeof import("./markdown") | null = null;
   private readonly cleanups: (() => void)[] = [];
 
   constructor(private readonly opts: EditorPaneOptions) {
@@ -203,8 +227,8 @@ export class EditorPane implements Pane {
     const bar = document.createElement("div");
     bar.className = "editor__bar";
     this.saveBtn = this.makeButton(ICON.save, "editor.save", () => void this.save(), "Ctrl+S");
-    const undo = this.makeButton(ICON.undo, "editor.undo", () => this.handle?.undo(), "Ctrl+Z");
-    const redo = this.makeButton(ICON.redo, "editor.redo", () => this.handle?.redo(), "Ctrl+Y");
+    const undo = this.makeButton(ICON.undo, "editor.undo", () => this.withEditor((h) => h.undo()), "Ctrl+Z");
+    const redo = this.makeButton(ICON.redo, "editor.redo", () => this.withEditor((h) => h.redo()), "Ctrl+Y");
     const file = document.createElement("div");
     file.className = "editor__file";
     this.dotEl = document.createElement("span");
@@ -221,7 +245,8 @@ export class EditorPane implements Pane {
       s.className = "files__bar-sep";
       return s;
     };
-    bar.append(this.saveBtn, undo, redo, sep(), file, sep(), find);
+    this.previewBtn = this.makeButton(ICON.edit, "editor.edit", () => this.togglePreview());
+    bar.append(this.saveBtn, undo, redo, sep(), file, sep(), find, this.previewBtn);
 
     this.bannerEl = document.createElement("div");
     this.bannerEl.className = "editor__banners";
@@ -234,7 +259,12 @@ export class EditorPane implements Pane {
     this.host.className = "editor__host";
     this.overlay = document.createElement("div");
     this.overlay.className = "editor__overlay";
-    this.body.append(this.host, this.overlay);
+    this.preview = document.createElement("div");
+    this.preview.className = "editor__preview";
+    this.preview.tabIndex = -1;
+    this.preview.hidden = true;
+    this.wirePreview();
+    this.body.append(this.host, this.preview, this.overlay);
 
     const status = document.createElement("div");
     status.className = "editor__status";
@@ -270,6 +300,10 @@ export class EditorPane implements Pane {
   /// editor already has focus it must do nothing: re-focusing would fight
   /// CodeMirror's own selection handling (and an IME composition).
   focus(): void {
+    if (this.previewing && this.file) {
+      if (!this.preview.contains(document.activeElement)) this.preview.focus({ preventScroll: true });
+      return;
+    }
     if (this.handle) {
       if (!this.handle.hasFocus()) this.handle.focus();
       return;
@@ -282,7 +316,10 @@ export class EditorPane implements Pane {
   /// may have resized the box. One frame later: re-measure and put the
   /// scroll position back.
   scheduleFit(): void {
-    requestAnimationFrame(() => this.handle?.restoreScroll());
+    requestAnimationFrame(() => {
+      if (this.previewing) this.preview.scrollTop = this.previewScroll;
+      else this.handle?.restoreScroll();
+    });
   }
 
   async spawn(): Promise<void> {
@@ -423,6 +460,7 @@ export class EditorPane implements Pane {
   /// Ctrl+F (main.ts routes it here): CodeMirror's search panel.
   toggleSearch(): void {
     if (!this.handle || this.problem) return;
+    this.setPreviewing(false);
     this.handle.openSearch();
   }
 
@@ -628,6 +666,14 @@ export class EditorPane implements Pane {
     h.load(tf.text, { readOnly: tf.truncated, lang });
     this.saved = h.doc();
     this.dirty = false;
+    // Assigned directly (the chrome is re-rendered below), but leaving
+    // preview un-hides CodeMirror, which needs rule 14's refit.
+    const wasPreviewing = this.previewing;
+    this.previewing = lang === "markdown";
+    if (wasPreviewing && !this.previewing) this.scheduleFit();
+    this.previewScroll = 0;
+    this.preview.scrollTop = 0;
+    if (this.previewing) this.renderPreview(tf.text);
     this.say("");
     if (tf.truncated) this.setBanner({ kind: "readOnly" });
     else if (needsEolWarning(tf.eol)) this.setBanner({ kind: "mixedEol" });
@@ -657,6 +703,7 @@ export class EditorPane implements Pane {
     const cursor = h.cursor();
     h.load(text, { readOnly: truncated, lang: this.file.lang, cursor });
     this.file = { ...this.file, eol, bom, stamp, readOnly: truncated };
+    if (this.previewing) this.renderPreview(text);
     this.saved = h.doc();
     this.dirty = false;
     this.deletedOnDisk = false;
@@ -889,9 +936,110 @@ export class EditorPane implements Pane {
     this.pendingDraft = null;
     this.renderBanner();
     h.replaceAll(draft.text);
+    if (this.previewing) this.renderPreview(draft.text);
     this.refreshDirty();
     this.renderChrome();
     this.opts.onDirtyChange?.();
+  }
+
+  // ── Markdown preview ──────────────────────────────────────────────────────
+
+  private togglePreview(): void {
+    if (!this.handle || this.file?.lang !== "markdown") return;
+    if (this.previewing) {
+      this.setPreviewing(false);
+      this.handle.focus();
+      return;
+    }
+    // From the buffer, unsaved edits included — not from disk.
+    this.renderPreview(this.handle.text());
+    this.setPreviewing(true);
+    this.preview.focus({ preventScroll: true });
+  }
+
+  /// Leaving preview un-hides CodeMirror, so it needs rule 14's refit.
+  private setPreviewing(on: boolean): void {
+    if (this.previewing === on) return;
+    this.previewing = on;
+    this.renderChrome();
+    this.scheduleFit();
+  }
+
+  /// Toolbar undo / redo act on the buffer, so they switch to the editor.
+  private withEditor(act: (h: EditorHandle) => void): void {
+    const h = this.handle;
+    if (!h) return;
+    this.setPreviewing(false);
+    act(h);
+    h.focus();
+  }
+
+  private renderPreview(text: string): void {
+    const gen = ++this.previewGen;
+    loadMarkdown().then(
+      (m) => {
+        if (gen !== this.previewGen || this.disposed) return;
+        this.md = m;
+        // Sanitised DOM (DOMPurify) — see markdown.ts.
+        this.preview.replaceChildren(m.renderMarkdownFragment(text));
+      },
+      (e) => {
+        if (gen !== this.previewGen || this.disposed) return;
+        console.warn("editor: markdown preview failed", e);
+        this.say(String(e), true);
+        this.setPreviewing(false);
+      },
+    );
+  }
+
+  /// No link in the preview may navigate the main webview: every click is
+  /// cancelled, then `classifyLink` says what, if anything, happens.
+  private wirePreview(): void {
+    const linkOf = (ev: Event): Element | null => {
+      const a = (ev.target as Element | null)?.closest?.("a, area") ?? null;
+      return a && this.preview.contains(a) ? a : null;
+    };
+    this.preview.addEventListener("click", (ev) => {
+      const a = linkOf(ev);
+      if (!a) return;
+      ev.preventDefault();
+      const href = a.getAttribute("href");
+      const md = this.md;
+      if (href === null || !md) return;
+      const link = md.classifyLink(href);
+      switch (link.kind) {
+        case "external":
+          void api.openUrl(link.url).catch((e) => console.warn("openUrl failed:", e));
+          break;
+        case "anchor": {
+          const find = (id: string) => this.preview.querySelector(`[id="${CSS.escape(id)}"]`);
+          (find(md.ID_PREFIX + link.id) ?? find(link.id))?.scrollIntoView({ block: "start" });
+          break;
+        }
+        case "file":
+          if (this.path) void this.openFile(md.resolveRelative(this.path, link.relPath));
+          break;
+        case "ignore":
+          break;
+      }
+    });
+    this.preview.addEventListener("auxclick", (ev) => {
+      if (linkOf(ev)) ev.preventDefault();
+    });
+    // A link dragged out would hand its URL to whatever takes the drop.
+    this.preview.addEventListener("dragstart", (ev) => {
+      if (linkOf(ev)) ev.preventDefault();
+    });
+    // Ctrl+S is a CodeMirror keymap entry; the preview needs its own.
+    this.preview.addEventListener("keydown", (ev) => {
+      if (hasMod(ev) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "s") {
+        ev.preventDefault();
+        void this.save();
+      }
+    });
+    this.preview.addEventListener("scroll", () => {
+      if (this.preview.clientHeight > 0) this.previewScroll = this.preview.scrollTop;
+    });
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -998,7 +1146,20 @@ export class EditorPane implements Pane {
     this.dirEl.textContent = cut > 0 ? this.path.slice(0, cut) : "";
     this.nameEl.parentElement!.title = this.path;
     this.saveBtn.disabled = !this.file || this.file.readOnly;
-    this.host.hidden = !this.file;
+    this.host.hidden = !this.file || this.previewing;
+    this.preview.hidden = !this.file || !this.previewing;
+    this.previewBtn.hidden = this.file?.lang !== "markdown";
+    // The button names what a click does: Edit while previewing, Preview
+    // while editing.
+    const entry = this.buttons.find((b) => b.el === this.previewBtn);
+    const key = this.previewing ? "editor.edit" : "editor.preview";
+    if (entry && entry.key !== key) {
+      entry.key = key;
+      this.previewBtn.innerHTML = this.previewing ? ICON.edit : ICON.preview;
+      this.previewBtn.title = t(key);
+      this.previewBtn.setAttribute("aria-label", t(key));
+    }
+    this.previewBtn.setAttribute("aria-pressed", String(this.previewing));
     this.renderOverlay();
     this.renderFacts();
     this.updateTitle();
@@ -1099,7 +1260,8 @@ export class EditorPane implements Pane {
     b.addEventListener("mousedown", (ev) => ev.preventDefault());
     b.addEventListener("click", () => {
       onClick();
-      if (key !== "editor.find") this.handle?.focus();
+      // Find opens its own panel; the preview toggle places focus itself.
+      if (key !== "editor.find" && b !== this.previewBtn && !this.previewing) this.handle?.focus();
     });
     this.buttons.push({ el: b, key, chord });
     return b;

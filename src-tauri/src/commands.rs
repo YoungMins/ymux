@@ -554,30 +554,55 @@ pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) ->
 #[tauri::command]
 pub fn open_url(webview: Webview, request: Request<'_>, url: String) -> YmuxResult<()> {
     guard_local(&webview, &request, "open_url")?;
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    let url = browsable_url(&url)?;
+    // Never through `cmd /C start`: cmd re-parses the URL, and an `&`, `|`
+    // or `^` in a space-free URL (which Rust does not quote) runs as a
+    // command — a crafted link in a rendered README would be RCE. `opener`
+    // hands it to ShellExecuteW on Windows and `open`/`xdg-open` elsewhere,
+    // as one argument, with no shell in between.
+    opener::open_browser(&url).map_err(|e| YmuxError::Other(format!("open_url: {e}")))?;
+    Ok(())
+}
+
+/// The http(s) URL `open_url` may hand to the OS, re-serialised by the URL
+/// parser so what reaches the launcher is a canonical URL, not the raw
+/// string a page supplied.
+fn browsable_url(raw: &str) -> YmuxResult<String> {
+    let parsed =
+        url::Url::parse(raw.trim()).map_err(|e| YmuxError::Other(format!("open_url: {e}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
         return Err(YmuxError::Other(
             "open_url: only http/https URLs are supported".into(),
         ));
     }
-    #[cfg(windows)]
-    {
-        // `start "" <url>` — the empty string is the window title, required
-        // when the URL contains query params so `cmd /C start` doesn't
-        // misparse the first `=` as a window-title separator.
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
-            .spawn()
-            .map_err(YmuxError::Io)?;
+    Ok(parsed.into())
+}
+
+#[cfg(test)]
+mod open_url_tests {
+    use super::browsable_url;
+
+    #[test]
+    fn only_http_and_https_pass() {
+        assert!(browsable_url("https://example.com/a?b=1").is_ok());
+        assert!(browsable_url("http://example.com").is_ok());
+        for bad in [
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "mailto:a@b.c",
+            "calc",
+            "",
+        ] {
+            assert!(browsable_url(bad).is_err(), "{bad} must be refused");
+        }
     }
-    #[cfg(not(windows))]
-    {
-        // macOS (`open`) and Linux (`xdg-open`) — `opener` picks the right
-        // launcher per platform. It is already a dependency for the Settings
-        // "open config file" action, so this costs nothing extra and avoids
-        // hardcoding `xdg-open`, which does not exist on macOS.
-        opener::open_browser(&url).map_err(|e| YmuxError::Other(format!("open_url: {e}")))?;
+
+    #[test]
+    fn shell_metacharacters_are_just_url_text() {
+        // Passed as one argument to ShellExecuteW / open, never to cmd.
+        let u = browsable_url("https://example.com/&calc").unwrap();
+        assert!(u.starts_with("https://example.com/"));
     }
-    Ok(())
 }
 
 /// Resolve terminal-output path candidates against a pane's live cwd,
