@@ -16,6 +16,7 @@
 
 import { tags, type Tag } from "@lezer/highlight";
 import type { SyntaxColors } from "../settings/types";
+import { MONO_FONT_NAMES } from "../ui/fonts";
 
 /// ytheme's defaults (crates/ytheme/src/lib.rs `SyntaxColors::default`).
 export const DEFAULT_SYNTAX: SyntaxColors = {
@@ -71,7 +72,8 @@ export function syntaxRules(syntax: Partial<SyntaxColors> | null | undefined): S
 /// tokens. `fontSize` follows the terminal font size (Ctrl +/-/0 apply to
 /// the editor too, spec §0.6).
 export function chromeSpec(fontSize: number): Record<string, Record<string, string>> {
-  const mono = '"Cascadia Code", "Cascadia Mono", Consolas, "D2Coding", "Malgun Gothic", ui-monospace, monospace';
+  // The shared stack, with Hangul-capable coding fonts ahead of the generics.
+  const mono = `${MONO_FONT_NAMES}, "D2Coding", "Malgun Gothic", ui-monospace, "Courier New", monospace`;
   return {
     "&": {
       height: "100%",

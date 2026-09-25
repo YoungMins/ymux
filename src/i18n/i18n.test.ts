@@ -18,3 +18,14 @@ describe("i18n completeness (rule 7)", () => {
     expect(translationGaps("fsError.")).toEqual([]);
   });
 });
+
+describe("no hard-coded shortcuts in translations", () => {
+  it("leaves shortcut text to shortcutLabel() at the use site, so macOS shows Cmd", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./i18n.ts", import.meta.url)), "utf8");
+    expect(src.match(/\b(Ctrl|Alt)\+\S+/g) ?? []).toEqual([]);
+    expect(translationGaps("browser.zoom")).toEqual([]);
+    expect(translationGaps("notes.buttonTitle")).toEqual([]);
+  });
+});

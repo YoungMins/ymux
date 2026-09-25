@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Terminal } from "@xterm/headless";
 import {
   restoreScrollGuard,
+  restoreGuardTail,
   restoreRevealLines,
   shouldDeferRestoreReveal,
 } from "./restoreGuard";
@@ -72,6 +73,44 @@ describe("restoreScrollGuard", () => {
     expect(text).toContain("-- restored --");
     expect(text).toContain("line-12");
     term.dispose();
+  });
+
+  it("homes the cursor after the guard only where ConPTY does not", () => {
+    expect(restoreGuardTail(true)).toBe("");
+    expect(restoreGuardTail(false)).toBe("\x1b[H");
+  });
+
+  it("without ConPTY, the prompt lands at the viewport top and the reveal shows history + prompt, as on Windows", async () => {
+    const rows = 8;
+    // What a macOS zsh prints first: no clear, just the prompt.
+    const ZSH_PROMPT = "me@mac ~ % ";
+    const run = async (conpty: boolean): Promise<{ promptRow: number; view: string[] }> => {
+      const term = new Terminal({ rows, cols: 40, scrollback: 200, allowProposedApi: true });
+      for (let i = 1; i <= 12; i++) await write(term, `line-${i}\r\n`);
+      await write(term, "-- restored --\r\n");
+      await write(term, restoreScrollGuard(term.rows));
+      await write(term, restoreGuardTail(conpty));
+      await write(term, conpty ? CONPTY_STARTUP_BURST : ZSH_PROMPT);
+      const needle = conpty ? "PS D:\\>" : ZSH_PROMPT.trim();
+      const buf = term.buffer.active;
+      const promptRow = buf.cursorY;
+      expect(buf.getLine(buf.baseY + promptRow)?.translateToString(true)).toContain(needle);
+      term.scrollLines(-restoreRevealLines(rows));
+      const view: string[] = [];
+      for (let y = buf.viewportY; y < buf.viewportY + rows; y++) {
+        view.push(buf.getLine(y)?.translateToString(true) ?? "");
+      }
+      term.dispose();
+      return { promptRow, view: view.map((l) => l.replace(needle, "<prompt>")) };
+    };
+    const win = await run(true);
+    const mac = await run(false);
+    expect(mac.promptRow).toBe(0);
+    expect(mac.promptRow).toBe(win.promptRow);
+    // Same picture on open: history tail, separator, prompt.
+    expect(mac.view.map((l) => l.trim())).toEqual(win.view.map((l) => l.trim()));
+    expect(mac.view.join("\n")).toContain("-- restored --");
+    expect(mac.view.join("\n")).toContain("<prompt>");
   });
 
   it("restoreRevealLines leaves room for the separator and never goes negative", () => {

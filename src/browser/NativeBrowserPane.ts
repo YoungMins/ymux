@@ -121,7 +121,7 @@ export class NativeBrowserPane implements Pane {
     this.statusEl.style.color = "#7fdbca";
     this.statusEl.style.fontSize = "10px";
     this.statusEl.style.lineHeight = "1.3";
-    this.statusEl.style.fontFamily = "Cascadia Code, Consolas, monospace";
+    this.statusEl.style.fontFamily = "var(--font-mono)";
     this.statusEl.style.zIndex = "5";
     this.statusEl.style.whiteSpace = "pre-wrap";
     this.statusEl.style.maxHeight = "120px";

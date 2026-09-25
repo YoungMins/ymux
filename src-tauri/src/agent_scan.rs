@@ -45,11 +45,44 @@ const SCRIPT_MARKERS: &[(&str, &str)] = &[
     ("/@google/gemini-cli/", "gemini"),
 ];
 
+/// The agent named exactly by `path`'s basename, ignoring case and a
+/// trailing `.exe` / `.cmd`. `claude-helper.js` or `claudette` are not agents.
+fn agent_by_basename(path: &str) -> Option<&'static str> {
+    let base = path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    let base = base
+        .strip_suffix(".exe")
+        .or_else(|| base.strip_suffix(".cmd"))
+        .unwrap_or(&base);
+    AGENT_EXES.iter().copied().find(|n| *n == base)
+}
+
+/// A file stem made of digits and dots, like the native Claude binary's
+/// `2.1` (from `versions/2.1.30`).
+fn is_version_stem(stem: &str) -> bool {
+    stem.bytes().any(|b| b.is_ascii_digit())
+        && stem.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+}
+
 /// Which agent, if any, a process is.
 pub fn match_agent(exe_stem: &str, argv: &[String]) -> Option<&'static str> {
     let stem = exe_stem.to_ascii_lowercase();
     if let Some(name) = AGENT_EXES.iter().copied().find(|n| *n == stem) {
         return Some(name);
+    }
+    // argv[0] names the agent even when the executable file doesn't: the
+    // native Claude binary lives at a version-named path
+    // (`~/.local/share/claude/versions/2.1.30`) and sets `process.title` to
+    // `claude`, which on macOS overwrites the argv block the scan reads.
+    // Trusted only in that shape — a version-number stem, or `claude`
+    // itself — so an unrelated program's argv[0] can't claim to be an agent.
+    if let Some(name) = argv.first().and_then(|a0| agent_by_basename(a0)) {
+        if name == "claude" || is_version_stem(&stem) {
+            return Some(name);
+        }
     }
     if !SCRIPT_HOSTS.contains(&stem.as_str()) {
         return None;
@@ -58,11 +91,14 @@ pub fn match_agent(exe_stem: &str, argv: &[String]) -> Option<&'static str> {
     // itself. Later args are the script's own input and may mention an agent
     // path without being one.
     let script = argv.iter().skip(1).find(|a| !a.starts_with('-'))?;
-    let script = format!("/{}", script.replace('\\', "/").to_ascii_lowercase());
+    let normalised = format!("/{}", script.replace('\\', "/").to_ascii_lowercase());
     SCRIPT_MARKERS
         .iter()
-        .find(|(marker, _)| script.contains(marker))
+        .find(|(marker, _)| normalised.contains(marker))
         .map(|(_, kind)| *kind)
+        // A shebang launch passes the npm bin *symlink*, not the package
+        // path: `node /opt/homebrew/bin/claude`. Its basename is the agent.
+        .or_else(|| agent_by_basename(script))
 }
 
 /// File stem of `exe`, or `name` minus a trailing `.exe` when the path is
@@ -655,11 +691,14 @@ mod tests {
             "--resume",
         ]);
         assert_eq!(match_agent("node", &win), Some("claude"));
-        let unix = argv(&[
-            "node",
-            "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js",
-        ]);
-        assert_eq!(match_agent("node", &unix), Some("claude"));
+        // macOS/Linux npm installs run through the bin symlink's shebang,
+        // so the script argument is the symlink, not the package path.
+        let brew = argv(&["node", "/opt/homebrew/bin/claude"]);
+        assert_eq!(match_agent("node", &brew), Some("claude"));
+        let gemini = argv(&["node", "--no-warnings", "/usr/local/bin/gemini"]);
+        assert_eq!(match_agent("node", &gemini), Some("gemini"));
+        let codex = argv(&["node", "/Users/me/.npm-global/bin/codex", "resume"]);
+        assert_eq!(match_agent("node", &codex), Some("codex"));
         // Host flags before the script are skipped.
         let flagged = argv(&[
             "node",
@@ -667,6 +706,75 @@ mod tests {
             "/home/x/.npm-global/lib/node_modules/@openai/codex/bin/codex.js",
         ]);
         assert_eq!(match_agent("node", &flagged), Some("codex"));
+    }
+
+    #[test]
+    fn matcher_uses_argv0_when_the_executable_path_does_not_name_the_agent() {
+        // Native Claude: version-named executable, `process.title = "claude"`
+        // overwrites argv, so only argv[0] survives.
+        assert_eq!(match_agent("2.1", &argv(&["claude"])), Some("claude"));
+        assert_eq!(
+            match_agent("2.1", &argv(&["/Users/me/.local/bin/claude", "--resume"])),
+            Some("claude")
+        );
+        // `claude` as argv[0] is trusted on any stem.
+        assert_eq!(match_agent("x", &argv(&["claude"])), Some("claude"));
+        assert_eq!(
+            match_agent("x", &argv(&[r"C:\tools\Claude.EXE"])),
+            Some("claude")
+        );
+        // Other agent names only on a version-number stem.
+        assert_eq!(match_agent("0.42.1", &argv(&["codex"])), Some("codex"));
+    }
+
+    #[test]
+    fn matcher_ignores_other_agent_names_in_argv0_of_unrelated_executables() {
+        for (stem, a0) in [
+            ("python", "aider"),
+            ("git", "amp"),
+            ("x", r"C:\tools\Codex.EXE"),
+            ("cmd", "gemini.cmd"),
+            ("v2", "codex"),
+            ("", "opencode"),
+            ("...", "amp"),
+        ] {
+            assert_eq!(match_agent(stem, &argv(&[a0])), None, "{stem} {a0}");
+        }
+        // Their own exe stem still matches normally.
+        assert_eq!(match_agent("aider", &argv(&["aider"])), Some("aider"));
+        assert_eq!(match_agent("amp", &argv(&["/usr/bin/amp"])), Some("amp"));
+    }
+
+    #[test]
+    fn matcher_basename_rules_reject_lookalikes() {
+        // The script's basename must equal an agent name exactly.
+        for script in [
+            "/x/claude-helper.js",
+            "/x/claude.js",
+            "/x/bin/claudette",
+            "/x/claude/server.js",
+        ] {
+            assert_eq!(
+                match_agent("node", &argv(&["node", script])),
+                None,
+                "{script}"
+            );
+        }
+        // argv[0] lookalikes, and an agent name that is only a later arg.
+        assert_eq!(match_agent("zsh", &argv(&["-zsh"])), None);
+        assert_eq!(match_agent("x", &argv(&["claude-helper"])), None);
+        assert_eq!(
+            match_agent(
+                "node",
+                &argv(&["node", "server.js", "/usr/local/bin/claude"])
+            ),
+            None
+        );
+        // A basename match only applies to a script host's script.
+        assert_eq!(
+            match_agent("python", &argv(&["python", "/usr/local/bin/claude"])),
+            None
+        );
     }
 
     #[test]

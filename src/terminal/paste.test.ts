@@ -154,28 +154,86 @@ describe("preparePaste", () => {
 
 describe("decideImagePaste", () => {
   it("falls through to text when the backend reports no image", () => {
-    expect(decideImagePaste(null)).toEqual({ kind: "text" });
-    expect(decideImagePaste(undefined)).toEqual({ kind: "text" });
+    expect(decideImagePaste(null, "posix")).toEqual({ kind: "text" });
+    expect(decideImagePaste(undefined, "posix")).toEqual({ kind: "text" });
   });
 
   it("falls through to text for a blank path instead of writing quotes", () => {
     // The 0-byte-PNG bug typed `""` into the shell. A nothing-shaped answer
     // must never become a write, whatever shape the nothing arrives in.
-    expect(decideImagePaste("")).toEqual({ kind: "text" });
-    expect(decideImagePaste("   ")).toEqual({ kind: "text" });
+    expect(decideImagePaste("", "posix")).toEqual({ kind: "text" });
+    expect(decideImagePaste("   ", "posix")).toEqual({ kind: "text" });
   });
 
   it("quotes the saved image's path", () => {
-    expect(decideImagePaste("C:\Users\John Smith\clip-1.png")).toEqual({
+    expect(decideImagePaste("C:\Users\John Smith\clip-1.png", "cmd")).toEqual({
       kind: "image",
       write: '"C:\Users\John Smith\clip-1.png"',
     });
   });
 
   it("types the path with no trailing newline — the user presses Enter", () => {
-    const decision = decideImagePaste("/tmp/clip-1.png");
+    const decision = decideImagePaste("/tmp/clip-1.png", "cmd");
     expect(decision.kind).toBe("image");
     expect(decision.kind === "image" && decision.write).toBe('"/tmp/clip-1.png"');
     expect(decision.kind === "image" && decision.write.endsWith("\n")).toBe(false);
+  });
+
+  it("quotes for the pane's shell so $ and backticks in the path never expand", () => {
+    expect(decideImagePaste("/Users/$USER/`id`/clip.png", "posix")).toEqual({
+      kind: "image",
+      write: "'/Users/$USER/`id`/clip.png'",
+    });
+    expect(decideImagePaste("C:\\Users\\$env:X\\clip.png", "powershell")).toEqual({
+      kind: "image",
+      write: "'C:\\Users\\$env:X\\clip.png'",
+    });
+  });
+
+  it("falls through to text for a path that cannot be typed safely", () => {
+    expect(decideImagePaste("/tmp/a\nb.png", "posix")).toEqual({ kind: "text" });
+  });
+
+  // Claude Code strips one outer '…' or "…" from a pasted path and does not
+  // un-escape inside it, so a quote in the path must not need an inner escape.
+  it("uses double quotes for a path with an apostrophe where that is safe", () => {
+    const img = (write: string) => ({ kind: "image", write });
+    expect(decideImagePaste("C:\\Users\\O'Brien\\clip.png", "powershell")).toEqual(
+      img('"C:\\Users\\O\'Brien\\clip.png"'),
+    );
+    expect(decideImagePaste("C:\\Users\\O\u2019Brien\\clip.png", "powershell")).toEqual(
+      img('"C:\\Users\\O\u2019Brien\\clip.png"'),
+    );
+    expect(decideImagePaste("C:\\Users\\O'Brien\\clip.png", "cmd")).toEqual(
+      img('"C:\\Users\\O\'Brien\\clip.png"'),
+    );
+    expect(decideImagePaste("/Users/o'brien/clip.png", "posix")).toEqual(
+      img('"/Users/o\'brien/clip.png"'),
+    );
+    expect(decideImagePaste("/Users/o'brien/clip.png", "fish")).toEqual(
+      img('"/Users/o\'brien/clip.png"'),
+    );
+    // No quote in the path: the family's single-quote form, no inner escape.
+    expect(decideImagePaste("/Users/me/clip 1.png", "posix")).toEqual(img("'/Users/me/clip 1.png'"));
+    // A curly quote is not special to POSIX shells: single quotes stay.
+    expect(decideImagePaste("/Users/o\u2019b/clip.png", "posix")).toEqual(
+      img("'/Users/o\u2019b/clip.png'"),
+    );
+  });
+
+  it("refuses an apostrophe path when double quotes would expand something", () => {
+    for (const [path, family] of [
+      ["C:\\Users\\O'Brien$x\\clip.png", "powershell"],
+      ["C:\\Users\\O'Brien`x\\clip.png", "powershell"],
+      ["/Users/o'brien/$HOME/clip.png", "posix"],
+      ["/Users/o'brien/`id`.png", "posix"],
+      ["/Users/o'brien/a\\b.png", "posix"],
+      ["/Users/o'brien/!!.png", "posix"],
+      ["/Users/o'brien/$(id).png", "fish"],
+      ["/Users/me/a\\b.png", "fish"],
+      ["/Users/o'brien/clip.png", "unknown"],
+    ] as const) {
+      expect(decideImagePaste(path, family), `${family} ${path}`).toEqual({ kind: "text" });
+    }
   });
 });

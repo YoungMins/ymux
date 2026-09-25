@@ -119,7 +119,21 @@ fn os_hidden(md: &fs::Metadata) -> bool {
     md.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
 }
 
-#[cfg(not(windows))]
+/// macOS's hidden flag (`chflags hidden`, what Finder hides `~/Library` by).
+#[cfg(target_os = "macos")]
+fn os_hidden(md: &fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    flags_hidden(md.st_flags())
+}
+
+/// `UF_HIDDEN` from `<sys/stat.h>`.
+#[cfg(any(target_os = "macos", test))]
+fn flags_hidden(st_flags: u32) -> bool {
+    const UF_HIDDEN: u32 = 0x8000;
+    st_flags & UF_HIDDEN != 0
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn os_hidden(_md: &fs::Metadata) -> bool {
     false
 }
@@ -356,7 +370,19 @@ pub(crate) mod imp {
         if to_trash {
             // The `trash` crate reports one error for the batch; map it
             // whole rather than guessing which path failed.
-            return trash::delete_all(paths)
+            #[allow(unused_mut)]
+            let mut ctx = trash::TrashContext::new();
+            // On macOS the crate defaults to scripting Finder over
+            // AppleScript, which pops an Automation permission prompt (and
+            // fails if it is denied). NSFileManager needs no permission; the
+            // cost is that Finder's "Put Back" may be missing for the item.
+            #[cfg(target_os = "macos")]
+            {
+                use trash::macos::{DeleteMethod, TrashContextExtMacos};
+                ctx.set_delete_method(DeleteMethod::NsFileManager);
+            }
+            return ctx
+                .delete_all(paths)
                 .map_err(|e| YmuxError::Other(format!("move to trash failed: {e}")));
         }
         for p in paths {
@@ -899,6 +925,38 @@ mod tests {
 
     fn s(p: PathBuf) -> String {
         p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn macos_uf_hidden_flag_is_hidden_and_other_flags_are_not() {
+        assert!(flags_hidden(0x8000));
+        // UF_HIDDEN alongside UF_NODUMP / UF_IMMUTABLE.
+        assert!(flags_hidden(0x8000 | 0x1 | 0x2));
+        assert!(!flags_hidden(0));
+        // UF_IMMUTABLE, UF_COMPRESSED, SF_RESTRICTED: not hidden.
+        assert!(!flags_hidden(0x2 | 0x20 | 0x0008_0000));
+    }
+
+    /// `chflags hidden` on a real file shows up as hidden in a listing.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_chflags_hidden_file_is_listed_as_hidden() {
+        let d = tmp();
+        let f = d.path().join("visible-name.txt");
+        std::fs::write(&f, b"x").unwrap();
+        let md = std::fs::metadata(&f).unwrap();
+        assert!(!os_hidden(&md));
+        let ok = std::process::Command::new("chflags")
+            .arg("hidden")
+            .arg(&f)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("skipped: chflags unavailable");
+            return;
+        }
+        assert!(os_hidden(&std::fs::metadata(&f).unwrap()));
     }
 
     #[test]

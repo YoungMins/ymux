@@ -48,6 +48,26 @@ pub struct NetInfo {
     pub download_bytes_sec: u64,
 }
 
+// ── Filters ─────────────────────────────────────────────────────────────────
+
+/// A volume worth showing. macOS mounts the APFS system/data split as extra
+/// volumes under `/System/Volumes` (Data, VM, Preboot, Update, …) that share
+/// one container with `/`, so listing them shows the same disk several times.
+/// `/` itself and user volumes (`/Volumes/…`) stay.
+fn shown_disk(mount: &str) -> bool {
+    !(mount == "/System/Volumes" || mount.starts_with("/System/Volumes/"))
+}
+
+/// A network interface whose traffic counts toward the totals. Loopback
+/// (`lo0` on macOS, `lo` on Linux) never leaves the machine, and on macOS
+/// any local IPC over it would dominate the up/down numbers.
+fn counted_interface(name: &str) -> bool {
+    let is_loopback = name
+        .strip_prefix("lo")
+        .is_some_and(|rest| rest.bytes().all(|b| b.is_ascii_digit()));
+    !is_loopback
+}
+
 // ── Public entry point ─────────────────────────────────────────────────────
 
 pub fn start_sysmonitor(app: AppHandle) {
@@ -90,7 +110,7 @@ fn monitor_loop(app: AppHandle) {
 
         let disk_infos: Vec<DiskInfo> = disks
             .iter()
-            .filter(|d| d.total_space() > 0)
+            .filter(|d| d.total_space() > 0 && shown_disk(&d.mount_point().to_string_lossy()))
             .map(|d| {
                 let total = d.total_space() as f64 / (1024.0 * 1024.0 * 1024.0);
                 let available = d.available_space() as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -117,7 +137,10 @@ fn monitor_loop(app: AppHandle) {
         // Network: sum across all interfaces, compute delta per second.
         let mut total_rx: u64 = 0;
         let mut total_tx: u64 = 0;
-        for data in networks.values() {
+        for (name, data) in networks.iter() {
+            if !counted_interface(name) {
+                continue;
+            }
             total_rx += data.received();
             total_tx += data.transmitted();
         }
@@ -313,6 +336,49 @@ mod gpu {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn apfs_system_volumes_are_hidden_but_root_and_user_volumes_are_not() {
+        for m in [
+            "/System/Volumes/Data",
+            "/System/Volumes/VM",
+            "/System/Volumes/Preboot",
+            "/System/Volumes/Update",
+            "/System/Volumes/xarts",
+            "/System/Volumes/Hardware",
+        ] {
+            assert!(!super::shown_disk(m), "{m}");
+        }
+        for m in [
+            "/",
+            "/Volumes/Backup",
+            "/Volumes/USB Stick",
+            "C:\\",
+            "D:\\",
+            "/home",
+        ] {
+            assert!(super::shown_disk(m), "{m}");
+        }
+        // A prefix lookalike is not the system tree.
+        assert!(super::shown_disk("/System/VolumesX"));
+    }
+
+    #[test]
+    fn loopback_interfaces_are_excluded_from_network_totals() {
+        for n in ["lo0", "lo", "lo1"] {
+            assert!(!super::counted_interface(n), "{n}");
+        }
+        for n in [
+            "en0",
+            "utun3",
+            "bridge0",
+            "Local Area Connection",
+            "low0",
+            "Ethernet",
+        ] {
+            assert!(super::counted_interface(n), "{n}");
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -12,6 +12,13 @@
 import type { PaneSpec, Uuid } from "../types";
 import type { Pane } from "../layout/Pane";
 import { t, onLangChange } from "../i18n/i18n";
+import { shortcutLabel } from "../platform";
+
+/// The zoom button's tooltip, with the shortcut rendered for this platform
+/// (`Cmd+Shift+Z` on macOS) rather than baked into the translation.
+function zoomTitle(): string {
+  return `${t("browser.zoom")} (${shortcutLabel("Ctrl+Shift+Z")})`;
+}
 
 export interface BrowserPaneOptions {
   spec: PaneSpec;
@@ -76,7 +83,7 @@ export class BrowserPane implements Pane {
       }
     });
 
-    this.zoomBtn = makeIconBtn("⛶", t("browser.zoom"), () =>
+    this.zoomBtn = makeIconBtn("⛶", zoomTitle(), () =>
       this.opts.onZoomRequested?.(),
     );
 
@@ -117,7 +124,7 @@ export class BrowserPane implements Pane {
     this.backBtn.title = t("browser.back");
     this.fwdBtn.title = t("browser.forward");
     this.reloadBtn.title = t("browser.reload");
-    this.zoomBtn.title = t("browser.zoom");
+    this.zoomBtn.title = zoomTitle();
     if (!this.opts.spec.title) {
       this.titleEl.textContent = t("browser.defaultTitle");
     }

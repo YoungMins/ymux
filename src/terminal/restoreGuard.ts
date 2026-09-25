@@ -17,6 +17,19 @@ export function restoreScrollGuard(rows: number): string {
   return "\r\n".repeat(Math.max(0, rows));
 }
 
+/// What to write after the guard so the first prompt lands where it does on
+/// Windows: at the top of the blank viewport, right under the parked history.
+///
+/// On Windows ConPTY's own `\x1b[2J\x1b[H` does that. Nothing clears a macOS
+/// (or any non-ConPTY) PTY, so after the guard the cursor is still on the
+/// viewport's *last* row and the prompt would sit under a screenful of blank
+/// lines — and the reveal scroll, sized for a prompt at the top, would push
+/// it off screen. A cursor-home puts the cursor where ConPTY's would be. The
+/// viewport is blank after the guard, so no erase is needed.
+export function restoreGuardTail(conptyClearsOnStart: boolean): string {
+  return conptyClearsOnStart ? "" : "\x1b[H";
+}
+
 /// How far to scroll the viewport up once the shell has painted its first
 /// prompt, so the restored history is actually VISIBLE on open instead of
 /// sitting silently in scrollback (which reads to the user as "nothing was

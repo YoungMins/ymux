@@ -1,6 +1,7 @@
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { getLang, setLang, onLangChange, ALL_LANGS, type Lang } from "../i18n/i18n";
 import { t } from "../i18n/i18n";
+import { IS_MAC } from "../platform";
 
 interface GpuInfo {
   name: string;
@@ -97,6 +98,10 @@ export async function mountStatusBar(parent: HTMLElement): Promise<() => void> {
         usageColor(s.ram_usage),
       );
 
+      // macOS has no GPU source in the backend, so the list is always empty
+      // there: drop the segment rather than show a permanent N/A. On Windows
+      // an empty list means the D3DKMT query failed, which N/A reports.
+      gpuEl.root.style.display = IS_MAC && s.gpus.length === 0 ? "none" : "";
       if (s.gpus.length === 0) {
         gpuEl.update("N/A", "var(--fg-muted)");
       } else {

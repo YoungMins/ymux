@@ -338,7 +338,7 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     versionLabel.textContent = t("settings.general.version");
     versionRow.appendChild(versionLabel);
     const versionValue = document.createElement("div");
-    versionValue.style.fontFamily = "Cascadia Mono, Cascadia Code, Consolas, monospace";
+    versionValue.style.fontFamily = "var(--font-mono)";
     versionValue.style.color = "var(--accent, #7fdbca)";
     versionValue.textContent = "…";
     getVersion().then((v) => {

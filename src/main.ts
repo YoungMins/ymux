@@ -8,7 +8,6 @@ import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { formatDroppedPaths } from "./terminal/dropPaths";
 import { forwardedKeyInit } from "./browser/forwardedKeys";
 import { api, onAgentsChanged, onPaneLabels } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
@@ -294,13 +293,13 @@ async function main(): Promise<void> {
   void getCurrentWebview()
     .onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
-      const text = formatDroppedPaths(event.payload.paths ?? []);
-      if (!text) return;
+      // Quoted for the target pane's shell (shellQuote.ts), so a `$` or
+      // backtick in a file name is never expanded.
       const dpr = window.devicePixelRatio || 1;
-      manager.typeIntoPaneAt(
+      manager.dropPathsAt(
         event.payload.position.x / dpr,
         event.payload.position.y / dpr,
-        text,
+        event.payload.paths ?? [],
       );
     })
     .catch((e) => console.warn("drag-drop listener failed:", e));

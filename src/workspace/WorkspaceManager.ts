@@ -588,6 +588,7 @@ export class WorkspaceManager {
     const finalSpec: PaneSpec = { ...spec, shell: resolvedShell };
     return new TerminalPane({
       spec: finalSpec,
+      shellExecutable: this.shells.find((s) => s.name === resolvedShell)?.executable,
       ownChrome: groupOfPane(this.active.root, spec.id) === null,
       fontSize: this.fontSize,
       onFocus: () => {
@@ -1856,19 +1857,19 @@ export class WorkspaceManager {
     if (id) void this.focusPane(id);
   }
 
-  /// Type `text` into whichever terminal pane sits under the given viewport
-  /// point, focusing it first. Used by the file drag-and-drop handler so a
-  /// drop lands in the pane the user aimed at rather than the focused one.
-  /// Non-terminal panes (browser) and points outside any pane are ignored.
-  typeIntoPaneAt(clientX: number, clientY: number, text: string): void {
-    if (!text) return;
+  /// Type dropped file `paths` into whichever terminal pane sits under the
+  /// given viewport point, focusing it first, each path quoted for that
+  /// pane's shell. Used by the file drag-and-drop handler so a drop lands in
+  /// the pane the user aimed at rather than the focused one. Non-terminal
+  /// panes (browser) and points outside any pane are ignored.
+  dropPathsAt(clientX: number, clientY: number, paths: readonly string[]): void {
     const hit = document.elementFromPoint(clientX, clientY);
     const paneId = hit?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
     if (!paneId) return;
     const pane = this.paneCaches.get(this.activeId)?.get(paneId);
     if (!(pane instanceof TerminalPane)) return;
     pane.focus();
-    pane.typeText(text);
+    pane.typePaths(paths);
   }
 
   /// Save the current config to disk. Debounced by 500 ms so rapid changes

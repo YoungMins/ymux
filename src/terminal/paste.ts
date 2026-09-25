@@ -24,6 +24,8 @@
 //     length, so nothing else shifts.
 //   * Chunking, so a multi-megabyte paste does not sit in one IPC message.
 
+import { quotePathForPaste, type ShellFamily } from "./shellQuote";
+
 /// Start of a bracketed paste (DECSET 2004).
 const PASTE_START = "\x1b[200~";
 /// End of a bracketed paste.
@@ -123,12 +125,18 @@ export type ImagePasteDecision =
 /// path exists to fix was a 0-byte image file whose path got typed into the
 /// user's shell, so a nothing-shaped answer must never turn into a write.
 ///
-/// The path is quoted because it can contain spaces — a Windows profile
-/// directory like `C:\Users\John Smith\…` would otherwise reach the receiving
-/// CLI as two arguments. There is no trailing newline: the user presses Enter.
+/// The path is quoted for the pane's shell (`quotePathForPaste`): it can
+/// contain spaces — a Windows profile directory like `C:\Users\John Smith\…`
+/// would otherwise reach the receiving CLI as two arguments — a `$` or
+/// backtick in it must never expand, and the quoting must be one Claude Code
+/// can undo. A path that cannot be typed that way falls through to text as
+/// well. There is no trailing newline: the user presses Enter.
 export function decideImagePaste(
   path: string | null | undefined,
+  family: ShellFamily,
 ): ImagePasteDecision {
   if (!path || !path.trim()) return { kind: "text" };
-  return { kind: "image", write: `"${path}"` };
+  const write = quotePathForPaste(path, family);
+  if (write === null) return { kind: "text" };
+  return { kind: "image", write };
 }

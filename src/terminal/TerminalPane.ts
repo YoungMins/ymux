@@ -20,6 +20,7 @@ import { t, onLangChange } from "../i18n/i18n";
 import { PaneStatusMachine, type PaneStatus } from "./paneStatus";
 import {
   restoreScrollGuard,
+  restoreGuardTail,
   restoreRevealLines,
   shouldDeferRestoreReveal,
 } from "./restoreGuard";
@@ -27,9 +28,12 @@ import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { spawnAction, describeAge, type ResumePlan } from "./resumePlan";
-import { hasMod, isWorkspaceSwitch } from "../platform";
+import { hasMod, isWorkspaceSwitch, IS_WINDOWS } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
 import { decideImagePaste, preparePaste } from "./paste";
+import { formatDroppedPaths } from "./dropPaths";
+import { MONO_FONT_STACK } from "../ui/fonts";
+import { shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
 import { PathLinks } from "./pathLinks";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
@@ -78,6 +82,9 @@ export interface TerminalPaneOptions {
   /// binds them to the active tab (spec §4). Absent or `true` leaves every
   /// standalone pane exactly as it is today.
   ownChrome?: boolean;
+  /// Executable of this pane's shell profile. Decides how a dropped file's
+  /// or pasted image's path is quoted when typed (`shellQuote.ts`).
+  shellExecutable?: string;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -210,8 +217,7 @@ export class TerminalPane implements Pane {
     this.term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
-      fontFamily:
-        "Cascadia Code, Consolas, 'Courier New', ui-monospace, monospace",
+      fontFamily: MONO_FONT_STACK,
       fontSize: opts.fontSize ?? DEFAULT_FONT_SIZE,
       scrollback: 10_000,
       // Squish ambiguous-width glyphs that the OS fallback font draws
@@ -534,6 +540,9 @@ export class TerminalPane implements Pane {
           // scrollback ring (which `\x1b[2J` leaves untouched) first, so the
           // shell clears a blank viewport instead of the restored text.
           this.term.write(restoreScrollGuard(this.term.rows));
+          // Without ConPTY (macOS) nothing homes the cursor; do it here so
+          // the first prompt lands at the viewport top, as on Windows.
+          this.term.write(restoreGuardTail(IS_WINDOWS));
           // The guard keeps the history safe but parks it above the viewport,
           // so the pane opens showing only a bare prompt — indistinguishable
           // from "nothing was restored". Reveal it by scrolling up once the
@@ -885,6 +894,17 @@ export class TerminalPane implements Pane {
     void api.writePane(this.id, ENCODER.encode(text));
   }
 
+  /// Type `paths`, each quoted for this pane's shell, space-separated and
+  /// without a newline — what a file drop onto the pane does.
+  typePaths(paths: readonly string[]): void {
+    this.typeText(formatDroppedPaths(paths, this.shellFamily));
+  }
+
+  /// How paths typed into this pane must be quoted.
+  private get shellFamily(): ShellFamily {
+    return shellFamilyFromExecutable(this.opts.shellExecutable);
+  }
+
   /// Recompute size based on the container. Debounced to one call per
   /// animation frame.
   scheduleFit(): void {
@@ -997,7 +1017,10 @@ export class TerminalPane implements Pane {
     // Image *before* text is deliberate and unchanged: a clipboard carrying
     // both (copying a cell range out of Excel, say) pastes the image path.
     try {
-      const decision = decideImagePaste(await api.pasteClipboardImage());
+      const decision = decideImagePaste(
+        await api.pasteClipboardImage(),
+        this.shellFamily,
+      );
       if (decision.kind === "image") {
         if (this.spawned) {
           void api.writePane(this.id, ENCODER.encode(decision.write));

@@ -12,18 +12,22 @@
 /// `navigator.platform` is deprecated but is the only signal available in
 /// every webview ymux targets; `userAgentData` is Chromium-only and absent in
 /// WKWebView. We check both and fall back to the user-agent string.
-export const IS_MAC: boolean = detectMac();
+export const IS_MAC: boolean = detectPlatform(/mac/i, /Mac OS X|Macintosh/i);
 
-function detectMac(): boolean {
+/// True when running on Windows (where every PTY is a ConPTY), detected the
+/// same way as `IS_MAC`.
+export const IS_WINDOWS: boolean = detectPlatform(/^win/i, /Windows/i);
+
+function detectPlatform(platformRe: RegExp, userAgentRe: RegExp): boolean {
   const nav = globalThis.navigator as
     | (Navigator & { userAgentData?: { platform?: string } })
     | undefined;
   if (!nav) return false;
   const uaPlatform = nav.userAgentData?.platform;
-  if (uaPlatform) return uaPlatform.toLowerCase().includes("mac");
+  if (uaPlatform) return platformRe.test(uaPlatform);
   const platform = nav.platform ?? "";
-  if (platform) return /mac/i.test(platform);
-  return /Mac OS X|Macintosh/i.test(nav.userAgent ?? "");
+  if (platform) return platformRe.test(platform);
+  return userAgentRe.test(nav.userAgent ?? "");
 }
 
 /// Does this event carry ymux's primary modifier — `Cmd` on macOS, `Ctrl`
