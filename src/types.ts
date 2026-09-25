@@ -37,6 +37,10 @@ export interface HotKeyDef {
 export interface PaneSpec {
   id: Uuid;
   title?: string | null;
+  /// A ShellProfile name. "" is a sentinel ("the default shell") that the
+  /// backend pins to a concrete name at boot (`Config::pin_pane_shells` in
+  /// load_bootstrap), so a restored terminal pane keeps its shell even if
+  /// `default_shell` changes later.
   shell: string;
   cwd?: string | null;
   startup_cmd?: string | null;

@@ -186,6 +186,18 @@ body,
   width: 100%;
 }
 
+/* Keystrokes reach xterm through its hidden helper textarea (ImeBridge in
+   src/terminal/ime.ts swallows keypress, so even a plain space takes that
+   path). xterm.css gives it `white-space: nowrap`, and in a whitespace-
+   collapsing textarea WebKit (macOS WKWebView) turns a lone or trailing typed
+   space into U+00A0 — `brew install ruby` then reaches zsh as one word.
+   `pre` keeps spaces literal and, like `nowrap`, never wraps, so xterm's IME
+   positioning is unaffected. Three classes out-specify xterm.css's
+   `.xterm .xterm-helper-textarea`. Guarded by helperTextareaCss.test.ts. */
+.pane__term .xterm .xterm-helper-textarea {
+  white-space: pre;
+}
+
 .pane .xterm {
   flex: 1 1 auto;
   height: 100%;

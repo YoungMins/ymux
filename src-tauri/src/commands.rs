@@ -83,6 +83,14 @@ pub fn load_bootstrap(
             let _ = state.config.flush_if_dirty();
         }
     }
+    // Pin every terminal pane's "" shell sentinel to the current default, so
+    // a pane keeps the shell it first opened with instead of re-resolving
+    // (e.g. zsh coming back as bash after `default_shell` changes). Probe a
+    // copy first: `update` marks the store dirty unconditionally.
+    if state.config.snapshot().pin_pane_shells() {
+        state.config.update(|c| c.pin_pane_shells());
+        let _ = state.config.flush_if_dirty();
+    }
     let config = state.config.snapshot();
     let shells = config.shells.clone();
     Ok(BootstrapPayload {

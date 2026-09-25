@@ -170,6 +170,37 @@ impl Config {
         self.shells.iter().find(|s| s.name == name)
     }
 
+    /// The shell a pane with no explicit shell should run: the profile named
+    /// by `default_shell` if it is still installed, else the first detected
+    /// one. `None` while the shell cache is empty.
+    pub fn resolved_default_shell(&self) -> Option<&str> {
+        self.shell(&self.default_shell)
+            .or_else(|| self.shells.first())
+            .map(|s| s.name.as_str())
+    }
+
+    /// Replace the `""` shell sentinel on every terminal pane with
+    /// [`Self::resolved_default_shell`], so a pane keeps the shell it first
+    /// opened with instead of following a later `default_shell` change.
+    /// Non-empty names (even ones no longer installed) and non-terminal panes
+    /// are left alone; a no-op while `shells` is empty. Returns whether any
+    /// pane changed.
+    pub fn pin_pane_shells(&mut self) -> bool {
+        let Some(name) = self.resolved_default_shell().map(str::to_owned) else {
+            return false;
+        };
+        let mut changed = false;
+        for ws in &mut self.workspaces {
+            ws.root.for_each_pane_mut(&mut |pane| {
+                if pane.pane_kind == PaneKind::Terminal && pane.shell.is_empty() {
+                    pane.shell = name.clone();
+                    changed = true;
+                }
+            });
+        }
+        changed
+    }
+
     /// Apply layout / workspace updates from `incoming` onto `self`, treating
     /// `shells` as a backend-owned detection cache: it is only overwritten
     /// when the incoming config carries a non-empty list. This stops a stale
@@ -472,8 +503,10 @@ pub struct PaneSpec {
     pub id: Uuid,
     #[serde(default)]
     pub title: Option<String>,
-    /// Reference to a [`ShellProfile::name`]. The empty string means "use the
-    /// first detected shell".
+    /// Reference to a [`ShellProfile::name`]. The empty string is a sentinel
+    /// ("the default shell") that `load_bootstrap` pins to a concrete name at
+    /// boot via [`Config::pin_pane_shells`]; it only survives on non-terminal
+    /// panes, or while no shells are detected.
     #[serde(default)]
     pub shell: String,
     #[serde(default)]
@@ -1701,6 +1734,137 @@ shell = "cmd"
                 assert!(*active < children.len(), "active stays in range");
             }
             other => panic!("expected a tabs node, got {other:?}"),
+        }
+    }
+
+    // --- pin_pane_shells -------------------------------------------------
+
+    const MAC_SHELLS: [&str; 3] = ["zsh", "bash", "fish"];
+    const WIN_SHELLS: [&str; 3] = ["PowerShell 7", "Windows PowerShell", "Command Prompt"];
+
+    fn profiles(names: &[&str]) -> Vec<ShellProfile> {
+        names
+            .iter()
+            .map(|n| ShellProfile {
+                name: (*n).to_string(),
+                executable: format!("/bin/{n}"),
+                args: Vec::new(),
+                icon: None,
+                color: None,
+                env: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn terminal(shell: &str) -> PaneSpec {
+        PaneSpec {
+            shell: shell.to_string(),
+            ..PaneSpec::new_default()
+        }
+    }
+
+    /// A workspace with empty-shell terminals at the root of a split and
+    /// inside a tab group, next to non-terminal panes that also carry "".
+    fn mixed_config(names: &[&str]) -> Config {
+        let mut cfg = Config {
+            shells: profiles(names),
+            ..Config::default()
+        };
+        cfg.workspace_mut(1).root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Pane(terminal(""))),
+            b: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 0,
+                children: vec![
+                    LayoutNode::Pane(terminal("")),
+                    LayoutNode::Pane(PaneSpec::new_browser("https://example.com")),
+                    LayoutNode::Pane(PaneSpec::new_editor("/tmp/x.txt")),
+                    LayoutNode::Pane(PaneSpec::new_files(None)),
+                    LayoutNode::Pane(terminal("gone-shell")),
+                ],
+            }),
+        };
+        cfg
+    }
+
+    fn shells_by_kind(cfg: &Config) -> Vec<(PaneKind, String)> {
+        cfg.workspaces
+            .iter()
+            .flat_map(|w| w.panes())
+            .map(|p| (p.pane_kind, p.shell.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn pin_fills_only_empty_terminal_panes() {
+        for names in [&MAC_SHELLS[..], &WIN_SHELLS[..]] {
+            let mut cfg = mixed_config(names);
+            assert!(cfg.pin_pane_shells(), "{names:?}: first call pins");
+            let first = names[0].to_string();
+            let got = shells_by_kind(&cfg);
+            assert!(got.contains(&(PaneKind::Browser, String::new())));
+            assert!(got.contains(&(PaneKind::Editor, String::new())));
+            assert!(got.contains(&(PaneKind::Files, String::new())));
+            assert!(got.contains(&(PaneKind::Terminal, "gone-shell".to_string())));
+            let pinned = got
+                .iter()
+                .filter(|(k, s)| *k == PaneKind::Terminal && *s == first)
+                .count();
+            assert_eq!(pinned, 2, "{names:?}: both empty terminals pinned");
+            assert!(
+                !got.iter()
+                    .any(|(k, s)| *k == PaneKind::Terminal && s.is_empty()),
+                "{names:?}: no empty terminal left"
+            );
+            assert!(!cfg.pin_pane_shells(), "{names:?}: second call is a no-op");
+        }
+    }
+
+    #[test]
+    fn pin_prefers_existing_default_shell_else_first() {
+        for names in [&MAC_SHELLS[..], &WIN_SHELLS[..]] {
+            let mut cfg = mixed_config(names);
+            cfg.default_shell = names[1].to_string();
+            assert_eq!(cfg.resolved_default_shell(), Some(names[1]));
+            cfg.pin_pane_shells();
+            assert_eq!(cfg.workspaces[0].panes()[0].shell, names[1]);
+
+            let mut cfg = mixed_config(names);
+            cfg.default_shell = "not-installed".to_string();
+            assert_eq!(cfg.resolved_default_shell(), Some(names[0]));
+            cfg.pin_pane_shells();
+            assert_eq!(cfg.workspaces[0].panes()[0].shell, names[0]);
+        }
+    }
+
+    #[test]
+    fn pinned_shell_survives_default_change_and_toml_roundtrip() {
+        for names in [&MAC_SHELLS[..], &WIN_SHELLS[..]] {
+            let mut cfg = mixed_config(names);
+            cfg.default_shell = names[0].to_string();
+            cfg.pin_pane_shells();
+            // The user later picks a different default shell.
+            cfg.default_shell = names[1].to_string();
+            let toml_str = toml::to_string_pretty(&cfg).unwrap();
+            let mut loaded: Config = toml::from_str(&toml_str).unwrap();
+            assert!(!loaded.pin_pane_shells(), "{names:?}: nothing left to pin");
+            let panes = loaded.workspaces[0].panes();
+            assert_eq!(panes[0].shell, names[0], "{names:?}");
+            assert_eq!(panes[1].shell, names[0], "{names:?}");
+        }
+    }
+
+    #[test]
+    fn pin_is_noop_without_shells() {
+        for names in [&MAC_SHELLS[..], &WIN_SHELLS[..]] {
+            let mut cfg = mixed_config(names);
+            cfg.default_shell = names[0].to_string();
+            cfg.shells.clear();
+            assert_eq!(cfg.resolved_default_shell(), None);
+            assert!(!cfg.pin_pane_shells());
+            assert_eq!(cfg.workspaces[0].panes()[0].shell, "");
         }
     }
 }
