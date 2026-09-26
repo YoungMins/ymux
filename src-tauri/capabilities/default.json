@@ -1,11 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for ymux. Grants core IPC + event APIs, and window destroy for the unsaved-changes close guard (main.ts onCloseRequested destroys the window once the guard allows it).",
+  "description": "Default capability for ymux. Grants core IPC + event APIs. Closing the window hides it to the tray and a real quit exits from Rust (src-tauri/src/tray.rs), so the frontend needs no window destroy/close permission. The tray is built and relabelled in Rust only, so every core:tray command that core:default pulls in (with the tray-icon feature) is denied — a deny wins over an allow in Tauri's ACL.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:window:allow-destroy",
+    "core:tray:deny-new",
+    "core:tray:deny-get-by-id",
+    "core:tray:deny-remove-by-id",
+    "core:tray:deny-set-icon",
+    "core:tray:deny-set-menu",
+    "core:tray:deny-set-tooltip",
+    "core:tray:deny-set-title",
+    "core:tray:deny-set-visible",
+    "core:tray:deny-set-temp-dir-path",
+    "core:tray:deny-set-icon-as-template",
+    "core:tray:deny-set-show-menu-on-left-click",
     "notification:default"
   ]
 }

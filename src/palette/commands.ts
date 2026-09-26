@@ -3,6 +3,7 @@ import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
 import { askText } from "../ui/Dialog";
 import { toggleFileDock } from "../filedock/FileDock";
+import { api } from "../ipc/bridge";
 
 export interface CommandDef {
   id: string;
@@ -190,6 +191,13 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       keybinding: `Ctrl+Alt+${i + 1}`,
       action: () => void manager.activate(i + 1),
     })),
+    {
+      // The real quit (closing the window only hides it to the tray): the
+      // same unsaved-editors prompt as the tray's Quit.
+      id: "app.quit",
+      label: () => t("app.quit"),
+      action: () => void api.quitApp().catch((e) => console.warn("quit_app failed:", e)),
+    },
   ];
 }
 

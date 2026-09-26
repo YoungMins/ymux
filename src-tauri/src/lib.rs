@@ -30,6 +30,8 @@ pub mod git;
 pub mod ipc_guard;
 pub mod paste_images;
 pub mod pty;
+// Close-to-tray / quit handshake state machine (pure; wired in `tray`).
+pub mod quit_gate;
 pub mod scrollback;
 pub mod shell;
 pub mod textfile;
@@ -79,5 +81,10 @@ pub mod sysmonitor;
 // the Tauri invoke handler.
 #[cfg(feature = "desktop")]
 pub mod settings;
+
+// Tray icon, hide-to-tray and the real-quit handshake. Desktop-only: it
+// builds the tray and registers `#[tauri::command]`s.
+#[cfg(feature = "desktop")]
+pub mod tray;
 
 pub use error::{YmuxError, YmuxResult};

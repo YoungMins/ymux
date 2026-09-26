@@ -1122,6 +1122,26 @@ const strings: Translations = {
     de: "Keine Shells erkannt. ymux konnte cmd, PowerShell, Git Bash oder WSL auf diesem Computer nicht finden.",
     vi: "Không phát hiện shell nào. ymux không tìm thấy cmd, PowerShell, Git Bash hoặc WSL trên máy này.",
   },
+  "tray.open": {
+    en: "Open ymux", ko: "ymux 열기", ja: "ymux を開く", zh: "打开 ymux",
+    hi: "ymux खोलें", es: "Abrir ymux", fr: "Ouvrir ymux", ar: "فتح ymux",
+    pt: "Abrir ymux", ru: "Открыть ymux", tr: "ymux'u aç", de: "ymux öffnen", vi: "Mở ymux",
+  },
+  "tray.quit": {
+    en: "Quit", ko: "종료", ja: "終了", zh: "退出",
+    hi: "बाहर निकलें", es: "Salir", fr: "Quitter", ar: "إنهاء",
+    pt: "Sair", ru: "Выход", tr: "Çıkış", de: "Beenden", vi: "Thoát",
+  },
+  "app.quit": {
+    en: "Quit ymux", ko: "ymux 종료", ja: "ymux を終了", zh: "退出 ymux",
+    hi: "ymux से बाहर निकलें", es: "Salir de ymux", fr: "Quitter ymux", ar: "إنهاء ymux",
+    pt: "Sair do ymux", ru: "Выйти из ymux", tr: "ymux'tan çık", de: "ymux beenden", vi: "Thoát ymux",
+  },
+  "tray.tooltip": {
+    en: "ymux", ko: "ymux", ja: "ymux", zh: "ymux",
+    hi: "ymux", es: "ymux", fr: "ymux", ar: "ymux",
+    pt: "ymux", ru: "ymux", tr: "ymux", de: "ymux", vi: "ymux",
+  },
   "app.paneTitle": {
     en: "Pane title:", ko: "패널 제목:", ja: "ペインタイトル:", zh: "窗格标题:",
     hi: "पैन शीर्षक:", es: "Título del panel:", fr: "Titre du panneau :", ar: "عنوان اللوحة:",

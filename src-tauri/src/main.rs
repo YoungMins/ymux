@@ -14,10 +14,11 @@ use ymux_lib::updater::start_update_checker;
 static FINAL_FLUSH_DONE: AtomicBool = AtomicBool::new(false);
 
 /// Close the browser webviews, record every pane's cwd, stop the PTYs and
-/// write the config -- once. It runs from `RunEvent::ExitRequested` (the last
-/// window closed) and again from `RunEvent::Exit`, because on macOS Quit from
-/// the Dock, logout and shutdown go straight through tao's
-/// `applicationWillTerminate` to `Exit` and never raise `ExitRequested`.
+/// write the config -- once. It runs from `RunEvent::ExitRequested` (a confirmed
+/// quit's `app.exit`; closing the window only hides it to the tray) and again
+/// from `RunEvent::Exit`, because on macOS Quit from the Dock, logout and
+/// shutdown go straight through tao's `applicationWillTerminate` to `Exit`
+/// and never raise `ExitRequested` (nor does Windows' `WM_ENDSESSION`).
 fn final_flush(app_handle: &AppHandle) {
     if FINAL_FLUSH_DONE.swap(true, Ordering::SeqCst) {
         return;
@@ -50,26 +51,18 @@ fn final_flush(app_handle: &AppHandle) {
     }
 }
 
-/// The menu id of ymux's own macOS Quit item (see `macos_menu`).
-#[cfg(target_os = "macos")]
-const QUIT_MENU_ID: &str = "ymux-quit";
-
-/// Set when the Quit item asked the main window to close, so that window's
-/// destruction ends the app even if a native browser window is still open.
-#[cfg(target_os = "macos")]
-static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
-
 /// Tauri's default macOS menu (`Menu::default`), minus the two items that end
 /// ymux behind the frontend's back:
 ///
 /// - **Quit (Cmd+Q)** is a predefined item that calls `terminate:` directly,
 ///   skipping the unsaved-editor prompt. It is replaced by a plain item
-///   whose handler closes the main window instead -- exactly what the red
-///   close button does, so the same `onCloseRequested` guard in `main.ts`
-///   runs (prompt -> destroy -> `ExitRequested` -> `final_flush`).
-/// - **Close Window (Cmd+W)** closes ymux's only window, i.e. quits. It is
-///   left out (with the File submenu that held it), so Cmd+W reaches the
-///   webview like any other key.
+///   whose handler is `tray::request_quit` -- the same real quit as the
+///   tray's Quit (prompt -> `answer_quit` -> `app.exit` -> `ExitRequested`
+///   -> `final_flush`). The red close button only hides to the tray.
+/// - **Close Window (Cmd+W)** would hide ymux's only window on every Cmd+W,
+///   which terminal and editor users press by habit. It is left out (with
+///   the File submenu that held it), so Cmd+W reaches the webview like any
+///   other key.
 ///
 /// Edit keeps the predefined items: WKWebView's copy/paste/undo key
 /// equivalents only work through them.
@@ -86,7 +79,7 @@ fn macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     };
     let quit = MenuItem::with_id(
         app,
-        QUIT_MENU_ID,
+        ymux_lib::tray::APP_MENU_QUIT,
         format!("Quit {}", pkg.name),
         true,
         Some("CmdOrCtrl+Q"),
@@ -195,6 +188,7 @@ fn main() {
     let builder = tauri::Builder::default()
         .manage(state)
         .manage(eb_registry)
+        .manage(ymux_lib::quit_gate::QuitGate::default())
         .manage(ymux_lib::agents::SharedAgents::default())
         .manage(ymux_lib::agent_scan::SharedLabels::default())
         .manage(ymux_lib::agent_sessions::SharedSessions(
@@ -280,28 +274,36 @@ fn main() {
             ymux_lib::commands::get_agents,
             ymux_lib::commands::get_pane_labels,
             ymux_lib::commands::set_agent_tracking,
+            ymux_lib::tray::set_tray_labels,
+            ymux_lib::tray::quit_guard_ready,
+            ymux_lib::tray::ack_quit,
+            ymux_lib::tray::answer_quit,
+            ymux_lib::tray::quit_app,
+            ymux_lib::tray::show_main_window,
         ])
         .plugin(tauri_plugin_notification::init())
-        .plugin(ymux_lib::fspath::navigation_guard_plugin());
-    #[cfg(target_os = "macos")]
-    let builder = builder.menu(macos_menu).on_menu_event(|app, event| {
-        if event.id() != QUIT_MENU_ID {
-            return;
-        }
-        // Close, not destroy: `close()` raises CloseRequested, which the
-        // frontend's guard answers (and holds while its prompt is up; a
-        // second Cmd+Q meanwhile is swallowed there). Without a main window
-        // there is nothing to guard.
-        match app.get_webview_window("main") {
-            Some(w) => {
-                QUIT_REQUESTED.store(true, Ordering::SeqCst);
-                if w.close().is_err() {
-                    app.exit(0);
-                }
+        .plugin(ymux_lib::fspath::navigation_guard_plugin())
+        // Close-to-tray: the main window's close button hides it; the real
+        // quit goes through `tray::request_quit` (see `quit_gate`).
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                ymux_lib::tray::on_close_requested(window, api);
             }
-            None => app.exit(0),
-        }
-    });
+        })
+        // A main-page (re)load or renderer crash drops its quit listener:
+        // disarm the handshake so a tray Quit never waits on a page that
+        // will not answer.
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                ymux_lib::tray::main_page_loading(webview);
+            }
+        })
+        // Menu events are global (the tray menu and the macOS app menu).
+        .on_menu_event(|app, event| {
+            ymux_lib::tray::handle_menu_event(app, event.id().as_ref());
+        });
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(macos_menu);
     builder
         .setup(|app| {
             // Claude Code hook receiver. Its per-run token goes into every
@@ -364,20 +366,16 @@ fn main() {
             start_update_checker(app.handle().clone());
             start_sysmonitor(app.handle().clone());
             start_agent_scan(app.handle().clone());
+            ymux_lib::tray::build_tray(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             RunEvent::ExitRequested { .. } | RunEvent::Exit => final_flush(app_handle),
-            // The Quit item closed the main window and the guard let it go:
-            // quit, even if a native browser window would keep the app alive.
+            // A Dock icon click while the window is hidden to the tray.
             #[cfg(target_os = "macos")]
-            RunEvent::WindowEvent {
-                label,
-                event: tauri::WindowEvent::Destroyed,
-                ..
-            } if label == "main" && QUIT_REQUESTED.load(Ordering::SeqCst) => app_handle.exit(0),
+            RunEvent::Reopen { .. } => ymux_lib::tray::show_main(app_handle),
             _ => {}
         });
 }

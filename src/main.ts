@@ -7,7 +7,6 @@ import "./bootGuard";
 import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { forwardedKeyInit } from "./browser/forwardedKeys";
 import { api, onAgentsChanged, onPaneLabels } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
@@ -15,13 +14,14 @@ import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountWorkspacePanel, refreshWorkspacePanel } from "./workspace/WorkspacePanel";
 import { mountUpdateBanner } from "./update/UpdateBanner";
 import { mountStatusBar } from "./statusbar/StatusBar";
-import { initLang, t } from "./i18n/i18n";
+import { initLang, onLangChange, t } from "./i18n/i18n";
 import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandPalette";
 import { builtinCommands } from "./palette/commands";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
 import { mountFileDock, toggleFileDock } from "./filedock/FileDock";
+import { runQuitGuard } from "./tray/quitGuard";
 
 async function main(): Promise<void> {
   initLang();
@@ -310,54 +310,84 @@ async function main(): Promise<void> {
   // with its buffer, so that first notch can't jump to the top of the
   // scrollback (see terminal/viewportSync.ts).
   window.addEventListener("focus", () => manager.refitActive());
-  // The unsaved-changes guard on the way out (spec §3.5): the window's close
-  // button, Alt+F4, the taskbar's "Close window" — every way the window is
-  // asked to close arrives here. Registering this listener is what makes
-  // Tauri hold the close until the handler returns, and `onCloseRequested`
-  // then destroys the window itself unless we `preventDefault()`
-  // (`core:window:allow-destroy` in capabilities/default.json).
+  // Close-to-tray (src-tauri/src/tray.rs): the window's close button,
+  // Alt+F4, the taskbar's "Close window" only HIDE the window — the backend
+  // handles those without asking us, and PTYs keep running. A real quit
+  // (tray Quit, macOS Cmd+Q) arrives as `ymux://quit-requested`; the
+  // unsaved-changes guard (spec §3.5) runs here and the answer goes back via
+  // `answer_quit`, which exits through `final_flush` on a go-ahead.
   //
-  // Any failure in the guard lets the window close: a bug here must never
-  // leave the user with a window they cannot close. The editors' local
-  // drafts are the safety net for that case.
+  // `quit_guard_ready` is sent only once the listener is live: until then
+  // the backend quits without asking, so ymux can always be quit.
   let windowClosing = false;
-  let closeAsked = false;
-  void getCurrentWindow()
-    .onCloseRequested(async (ev) => {
-      if (closeAsked) {
-        // A second click on × while the prompt is up.
-        ev.preventDefault();
-        return;
-      }
-      closeAsked = true;
-      let ok = true;
-      try {
-        ok = await manager.confirmCloseAll();
-      } catch (e) {
-        console.error("close guard failed; closing anyway", e);
-        ok = true;
-        // Closing without the guard's answer: the drafts are all that
-        // protects unsaved edits, so write the ones still in their 2 s
-        // debounce before the window goes. Bounded, so a hung IPC cannot
-        // keep the window open.
-        await Promise.race([
-          manager.flushDrafts().catch(() => {}),
-          new Promise((r) => setTimeout(r, 1500)),
-        ]);
-      } finally {
-        closeAsked = false;
-      }
-      if (!ok) {
-        ev.preventDefault();
-        return;
-      }
-      windowClosing = true;
-    })
-    .catch((e) => console.warn("close-requested listener failed:", e));
+  let quitAsked = false;
+  void listen("ymux://quit-requested", async () => {
+    // Ack before any prompt: tells the backend this page is alive, so a
+    // second Quit while the prompt is up is swallowed, not taken for a
+    // hung page (which would exit without asking).
+    void api.ackQuit().catch((e) => console.warn("ack_quit failed:", e));
+    if (quitAsked) return;
+    quitAsked = true;
+    let ok = true;
+    try {
+      ok = await runQuitGuard({
+        hasUnsavedEditors: () => manager.hasUnsavedEditors(),
+        showWindow: () => api.showMainWindow(),
+        confirmCloseAll: () => manager.confirmCloseAll(),
+        flushDrafts: () => manager.flushDrafts(),
+        flushLayout: () => manager.flush(),
+      });
+      if (ok) windowClosing = true;
+    } finally {
+      quitAsked = false;
+      // On an accepted go-ahead the page is torn down under this call; if
+      // the backend did not take it (cancelled, stale), keep guarding
+      // reloads with the `beforeunload` prompt below.
+      void api
+        .answerQuit(ok)
+        .then((exiting) => {
+          if (!exiting) windowClosing = false;
+        })
+        .catch((e) => {
+          windowClosing = false;
+          console.warn("answer_quit failed:", e);
+        });
+    }
+  })
+    .then(() => api.quitGuardReady())
+    .catch((e) => console.warn("quit-requested listener failed:", e));
+
+  // Hidden to the tray: nothing is on screen (agent `done` vs `attention`).
+  void listen("ymux://main-hidden", () => manager.noteWindowHidden()).catch((e) =>
+    console.warn("main-hidden listen failed:", e),
+  );
+  // Shown again: panes may have resized while hidden, and un-hiding resets
+  // the viewport's scrollTop behind xterm's back (rule 14) — refit even if
+  // focus never lands in the webview.
+  // `main-shown` follows the backend's `set_focus`, which in WebView2 often
+  // raises no DOM `focus` — so mark the window seen here, not only there.
+  void listen("ymux://main-shown", () => {
+    manager.noteWindowShown(true);
+    manager.refitActive();
+  }).catch((e) => console.warn("main-shown listen failed:", e));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    manager.noteWindowShown(document.hasFocus());
+    manager.refitActive();
+  });
+
+  // The tray's menu labels and tooltip are built in English by the backend;
+  // push the translations now and on every language change (rule 7).
+  const pushTrayLabels = () =>
+    void api
+      .setTrayLabels(t("tray.open"), t("tray.quit"), t("tray.tooltip"))
+      .catch((e) => console.warn("set_tray_labels failed:", e));
+  pushTrayLabels();
+  onLangChange(pushTrayLabels);
 
   window.addEventListener("beforeunload", (ev) => {
     // A reload with unsaved editors: let the webview ask. Not on the real
-    // close, which the guard above has already settled.
+    // quit, which the guard above has already settled.
     if (!windowClosing && manager.hasUnsavedEditors()) {
       ev.preventDefault();
       ev.returnValue = "";

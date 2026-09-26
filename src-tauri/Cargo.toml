@@ -67,7 +67,7 @@ sha2 = "0.10"
 # system libraries the Tauri crate needs on Linux.
 # SAFETY: Window::add_child is gated on the "unstable" feature; pinned to
 # =2.10.3 because the API may change in any 2.x minor without semver protection.
-tauri = { version = "=2.10.3", optional = true, features = ["unstable", "devtools"] }
+tauri = { version = "=2.10.3", optional = true, features = ["unstable", "devtools", "tray-icon"] }
 
 # Update checker: polls the GitHub releases API in a background thread. Kept
 # behind the `desktop` feature because the cross-platform test suite doesn't

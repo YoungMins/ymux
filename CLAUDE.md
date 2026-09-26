@@ -33,9 +33,11 @@ ymux/
 │       ├── clipboard_image.rs  # Read a pasted image off the OS clipboard directly (desktop)
 │       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
 │       ├── pty/                # PTY session management
+│       ├── quit_gate.rs        # Close-to-tray / real-quit handshake state machine (pure)
 │       ├── scrollback.rs       # Persist/restore per-pane terminal scrollback (pure)
 │       ├── shell/              # Shell detection (detect.rs)
 │       ├── textfile.rs         # EOL/BOM/encoding-safe text read/write (pure)
+│       ├── tray.rs             # Tray icon, hide-to-tray, quit handshake commands (desktop)
 │       ├── sysmonitor.rs       # System monitor (desktop)
 │       ├── updater.rs          # Update checker (desktop)
 │       ├── webview.rs          # Native browser (desktop, experimental)
@@ -95,7 +97,8 @@ npx tsc --noEmit             # TypeScript type check
 
 The `ymux` crate uses `#[cfg(feature = "desktop")]` for Tauri-dependent modules:
 - `commands.rs`, `updater.rs`, `sysmonitor.rs`, `webview.rs`,
-  `fsops.rs`, `clipboard_image.rs`, `embedded_browser.rs`, `settings.rs`
+  `fsops.rs`, `clipboard_image.rs`, `embedded_browser.rs`, `settings.rs`,
+  `tray.rs`
 
 `hook_http.rs` is deliberately *not* gated: it is pure `std`, so its auth
 decision and a real-socket round trip run on Linux CI.

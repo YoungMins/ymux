@@ -1393,7 +1393,8 @@ export class WorkspaceManager {
     }
   }
 
-  /// The window is closing (main.ts's `onCloseRequested`). Every editor in
+  /// The app is quitting (main.ts's `ymux://quit-requested` listener —
+  /// closing the window only hides it to the tray). Every editor in
   /// every workspace is asked about, once. On a go-ahead, the drafts of
   /// buffers the user chose not to save are dropped, so the next launch does
   /// not offer back edits that were explicitly discarded.
@@ -1665,6 +1666,20 @@ export class WorkspaceManager {
     this.persistDebounced();
     // The workspace panel's "tracking is off" hint keys off this.
     this.notifyTree();
+  }
+
+  /// The window was hidden to the tray (`ymux://main-hidden`): nothing in it
+  /// is on screen, whether or not the webview saw a DOM `blur`.
+  noteWindowHidden(): void {
+    this.windowFocused = false;
+  }
+
+  /// The window was shown again (`ymux://main-shown`, after the backend
+  /// focused it; or `visibilitychange` → visible, with `document.hasFocus()`).
+  /// Needed because a native `set_focus` often raises no DOM `focus` in
+  /// WebView2, which would leave every pane counted unseen.
+  noteWindowShown(focused: boolean): void {
+    this.windowFocused = focused;
   }
 
   /// Can the user see pane `paneId` right now — window focused and its

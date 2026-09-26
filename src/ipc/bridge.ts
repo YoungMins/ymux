@@ -489,6 +489,16 @@ export const api = {
   /// ~/.claude/settings.json and persist the setting.
   setAgentTracking: (enabled: boolean): Promise<void> =>
     call("set_agent_tracking", { enabled }),
+
+  // Close-to-tray (src-tauri/src/tray.rs).
+  setTrayLabels: (open: string, quit: string, tooltip: string): Promise<void> =>
+    call("set_tray_labels", { open, quit, tooltip }),
+  quitGuardReady: (): Promise<void> => call("quit_guard_ready"),
+  ackQuit: (): Promise<void> => call("ack_quit"),
+  /// Resolves whether the app is now exiting (false: cancelled or stale).
+  answerQuit: (proceed: boolean): Promise<boolean> => call("answer_quit", { proceed }),
+  quitApp: (): Promise<void> => call("quit_app"),
+  showMainWindow: (): Promise<void> => call("show_main_window"),
 };
 
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.
