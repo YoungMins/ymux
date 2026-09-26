@@ -231,7 +231,13 @@ each of which re-sources the user's real counterpart before handing control
 back. Break that and users silently lose their aliases and `PATH`. It is
 covered by `pty::session::tests::macos_shell_integration_reports_live_cwd`,
 which spawns a real PTY and asserts a live cwd comes back — run it on macOS,
-because Linux CI cannot compile it.
+because Linux CI cannot compile it. The dotfile-sourcing half is also covered
+on Linux: `shell::detect::tests::real_zsh_sources_user_dotfiles_through_the_shim`
+runs the shim under a real `zsh -l -i` against a temp `$HOME` (CI installs
+zsh; the test skips where it is missing). A cached zsh profile's
+`YMUX_USER_ZDOTDIR` is empty for "none" — pre-v9 configs cached `$HOME`
+there, which is why `CONFIG_VERSION` 9 re-detects and the shim treats `$HOME`
+as empty.
 
 **Keyboard.** All shortcuts are written in the canonical `Ctrl+…` form and
 translated at runtime by `src/platform.ts`. Never compare `ev.ctrlKey`

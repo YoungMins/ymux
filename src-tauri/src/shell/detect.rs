@@ -42,6 +42,30 @@ pub fn refresh_shell_integration() {
     }
 }
 
+/// Write `body` to `path` via a temp file in the same directory and a rename,
+/// so a shell starting while [`refresh_shell_integration`] rewrites its init
+/// file on boot reads either the old script or the new one, never a torn
+/// half. The temp name carries the pid and a counter so concurrent writers
+/// never share one; it is removed again if the write or rename fails.
+fn write_atomic(path: &Path, body: &str) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = std::fs::write(&tmp, body).and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Return true if the path exists and is a regular file.
 fn is_file(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
@@ -195,7 +219,7 @@ esac
             return None;
         }
         let path = dir.join("bash-init.sh");
-        if let Err(e) = std::fs::write(&path, BASH_OSC7_RCFILE) {
+        if let Err(e) = super::write_atomic(&path, BASH_OSC7_RCFILE) {
             tracing::warn!(error = %e, "failed to write bash rcfile");
             return None;
         }
@@ -697,6 +721,11 @@ mod unix_scripts {
     /// adopted as the new "user" value, as zsh itself would. Afterwards
     /// `ZDOTDIR` points back at the shim, because zsh re-reads it before
     /// *each* remaining startup file.
+    ///
+    /// A `YMUX_USER_ZDOTDIR` equal to `$HOME` counts as empty: configs from
+    /// before this "empty = none" rule (`CONFIG_VERSION` < 9) cached `$HOME`
+    /// as the fallback, and taken literally it survives a user `.zshenv`'s
+    /// `${ZDOTDIR:-$HOME/.config/zsh}`, so their real files were never found.
     pub(super) const ZSH_ZSHENV: &str = r#"# ymux shell integration — auto-generated, safe to delete.
 #
 # ymux starts zsh with ZDOTDIR pointing here so it can install an OSC 7
@@ -706,6 +735,7 @@ mod unix_scripts {
 # as it would in Terminal.app.
 YMUX_SHIM_ZDOTDIR="${ZDOTDIR:-$HOME}"
 YMUX_USER_ZDOTDIR="${YMUX_USER_ZDOTDIR-}"
+if [ "$YMUX_USER_ZDOTDIR" = "$HOME" ]; then YMUX_USER_ZDOTDIR=; fi
 if [ -n "$YMUX_USER_ZDOTDIR" ]; then export ZDOTDIR="$YMUX_USER_ZDOTDIR"; else unset ZDOTDIR; fi
 [ -f "${ZDOTDIR:-$HOME}/.zshenv" ] && . "${ZDOTDIR:-$HOME}/.zshenv"
 YMUX_USER_ZDOTDIR="${ZDOTDIR-}"
@@ -804,7 +834,7 @@ mod unix_detect {
     use super::unix_scripts::{
         BASH_OSC7_RCFILE, ZSH_SHIM_DIR, ZSH_ZLOGIN, ZSH_ZPROFILE, ZSH_ZSHENV, ZSH_ZSHRC,
     };
-    use super::{is_file, which, Path, PathBuf, ShellProfile};
+    use super::{is_file, which, write_atomic, Path, PathBuf, ShellProfile};
 
     /// `<config_dir>/ymux`, created on demand. Shared with `theme.toml` via
     /// `ytheme::config_dir`.
@@ -832,7 +862,7 @@ mod unix_detect {
             (".zshrc", ZSH_ZSHRC),
             (".zlogin", ZSH_ZLOGIN),
         ] {
-            if let Err(e) = std::fs::write(dir.join(name), body) {
+            if let Err(e) = write_atomic(&dir.join(name), body) {
                 tracing::warn!(error = %e, file = name, "failed to write zsh shim file");
                 return None;
             }
@@ -843,7 +873,7 @@ mod unix_detect {
     /// Write (or refresh) the bash rcfile and return its absolute path.
     pub(super) fn ensure_bash_rcfile() -> Option<PathBuf> {
         let path = ymux_dir()?.join("bash-init.sh");
-        if let Err(e) = std::fs::write(&path, BASH_OSC7_RCFILE) {
+        if let Err(e) = write_atomic(&path, BASH_OSC7_RCFILE) {
             tracing::warn!(error = %e, "failed to write bash rcfile");
             return None;
         }
@@ -872,7 +902,7 @@ _ymux_osc7
     /// Write (or refresh) the POSIX `$ENV` script and return its path.
     pub(super) fn ensure_posix_env_file() -> Option<PathBuf> {
         let path = ymux_dir()?.join("posix-init.sh");
-        if let Err(e) = std::fs::write(&path, POSIX_ENV_INIT) {
+        if let Err(e) = write_atomic(&path, POSIX_ENV_INIT) {
             tracing::warn!(error = %e, "failed to write posix env file");
             return None;
         }
@@ -1363,6 +1393,38 @@ mod tests {
         );
     }
 
+    /// Configs from before the "empty = none" semantics cached
+    /// `YMUX_USER_ZDOTDIR=$HOME`. Taken literally, a user `.zshenv` doing
+    /// `export ZDOTDIR="${ZDOTDIR:-$HOME/.config/zsh}"` keeps `$HOME` and
+    /// the shim sources nothing after it. `.zshenv` treats `$HOME` as "none"
+    /// before it hands ZDOTDIR to the user.
+    #[test]
+    fn zsh_shim_treats_a_home_user_zdotdir_as_none() {
+        let script = unix_scripts::ZSH_ZSHENV;
+        let seed = line_of(script, r#"YMUX_USER_ZDOTDIR="${YMUX_USER_ZDOTDIR-}""#);
+        let guard = line_of(
+            script,
+            r#"if [ "$YMUX_USER_ZDOTDIR" = "$HOME" ]; then YMUX_USER_ZDOTDIR=; fi"#,
+        );
+        let to_user = line_of(script, ZDOTDIR_TO_USER);
+        assert!(seed < guard && guard < to_user, "{script}");
+    }
+
+    /// `write_atomic` replaces the content and leaves no temp file behind.
+    #[test]
+    fn write_atomic_replaces_content_without_leftovers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".zshrc");
+        write_atomic(&path, "old").expect("first write");
+        write_atomic(&path, "new").expect("second write");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![".zshrc".to_string()]);
+    }
+
     /// macOS `/etc/zshrc` runs between the shim's .zprofile and .zshrc with
     /// ZDOTDIR on the shim, so its `HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history`
     /// lands inside the shim dir. The shim .zshrc moves it back — before the
@@ -1431,5 +1493,211 @@ mod tests {
             "must not source ~/.bashrc twice:\n{rc}"
         );
         assert!(rc.contains(r#"PROMPT_COMMAND="_ymux_osc7;${PROMPT_COMMAND:-}""#));
+    }
+
+    /// Run the real shim under a real `zsh -l -i` (skipped where zsh isn't
+    /// installed — Linux CI installs it) against a throwaway `$HOME`, the way
+    /// a macOS user saw `claude` go missing: every user startup file must run
+    /// exactly once, in zsh's order, from the directory Terminal.app would
+    /// read it from, so their `PATH` edits and aliases survive. Covers a
+    /// fresh profile env (`YMUX_USER_ZDOTDIR` empty) and a stale pre-v9 one
+    /// (`YMUX_USER_ZDOTDIR=$HOME`), across the three common dotfile layouts.
+    ///
+    /// The shim is written from the `unix_scripts` constants into a temp dir;
+    /// `ensure_zsh_shim()` would write the live config dir instead.
+    #[cfg(unix)]
+    #[test]
+    fn real_zsh_sources_user_dotfiles_through_the_shim() {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+        use unix_scripts::{ZSH_SHIM_DIR, ZSH_ZLOGIN, ZSH_ZPROFILE, ZSH_ZSHENV, ZSH_ZSHRC};
+
+        let Some(zsh) = which("zsh") else {
+            eprintln!("skipping real_zsh_sources_user_dotfiles_through_the_shim: no zsh on PATH");
+            return;
+        };
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Layout {
+            /// Everything in `$HOME`.
+            Home,
+            /// `$HOME/.zshenv` does `export ZDOTDIR=$HOME/.config/zsh`.
+            Xdg,
+            /// `$HOME/.zshenv` does `export ZDOTDIR=${ZDOTDIR:-$HOME/.config/zsh}`.
+            XdgConditional,
+        }
+
+        let write = |path: &Path, body: &str| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        };
+        // A user startup file that logs `tag`, then runs `extra`.
+        let dotfile = |path: &Path, tag: &str, extra: &str| {
+            write(
+                path,
+                &format!("echo '{tag}' >> \"$HOME/dotfiles.log\"\n{extra}"),
+            );
+        };
+        const ZPROFILE_EXTRA: &str = "export PATH=\"$HOME/zprofile-bin:$PATH\"\n";
+        const ZSHRC_EXTRA: &str =
+            "export PATH=\"$HOME/.local/bin:$PATH\"\nalias ymuxprobe='print ok'\n";
+        // Starts with a bare newline: the shim's .zshrc has already printed
+        // an OSC 7 sequence, with no newline, when the probe runs.
+        const PROBE: &str = r#"print
+print -r -- "claude=$(whence -p claude)"
+print -r -- "path=$PATH"
+print -r -- "alias=${+aliases[ymuxprobe]}"
+print -r -- "zdotdir_set=${+ZDOTDIR}"
+print -r -- "zdotdir=${ZDOTDIR-}"
+print -r -- "ymux=${+YMUX_USER_ZDOTDIR}${+YMUX_SHIM_ZDOTDIR}"
+if [[ -o login ]]; then print -r -- login=yes; else print -r -- login=no; fi
+"#;
+
+        for (stale, layout) in [
+            (false, Layout::Home),
+            (false, Layout::Xdg),
+            (false, Layout::XdgConditional),
+            (true, Layout::Home),
+            (true, Layout::XdgConditional),
+        ] {
+            let case = format!("stale={stale} layout={layout:?}");
+            let root = tempfile::tempdir().expect("tempdir");
+            // Spaces in both paths, as in macOS's "Application Support".
+            let shim = root.path().join("App Support").join(ZSH_SHIM_DIR);
+            let home = root.path().join("home dir");
+            let home_s = home.to_str().expect("utf-8 temp path").to_string();
+            for (name, body) in [
+                (".zshenv", ZSH_ZSHENV),
+                (".zprofile", ZSH_ZPROFILE),
+                (".zshrc", ZSH_ZSHRC),
+                (".zlogin", ZSH_ZLOGIN),
+            ] {
+                write(&shim.join(name), body);
+            }
+            let stub = home.join(".local/bin/claude");
+            write(&stub, "#!/bin/sh\necho stub\n");
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            std::fs::create_dir_all(home.join("zprofile-bin")).unwrap();
+
+            // Where the user's .zprofile/.zshrc/.zlogin live, and the
+            // ZDOTDIR they end up with (None = never set one).
+            let (user_dir, tag, expected_zdotdir) = if layout == Layout::Home {
+                dotfile(&home.join(".zshenv"), "home/.zshenv", "");
+                (home.clone(), "home", None)
+            } else {
+                let export = if layout == Layout::Xdg {
+                    r#"export ZDOTDIR="$HOME/.config/zsh""#
+                } else {
+                    r#"export ZDOTDIR="${ZDOTDIR:-$HOME/.config/zsh}""#
+                };
+                dotfile(
+                    &home.join(".zshenv"),
+                    "home/.zshenv",
+                    &format!("{export}\n"),
+                );
+                // Decoys where a shim that lost the user's ZDOTDIR would
+                // look. They add nothing, so sourcing them instead shows up in
+                // the log and as missing PATH entries.
+                for name in [".zprofile", ".zshrc", ".zlogin"] {
+                    dotfile(&home.join(name), &format!("decoy/{name}"), "");
+                }
+                let xdg = home.join(".config/zsh");
+                let xdg_s = xdg.to_str().unwrap().to_string();
+                (xdg, "xdg", Some(xdg_s))
+            };
+            dotfile(
+                &user_dir.join(".zprofile"),
+                &format!("{tag}/.zprofile"),
+                ZPROFILE_EXTRA,
+            );
+            dotfile(
+                &user_dir.join(".zshrc"),
+                &format!("{tag}/.zshrc"),
+                ZSHRC_EXTRA,
+            );
+            dotfile(&user_dir.join(".zlogin"), &format!("{tag}/.zlogin"), "");
+
+            let mut child = Command::new(&zsh)
+                .args(["-l", "-i", "-c", PROBE])
+                .env_clear()
+                .env("HOME", &home)
+                .env("PATH", "/usr/bin:/bin")
+                .env("TERM", "dumb")
+                // Ubuntu's /etc/zsh/zshrc runs compinit unless told not to.
+                .env("skip_global_compinit", "1")
+                .env("ZDOTDIR", &shim)
+                .env(
+                    "YMUX_USER_ZDOTDIR",
+                    if stale { home_s.as_str() } else { "" },
+                )
+                .current_dir(&home)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn zsh");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while child.try_wait().expect("try_wait").is_none() {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    panic!("{case}: zsh did not exit within 20s");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let out = child.wait_with_output().expect("zsh output");
+            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+            let log = std::fs::read_to_string(home.join("dotfiles.log")).unwrap_or_default();
+            let ctx = format!(
+                "{case}\n--- stdout\n{stdout}\n--- stderr\n{}\n--- log\n{log}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let get = |key: &str| -> String {
+                let prefix = format!("{key}=");
+                stdout
+                    .lines()
+                    .find_map(|l| l.strip_prefix(prefix.as_str()))
+                    .unwrap_or_else(|| panic!("no {key} probe\n{ctx}"))
+                    .to_string()
+            };
+
+            let expected_log = [
+                "home/.zshenv".to_string(),
+                format!("{tag}/.zprofile"),
+                format!("{tag}/.zshrc"),
+                format!("{tag}/.zlogin"),
+            ];
+            assert_eq!(
+                log.lines().collect::<Vec<_>>(),
+                expected_log,
+                "each user file once, in zsh order\n{ctx}"
+            );
+            assert_eq!(
+                get("claude"),
+                format!("{home_s}/.local/bin/claude"),
+                "{ctx}"
+            );
+            let path = get("path");
+            for dir in [
+                format!("{home_s}/zprofile-bin"),
+                format!("{home_s}/.local/bin"),
+            ] {
+                assert!(
+                    path.split(':').any(|p| p == dir),
+                    "{dir} not on PATH\n{ctx}"
+                );
+            }
+            assert_eq!(get("alias"), "1", "alias from .zshrc missing\n{ctx}");
+            assert_eq!(get("ymux"), "00", "YMUX_* left behind\n{ctx}");
+            assert_eq!(get("login"), "yes", "{ctx}");
+            match expected_zdotdir {
+                // No ZDOTDIR of their own: startup must leave it unset.
+                None => assert_eq!(get("zdotdir_set"), "0", "{ctx}"),
+                // Their .zshenv exported one: they keep it, as in Terminal.app.
+                Some(dir) => assert_eq!(get("zdotdir"), dir, "{ctx}"),
+            }
+        }
     }
 }

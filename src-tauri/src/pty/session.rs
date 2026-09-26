@@ -734,8 +734,8 @@ mod tests {
         }
         // What launchd hands a Finder-launched app.
         const STRIPPED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
-        // A `/etc/paths` entry that stripped PATH lacks, so
-        // finding it in a bash pane proves the rcfile ran /etc/profile.
+        // A `/etc/paths` entry that stripped PATH lacks, so finding it in a
+        // bash or zsh pane proves the login startup (path_helper) ran.
         let etc_paths_entry = std::fs::read_to_string("/etc/paths").ok().and_then(|s| {
             s.lines()
                 .map(str::trim)
@@ -769,7 +769,7 @@ mod tests {
             let is_zsh = profile.executable.ends_with("/zsh");
             let is_bash = profile.executable.ends_with("/bash");
             let mut spec = PaneSpec::new_default();
-            if is_bash {
+            if is_bash || is_zsh {
                 spec.env.push(("PATH".into(), STRIPPED_PATH.into()));
             }
             let (tx, rx) = mpsc::channel();
@@ -821,9 +821,17 @@ mod tests {
             session
                 .write(
                     b"printf 'ymux-%s=[%s]\\n' hist \"$HISTFILE\" zdotdir \"$ZDOTDIR\" path \"$PATH\"; \
-                      locale charmap | sed 's/^/ymux-/; s/^ymux-/&charmap=[/; s/$/]/'; \
-                      printf 'ymux-%s\\n' probe-done\n",
+                      locale charmap | sed 's/^/ymux-/; s/^ymux-/&charmap=[/; s/$/]/'\n",
                 )
+                .expect("write");
+            if is_zsh {
+                // zsh-only syntax, so a separate line; bash would misparse it.
+                session
+                    .write(b"[[ -o login ]] && printf 'ymux-%s=[%s]\\n' login yes\n")
+                    .expect("write");
+            }
+            session
+                .write(b"printf 'ymux-%s\\n' probe-done\n")
                 .expect("write");
             let text = capture_until(&rx, "ymux-probe-done");
             let _ = session.write(b"exit\n");
@@ -854,14 +862,39 @@ mod tests {
                     "{}: ZDOTDIR still points at the shim after startup: {zdotdir:?}",
                     profile.name
                 );
+                // With no ZDOTDIR of the user's own — none inherited and
+                // none set by their ~/.zshenv — startup must leave it empty.
+                let inherited = profile
+                    .env
+                    .iter()
+                    .any(|(k, v)| k == "YMUX_USER_ZDOTDIR" && !v.is_empty());
+                let zshenv_sets_it = dirs::home_dir()
+                    .and_then(|h| std::fs::read_to_string(h.join(".zshenv")).ok())
+                    .is_some_and(|s| s.contains("ZDOTDIR"));
+                if !inherited && !zshenv_sets_it {
+                    assert_eq!(
+                        zdotdir, "",
+                        "{}: ZDOTDIR should be empty when the user has none",
+                        profile.name
+                    );
+                }
+                assert_eq!(
+                    probe(&text, "login").as_deref(),
+                    Some("yes"),
+                    "{}: zsh pane is not a login shell: {text:?}",
+                    profile.name
+                );
             }
-            if is_bash {
+            // Login zsh gets /etc/paths from /etc/zprofile's path_helper,
+            // bash from the rcfile's /etc/profile — both starting from a
+            // stripped PATH, as for a Finder launch.
+            if is_bash || is_zsh {
                 if let Some(entry) = &etc_paths_entry {
                     let path = probe(&text, "path")
                         .unwrap_or_else(|| panic!("{}: no PATH probe: {text:?}", profile.name));
                     assert!(
                         path.split(':').any(|p| p == entry),
-                        "{}: PATH {path:?} lacks /etc/paths entry {entry:?} — /etc/profile not sourced",
+                        "{}: PATH {path:?} lacks /etc/paths entry {entry:?} — login startup not replayed",
                         profile.name
                     );
                 }

@@ -36,7 +36,12 @@ use uuid::Uuid;
 ///       shells on the machine's legacy code page — CP949 on Korean
 ///       Windows — and every CJK glyph in those panes stays garbled until
 ///       a re-detect.
-pub const CONFIG_VERSION: u32 = 8;
+///   9 — zsh profile's YMUX_USER_ZDOTDIR semantics changed (empty = none);
+///       re-detect shells. A v8 cache can still carry the old `$HOME`
+///       fallback, which the zsh shim would take as the user's own ZDOTDIR
+///       and then miss their `.zprofile`/`.zshrc` (and every `PATH` edit in
+///       them) when their `.zshenv` points ZDOTDIR elsewhere.
+pub const CONFIG_VERSION: u32 = 9;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
@@ -1853,6 +1858,35 @@ shell = "cmd"
             let panes = loaded.workspaces[0].panes();
             assert_eq!(panes[0].shell, names[0], "{names:?}");
             assert_eq!(panes[1].shell, names[0], "{names:?}");
+        }
+    }
+
+    /// v9 exists to re-detect the zsh profile (whose cached
+    /// `YMUX_USER_ZDOTDIR` changed meaning), so migrating a v8 config must
+    /// drop the shell cache — but leave every pane's pinned shell name alone,
+    /// so the names still resolve once detection repopulates the cache.
+    #[test]
+    fn migrate_v8_to_v9_clears_shells() {
+        assert_eq!(CONFIG_VERSION, 9);
+        for names in [&MAC_SHELLS[..], &WIN_SHELLS[..]] {
+            let mut cfg = mixed_config(names);
+            cfg.pin_pane_shells();
+            cfg.version = 8;
+            let before = shells_by_kind(&cfg);
+
+            cfg.migrate();
+            assert_eq!(cfg.version, 9, "{names:?}");
+            assert!(cfg.shells.is_empty(), "{names:?}: v8 shells cleared");
+            assert_eq!(shells_by_kind(&cfg), before, "{names:?}: panes untouched");
+
+            // Re-detection produces the same profile names.
+            cfg.shells = profiles(names);
+            for (kind, shell) in shells_by_kind(&cfg) {
+                if kind == PaneKind::Terminal && shell != "gone-shell" {
+                    assert!(cfg.shell(&shell).is_some(), "{names:?}: {shell:?}");
+                }
+            }
+            assert!(!cfg.pin_pane_shells(), "{names:?}: nothing left to pin");
         }
     }
 

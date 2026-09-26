@@ -66,6 +66,13 @@ jobs:
       - name: cargo test (shared crates)
         run: cargo test -p ytheme -p ypath
 
+      # `shell::detect`'s real-zsh shim test skips itself without zsh, and
+      # ubuntu-latest doesn't ship it.
+      - name: Install zsh (real-shell shim test)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+
       - name: cargo test (ymux lib, no tauri runtime)
         run: cargo test --no-default-features --lib -p ymux
 
