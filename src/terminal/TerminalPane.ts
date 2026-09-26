@@ -35,6 +35,7 @@ import { formatDroppedPaths } from "./dropPaths";
 import { MONO_FONT_STACK } from "../ui/fonts";
 import { shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
 import { PathLinks } from "./pathLinks";
+import { pathOpenTarget } from "./pathOpen";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 
 export interface TerminalPaneOptions {
@@ -85,6 +86,10 @@ export interface TerminalPaneOptions {
   /// Executable of this pane's shell profile. Decides how a dropped file's
   /// or pasted image's path is quoted when typed (`shellQuote.ts`).
   shellExecutable?: string;
+  /// Open an existing Markdown file clicked in this pane's output in ymux's
+  /// viewer, in this pane's group. Absent means every path goes to the OS
+  /// opener (`pathOpen.ts` decides which paths qualify).
+  openInViewer?: (path: string) => Promise<void>;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -338,10 +343,18 @@ export class TerminalPane implements Pane {
       probe: (paths, cwd) => api.resolvePaths(paths, cwd),
       // Same treatment as a failed `openUrl` above: log it rather than
       // writing into the buffer, which belongs to the shell.
-      open: (resolved) =>
+      open: (resolved) => {
+        const openInViewer = this.opts.openInViewer;
+        if (pathOpenTarget(resolved, openInViewer !== undefined) === "viewer") {
+          void Promise.resolve(openInViewer?.(resolved.absolute)).catch((e) =>
+            console.warn("openInViewer failed:", describeError(e)),
+          );
+          return;
+        }
         void api
           .openPath(resolved.absolute)
-          .catch((e) => console.warn("openPath failed:", describeError(e))),
+          .catch((e) => console.warn("openPath failed:", describeError(e)));
+      },
     });
     this.pathLinks.install();
     this.term.open(this.termHost);

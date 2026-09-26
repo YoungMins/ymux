@@ -595,6 +595,7 @@ export class WorkspaceManager {
         this.focusedPaneId = spec.id;
       },
       onAttention: (msg) => this.handleAttention(spec.id, msg),
+      openInViewer: (path) => this.openFileInViewerTab(path, spec.id),
       isVisible: () => this.isPaneVisible(spec.id),
       onContextMenu: (ev) => this.showPaneContextMenu(spec.id, ev),
       persistScrollback: () => this.persistScrollback,
@@ -969,10 +970,17 @@ export class WorkspaceManager {
   /// pane (`EditorPane.openFile`) rather than opening another tab. No PTY is
   /// killed or respawned any more — the editor asks before replacing an
   /// unsaved buffer, and keeps it if the user cancels.
-  async openFileInViewerTab(path: string): Promise<void> {
+  ///
+  /// `anchorId` targets a specific pane's group instead — a terminal whose
+  /// output had a Markdown path Ctrl/Cmd+clicked passes its own id, so the
+  /// viewer opens beside *that* terminal even if another pane holds focus.
+  /// An anchor that is not in the active workspace falls back to
+  /// `activePaneId()`, as `splitTerminalAt` does.
+  async openFileInViewerTab(path: string, anchorId?: Uuid): Promise<void> {
     if (!path) return;
     const ws = this.active;
-    const targetId = this.activePaneId();
+    const targetId =
+      anchorId && findPane(ws.root, anchorId) ? anchorId : this.activePaneId();
     if (!targetId) return;
     let group = groupOfPane(ws.root, targetId);
     if (!group) {

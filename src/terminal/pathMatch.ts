@@ -35,12 +35,60 @@ export interface PathCandidate {
 
 /// Characters that may be glued to the front of a path by the surrounding
 /// text and are never part of one in practice. Backtick and pipe are here
-/// because coding agents wrap paths in them constantly.
-const LEAD_STRIP = "([{<\"'`|*";
+/// because coding agents wrap paths in them constantly; `⎿`, `●` and `•`
+/// are the result/bullet glyphs Claude Code prints right before a path.
+/// An opening bracket stripped here is put back when the path turns out to
+/// close it (`(group)/page.tsx`) — see the end of `refineToken`.
+const LEAD_STRIP = "([{<\"'`|*⎿●•";
 /// Same idea for the tail. `:` is included because `file.rs:` is a common
 /// prefix form in compiler output; a real `:line:col` suffix is recovered
-/// afterwards, from the already-trimmed token.
+/// afterwards, from the already-trimmed token. A closing `)`, `]` or `}` is
+/// only stripped while it is *unbalanced* in what remains, so `src/foo(old)`
+/// keeps its `)` and `(src/a.md)` loses it — see `peelsAtTail`.
 const TRAIL_STRIP = ")]}>,.;:!?\"'`|*";
+
+/// Bracket pairs whose balance decides whether a bracket is part of the
+/// path or wrapping punctuation. Paths do contain them — `Program Files
+/// (x86)`, Next.js route groups `app/(group)/page.tsx`, `src/foo(old)` — but
+/// balanced, so an unmatched one is taken to belong to the prose. `<>` is
+/// not here: illegal in Windows names and never balanced inside a POSIX one
+/// in practice, so it is always stripped.
+const CLOSER_OF: Readonly<Record<string, string>> = { "(": ")", "[": "]", "{": "}" };
+const OPENER_OF: Readonly<Record<string, string>> = { ")": "(", "]": "[", "}": "{" };
+
+/// Does `s` close an `open`/`close` pair it never opened? True if, scanning
+/// left to right, the depth ever goes negative.
+function closesUnopened(s: string, open: string, close: string): boolean {
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === open) depth++;
+    else if (ch === close && --depth < 0) return true;
+  }
+  return false;
+}
+
+/// Should the last character of `s` be peeled off as trailing punctuation?
+/// A closing bracket only when `s` has more of it than of its opener.
+function peelsAtTail(s: string): boolean {
+  const ch = s[s.length - 1];
+  if (ch === undefined || !TRAIL_STRIP.includes(ch)) return false;
+  const open = OPENER_OF[ch];
+  if (open === undefined) return true;
+  let opens = 0;
+  let closes = 0;
+  for (const c of s) {
+    if (c === open) opens++;
+    else if (c === ch) closes++;
+  }
+  return closes > opens;
+}
+
+/// A file name whose extension has at least one letter: `main.rs`,
+/// `file.ts`, `.env`. Consulted only for a separator-less token that came
+/// with a `:line` / `(line)` suffix — the suffix is what makes `file.ts:10:5`
+/// path-shaped where a bare `file.ts` is not — and it keeps `127.0.0.1:80`,
+/// `v1.2:3` and `12:30:45` out.
+const BARE_FILE_RE = /\.[A-Za-z0-9_-]*[A-Za-z][A-Za-z0-9_-]*$/;
 
 /// A scheme-qualified URL. Used twice: to blank out regions of the line that
 /// belong to the URL link provider (which is registered first and wins
@@ -84,7 +132,13 @@ const STRUCTURAL = new Set(["/", "\\", "."]);
 
 /// Turn one whitespace-delimited token into a candidate, or `null` when it
 /// is not path-shaped. `offset` is the token's index in the source line.
-function refineToken(token: string, offset: number): PathCandidate | null {
+/// `inPathContext` marks a token lifted out of a `Tool(…)` call or a
+/// markdown link target, where a separator-less `README.md` is a path.
+function refineToken(
+  token: string,
+  offset: number,
+  inPathContext = false,
+): PathCandidate | null {
   let start = 0;
   let end = token.length;
   while (start < end && LEAD_STRIP.includes(token[start]!)) start++;
@@ -104,7 +158,7 @@ function refineToken(token: string, offset: number): PathCandidate | null {
       end = start + paren.index;
       continue;
     }
-    if (end > start && TRAIL_STRIP.includes(token[end - 1]!)) {
+    if (end > start && peelsAtTail(token.slice(start, end))) {
       end--;
       continue;
     }
@@ -120,17 +174,34 @@ function refineToken(token: string, offset: number): PathCandidate | null {
       end = start + m.index;
       // The cut can expose punctuation that was hiding behind the suffix,
       // as in `see src/main.ts:12,` once the `,` and then `:12` have gone.
-      while (end > start && TRAIL_STRIP.includes(token[end - 1]!)) end--;
+      while (end > start && peelsAtTail(token.slice(start, end))) end--;
       text = token.slice(start, end);
     }
+  }
+
+  // Put back an opening bracket the lead strip took if the path closes it:
+  // `(group)/page.tsx` is a Next.js route group, not a wrapped `group)/…`.
+  while (start > 0) {
+    const open = token[start - 1]!;
+    const close = CLOSER_OF[open];
+    if (close === undefined || !closesUnopened(text, open, close)) break;
+    start--;
+    text = token.slice(start, end);
   }
 
   if (!text) return null;
   if (CONTROL_RE.test(text)) return null;
   // A path has to have a separator. This is the rule that keeps bare words
   // ("README", "main.ts", "build") out, whether or not a file of that name
-  // happens to sit in the cwd.
-  if (!text.includes("/") && !text.includes("\\")) return null;
+  // happens to sit in the cwd. The one exception is a file name that came
+  // with a position suffix (`file.ts:10:5`, `main.rs(42,7)`): compilers and
+  // agents print those relative to the cwd, and the suffix is what makes the
+  // token path-shaped. The same goes for a `Tool(README.md)` argument or a
+  // `[x](README.md)` target (`inPathContext`). Either still only links if it
+  // exists in the cwd.
+  const hasSeparator = text.includes("/") || text.includes("\\");
+  const bareOk = (line !== undefined || inPathContext) && BARE_FILE_RE.test(text);
+  if (!hasSeparator && !bareOk) return null;
   if (![...text].some((ch) => !STRUCTURAL.has(ch))) return null;
   // Leave URLs to the web-links provider; it is registered first, so xterm
   // would drop ours on overlap anyway, but a bare `ftp://host/x` that the
@@ -138,6 +209,49 @@ function refineToken(token: string, offset: number): PathCandidate | null {
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(text)) return null;
 
   return { text, start: offset + start, end: offset + end, line, col };
+}
+
+/// Every reading of one token: the whole token, plus the path inside it
+/// when the token is `label(path)` or a markdown link `[label](path)`.
+///
+/// - Markdown link: whatever follows the first `](` is the target, whatever
+///   the label says (Claude Code writes `[src/a.md](src/a.md)` constantly).
+/// - Call form: `Read(src/a.ts)`, `Update(D:\x\README.md)` — the first `(`
+///   whose prefix is a non-empty word with no separator, and which is closed
+///   by the token's final `)` (trailing prose punctuation aside). A prefix
+///   with a separator is a directory name instead (`src/foo(old)/a.ts`), and
+///   yields nothing extra.
+///
+/// Every reading is emitted and the existence probe picks: longest existing
+/// wins (`resolveOverlaps`), so a real file named `foo(bar)` still beats a
+/// `bar` inside it.
+function refineAll(token: string, offset: number): Array<PathCandidate | null> {
+  const out = [refineToken(token, offset)];
+  const md = token.indexOf("](");
+  if (md >= 0) out.push(refineToken(token.slice(md + 2), offset + md + 2, true));
+
+  let lead = 0;
+  while (lead < token.length && LEAD_STRIP.includes(token[lead]!)) lead++;
+  const open = token.indexOf("(", lead);
+  if (open > lead && !/[/\\\s]/.test(token.slice(lead, open))) {
+    let tail = token.length;
+    while (tail > open && token[tail - 1] !== ")" && TRAIL_STRIP.includes(token[tail - 1]!)) {
+      tail--;
+    }
+    let depth = 0;
+    let closeAt = -1;
+    for (let k = open; k < tail; k++) {
+      if (token[k] === "(") depth++;
+      else if (token[k] === ")" && --depth === 0) {
+        closeAt = k;
+        break;
+      }
+    }
+    if (closeAt === tail - 1 && closeAt > open + 1) {
+      out.push(refineToken(token.slice(open + 1, closeAt), offset + open + 1, true));
+    }
+  }
+  return out;
 }
 
 /// Find every path-shaped substring of `line`.
@@ -179,7 +293,7 @@ export function findPathCandidates(
       }
       let j = i;
       while (j < text.length && !isSpace(text[j]!)) j++;
-      push(refineToken(text.slice(i, j), base + i));
+      for (const c of refineAll(text.slice(i, j), base + i)) push(c);
       i = j;
     }
   };
@@ -198,7 +312,7 @@ export function findPathCandidates(
         // The whole quoted string as one path (this is how a path with
         // spaces survives), plus its tokens (this is how a path mentioned
         // inside a quoted sentence survives).
-        push(refineToken(inner, i + 1));
+        for (const c of refineAll(inner, i + 1)) push(c);
         if (inner.includes(" ")) scanTokens(inner, i + 1);
         i = close + 1;
         continue;
@@ -206,7 +320,7 @@ export function findPathCandidates(
     }
     let j = i;
     while (j < line.length && !isSpace(line[j]!)) j++;
-    push(refineToken(line.slice(i, j), i));
+    for (const c of refineAll(line.slice(i, j), i)) push(c);
     i = j;
   }
 

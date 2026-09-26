@@ -5,6 +5,7 @@ import {
   findPathCandidates,
   type PathCandidate,
 } from "./pathMatch";
+import { resolveOverlaps } from "./pathProbe";
 
 /// The candidate texts, in the order they were found.
 function texts(line: string): string[] {
@@ -263,5 +264,140 @@ describe("findPathCandidates — non-ASCII", () => {
   it("matches a quoted path with Korean components and spaces", () => {
     const found = findPathCandidates('"C:\\사용자\\내 문서\\a.txt"');
     expect(found.map((c) => c.text)).toContain("C:\\사용자\\내 문서\\a.txt");
+  });
+});
+
+/// What a row ends up linking, given which texts exist on disk: the matcher
+/// plus the same overlap resolution `PathLinks` applies. Returns each link
+/// as the exact slice of `line` it underlines, so a test also pins the span.
+function linked(line: string, existing: readonly string[]): string[] {
+  const onDisk = new Set(existing);
+  return resolveOverlaps(findPathCandidates(line), (c) => onDisk.has(c.text)).map((c) =>
+    line.slice(c.start, c.end),
+  );
+}
+
+describe("findPathCandidates — parentheses and brackets", () => {
+  it("links a relative path wrapped in parentheses", () => {
+    expect(linked("(src/foo/bar.md)", ["src/foo/bar.md"])).toEqual(["src/foo/bar.md"]);
+  });
+
+  it("links a Windows path wrapped in parentheses", () => {
+    const line = "(D:\\Git\\ymux\\README.md)";
+    expect(linked(line, ["D:\\Git\\ymux\\README.md"])).toEqual(["D:\\Git\\ymux\\README.md"]);
+  });
+
+  it("links a path:line in a parenthesised aside", () => {
+    const c = findPathCandidates("(see docs/a.md:12)").find((x) => x.text === "docs/a.md");
+    expect(c?.line).toBe(12);
+  });
+
+  it("links the target of a markdown link, not the label", () => {
+    expect(linked("[text](docs/a.md)", ["docs/a.md"])).toEqual(["docs/a.md"]);
+  });
+
+  it("links a markdown link target whose label is itself a path", () => {
+    // Claude Code writes `[src/a.md](src/a.md)` constantly.
+    expect(linked("see [src/a.md](src/a.md).", ["src/a.md"])).toEqual(["src/a.md"]);
+  });
+
+  it("links a markdown link target with a line suffix", () => {
+    const c = findPathCandidates("[x](docs/a.md:12)").find((x) => x.text === "docs/a.md");
+    expect(c?.line).toBe(12);
+  });
+
+  it("links a bare file name with a line:col suffix", () => {
+    const c = only("(file.ts:10:5)");
+    expect(c.text).toBe("file.ts");
+    expect(c.line).toBe(10);
+    expect(c.col).toBe(5);
+  });
+
+  it("links a bare file name in the tsc position form", () => {
+    const c = only("main.rs(42,7): error");
+    expect(c.text).toBe("main.rs");
+    expect(c.line).toBe(42);
+  });
+
+  it("still rejects separator-less words with a colon-number suffix but no extension", () => {
+    expect(texts("localhost:8080 12:30:45 127.0.0.1:80 v1.2:3")).toEqual([]);
+  });
+
+  it("links the argument of a Claude Code tool call", () => {
+    expect(linked("● Read(src/a.ts)", ["src/a.ts"])).toEqual(["src/a.ts"]);
+    const win = "● Update(D:\\Git\\ymux\\README.md)";
+    expect(linked(win, ["D:\\Git\\ymux\\README.md"])).toEqual(["D:\\Git\\ymux\\README.md"]);
+  });
+
+  it("links a bare file name that is a tool-call argument or link target", () => {
+    // Claude Code prints cwd-relative paths, so a root-level file has no
+    // separator; the call / link context is the path signal instead.
+    expect(linked("● Update(README.md)", ["README.md"])).toEqual(["README.md"]);
+    expect(linked("[CLAUDE.md](CLAUDE.md)", ["CLAUDE.md"])).toEqual(["CLAUDE.md"]);
+  });
+
+  it("does not take a call argument without an extension as a file", () => {
+    expect(texts("console.log(x) foo(bar) Read(12)")).toEqual([]);
+  });
+
+  it("links a tool-call argument that itself contains parentheses", () => {
+    expect(linked("Read(src/foo(old)/a.ts)", ["src/foo(old)/a.ts"])).toEqual([
+      "src/foo(old)/a.ts",
+    ]);
+  });
+
+  it("does not split a parenthesised directory into a junk reading", () => {
+    expect(texts("src/foo(old)/a.ts")).toEqual(["src/foo(old)/a.ts"]);
+  });
+
+  it("keeps a parenthesised last segment", () => {
+    // Balanced, so the `)` is part of the name, not wrapping punctuation.
+    expect(only("ls src/foo(old)").text).toBe("src/foo(old)");
+  });
+
+  it("keeps a Next.js route group", () => {
+    expect(only("app/(group)/page.tsx").text).toBe("app/(group)/page.tsx");
+    expect(only("(group)/page.tsx").text).toBe("(group)/page.tsx");
+    expect(only("edit (app/(group)/page.tsx)").text).toBe("app/(group)/page.tsx");
+  });
+
+  it("strips nested wrapping parentheses", () => {
+    expect(only("((src/a.md))").text).toBe("src/a.md");
+    expect(only("(src/foo(old))").text).toBe("src/foo(old)");
+  });
+
+  it("keeps Program Files (x86) intact when the path is quoted", () => {
+    const p = "C:\\Program Files (x86)\\foo\\bar.txt";
+    expect(linked(`"${p}"`, [p])).toEqual([p]);
+    expect(linked(`\`${p}\``, [p])).toEqual([p]);
+  });
+});
+
+describe("findPathCandidates — agent output wrappers", () => {
+  it("strips backticks, quotes and angle brackets", () => {
+    expect(only("`src/a.ts`").text).toBe("src/a.ts");
+    expect(only('"src/a.ts"').text).toBe("src/a.ts");
+    expect(only("'src/a.ts'").text).toBe("src/a.ts");
+    expect(only("<src/a.ts>").text).toBe("src/a.ts");
+    expect(only("(`src/a.md`)").text).toBe("src/a.md");
+    expect(only("**src/a.md**").text).toBe("src/a.md");
+  });
+
+  it("strips trailing prose punctuation", () => {
+    expect(texts("src/a.ts. src/b.ts, src/c.ts: src/d.ts;")).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+      "src/d.ts",
+    ]);
+    const c = only("(src/a.md:12:3).");
+    expect([c.text, c.line, c.col]).toEqual(["src/a.md", 12, 3]);
+  });
+
+  it("strips Claude Code's result and bullet glyphs", () => {
+    expect(only("⎿ src/a.ts").text).toBe("src/a.ts");
+    expect(only("⎿src/a.ts").text).toBe("src/a.ts");
+    expect(only("●src/a.ts").text).toBe("src/a.ts");
+    expect(only("  ⎿  Read src/a.md (12 lines)").text).toBe("src/a.md");
   });
 });
