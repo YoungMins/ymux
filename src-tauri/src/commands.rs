@@ -508,7 +508,9 @@ pub struct AgentHookPort(pub Option<u16>);
 /// hooks in `~/.claude/settings.json` carry it literally. When it is taken:
 /// if another ymux answers the ping there, this instance runs **without** a
 /// receiver (`None`) and never touches the port or the hooks — moving them
-/// would strand that instance's panes; otherwise an OS-assigned port is used
+/// would strand that instance's panes. (Release builds are single-instance,
+/// so that other ymux is a `tauri dev` build or a startup race; see
+/// `main.rs`.) Otherwise an OS-assigned port is used
 /// and — if `may_persist` (see `agent_hooks::startup_refresh_allowed`) —
 /// saved, so the startup hook refresh that follows points the hooks at it.
 /// Accepted events are applied after the receiver has already answered, so

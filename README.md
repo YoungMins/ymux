@@ -82,7 +82,8 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   restored"* separator on the next launch. Toggle under **Settings → General**.
 - **Close to tray**: closing the window hides ymux to the tray (Windows
   notification area / macOS menu bar) and keeps every shell and agent
-  running; click the tray icon to bring it back. Quit from the tray menu or
+  running; click the tray icon, or launch ymux again, to bring it back (only
+  one ymux runs at a time). Quit from the tray menu or
   `Cmd+Q` on macOS, or run **Quit ymux** from the command palette (unsaved
   editors are still asked about).
 - **Agent status at a glance**: every terminal pane tracks its process —

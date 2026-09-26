@@ -171,8 +171,10 @@ fn main() {
             .flat_map(|w| w.panes())
             .map(|p| p.id)
             .collect();
+        // Written in `setup`, not here: a relaunch that the single-instance
+        // plugin turns away exits inside `build()` and must not overwrite
+        // the running instance's file with this stale snapshot.
         sessions.retain_panes(&panes);
-        ymux_lib::commands::flush_sessions(&mut sessions);
     }
 
     let state = AppState {
@@ -185,7 +187,23 @@ fn main() {
     // helper macros it expands into (`__cmd__<name>`) resolve through the
     // `ymux_lib::commands` module they were defined in. Importing the names
     // via `use` is not enough — macros are not re-exported by `use`.
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Single instance, release builds only. A relaunch while ymux sits
+    // hidden in the tray (Start menu, taskbar pin, `ymux` on PATH, macOS
+    // `open -n`) shows this window instead, and the new process exits inside
+    // `build()` — before any window, the tray or the hook receiver exists,
+    // and without `final_flush`, so it never writes its stale config. It
+    // must be the first plugin. ymux takes no CLI arguments, so argv/cwd are
+    // ignored. Debug builds skip it: the plugin keys on the bundle
+    // identifier (no override on Windows/macOS), which `tauri dev` shares
+    // with the installed app, so a dev launch would just focus the release
+    // instance and quit. Such a second ymux still stands down on the hook
+    // port (`commands::start_hook_receiver`, CLAUDE.md rule 13).
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        ymux_lib::tray::show_main(app)
+    }));
+    let builder = builder
         .manage(state)
         .manage(eb_registry)
         .manage(ymux_lib::quit_gate::QuitGate::default())
@@ -306,6 +324,10 @@ fn main() {
     let builder = builder.menu(macos_menu);
     builder
         .setup(|app| {
+            // The prune in `main()` above, now that this is the one instance.
+            ymux_lib::commands::flush_sessions(
+                &mut app.state::<ymux_lib::agent_sessions::SharedSessions>().0.lock(),
+            );
             // Claude Code hook receiver. Its per-run token goes into every
             // PTY spawned from here on, so only a Claude running inside one
             // of this ymux's panes can report agent events (rule 13).

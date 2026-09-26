@@ -87,6 +87,14 @@ url = "2"
 # Desktop-only because it wraps a native Tauri plugin.
 tauri-plugin-notification = { version = "2", optional = true }
 
+# Relaunching ymux while it sits hidden in the tray (Start menu, taskbar pin,
+# `open -n`) hands off to the running instance and exits. Only registered in
+# release builds (see main.rs): the plugin keys on the bundle identifier,
+# which `tauri dev` shares with the installed app. The `semver` feature stays
+# off on purpose, so two ymux versions never both run (and race for the hook
+# port, CLAUDE.md rule 13). Behind `desktop`: on Linux it pulls zbus.
+tauri-plugin-single-instance = { version = "2.4", optional = true }
+
 # System-clipboard access, used to read a pasted screenshot as raw pixels.
 # `image-data` is the feature that exposes `get_image`; on Windows and macOS it
 # is backed by native APIs (the `image` crate it names is a target-specific
@@ -132,7 +140,7 @@ socket2 = "0.6"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:tauri-plugin-notification", "dep:arboard", "dep:trash"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:tauri-plugin-notification", "dep:tauri-plugin-single-instance", "dep:arboard", "dep:trash"]
 
 [profile.release]
 lto = true

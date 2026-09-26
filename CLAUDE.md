@@ -339,8 +339,15 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   this instance runs without a receiver** (its panes get an empty token and
   no hook events; the process scan still lists their agents) and leaves the
   port and `settings.json` alone — moving them would send the first
-  instance's token to a port anyone can take once it exits. No
-  single-instance plugin: that would change launch behaviour. Only a
+  instance's token to a port anyone can take once it exits. Release
+  builds are single-instance (`tauri-plugin-single-instance`, registered
+  first in `main.rs`, `semver` feature off so versions don't coexist): a
+  relaunch shows the running window and exits inside `build()`, before
+  `setup` ever reaches `choose_port`. So a second ymux on the port is now a
+  debug build (`tauri dev` shares the identifier and deliberately skips the
+  plugin) or the Windows startup race where the first instance holds the
+  mutex but has not created its message window yet; keep the stand-down
+  path for those. Only a
   non-ymux holder makes it take an OS-assigned port; release builds persist
   it and the startup refresh rewrites the hooks' URL. Debug
   builds (`tauri dev`, sharing the live config) neither persist nor refresh
