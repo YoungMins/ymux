@@ -812,7 +812,7 @@ export class WorkspaceManager {
   /// Split the currently focused pane.
   async splitFocused(direction: SplitDir): Promise<void> {
     const ws = this.active;
-    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const focusId = this.activePaneId();
     if (!focusId) return;
     const existing = findPane(ws.root, focusId);
     // Use the picker's currently selected default shell (it lives at
@@ -835,7 +835,10 @@ export class WorkspaceManager {
     }
     const inheritedCwd = liveCwd ?? existing?.cwd ?? null;
     const spec = newPane(shellName, inheritedCwd);
-    ws.root = splitPane(ws.root, focusId, direction, spec);
+    // A target the tree cannot split must not leave a live, unplaced pane.
+    const next = splitPane(ws.root, focusId, direction, spec);
+    if (!findPane(next, spec.id)) return;
+    ws.root = next;
 
     const cache = this.paneCaches.get(ws.id)!;
     const pane = this.createPane(spec);
@@ -852,11 +855,28 @@ export class WorkspaceManager {
 
   /// Open a tab next to the focused pane, wrapping it in a group first if it
   /// has none (`Ctrl+Shift+T`, the palette).
-  async newTabInFocused(): Promise<void> {
+  ///
+  /// `launch` is the top bar's "+" launcher: the tab runs that shell and
+  /// types `startupCmd` (an agent) instead of copying the source's shell.
+  /// Naming its own shell, it can join any visible terminal's group when
+  /// focus is on a non-terminal pane; with no terminal on screen it splits
+  /// one in beside the focused pane rather than doing nothing.
+  async newTabInFocused(launch?: { shell: string; startupCmd: string | null }): Promise<void> {
     const ws = this.active;
-    const sourceId = this.focusedPaneId ?? visiblePanes(ws.root)[0]?.id;
+    let sourceId = this.focusedPaneId ?? visiblePanes(ws.root)[0]?.id;
     if (!sourceId) return;
-    await this.addTabFrom(ws, sourceId);
+    const source = findPane(ws.root, sourceId);
+    if (launch && (source?.pane_kind ?? "terminal") !== "terminal") {
+      const term = visiblePanes(ws.root).find((p) => (p.pane_kind ?? "terminal") === "terminal");
+      if (!term) {
+        const spec = newPane(this.resolveShell(launch.shell), source?.cwd ?? null);
+        spec.startup_cmd = launch.startupCmd;
+        await this.insertSplit(ws, sourceId, "horizontal", spec, "launcher split failed");
+        return;
+      }
+      sourceId = term.id;
+    }
+    await this.addTabFrom(ws, sourceId, launch);
   }
 
   /// The strip's `+`: always adds to *that* group, whatever holds focus (the
@@ -876,7 +896,11 @@ export class WorkspaceManager {
   /// does. Hotkeys and background colour are copied too: the group shows one
   /// bar, and copying the list is what makes it *look* shared across tabs
   /// without inventing group-level state.
-  private async addTabFrom(ws: Workspace, sourceId: Uuid): Promise<void> {
+  private async addTabFrom(
+    ws: Workspace,
+    sourceId: Uuid,
+    launch?: { shell: string; startupCmd: string | null },
+  ): Promise<void> {
     const source = findPane(ws.root, sourceId);
     // Browser panes have no shell to duplicate and no strip — tabs are a
     // terminal feature (spec §4), so this is a no-op there.
@@ -888,7 +912,11 @@ export class WorkspaceManager {
       if (!group) return;
     }
     const liveCwd = await api.getPaneCwd(sourceId).catch(() => null);
-    const spec = newPane(this.resolveShell(source.shell), liveCwd ?? source.cwd ?? null);
+    const spec = newPane(
+      this.resolveShell(launch?.shell ?? source.shell),
+      liveCwd ?? source.cwd ?? null,
+    );
+    if (launch) spec.startup_cmd = launch.startupCmd;
     spec.hotkeys = (source.hotkeys ?? []).map((h) => ({ ...h }));
     spec.bg_color = source.bg_color ?? "";
     ws.root = addTab(ws.root, group.id, spec);
@@ -1070,7 +1098,7 @@ export class WorkspaceManager {
   /// terminal pane whose cwd is the new worktree directory.
   async openWorktreePane(direction: SplitDir): Promise<void> {
     const ws = this.active;
-    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const focusId = this.activePaneId();
     if (!focusId) return;
     const existing = findPane(ws.root, focusId);
 
@@ -1098,6 +1126,11 @@ export class WorkspaceManager {
 
     const branch = await promptWorktreeBranch(`agent/${crypto.randomUUID().slice(0, 6)}`);
     if (!branch) return;
+    // Check the split can land *before* creating anything on disk: the pane
+    // may have closed while the prompt was up, and a split that no-ops
+    // would strand the new worktree and branch.
+    const probe = newPane("", null);
+    if (!findPane(splitPane(ws.root, focusId, direction, probe), probe.id)) return;
 
     let wtPath: string;
     try {
@@ -1112,7 +1145,10 @@ export class WorkspaceManager {
     const shellName = this.resolveShell(this.shells[0]?.name ?? "");
     const spec = newPane(shellName, wtPath);
     spec.worktree_path = wtPath;
-    ws.root = splitPane(ws.root, focusId, direction, spec);
+    // A target the tree cannot split must not leave a live, unplaced pane.
+    const next = splitPane(ws.root, focusId, direction, spec);
+    if (!findPane(next, spec.id)) return;
+    ws.root = next;
 
     const cache = this.paneCaches.get(ws.id)!;
     const pane = this.createPane(spec);
@@ -1132,7 +1168,7 @@ export class WorkspaceManager {
   /// the URL bar.
   async splitFocusedBrowser(direction: SplitDir, url: string = ""): Promise<void> {
     const ws = this.active;
-    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const focusId = this.activePaneId();
     if (!focusId) return;
     const spec: PaneSpec = {
       id: crypto.randomUUID(),
@@ -1145,7 +1181,10 @@ export class WorkspaceManager {
       url: url || null,
       hotkeys: [],
     };
-    ws.root = splitPane(ws.root, focusId, direction, spec);
+    // A target the tree cannot split must not leave a live, unplaced pane.
+    const next = splitPane(ws.root, focusId, direction, spec);
+    if (!findPane(next, spec.id)) return;
+    ws.root = next;
     const cache = this.paneCaches.get(ws.id)!;
     const pane = this.createPane(spec);
     cache.set(spec.id, pane);
@@ -1164,7 +1203,7 @@ export class WorkspaceManager {
   /// a files pane's stored cwd *is* the folder it shows).
   async splitFocusedFiles(direction: SplitDir): Promise<void> {
     const ws = this.active;
-    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const focusId = this.activePaneId();
     if (!focusId) return;
     const liveCwd = await api.getPaneCwd(focusId).catch(() => null);
     const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
@@ -1177,7 +1216,7 @@ export class WorkspaceManager {
   /// git pane then follows the active pane until pinned.
   async splitFocusedGit(direction: SplitDir): Promise<void> {
     const ws = this.active;
-    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const focusId = this.activePaneId();
     if (!focusId) return;
     const liveCwd = await api.getPaneCwd(focusId).catch(() => null);
     const spec = newPane("", liveCwd ?? findPane(ws.root, focusId)?.cwd ?? null);
@@ -1190,7 +1229,7 @@ export class WorkspaceManager {
   /// through a files pane's Enter (`openFileInViewerTab`).
   async splitFocusedEditor(direction: SplitDir): Promise<void> {
     const ws = this.active;
-    const focusId = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const focusId = this.activePaneId();
     if (!focusId) return;
     const spec = newPane("", null);
     spec.pane_kind = "editor";
@@ -1215,7 +1254,10 @@ export class WorkspaceManager {
     spec: PaneSpec,
     failure: string,
   ): Promise<void> {
-    ws.root = splitPane(ws.root, targetId, direction, spec);
+    // A target the tree cannot split must not leave a live, unplaced pane.
+    const next = splitPane(ws.root, targetId, direction, spec);
+    if (!findPane(next, spec.id)) return;
+    ws.root = next;
     const cache = this.paneCaches.get(ws.id)!;
     const pane = this.createPane(spec);
     cache.set(spec.id, pane);

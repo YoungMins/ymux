@@ -98,9 +98,17 @@ export function splitPane(
     return { ...root, a, b };
   }
   if (root.kind === "tabs") {
+    // A tab is split by splitting its whole group: a split nested inside a
+    // `Tabs` node has no tab of its own and the renderer can't show it.
+    if (root.children.some((c) => c.kind === "pane" && c.id === targetId)) {
+      return { kind: "split", direction, ratio: 0.5, a: root, b: paneNode(newPaneSpec) };
+    }
+    // Same reference when nothing changed: the split branch above relies on
+    // it to decide whether to search its `b` side.
     const children = root.children.map((c) =>
       splitPane(c, targetId, direction, newPaneSpec),
     );
+    if (children.every((c, i) => c === root.children[i])) return root;
     return { ...root, children };
   }
   return root;

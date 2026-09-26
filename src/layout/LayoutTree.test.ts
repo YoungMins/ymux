@@ -10,6 +10,7 @@ import {
   nodeToSpec,
   worktreePaths,
 } from "./LayoutTree";
+import { groupOfPane, visiblePanes } from "./tabs";
 import type { LayoutNode, PaneSpec } from "../types";
 
 describe("paneNode / splitPane field persistence", () => {
@@ -215,5 +216,79 @@ describe("editor_file_path_survives_save_load", () => {
     const node = paneNode(newPane("bash")) as LayoutNode & { kind: "pane" };
     delete (node as { file_path?: string }).file_path;
     expect(nodeToSpec(node).file_path).toBe("");
+  });
+});
+
+describe("splitPane with tab groups", () => {
+  const split = (direction: "horizontal" | "vertical", a: LayoutNode, b: LayoutNode): LayoutNode => ({
+    kind: "split",
+    direction,
+    ratio: 0.5,
+    a,
+    b,
+  });
+  const ids = (n: LayoutNode) => panes(n).map((p) => p.id);
+  const everyTabsChildIsPane = (n: LayoutNode): boolean =>
+    n.kind === "pane"
+      ? true
+      : n.kind === "split"
+        ? everyTabsChildIsPane(n.a) && everyTabsChildIsPane(n.b)
+        : n.children.every((c) => c.kind === "pane");
+
+  // The reported layout: Split{v:[Split{h:[P, Tabs{[P, P, Editor]}]}, PS]}.
+  function userLayout() {
+    const p = newPane("pwsh");
+    const t1 = newPane("pwsh");
+    const t2 = newPane("pwsh");
+    const ed = newPane("");
+    ed.pane_kind = "editor";
+    ed.file_path = "C:/x/README.md";
+    const ps = newPane("pwsh");
+    const root = split(
+      "vertical",
+      split("horizontal", paneNode(p), {
+        kind: "tabs",
+        id: "g",
+        active: 2,
+        children: [paneNode(t1), paneNode(t2), paneNode(ed)],
+      }),
+      paneNode(ps),
+    );
+    return { root, p, t1, t2, ed, ps };
+  }
+
+  it("splits a pane on the b side past a tab group, keeping the a side's reference", () => {
+    const { root, ps } = userLayout();
+    const n = newPane("pwsh");
+    const out = splitPane(root, ps.id, "horizontal", n);
+    expect(ids(out)).toContain(n.id);
+    expect((out as { a: LayoutNode }).a).toBe((root as { a: LayoutNode }).a);
+  });
+
+  it("returns the same reference for an unknown id in a tree with tabs", () => {
+    const { root } = userLayout();
+    expect(splitPane(root, "nope", "horizontal", newPane("pwsh"))).toBe(root);
+  });
+
+  it("adds exactly one pane for every target and never nests a split in a group", () => {
+    const { root } = userLayout();
+    for (const id of ids(root)) {
+      const n = newPane("pwsh");
+      const out = splitPane(root, id, "vertical", n);
+      expect(ids(out).length).toBe(ids(root).length + 1);
+      expect(ids(out)).toContain(n.id);
+      expect(everyTabsChildIsPane(out)).toBe(true);
+    }
+  });
+
+  it("splitting a tab splits its group, which stays intact", () => {
+    const { root, p, t1, ed } = userLayout();
+    const n = newPane("pwsh");
+    const out = splitPane(root, t1.id, "horizontal", n);
+    expect(groupOfPane(out, t1.id)?.id).toBe("g");
+    expect(groupOfPane(out, n.id)).toBeNull();
+    // The group shows its active tab (the editor); the new pane sits beside it.
+    const visible = visiblePanes(out).map((s) => s.id);
+    expect(visible.slice(0, 3)).toEqual([p.id, ed.id, n.id]);
   });
 });
