@@ -2403,4 +2403,71 @@ const strings: Translations = {
     fr: "Échec de création du worktree :", ar: "فشل إنشاء worktree:", pt: "Falha ao criar o worktree:",
     ru: "Не удалось создать worktree:", tr: "Worktree oluşturulamadı:", de: "Worktree konnte nicht erstellt werden:", vi: "Không tạo được worktree:",
   },
+  // ── "+" launcher (top bar) ──────────────────────────────────────
+  "launcher.button": {
+    en: "New tab: agent, shell or pane", ko: "새 탭: 에이전트, 셸 또는 창", ja: "新しいタブ: エージェント・シェル・ペイン",
+    zh: "新建标签：智能体、Shell 或窗格", hi: "नया टैब: एजेंट, शेल या पेन", es: "Nueva pestaña: agente, shell o panel",
+    fr: "Nouvel onglet : agent, shell ou volet", ar: "علامة تبويب جديدة: وكيل أو صدفة أو لوحة", pt: "Nova aba: agente, shell ou painel",
+    ru: "Новая вкладка: агент, оболочка или панель", tr: "Yeni sekme: ajan, kabuk veya bölme", de: "Neuer Tab: Agent, Shell oder Bereich", vi: "Thẻ mới: agent, shell hoặc ô",
+  },
+  "launcher.agents": {
+    en: "Agents", ko: "에이전트", ja: "エージェント",
+    zh: "智能体", hi: "एजेंट", es: "Agentes",
+    fr: "Agents", ar: "الوكلاء", pt: "Agentes",
+    ru: "Агенты", tr: "Ajanlar", de: "Agenten", vi: "Agent",
+  },
+  "launcher.terminal": {
+    en: "Terminal", ko: "터미널", ja: "ターミナル",
+    zh: "终端", hi: "टर्मिनल", es: "Terminal",
+    fr: "Terminal", ar: "الطرفية", pt: "Terminal",
+    ru: "Терминал", tr: "Terminal", de: "Terminal", vi: "Terminal",
+  },
+  "launcher.panes": {
+    en: "Panes", ko: "창", ja: "ペイン",
+    zh: "窗格", hi: "पेन", es: "Paneles",
+    fr: "Volets", ar: "اللوحات", pt: "Painéis",
+    ru: "Панели", tr: "Bölmeler", de: "Bereiche", vi: "Ô",
+  },
+  "launcher.browser": {
+    en: "Browser", ko: "브라우저", ja: "ブラウザ",
+    zh: "浏览器", hi: "ब्राउज़र", es: "Navegador",
+    fr: "Navigateur", ar: "المتصفح", pt: "Navegador",
+    ru: "Браузер", tr: "Tarayıcı", de: "Browser", vi: "Trình duyệt",
+  },
+  "launcher.rescan": {
+    en: "Rescan agents", ko: "에이전트 다시 검색", ja: "エージェントを再検出",
+    zh: "重新扫描智能体", hi: "एजेंट फिर से खोजें", es: "Volver a buscar agentes",
+    fr: "Relancer la détection des agents", ar: "إعادة البحث عن الوكلاء", pt: "Procurar agentes novamente",
+    ru: "Повторно найти агентов", tr: "Ajanları yeniden tara", de: "Agenten erneut suchen", vi: "Quét lại agent",
+  },
+  "launcher.noAgents": {
+    en: "No agents found", ko: "설치된 에이전트 없음", ja: "エージェントが見つかりません",
+    zh: "未找到智能体", hi: "कोई एजेंट नहीं मिला", es: "No se encontraron agentes",
+    fr: "Aucun agent trouvé", ar: "لم يُعثر على أي وكيل", pt: "Nenhum agente encontrado",
+    ru: "Агенты не найдены", tr: "Ajan bulunamadı", de: "Keine Agenten gefunden", vi: "Không tìm thấy agent",
+  },
+  "launcher.bypassTip": {
+    en: "⚡ Runs with permission prompts bypassed", ko: "⚡ 권한 확인 없이 실행됩니다", ja: "⚡ 権限確認をスキップして実行します",
+    zh: "⚡ 跳过权限确认运行", hi: "⚡ अनुमति संकेतों को छोड़कर चलता है", es: "⚡ Se ejecuta sin solicitudes de permiso",
+    fr: "⚡ S’exécute sans demandes d’autorisation", ar: "⚡ يعمل مع تجاوز طلبات الإذن", pt: "⚡ Executa sem pedidos de permissão",
+    ru: "⚡ Запускается без запросов разрешений", tr: "⚡ İzin istemleri atlanarak çalışır", de: "⚡ Läuft ohne Berechtigungsabfragen", vi: "⚡ Chạy mà bỏ qua các yêu cầu cấp quyền",
+  },
+  "launcher.noteCodexSandbox": {
+    en: "Also disables Codex's sandbox", ko: "Codex 샌드박스도 꺼집니다", ja: "Codex のサンドボックスも無効になります",
+    zh: "同时会禁用 Codex 的沙箱", hi: "Codex का सैंडबॉक्स भी बंद हो जाता है", es: "También desactiva el sandbox de Codex",
+    fr: "Désactive aussi le bac à sable de Codex", ar: "يعطّل أيضًا بيئة Codex المعزولة", pt: "Também desativa o sandbox do Codex",
+    ru: "Также отключает песочницу Codex", tr: "Codex'in korumalı alanını da kapatır", de: "Deaktiviert auch die Sandbox von Codex", vi: "Đồng thời tắt sandbox của Codex",
+  },
+  "launcher.noBypass": {
+    en: "(no bypass)", ko: "(확인 유지)", ja: "(確認あり)",
+    zh: "(保留确认)", hi: "(बिना बायपास)", es: "(sin omitir permisos)",
+    fr: "(sans contournement)", ar: "(دون تجاوز)", pt: "(sem ignorar permissões)",
+    ru: "(с запросами)", tr: "(atlama yok)", de: "(mit Abfragen)", vi: "(không bỏ qua)",
+  },
+  "launcher.defaultShell": {
+    en: "(default)", ko: "(기본)", ja: "(既定)",
+    zh: "(默认)", hi: "(डिफ़ॉल्ट)", es: "(predeterminado)",
+    fr: "(par défaut)", ar: "(افتراضي)", pt: "(padrão)",
+    ru: "(по умолчанию)", tr: "(varsayılan)", de: "(Standard)", vi: "(mặc định)",
+  },
 };

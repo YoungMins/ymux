@@ -7,6 +7,8 @@
 // Which conversation a pane's agent process is running (pure).
 pub mod agent_binding;
 pub mod agent_hooks;
+// The "+" launcher's agent table and PATH/known-dir detection (pure).
+pub mod agent_launch;
 pub mod agent_scan;
 pub mod agent_scan_disk;
 pub mod agent_sessions;

@@ -223,6 +223,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
+            ymux_lib::commands::detect_agents,
             ymux_lib::commands::save_config,
             ymux_lib::commands::spawn_pane,
             ymux_lib::commands::write_pane,

@@ -118,6 +118,21 @@ pub fn detect_shells_cmd(
     Ok(detected)
 }
 
+/// Which agent CLIs are installed, for the top bar's "+" launcher. Only
+/// detects: the frontend types the command into a pane it created itself, so
+/// this cannot start anything. Off the main thread — it stats a few dozen
+/// files across `PATH` and the known install directories.
+#[tauri::command]
+pub async fn detect_agents(
+    webview: Webview,
+    request: Request<'_>,
+) -> YmuxResult<Vec<crate::agent_launch::DetectedAgent>> {
+    guard_local(&webview, &request, "detect_agents")?;
+    tauri::async_runtime::spawn_blocking(crate::agent_launch::detect_agents)
+        .await
+        .map_err(|e| YmuxError::Other(format!("detect_agents: {e}")))
+}
+
 #[tauri::command]
 pub fn save_config(
     webview: Webview,

@@ -30,6 +30,14 @@ const AGENT_EXES: &[&str] = &[
     "aider",
     "cursor-agent",
     "amp",
+    // Launchable from the top bar's "+" menu (`agent_launch::AGENTS`).
+    "kimi",
+    "qwen",
+    "copilot",
+    "crush",
+    "cline",
+    "droid",
+    "kiro-cli",
 ];
 
 /// Script hosts whose argv identifies the agent package.
@@ -43,6 +51,9 @@ const SCRIPT_MARKERS: &[(&str, &str)] = &[
     ("/@anthropic-ai/claude-code/", "claude"),
     ("/@openai/codex/", "codex"),
     ("/@google/gemini-cli/", "gemini"),
+    ("/@qwen-code/qwen-code/", "qwen"),
+    ("/@github/copilot/", "copilot"),
+    ("/@sourcegraph/amp/", "amp"),
 ];
 
 /// The agent named exactly by `path`'s basename, ignoring case and a
@@ -644,6 +655,13 @@ mod tests {
             ("aider", "aider"),
             ("cursor-agent", "cursor-agent"),
             ("amp", "amp"),
+            ("kimi", "kimi"),
+            ("qwen", "qwen"),
+            ("copilot", "copilot"),
+            ("crush", "crush"),
+            ("cline", "cline"),
+            ("droid", "droid"),
+            ("kiro-cli", "kiro-cli"),
         ] {
             assert_eq!(match_agent(stem, &[]), Some(kind), "{stem}");
         }
@@ -668,6 +686,23 @@ mod tests {
             "C:\\npm\\node_modules\\@google\\gemini-cli\\dist\\index.js",
         ]);
         assert_eq!(match_agent("node", &gemini_win), Some("gemini"));
+        for (script, kind) in [
+            (r"C:\npm\node_modules\@qwen-code\qwen-code\cli.js", "qwen"),
+            ("/usr/lib/node_modules/@github/copilot/index.js", "copilot"),
+            ("/x/node_modules/@sourcegraph/amp/dist/main.js", "amp"),
+        ] {
+            assert_eq!(match_agent("node", &argv(&["node", script])), Some(kind));
+        }
+        // Whole segments only: a look-alike scope is not the agent.
+        assert_eq!(
+            match_agent("node", &argv(&["node", "/x/@github/copilot-tools/a.js"])),
+            None
+        );
+        // A shebang launch through the npm bin symlink matches by basename.
+        assert_eq!(
+            match_agent("node", &argv(&["node", "/usr/local/bin/qwen"])),
+            Some("qwen")
+        );
     }
 
     #[test]

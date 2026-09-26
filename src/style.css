@@ -1328,6 +1328,16 @@ body,
   background: var(--border);
 }
 
+.context-menu__header {
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
 /* Workspace left panel ------------------------------------------------ */
 .workspace-panel-host {
   display: contents;

@@ -12,9 +12,16 @@ export interface ContextMenuItem {
   onSelect: () => void;
   /// Rendered greyed out and unclickable — used for "Copy" with no selection.
   disabled?: boolean;
+  /// Tooltip (the button's `title`).
+  title?: string;
 }
 
-export type ContextMenuEntry = ContextMenuItem | "separator";
+/// A non-clickable section label (the "+" launcher's Agents / Terminal / …).
+export interface ContextMenuHeader {
+  header: string;
+}
+
+export type ContextMenuEntry = ContextMenuItem | ContextMenuHeader | "separator";
 
 /// Gap kept between the menu and the viewport edge when it has to be nudged
 /// back on screen.
@@ -55,11 +62,20 @@ export function showContextMenu(
       menu.appendChild(sep);
       continue;
     }
+    if ("header" in entry) {
+      const head = document.createElement("div");
+      head.className = "context-menu__header";
+      head.setAttribute("role", "presentation");
+      head.textContent = entry.header;
+      menu.appendChild(head);
+      continue;
+    }
     const item = document.createElement("button");
     item.type = "button";
     item.className = "context-menu__item";
     item.setAttribute("role", "menuitem");
     item.textContent = entry.label;
+    if (entry.title) item.title = entry.title;
     if (entry.disabled) {
       item.disabled = true;
     } else {

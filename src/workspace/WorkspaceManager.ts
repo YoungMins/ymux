@@ -863,7 +863,9 @@ export class WorkspaceManager {
   /// one in beside the focused pane rather than doing nothing.
   async newTabInFocused(launch?: { shell: string; startupCmd: string | null }): Promise<void> {
     const ws = this.active;
-    let sourceId = this.focusedPaneId ?? visiblePanes(ws.root)[0]?.id;
+    // Not `focusedPaneId`: it still points into the previous workspace after
+    // a switch, which made this a silent no-op (`activePane.ts`).
+    let sourceId = this.activePaneId();
     if (!sourceId) return;
     const source = findPane(ws.root, sourceId);
     if (launch && (source?.pane_kind ?? "terminal") !== "terminal") {

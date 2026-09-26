@@ -1,13 +1,87 @@
-import type { ShellProfile } from "../types";
+import type { DetectedAgent, ShellProfile } from "../types";
 import type { WorkspaceManager } from "./WorkspaceManager";
 import { api } from "../ipc/bridge";
 import { mountSettings } from "../settings/SettingsOverlay";
 import { toggleWorkspacePanel } from "./WorkspacePanel";
 import { t, onLangChange } from "../i18n/i18n";
 import { toggleFileDock } from "../filedock/FileDock";
+import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
+import { shellFamilyFromExecutable } from "../terminal/shellQuote";
+import { launchableAgents } from "./agentLaunch";
 
 const panelToggleSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>`;
 const fileDockSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`;
+
+const launcherSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+
+/// Installed agents, detected once per session (the launcher's "Rescan"
+/// forces a fresh look). Started at mount so the first open isn't waiting.
+let agentScan: Promise<DetectedAgent[]> | null = null;
+function scanAgents(force = false): Promise<DetectedAgent[]> {
+  if (force || !agentScan) {
+    agentScan = api.detectAgents().catch((e) => {
+      console.warn("detect_agents failed:", e);
+      agentScan = null;
+      return [];
+    });
+  }
+  return agentScan;
+}
+
+/// The "+" launcher's menu: installed agents (each a new tab in the default
+/// shell typing `<exe> <bypass flag>`), shells, GUI panes, and Rescan.
+function launcherEntries(
+  manager: WorkspaceManager,
+  shells: ShellProfile[],
+  agents: DetectedAgent[],
+  reopen: () => void,
+): ContextMenuEntry[] {
+  const shell = manager.defaultShell;
+  const family = shellFamilyFromExecutable(shells.find((s) => s.name === shell)?.executable);
+  const entries: ContextMenuEntry[] = [{ header: t("launcher.agents") }];
+  const launchable = launchableAgents(agents, family);
+  for (const { agent, command } of launchable) {
+    const bypass = agent.bypass_args.length > 0;
+    const tip = bypass
+      ? [t("launcher.bypassTip"), agent.note ? t(agent.note) : "", command]
+      : [command];
+    entries.push({
+      label: bypass ? `⚡ ${agent.name}` : `${agent.name} ${t("launcher.noBypass")}`,
+      title: tip.filter((x) => x).join("\n"),
+      onSelect: () => void manager.newTabInFocused({ shell, startupCmd: command }),
+    });
+  }
+  if (launchable.length === 0) {
+    entries.push({ label: t("launcher.noAgents"), disabled: true, onSelect: () => {} });
+  }
+  entries.push("separator", { header: t("launcher.terminal") });
+  const ordered = [shell, ...shells.map((s) => s.name).filter((n) => n !== shell)];
+  for (const name of ordered) {
+    entries.push({
+      label: name === shell ? `${name} ${t("launcher.defaultShell")}` : name,
+      onSelect: () => void manager.newTabInFocused({ shell: name, startupCmd: null }),
+    });
+  }
+  entries.push(
+    "separator",
+    { header: t("launcher.panes") },
+    { label: t("files.title"), onSelect: () => void manager.splitFocusedFiles("horizontal") },
+    { label: t("git.title"), onSelect: () => void manager.splitFocusedGit("horizontal") },
+    {
+      label: t("launcher.browser"),
+      onSelect: () => void manager.splitFocusedBrowser("horizontal"),
+    },
+    "separator",
+    {
+      label: t("launcher.rescan"),
+      onSelect: () => {
+        void scanAgents(true);
+        reopen();
+      },
+    },
+  );
+  return entries;
+}
 
 export function mountWorkspaceBar(
   host: HTMLElement,
@@ -30,6 +104,25 @@ export function mountWorkspaceBar(
   const spacer = document.createElement("div");
   spacer.className = "workspace-bar__spacer";
   bar.appendChild(spacer);
+
+  // "+" launcher: a dropdown of agents, shells and panes.
+  const launchBtn = document.createElement("button");
+  launchBtn.className = "workspace-bar__icon-btn";
+  launchBtn.type = "button";
+  launchBtn.innerHTML = launcherSvg;
+  launchBtn.title = t("launcher.button");
+  launchBtn.setAttribute("aria-label", t("launcher.button"));
+  launchBtn.setAttribute("aria-haspopup", "menu");
+  const openLauncher = async (): Promise<void> => {
+    const agents = await scanAgents();
+    // Measured after the await: the bar may have moved while detecting.
+    const r = launchBtn.getBoundingClientRect();
+    showContextMenu(r.left, r.bottom + 2, launcherEntries(manager, shells, agents, openLauncherSoon));
+  };
+  const openLauncherSoon = (): void => void openLauncher();
+  launchBtn.addEventListener("click", openLauncherSoon);
+  bar.appendChild(launchBtn);
+  void scanAgents();
 
   const shellPicker = document.createElement("select");
   shellPicker.className = "workspace-bar__shell";
@@ -103,6 +196,8 @@ export function mountWorkspaceBar(
   const cleanupLang = onLangChange(() => {
     toggleBtn.title = t("workspace.togglePanel");
     toggleBtn.setAttribute("aria-label", t("workspace.togglePanel"));
+    launchBtn.title = t("launcher.button");
+    launchBtn.setAttribute("aria-label", t("launcher.button"));
     shellPicker.title = t("workspace.shellTitle");
     browserBtn.textContent = t("workspace.addBrowser");
     browserBtn.title = t("workspace.addBrowserTitle");

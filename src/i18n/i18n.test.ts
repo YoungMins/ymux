@@ -14,6 +14,11 @@ describe("i18n completeness (rule 7)", () => {
     expect(translationGaps("shortcut.gotoLine")).toEqual([]);
   });
 
+  it("has every \"+\" launcher string in all 13 languages", () => {
+    expect(t("launcher.agents")).toBe("Agents");
+    expect(translationGaps("launcher.")).toEqual([]);
+  });
+
   it("has every backend error kind in all 13 languages", () => {
     expect(translationGaps("fsError.")).toEqual([]);
   });

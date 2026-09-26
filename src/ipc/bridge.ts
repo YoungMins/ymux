@@ -9,6 +9,7 @@ import type {
   AgentSnapshot,
   BootstrapPayload,
   Config,
+  DetectedAgent,
   ResolvedPath,
   ShellProfile,
   SpawnedPane,
@@ -281,6 +282,10 @@ export const api = {
   loadBootstrap: (): Promise<BootstrapPayload> => call("load_bootstrap"),
 
   detectShells: (): Promise<ShellProfile[]> => call("detect_shells_cmd"),
+
+  /// Installed agent CLIs for the "+" launcher. Detection only — nothing is
+  /// spawned; the launcher types the command into a tab it creates.
+  detectAgents: (): Promise<DetectedAgent[]> => call("detect_agents"),
 
   saveConfig: (config: Config): Promise<void> =>
     call("save_config", { config }),

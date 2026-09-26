@@ -142,6 +142,23 @@ export interface ResolvedPath {
   is_dir: boolean;
 }
 
+/// An installed agent CLI for the top bar's "+" launcher (mirrors
+/// `src-tauri/src/agent_launch.rs::DetectedAgent`, returned by `detect_agents`).
+export interface DetectedAgent {
+  id: string;
+  name: string;
+  /// Bare executable name, typed as-is when the agent is on PATH.
+  program: string;
+  /// Absolute path, set only when the agent is not on PATH.
+  path: string | null;
+  /// Empty when the agent has no bypass flag (opencode).
+  bypass_args: string[];
+  /// An extra tooltip caveat, as an i18n key.
+  note: string | null;
+  /// Only a `.ps1` shim was found: runnable from PowerShell only.
+  powershell_only: boolean;
+}
+
 /// UUID v4 generator that doesn't need a `crypto` subtle fallback polyfill.
 export function uuidv4(): Uuid {
   // Prefer `crypto.randomUUID` — available in WebView2 and all modern browsers.
