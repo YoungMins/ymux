@@ -196,8 +196,11 @@ export class ImeBridge {
     });
     // Every other `input` on the helper textarea is IME, dictation or dropped
     // text: xterm cancels the keydowns it sends itself, so their characters
-    // never reach the textarea, and paste goes through its own `paste`
-    // listener.
+    // never reach the textarea. Paste must not get here either: xterm's own
+    // `paste` listener never cancels the event, so its native insertion used to
+    // land in the textarea and be mirrored a second time (the macOS Cmd+V
+    // double paste). `TerminalPane` now claims and cancels every terminal
+    // `paste` event first (`claimPasteEvent`).
     this.on("input", (ev) => {
       ev.stopImmediatePropagation();
       // While a real composition is open its own `compositionend` delivers the
@@ -229,6 +232,12 @@ export class ImeBridge {
     }
     this.reset();
     return false;
+  }
+
+  /// End the current run from outside a keydown — a paste, which on macOS
+  /// arrives from the app menu with no keydown for `handleKeyDown` to see.
+  endRun(): void {
+    this.reset();
   }
 
   /// Drop the mirror and the buffer behind it, so the next run starts clean.

@@ -2,9 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   CHUNK_SIZE,
   DIRECT_LIMIT,
+  claimPasteEvent,
   decideImagePaste,
+  pasteKeyOwner,
   preparePaste,
+  runPaste,
   sanitizePaste,
+  type PasteEventLike,
+  type PasteRun,
 } from "./paste";
 
 const START = "\x1b[200~";
@@ -235,5 +240,149 @@ describe("decideImagePaste", () => {
     ] as const) {
       expect(decideImagePaste(path, family), `${family} ${path}`).toEqual({ kind: "text" });
     }
+  });
+});
+
+describe("pasteKeyOwner", () => {
+  it("leaves Cmd+V to the native paste command on macOS", () => {
+    // The app menu's Edit > Paste turns Cmd+V into a DOM `paste` event; a
+    // keydown handler that pasted too was a second copy.
+    expect(pasteKeyOwner(true)).toBe("native");
+  });
+
+  it("keeps Ctrl+V in the keydown handler elsewhere", () => {
+    // WebView2 fires no `paste` event for a cancelled Ctrl+V, so the keydown
+    // handler is the only path there.
+    expect(pasteKeyOwner(false)).toBe("ymux");
+  });
+});
+
+/// A DOM `paste` event stand-in that records the order things happen in.
+function fakePasteEvent(text: string | null, log: string[]): PasteEventLike {
+  return {
+    clipboardData:
+      text === null
+        ? null
+        : {
+            getData: (type: string) => {
+              log.push(`getData:${type}`);
+              return type === "text/plain" ? text : "";
+            },
+          },
+    preventDefault: () => log.push("preventDefault"),
+    stopImmediatePropagation: () => log.push("stopImmediatePropagation"),
+  };
+}
+
+describe("claimPasteEvent", () => {
+  it("cancels the event and reads its text synchronously", () => {
+    const log: string[] = [];
+    const text = claimPasteEvent(fakePasteEvent("hello", log));
+    expect(text).toBe("hello");
+    // All three before returning: `clipboardData` is dead once the handler
+    // returns, and an un-cancelled event lets xterm and the IME mirror write.
+    expect(log).toEqual(["preventDefault", "stopImmediatePropagation", "getData:text/plain"]);
+  });
+
+  it("treats a missing clipboardData as no text", () => {
+    const log: string[] = [];
+    expect(claimPasteEvent(fakePasteEvent(null, log))).toBe("");
+    expect(log).toEqual(["preventDefault", "stopImmediatePropagation"]);
+  });
+});
+
+function fakeRun(over: Partial<PasteRun> = {}): { run: PasteRun; writes: string[]; errors: unknown[] } {
+  const writes: string[] = [];
+  const errors: unknown[] = [];
+  const run: PasteRun = {
+    readImage: async () => null,
+    readText: async () => "",
+    family: "posix",
+    bracketed: () => false,
+    canWrite: () => true,
+    write: async (data) => {
+      writes.push(data);
+    },
+    reportImageError: (e) => errors.push(e),
+    ...over,
+  };
+  return { run, writes, errors };
+}
+
+describe("runPaste", () => {
+  it("writes clipboard text exactly once", async () => {
+    const { run, writes } = fakeRun({ readText: async () => "echo hi" });
+    await runPaste(run);
+    expect(writes).toEqual(["echo hi"]);
+  });
+
+  it("brackets and normalizes a multi-line paste in one write", async () => {
+    const { run, writes } = fakeRun({ readText: async () => "a\nb", bracketed: () => true });
+    await runPaste(run);
+    expect(writes).toEqual([`${START}a\rb${END}`]);
+  });
+
+  it("pastes the image path instead of the text when both are present", async () => {
+    let textRead = false;
+    const { run, writes } = fakeRun({
+      readImage: async () => "/tmp/clip-1.png",
+      readText: async () => {
+        textRead = true;
+        return "text";
+      },
+    });
+    await runPaste(run);
+    expect(writes).toEqual(["'/tmp/clip-1.png'"]);
+    expect(textRead).toBe(false);
+  });
+
+  it("writes nothing when there is neither image nor text", async () => {
+    const { run, writes } = fakeRun();
+    await runPaste(run);
+    expect(writes).toEqual([]);
+  });
+
+  it("reports an unsaveable image and does not fall back to text", async () => {
+    const boom = new Error("disk full");
+    const { run, writes, errors } = fakeRun({
+      readImage: async () => {
+        throw boom;
+      },
+      readText: async () => "text",
+    });
+    await runPaste(run);
+    expect(writes).toEqual([]);
+    expect(errors).toEqual([boom]);
+  });
+
+  it("writes nothing before the PTY is up", async () => {
+    const { run, writes } = fakeRun({ readText: async () => "x", canWrite: () => false });
+    await runPaste(run);
+    expect(writes).toEqual([]);
+  });
+
+  it("swallows a denied text read", async () => {
+    const { run, writes } = fakeRun({
+      readText: async () => {
+        throw new Error("denied");
+      },
+    });
+    await runPaste(run);
+    expect(writes).toEqual([]);
+  });
+});
+
+describe("a terminal paste event end to end", () => {
+  it("yields exactly one write and nothing for xterm or the IME mirror", async () => {
+    const log: string[] = [];
+    const ev = fakePasteEvent("ls -la", log);
+    const text = claimPasteEvent(ev);
+    const { run, writes } = fakeRun({ readText: async () => text });
+    await runPaste(run);
+    expect(writes).toEqual(["ls -la"]);
+    // Cancelled (no native insertion -> no `input` for the IME mirror) and
+    // stopped (xterm's own `paste` listener never runs).
+    expect(log).toContain("preventDefault");
+    expect(log).toContain("stopImmediatePropagation");
   });
 });

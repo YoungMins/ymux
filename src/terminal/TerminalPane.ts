@@ -28,9 +28,9 @@ import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
 import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { spawnAction, describeAge, type ResumePlan } from "./resumePlan";
-import { hasMod, isWorkspaceSwitch, IS_WINDOWS } from "../platform";
+import { hasMod, isWorkspaceSwitch, IS_MAC, IS_WINDOWS } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
-import { decideImagePaste, preparePaste } from "./paste";
+import { claimPasteEvent, pasteKeyOwner, runPaste } from "./paste";
 import { formatDroppedPaths } from "./dropPaths";
 import { MONO_FONT_STACK } from "../ui/fonts";
 import { shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
@@ -282,11 +282,15 @@ export class TerminalPane implements Pane {
       // where they mean forward-char and literal-next.
       if (hasMod(ev) && !ev.altKey) {
         const k = ev.key.toLowerCase();
-        // Ctrl/Cmd+V → paste clipboard text into the PTY instead of
-        // letting xterm send the raw 0x16 byte.
+        // Ctrl/Cmd+V → paste instead of letting xterm send the raw 0x16
+        // byte. On macOS the key is only kept from xterm: the app menu's
+        // Edit ▸ Paste turns it into a `paste` event, which `onPasteEvent`
+        // takes — pasting here too was the Cmd+V double paste.
         if (!ev.shiftKey && k === "v") {
-          ev.preventDefault();
-          void this.pasteClipboard();
+          if (pasteKeyOwner(IS_MAC) === "ymux") {
+            ev.preventDefault();
+            void this.pasteClipboard();
+          }
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
@@ -382,6 +386,10 @@ export class TerminalPane implements Pane {
       });
       this.ime.install();
     }
+    // Every `paste` event aimed at the terminal is ours, on every platform.
+    // Capture phase on `termHost`, a strict ancestor of `.xterm`, so this runs
+    // before xterm's listeners on both the textarea and `.xterm` itself.
+    this.termHost.addEventListener("paste", this.onPasteEvent, { capture: true });
     // Serialize addon: snapshots the buffer (text + escape sequences) so it
     // can be replayed on next mount when scrollback persistence is enabled.
     this.term.loadAddon(this.serializeAddon);
@@ -730,8 +738,8 @@ export class TerminalPane implements Pane {
     }
   }
 
-  /// Paste the clipboard into the PTY — the same path as Ctrl+V, images
-  /// included.
+  /// Paste the clipboard into the PTY — the same pipeline as Ctrl/Cmd+V,
+  /// images included. Used by the right-click menu.
   async paste(): Promise<void> {
     await this.pasteClipboard();
   }
@@ -1015,58 +1023,46 @@ export class TerminalPane implements Pane {
     screen.style.transform = transform;
   }
 
-  private async pasteClipboard(): Promise<void> {
-    // Image first: if the clipboard holds an image, it is now a PNG on disk
-    // and what gets typed is that file's path, so an in-pane CLI can read it.
-    //
-    // The clipboard read happens in Rust (`paste_clipboard_image`), not via
-    // `navigator.clipboard.read()`. WebView2's async clipboard image read
-    // returned blobs whose `arrayBuffer()` was empty, which the backend
-    // faithfully wrote to disk as 0-byte PNGs whose paths were then typed into
-    // the shell. The webview branch is gone rather than kept as a fallback:
-    // the failure was silent and produced a plausible-looking path, so falling
-    // back to it would just reinstate the bug in the cases that matter.
-    //
-    // Image *before* text is deliberate and unchanged: a clipboard carrying
-    // both (copying a cell range out of Excel, say) pastes the image path.
-    try {
-      const decision = decideImagePaste(
-        await api.pasteClipboardImage(),
-        this.shellFamily,
-      );
-      if (decision.kind === "image") {
-        if (this.spawned) {
-          void api.writePane(this.id, ENCODER.encode(decision.write));
-        }
-        return;
-      }
-    } catch (e) {
-      // An image *was* on the clipboard but could not be saved. Say so where
-      // the user is looking, and stop: silently pasting the clipboard's text
-      // instead would be worse than nothing, and typing a path to a file that
-      // isn't there is the bug this replaced.
-      this.term.writeln(
-        `\x1b[31mcould not paste the clipboard image: ${describeError(e)}\x1b[0m`,
-      );
-      return;
-    }
-    // Text. Framed and sanitized by `preparePaste` — bracketed when the
-    // foreground app asked for it (xterm tracks DECSET 2004 for us in
-    // `term.modes`), ESC-defanged always, and chunked when huge. Awaited in
-    // order: a `void` loop would not guarantee the IPC sees the chunks in
-    // sequence, and a reordered chunk is a scrambled paste.
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text || !this.spawned) return;
-      const chunks = preparePaste(text, {
-        bracketed: this.term.modes.bracketedPasteMode,
-      });
-      for (const chunk of chunks) {
-        await api.writePane(this.id, ENCODER.encode(chunk));
-      }
-    } catch {
-      // Clipboard access denied or empty — silent fail.
-    }
+  /// `paste` events aimed at the terminal (see `claimPasteEvent`). One on the
+  /// search bar's input keeps its native paste.
+  private onPasteEvent = (ev: ClipboardEvent): void => {
+    const target = ev.target as Node | null;
+    if (!target || !this.term.element?.contains(target)) return;
+    const text = claimPasteEvent(ev);
+    // The paste ends any IME run, as a keydown would have: a later revision
+    // of the old buffer must not send DELs into the pasted text.
+    this.ime?.endRun();
+    void this.pasteClipboard(() => Promise.resolve(text));
+  };
+
+  /// Paste the clipboard into the PTY (`runPaste`). `readText` defaults to a
+  /// script read of the clipboard: Rust on macOS, where WKWebView answers
+  /// `navigator.clipboard.readText()` with a "Paste" callout, the webview
+  /// elsewhere.
+  ///
+  /// The image read happens in Rust (`paste_clipboard_image`), not via
+  /// `navigator.clipboard.read()`. WebView2's async clipboard image read
+  /// returned blobs whose `arrayBuffer()` was empty, which the backend
+  /// faithfully wrote to disk as 0-byte PNGs whose paths were then typed into
+  /// the shell. The webview branch is gone rather than kept as a fallback: the
+  /// failure was silent and produced a plausible-looking path.
+  private async pasteClipboard(
+    readText: () => Promise<string> = IS_MAC
+      ? () => api.readClipboardText()
+      : () => navigator.clipboard.readText(),
+  ): Promise<void> {
+    await runPaste({
+      readImage: () => api.pasteClipboardImage(),
+      readText,
+      family: this.shellFamily,
+      bracketed: () => this.term.modes.bracketedPasteMode,
+      canWrite: () => this.spawned,
+      write: (data) => api.writePane(this.id, ENCODER.encode(data)),
+      reportImageError: (e) =>
+        this.term.writeln(
+          `\x1b[31mcould not paste the clipboard image: ${describeError(e)}\x1b[0m`,
+        ),
+    });
   }
 
   /// One dim line above the resumed conversation, e.g.
@@ -1151,6 +1147,7 @@ export class TerminalPane implements Pane {
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     this.ime?.dispose();
+    this.termHost.removeEventListener("paste", this.onPasteEvent, { capture: true });
     this.pathLinks?.dispose();
     if (this.spawned) {
       void api.killPane(this.id).catch(() => {});

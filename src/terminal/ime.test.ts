@@ -395,3 +395,19 @@ describe("ImeBridge lifecycle", () => {
     expect(h.target.leaked).toEqual(["input"]);
   });
 });
+
+describe("ImeBridge.endRun", () => {
+  it("ends the run so a revision after a paste retracts nothing pasted", () => {
+    // macOS: Cmd+V is taken by the app menu, so no keydown reaches the
+    // bridge to end the run. The paste handler ends it instead.
+    const h = harness();
+    h.key("안", "insertText");
+    expect(h.sent).toEqual(["안"]);
+    h.bridge.endRun();
+    expect(h.textarea.value).toBe("");
+    // The IME's next edit starts from an empty buffer: no DEL aimed at the
+    // (now pasted-over) shell line.
+    h.key("ㄴ", "insertText");
+    expect(h.sent).toEqual(["안", "ㄴ"]);
+  });
+});

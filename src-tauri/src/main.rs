@@ -245,6 +245,7 @@ fn main() {
             ymux_lib::commands::get_agent_session,
             ymux_lib::commands::clear_agent_session,
             ymux_lib::commands::paste_clipboard_image,
+            ymux_lib::clipboard_image::read_clipboard_text,
             // The filesystem / text-file / git surface for the files,
             // editor and git panes.
             ymux_lib::fsops::fs_list_dir,

@@ -478,6 +478,10 @@ export const api = {
   pasteClipboardImage: (): Promise<string | null> =>
     call("paste_clipboard_image"),
 
+  /// Clipboard text read in Rust, `""` when there is none. Used on macOS,
+  /// where `navigator.clipboard.readText()` pops WKWebView's "Paste" callout.
+  readClipboardText: (): Promise<string> => call("read_clipboard_text"),
+
   /// Check whether `cwd` is inside a git repository.
   gitIsRepo: (cwd: string): Promise<boolean> => call("git_is_repo", { cwd }),
 

@@ -1,4 +1,5 @@
-//! Reading a pasted image off the **OS** clipboard, in Rust.
+//! Reading a pasted image (and, for macOS right-click Paste, text) off the
+//! **OS** clipboard, in Rust.
 //!
 //! Why not the webview: `TerminalPane` used to do this with
 //! `navigator.clipboard.read()` → `blob.arrayBuffer()` → a JSON number array
@@ -14,6 +15,8 @@
 //! pulls X11/Wayland deps on Linux.
 
 use arboard::{Clipboard, Error, ImageData};
+
+use crate::fspath::guard_local;
 
 /// How long to wait before the single retry in [`read_clipboard_png`]. Short
 /// enough to be invisible in a keystroke-driven paste, long enough for a
@@ -69,6 +72,33 @@ fn read_image() -> Result<Option<ImageData<'static>>, Error> {
         Err(Error::ContentNotAvailable) => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+/// The text on the system clipboard, or `""` when there is none, for the
+/// terminal's right-click Paste on macOS.
+///
+/// Why not `navigator.clipboard.readText()` there: WKWebView answers a script
+/// clipboard read that is not inside a native `paste` event with a floating
+/// "Paste" callout the user has to click (tauri-apps/tauri#12007). Keyboard
+/// paste never needs this, because Cmd+V arrives as a real `paste` event with
+/// its own `clipboardData`. Windows keeps using the webview read, which does
+/// not prompt there.
+///
+/// Every failure is the empty string: a paste that finds nothing does nothing.
+#[tauri::command]
+pub fn read_clipboard_text(
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+) -> crate::YmuxResult<String> {
+    guard_local(&webview, &request, "read_clipboard_text")?;
+    Ok(Clipboard::new()
+        .and_then(|mut c| c.get_text())
+        .unwrap_or_else(|e| {
+            if !matches!(e, Error::ContentNotAvailable) {
+                tracing::warn!(error = %e, "reading clipboard text failed");
+            }
+            String::new()
+        }))
 }
 
 #[cfg(test)]

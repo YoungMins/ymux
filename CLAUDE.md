@@ -30,7 +30,7 @@ ymux/
 │       ├── fsx.rs              # Pure decisions behind the Files pane: listing, sort, binary sniff, same-file (pure)
 │       ├── git/                # Git pane backend: log/branch/worktree porcelain parsing + commands
 │       ├── ipc_guard.rs        # Per-command origin/label guard (rule 16); no page can invoke a command unguarded (pure)
-│       ├── clipboard_image.rs  # Read a pasted image off the OS clipboard directly (desktop)
+│       ├── clipboard_image.rs  # Read a pasted image (or, for macOS right-click Paste, text) off the OS clipboard directly (desktop)
 │       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
 │       ├── pty/                # PTY session management
 │       ├── quit_gate.rs        # Close-to-tray / real-quit handshake state machine (pure)
