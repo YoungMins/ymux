@@ -401,3 +401,25 @@ describe("findPathCandidates — agent output wrappers", () => {
     expect(only("  ⎿  Read src/a.md (12 lines)").text).toBe("src/a.md");
   });
 });
+
+describe("findPathCandidates — CJK text glued to a path", () => {
+  // Korean / Japanese / Chinese prose puts particles right after a word
+  // with no space ("…md에 있고"), so the path must also be offered
+  // without the glued run; the probe keeps whichever reading exists.
+  it("offers the path without a trailing Hangul particle", () => {
+    expect(texts("릴리스 노트는 .omc/release-notes-v0.13.1.md에 있고")).toContain(
+      ".omc/release-notes-v0.13.1.md",
+    );
+  });
+  it("handles punctuation after the particle", () => {
+    expect(texts("파일은 src/a.md에서, 그리고")).toContain("src/a.md");
+  });
+  it("handles Japanese and Chinese particles", () => {
+    expect(texts("docs/a.mdを開く")).toContain("docs/a.md");
+    expect(texts("见 src/main.rs中的")).toContain("src/main.rs");
+  });
+  it("keeps the whole token too, so a Korean file name still resolves", () => {
+    expect(texts("docs/한글.md")).toContain("docs/한글.md");
+    expect(texts("docs/노트에")).toContain("docs/노트에");
+  });
+});

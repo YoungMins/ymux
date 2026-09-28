@@ -47,6 +47,12 @@ const LEAD_STRIP = "([{<\"'`|*⎿●•";
 /// keeps its `)` and `(src/a.md)` loses it — see `peelsAtTail`.
 const TRAIL_STRIP = ")]}>,.;:!?\"'`|*";
 
+/// A path-ish head followed by a run of Hangul / Han / kana (and optional
+/// trailing punctuation). Group 1 is the head, ending on an ASCII word
+/// character, a separator or a closing bracket.
+const CJK_TAIL_RE =
+  /^(.*[A-Za-z0-9_\-)\]/\\])[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+[^\p{L}\p{N}]*$/u;
+
 /// Bracket pairs whose balance decides whether a bracket is part of the
 /// path or wrapping punctuation. Paths do contain them — `Program Files
 /// (x86)`, Next.js route groups `app/(group)/page.tsx`, `src/foo(old)` — but
@@ -227,6 +233,12 @@ function refineToken(
 /// `bar` inside it.
 function refineAll(token: string, offset: number): Array<PathCandidate | null> {
   const out = [refineToken(token, offset)];
+  // Korean / Japanese / Chinese prose glues particles straight onto a word
+  // ("…md에 있고", "a.mdを開く"), so also offer the token without a trailing
+  // run of those scripts. Both readings go to the probe, which keeps the one
+  // that exists — a file genuinely named `노트에` still wins.
+  const glued = CJK_TAIL_RE.exec(token);
+  if (glued) out.push(refineToken(glued[1]!, offset));
   const md = token.indexOf("](");
   if (md >= 0) out.push(refineToken(token.slice(md + 2), offset + md + 2, true));
 
