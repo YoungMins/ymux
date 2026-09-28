@@ -12,8 +12,9 @@ import { quotePathForShell, type ShellFamily } from "../terminal/shellQuote";
 /// The command to type, or `null` when the agent sits off `PATH` at a path
 /// this shell cannot be handed safely (the launcher then leaves it out).
 ///
-/// An agent on `PATH` is typed by bare name. One found only in a known
-/// install directory is typed by its quoted absolute path, since the shell's
+/// An agent on `PATH` (the app's own, or on macOS/Linux the login shell's,
+/// which is what the pane's login shell will have) is typed by bare name. One
+/// found only in a known install directory is typed by its quoted absolute path, since the shell's
 /// `PATH` may lack that directory too. PowerShell needs `& ` in front of a
 /// quoted path: on its own a quoted string is an expression, not a call.
 ///

@@ -19,7 +19,7 @@ const launcherSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
 let agentScan: Promise<DetectedAgent[]> | null = null;
 function scanAgents(force = false): Promise<DetectedAgent[]> {
   if (force || !agentScan) {
-    agentScan = api.detectAgents().catch((e) => {
+    agentScan = api.detectAgents(force).catch((e) => {
       console.warn("detect_agents failed:", e);
       agentScan = null;
       return [];

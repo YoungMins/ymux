@@ -120,15 +120,18 @@ pub fn detect_shells_cmd(
 
 /// Which agent CLIs are installed, for the top bar's "+" launcher. Only
 /// detects: the frontend types the command into a pane it created itself, so
-/// this cannot start anything. Off the main thread — it stats a few dozen
-/// files across `PATH` and the known install directories.
+/// this cannot start anything. Off the main thread — on macOS/Linux the first
+/// call (and every `refresh`, the launcher's "Rescan") runs the user's login
+/// shell to learn its `PATH`, then it stats a few dozen files.
 #[tauri::command]
 pub async fn detect_agents(
     webview: Webview,
     request: Request<'_>,
+    refresh: Option<bool>,
 ) -> YmuxResult<Vec<crate::agent_launch::DetectedAgent>> {
     guard_local(&webview, &request, "detect_agents")?;
-    tauri::async_runtime::spawn_blocking(crate::agent_launch::detect_agents)
+    let refresh = refresh.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || crate::agent_launch::detect_agents(refresh))
         .await
         .map_err(|e| YmuxError::Other(format!("detect_agents: {e}")))
 }

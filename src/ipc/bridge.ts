@@ -283,9 +283,11 @@ export const api = {
 
   detectShells: (): Promise<ShellProfile[]> => call("detect_shells_cmd"),
 
-  /// Installed agent CLIs for the "+" launcher. Detection only — nothing is
-  /// spawned; the launcher types the command into a tab it creates.
-  detectAgents: (): Promise<DetectedAgent[]> => call("detect_agents"),
+  /// Installed agent CLIs for the "+" launcher. Detection only — no agent is
+  /// started; the launcher types the command into a tab it creates. `refresh`
+  /// re-probes the login shell's PATH (macOS/Linux; the launcher's Rescan).
+  detectAgents: (refresh = false): Promise<DetectedAgent[]> =>
+    call("detect_agents", { refresh }),
 
   saveConfig: (config: Config): Promise<void> =>
     call("save_config", { config }),
