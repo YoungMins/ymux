@@ -32,3 +32,5 @@ logs/
 
 # Agent git worktrees (Claude Code isolation)
 .claude/worktrees/
+
+.omc/

@@ -221,6 +221,7 @@ fn main() {
         // parses this list and each command's body; adding a line here and a
         // `#[tauri::command]` must change together. CLAUDE.md rule 16.
         .invoke_handler(tauri::generate_handler![
+            ymux_lib::commands::get_token_usage,
             ymux_lib::commands::load_bootstrap,
             ymux_lib::commands::detect_shells_cmd,
             ymux_lib::commands::detect_agents,

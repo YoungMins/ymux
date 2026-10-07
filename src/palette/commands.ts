@@ -14,6 +14,7 @@ export interface CommandDef {
 
 export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
   return [
+    { id: "usage.add", label: () => t("usage.title"), action: () => manager.splitFocusedTokenUsage("horizontal") },
     {
       id: "pane.splitH",
       label: () => t("shortcut.splitH"),

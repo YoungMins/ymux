@@ -26,7 +26,8 @@ export type PaneKind =
   | "embedded_browser"
   | "files"
   | "editor"
-  | "git";
+  | "git"
+  | "token_usage";
 
 export interface HotKeyDef {
   label: string;

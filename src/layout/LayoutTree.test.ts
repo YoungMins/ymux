@@ -292,3 +292,18 @@ describe("splitPane with tab groups", () => {
     expect(visible.slice(0, 3)).toEqual([p.id, ed.id, n.id]);
   });
 });
+
+describe("token usage pane persistence", () => {
+  it("retains token_usage through splitting and snapshot mutations", () => {
+    const source = newPane("bash", null);
+    const spec = newPane("", null); spec.pane_kind = "token_usage";
+    const root = splitPane(paneNode(source), source.id, "horizontal", spec);
+    findAndMutatePane(root, spec.id, pane => { pane.title = "Monitor"; });
+    const found = findPane(root, spec.id);
+    expect(found?.pane_kind).toBe("token_usage");
+    expect(found?.title).toBe("Monitor");
+    const node = paneNode(spec);
+    if (node.kind !== "pane") throw new Error("Expected pane leaf");
+    expect(nodeToSpec(node).pane_kind).toBe("token_usage");
+  });
+});

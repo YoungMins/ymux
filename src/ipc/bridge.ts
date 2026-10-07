@@ -1,3 +1,4 @@
+import type { TokenUsage } from "../tokenmonitor/model";
 // Typed wrappers around Tauri's `invoke` + `listen` so the rest of the app
 // never touches the raw IPC surface. This also makes it trivial to swap in a
 // mock during browser-only development.
@@ -279,6 +280,7 @@ async function safeListen<T>(
 }
 
 export const api = {
+  getTokenUsage: (): Promise<TokenUsage> => call("get_token_usage"),
   loadBootstrap: (): Promise<BootstrapPayload> => call("load_bootstrap"),
 
   detectShells: (): Promise<ShellProfile[]> => call("detect_shells_cmd"),

@@ -65,6 +65,7 @@ function launcherEntries(
   entries.push(
     "separator",
     { header: t("launcher.panes") },
+    { label: t("usage.title"), onSelect: () => void manager.splitFocusedTokenUsage("horizontal") },
     { label: t("files.title"), onSelect: () => void manager.splitFocusedFiles("horizontal") },
     { label: t("git.title"), onSelect: () => void manager.splitFocusedGit("horizontal") },
     {

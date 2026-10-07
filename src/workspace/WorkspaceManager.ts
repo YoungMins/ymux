@@ -23,6 +23,7 @@ import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
 import { FilesPane } from "../files/FilesPane";
 import { baseName } from "../files/fileModel";
 import { EditorPane } from "../editor/EditorPane";
+import { TokenMonitorPane } from "../tokenmonitor/TokenMonitor";
 import { GitPane } from "../git/GitPane";
 import { fileName } from "../editor/editorModel";
 import { closePlan, closeResult, type Closable, type CloseChoice } from "../editor/closeGuard";
@@ -482,6 +483,9 @@ export class WorkspaceManager {
   /// focus / hotkey / url change callbacks are wired so the manager can react
   /// to state changes without needing to know the pane subclass.
   private createPane(spec: PaneSpec): Pane {
+    if (spec.pane_kind === "token_usage") {
+      return new TokenMonitorPane({ id: spec.id, title: spec.title, ownChrome: groupOfPane(this.active.root, spec.id) === null, onFocus: () => { this.focusedPaneId = spec.id; } });
+    }
     if (spec.pane_kind === "browser") {
       return new BrowserPane({
         spec,
@@ -672,7 +676,8 @@ export class WorkspaceManager {
         pane instanceof TerminalPane ||
         pane instanceof FilesPane ||
         pane instanceof EditorPane ||
-        pane instanceof GitPane
+        pane instanceof GitPane ||
+        pane instanceof TokenMonitorPane
       ) {
         pane.setOwnChrome(!grouped);
       }
@@ -1054,6 +1059,7 @@ export class WorkspaceManager {
   /// the process scan, else the shell name (`src/terminal/tabLabel.ts`).
   tabLabelFor(paneId: Uuid): string {
     const spec = this.getPaneSpec(paneId);
+    if (spec?.pane_kind === "token_usage") return spec.title || t("usage.title");
     // A files pane has no shell or process: its label is the folder it shows.
     if (spec?.pane_kind === "files") {
       return spec.title || (spec.cwd ? baseName(spec.cwd) : t("files.title"));
@@ -1213,9 +1219,17 @@ export class WorkspaceManager {
     await this.insertSplit(ws, focusId, direction, spec, "files split failed");
   }
 
-  /// Split the focused pane and open a git pane on the repository of the
-  /// focused pane's live directory (its OSC 7 cwd, else its stored cwd). The
-  /// git pane then follows the active pane until pinned.
+  /// Add a persistent monitor beside the focused pane.
+  async splitFocusedTokenUsage(direction: SplitDir): Promise<void> {
+    const ws = this.active;
+    const focusId = this.activePaneId();
+    if (!focusId) return;
+    const spec = newPane("", null);
+    spec.pane_kind = "token_usage";
+    await this.insertSplit(ws, focusId, direction, spec, "token usage split failed");
+  }
+
+  /// Open the repository of the focused pane in a following Git pane.
   async splitFocusedGit(direction: SplitDir): Promise<void> {
     const ws = this.active;
     const focusId = this.activePaneId();

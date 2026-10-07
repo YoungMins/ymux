@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1789649761757,
-  "projectRoot": "/Users/nanyoungmin/Documents/GitHub/ymux",
+  "lastScanned": 1791297033282,
+  "projectRoot": "D:\\Git\\ymux",
   "techStack": {
     "languages": [
       {
@@ -51,7 +51,7 @@
     "devCommand": "pnpm dev",
     "scripts": {
       "dev": "vite",
-      "build": "tsc --noEmit && vite build && node scripts/build-tools.mjs",
+      "build": "tsc --noEmit && vite build",
       "preview": "vite preview",
       "typecheck": "tsc --noEmit",
       "test": "bash scripts/test.sh",
@@ -84,14 +84,14 @@
       "path": "crates",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1789649761740,
+      "lastAccessed": 1791297033219,
       "keyFiles": []
     },
     "dist": {
       "path": "dist",
       "purpose": "Distribution/build output",
       "fileCount": 1,
-      "lastAccessed": 1789649761742,
+      "lastAccessed": 1791297033220,
       "keyFiles": [
         "index.html"
       ]
@@ -100,40 +100,46 @@
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 0,
-      "lastAccessed": 1789649761742,
+      "lastAccessed": 1791297033220,
+      "keyFiles": []
+    },
+    "DGitymux.superpowerssdd": {
+      "path": "DGitymux.superpowerssdd",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1791297033221,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
-      "fileCount": 2,
-      "lastAccessed": 1789649761742,
+      "fileCount": 1,
+      "lastAccessed": 1791297033221,
       "keyFiles": [
-        "build-tools.mjs",
         "test.sh"
       ]
     },
     "src": {
       "path": "src",
       "purpose": "Source code",
-      "fileCount": 5,
-      "lastAccessed": 1789649761743,
+      "fileCount": 8,
+      "lastAccessed": 1791297033221,
       "keyFiles": [
+        "bootGuard.ts",
+        "frameGuard.test.ts",
+        "frameGuard.ts",
         "main.ts",
-        "platform.test.ts",
-        "platform.ts",
-        "style.css",
-        "types.ts"
+        "platform.test.ts"
       ]
     },
     "src-tauri": {
       "path": "src-tauri",
       "purpose": null,
       "fileCount": 4,
-      "lastAccessed": 1789649761743,
+      "lastAccessed": 1791297033221,
       "keyFiles": [
-        "Cargo.toml",
         "build.rs",
+        "Cargo.toml",
         "tauri.conf.json",
         "tauri.macos.conf.json"
       ]
@@ -141,41 +147,336 @@
     "target": {
       "path": "target",
       "purpose": null,
-      "fileCount": 3,
-      "lastAccessed": 1789649761743,
+      "fileCount": 2,
+      "lastAccessed": 1791297033221,
       "keyFiles": [
         "CACHEDIR.TAG"
       ]
     },
-    "tools": {
-      "path": "tools",
-      "purpose": null,
-      "fileCount": 0,
-      "lastAccessed": 1789649761743,
-      "keyFiles": []
-    },
-    "dist/assets": {
-      "path": "dist/assets",
+    "dist\\assets": {
+      "path": "dist\\assets",
       "purpose": "Static assets",
-      "fileCount": 2,
-      "lastAccessed": 1789649761744,
+      "fileCount": 14,
+      "lastAccessed": 1791297033223,
       "keyFiles": [
-        "index-CcYFCfsP.js",
-        "index-DFHMvckv.css"
+        "cmSetup-AO2KIFh8.js",
+        "index-BI408N60.js",
+        "index-BLx_bHS1.js"
       ]
     },
-    "src-tauri/src": {
-      "path": "src-tauri/src",
+    "src-tauri\\src": {
+      "path": "src-tauri\\src",
       "purpose": "Source code",
-      "fileCount": 12,
-      "lastAccessed": 1789649761745,
+      "fileCount": 28,
+      "lastAccessed": 1791297033224,
       "keyFiles": [
-        "commands.rs",
-        "embedded_browser.rs",
-        "error.rs"
+        "agents.rs",
+        "agent_binding.rs",
+        "agent_hooks.rs"
       ]
     }
   },
-  "hotPaths": [],
+  "hotPaths": [
+    {
+      "path": "src/workspace/WorkspaceManager.ts",
+      "accessCount": 76,
+      "lastAccessed": 1790406292886,
+      "type": "file"
+    },
+    {
+      "path": "src/terminal/TerminalPane.ts",
+      "accessCount": 64,
+      "lastAccessed": 1790600510627,
+      "type": "directory"
+    },
+    {
+      "path": "src-tauri/src/pty/session.rs",
+      "accessCount": 43,
+      "lastAccessed": 1790406310142,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/config/model.rs",
+      "accessCount": 34,
+      "lastAccessed": 1790406273092,
+      "type": "directory"
+    },
+    {
+      "path": "src",
+      "accessCount": 32,
+      "lastAccessed": 1790599818152,
+      "type": "directory"
+    },
+    {
+      "path": "src-tauri/src/agent_scan.rs",
+      "accessCount": 29,
+      "lastAccessed": 1790406290979,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-18-agent-tree.md",
+      "accessCount": 23,
+      "lastAccessed": 1789823424052,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src",
+      "accessCount": 21,
+      "lastAccessed": 1790406143030,
+      "type": "directory"
+    },
+    {
+      "path": "src-tauri/src/main.rs",
+      "accessCount": 21,
+      "lastAccessed": 1790600152949,
+      "type": "file"
+    },
+    {
+      "path": "src/main.ts",
+      "accessCount": 20,
+      "lastAccessed": 1790404571980,
+      "type": "file"
+    },
+    {
+      "path": "tools/ydir/src/app.rs",
+      "accessCount": 18,
+      "lastAccessed": 1790213119752,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/commands.rs",
+      "accessCount": 17,
+      "lastAccessed": 1790599999685,
+      "type": "directory"
+    },
+    {
+      "path": "",
+      "accessCount": 15,
+      "lastAccessed": 1790599812910,
+      "type": "directory"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-18-ydir-dock.md",
+      "accessCount": 11,
+      "lastAccessed": 1789824603595,
+      "type": "file"
+    },
+    {
+      "path": "src/ipc/bridge.ts",
+      "accessCount": 11,
+      "lastAccessed": 1790600154712,
+      "type": "directory"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-09-18-orca-style-layout-design.md",
+      "accessCount": 10,
+      "lastAccessed": 1790213099002,
+      "type": "file"
+    },
+    {
+      "path": "src/types.ts",
+      "accessCount": 8,
+      "lastAccessed": 1790352302133,
+      "type": "directory"
+    },
+    {
+      "path": "src/workspace/WorkspaceBar.ts",
+      "accessCount": 8,
+      "lastAccessed": 1790599820716,
+      "type": "file"
+    },
+    {
+      "path": "tools/ydir/src/main.rs",
+      "accessCount": 7,
+      "lastAccessed": 1790213119097,
+      "type": "file"
+    },
+    {
+      "path": "tools/ydir/src/dock.rs",
+      "accessCount": 7,
+      "lastAccessed": 1790213119898,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/agent_hooks.rs",
+      "accessCount": 7,
+      "lastAccessed": 1790350961207,
+      "type": "file"
+    },
+    {
+      "path": "src/terminal/ime.ts",
+      "accessCount": 7,
+      "lastAccessed": 1790600508928,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/ipc_server.rs",
+      "accessCount": 5,
+      "lastAccessed": 1789900368996,
+      "type": "directory"
+    },
+    {
+      "path": "src-tauri/src/pty/manager.rs",
+      "accessCount": 5,
+      "lastAccessed": 1790404663917,
+      "type": "file"
+    },
+    {
+      "path": "src/workspace/WorkspacePanel.ts",
+      "accessCount": 5,
+      "lastAccessed": 1790404731959,
+      "type": "file"
+    },
+    {
+      "path": "crates/yipc/src/server.rs",
+      "accessCount": 4,
+      "lastAccessed": 1789900295605,
+      "type": "file"
+    },
+    {
+      "path": "crates/yipc/src/protocol.rs",
+      "accessCount": 4,
+      "lastAccessed": 1790213142703,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-18-bottom-anchor.md",
+      "accessCount": 3,
+      "lastAccessed": 1789895423771,
+      "type": "file"
+    },
+    {
+      "path": "src/terminal/ime.test.ts",
+      "accessCount": 3,
+      "lastAccessed": 1789906269734,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/sysmonitor.rs",
+      "accessCount": 3,
+      "lastAccessed": 1790350432829,
+      "type": "directory"
+    },
+    {
+      "path": "src-tauri/src/pty/osc7.rs",
+      "accessCount": 3,
+      "lastAccessed": 1790350510714,
+      "type": "file"
+    },
+    {
+      "path": "src/terminal/paneStatus.ts",
+      "accessCount": 2,
+      "lastAccessed": 1789823544306,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/cdp.mjs",
+      "accessCount": 2,
+      "lastAccessed": 1789825067155,
+      "type": "file"
+    },
+    {
+      "path": "src/filedock/FileDock.ts",
+      "accessCount": 2,
+      "lastAccessed": 1789900301554,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "accessCount": 2,
+      "lastAccessed": 1789943989800,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/pty",
+      "accessCount": 2,
+      "lastAccessed": 1790349977197,
+      "type": "directory"
+    },
+    {
+      "path": "C:/Users/nanyo/.claude/projects/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/tool-results/bvoakxza7.txt",
+      "accessCount": 1,
+      "lastAccessed": 1789738442774,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/.claude/projects/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/tool-results/btukhwpm3.txt",
+      "accessCount": 1,
+      "lastAccessed": 1789738465025,
+      "type": "file"
+    },
+    {
+      "path": "src/terminal/paneStatus.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1789823537422,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/t2.py",
+      "accessCount": 1,
+      "lastAccessed": 1789824305457,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/.claude/projects/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/tool-results/b5xklmmaq.txt",
+      "accessCount": 1,
+      "lastAccessed": 1789824611358,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot1.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825118358,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot2.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825146737,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot3.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825166076,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot4.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825205442,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot5.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825225636,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot6.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825317327,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot8.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825383094,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot9.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825417903,
+      "type": "file"
+    },
+    {
+      "path": "C:/Users/nanyo/AppData/Local/Temp/claude/D--Git-ymux/20aebce7-f8e2-4582-b480-bf1ae90d7a0b/scratchpad/shot10.png",
+      "accessCount": 1,
+      "lastAccessed": 1789825472129,
+      "type": "file"
+    }
+  ],
   "userDirectives": []
 }

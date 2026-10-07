@@ -205,6 +205,12 @@ is on and ymux is not running, Claude Code sessions report those hooks as failed
 (for example "Stop hook error occurred"), so turn tracking off under
 **Settings → General** before you uninstall ymux.
 
+### AI token monitor
+
+Choose **AI token usage** from the top **+** launcher or command palette to add a saved split pane. Compact totals and five-hour / weekly meters stay visible beside your terminals; hover totals for token breakdowns and open the information disclosure for collection details. The panel shows local Claude Code and Codex CLI tokens for the last five hours, seven days, or all recorded history, grouped by AI, model, or project. Input, output, and cache tokens are shown separately.
+
+Claude account quota percentages are fetched with existing local OAuth credentials and cached for five minutes. Codex quotas use the latest local session snapshot. Quotas show their observation and reset times; stale or unavailable data is labeled. Local token totals exclude web chats and other devices, can include previous accounts, and are distinct from subscription quotas. Large or unreadable logs produce a partial-data notice. The panel refreshes every minute while open.
+
 ## Development
 
 Requires: Rust (stable), Node 20+, pnpm (or npm).

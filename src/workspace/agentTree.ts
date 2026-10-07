@@ -67,6 +67,7 @@ export interface TreeLabels {
   subagent: string;
   /// A git pane with no repository yet (`git.title`).
   git: string;
+  token_usage?: string;
 }
 
 /// The backend can't know a process-only agent's status; the pane's own
@@ -85,6 +86,7 @@ export function paneStatusToAgentStatus(s: PaneStatus): AgentStatus {
 }
 
 export function paneLabel(spec: PaneSpec, labels: TreeLabels): string {
+  if (spec.pane_kind === "token_usage") return spec.title || labels.token_usage || "AI token usage";
   if ((spec.pane_kind ?? "terminal") === "terminal") {
     return spec.title || spec.shell || labels.terminal;
   }

@@ -22,6 +22,21 @@ use crate::git;
 use crate::pty::{PtyManager, SpawnedPane};
 use crate::shell;
 
+#[tauri::command]
+pub async fn get_token_usage(
+    webview: Webview,
+    request: Request<'_>,
+) -> YmuxResult<crate::token_usage::TokenSnapshot> {
+    guard_local(&webview, &request, "get_token_usage")?;
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut snapshot = crate::token_usage::collect();
+        crate::token_usage::quota::enrich(&mut snapshot);
+        snapshot
+    })
+    .await
+    .map_err(|_| YmuxError::Other("token collector unavailable".into()))
+}
+
 /// State container registered via `Tauri::manage`.
 pub struct AppState {
     pub config: ConfigStore,

@@ -476,6 +476,7 @@ pub enum SplitDir {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneKind {
+    TokenUsage,
     #[default]
     Terminal,
     Browser,
@@ -1425,10 +1426,44 @@ shell = "PowerShell 7"
         assert_eq!(loaded.workspaces[0].panes()[0].file_path, "");
     }
 
-    /// A git pane keeps its kind and its repository directory (`cwd`)
-    /// through TOML, nested in a split and in a tab group — the two
-    /// tagged-enum shapes rule 3 warns about. It needs no field of its own
-    /// (spec §0.2): the repository is found from `cwd`.
+    /// Token monitoring keeps its kind and empty shell through nested layouts.
+    #[test]
+    fn token_usage_pane_roundtrip_nested() {
+        let mut monitor = PaneSpec::new_default();
+        monitor.pane_kind = PaneKind::TokenUsage;
+        monitor.shell.clear();
+        let mut in_tabs = PaneSpec::new_default();
+        in_tabs.pane_kind = PaneKind::TokenUsage;
+        in_tabs.shell.clear();
+        let mut config = Config::default();
+        config.workspaces[0].root = LayoutNode::Split {
+            direction: SplitDir::Vertical,
+            ratio: 0.4,
+            a: Box::new(LayoutNode::Pane(monitor.clone())),
+            b: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 1,
+                children: vec![
+                    LayoutNode::Pane(PaneSpec::new_default()),
+                    LayoutNode::Pane(in_tabs.clone()),
+                ],
+            }),
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(
+            toml_str.contains("pane_kind = \"token_usage\""),
+            "{toml_str}"
+        );
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        let panes = loaded.workspaces[0].panes();
+        let a = panes.iter().find(|p| p.id == monitor.id).unwrap();
+        let b = panes.iter().find(|p| p.id == in_tabs.id).unwrap();
+        assert_eq!(a.pane_kind, PaneKind::TokenUsage);
+        assert!(a.shell.is_empty());
+        assert_eq!(b.pane_kind, PaneKind::TokenUsage);
+        assert!(b.shell.is_empty());
+    }
+
     #[test]
     fn git_pane_kind_and_cwd_roundtrip_nested() {
         let git = PaneSpec::new_git(Some("D:\\작업\\ymux".into()));

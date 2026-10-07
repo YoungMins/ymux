@@ -1,3 +1,4 @@
+import { tokenStrings } from "./tokenStrings";
 export type Lang =
   | "en" | "ko" | "ja" | "zh" | "hi" | "es"
   | "fr" | "ar" | "pt" | "ru" | "tr" | "de" | "vi";
@@ -66,6 +67,7 @@ export function translationGaps(prefix: string): string[] {
 type Translations = Record<string, Partial<Record<Lang, string>>>;
 
 const strings: Translations = {
+  ...tokenStrings,
   // ── Settings panel (gear icon) ─────────────────────────────────
   "settings.title": { en: "Settings", ko: "설정", ja: "設定" },
   "settings.close": { en: "Close", ko: "닫기", ja: "閉じる" },

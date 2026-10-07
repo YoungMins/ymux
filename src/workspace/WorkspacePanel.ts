@@ -86,6 +86,7 @@ function treeLabels(): TreeLabels {
     browser: t("tree.browser"),
     subagent: t("tree.subagent"),
     git: t("git.title"),
+    token_usage: t("usage.title"),
   };
 }
 
