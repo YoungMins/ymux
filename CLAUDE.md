@@ -50,7 +50,9 @@ ymux/
 │   ├── types.ts            # TypeScript mirror of Rust models
 │   ├── i18n/i18n.ts        # 13-language translations
 │   ├── ipc/bridge.ts       # Tauri IPC wrappers
-│   ├── filedock/           # Right-side file dock hosting a FilesPane (FileDock, cwdFollow, dockModel)
+│   ├── sidepanel/          # Right-side panel with a Files/Usage view switcher (SidePanel)
+│   ├── filedock/           # Side-panel state + cwd follow (dockModel, cwdFollow)
+│   ├── tokenmonitor/       # AI token usage view (TokenMonitorPane, model)
 │   ├── files/              # Files pane (FilesPane, fileModel, preview, clipboard)
 │   ├── editor/             # Editor pane (EditorPane, CodeMirror 6 setup, eol, theme)
 │   ├── git/                # Git pane (GitPane, graphLanes, worktreeFlow)
@@ -144,6 +146,7 @@ Update ALL of these (they must match):
 - `package.json` → `version`
 - `README.md` / `README.ko.md` / `README.ja.md` → badge URL
 - Run `cargo check` to regenerate `Cargo.lock`
+- Store MSIX version needs no manual bump: `scripts/package-msix.ps1` derives it from `tauri.conf.json` (X.Y.Z → (X+1).Y.Z.0)
 
 ### 6. xterm.js Key Handling
 

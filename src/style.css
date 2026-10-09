@@ -1883,43 +1883,6 @@ body,
   min-width: 0;
 }
 
-.file-dock {
-  display: none;
-  position: relative;
-  flex: 0 0 auto;
-  /* Keep in step with DOCK_MIN_WIDTH in src/filedock/dockModel.ts: two
-     floors that drift apart let the drag stop where CSS will not. */
-  min-width: 260px;
-  max-width: 50%;
-  background: var(--bg);
-  border-left: 1px solid var(--border);
-}
-
-.file-dock--open {
-  display: flex;
-}
-
-.file-dock__resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 2;
-  transition: background-color 120ms ease;
-}
-
-.file-dock__resizer:hover,
-.file-dock__resizer:active {
-  background: var(--accent);
-}
-
-/* The dock hosts one files pane directly (src/filedock/FileDock.ts). */
-.file-dock > .files-pane {
-  padding: 6px 6px 4px;
-}
-
 /* ---------------------------------------------------------------------------
    Path link tooltip
 

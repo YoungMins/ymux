@@ -1,0 +1,115 @@
+/* Right-side panel (src/sidepanel/SidePanel.ts): activity switcher on top,
+   one view visible below. Both views stay mounted. */
+.side-panel {
+  display: none;
+  position: relative;
+  flex: 0 0 auto;
+  flex-direction: column;
+  /* Keep in step with DOCK_MIN_WIDTH in src/filedock/dockModel.ts: two
+     floors that drift apart let the drag stop where CSS will not. */
+  min-width: 260px;
+  max-width: 50%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--fg);
+  border-left: 1px solid var(--border);
+}
+
+.side-panel--open {
+  display: flex;
+}
+
+.side-panel__resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+  transition: background-color 120ms ease;
+}
+
+.side-panel__resizer:hover,
+.side-panel__resizer:active {
+  background: var(--accent);
+}
+
+.side-panel__tabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: 30px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-panel__tablist {
+  display: flex;
+  align-items: stretch;
+}
+
+.side-panel__tab,
+.side-panel__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.side-panel__tab {
+  border-bottom: 2px solid transparent;
+}
+
+.side-panel__tab:hover,
+.side-panel__close:hover {
+  background: var(--bg-hover);
+}
+
+.side-panel__tab[aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.side-panel__close {
+  margin-left: auto;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.side-panel__view {
+  display: none;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.side-panel__view--active {
+  display: flex;
+}
+
+/* The files view hosts one files pane directly. */
+.side-panel__view > .files-pane {
+  padding: 6px 6px 4px;
+}
+
+.side-panel .token-monitor-pane {
+  flex: 1;
+}
+
+.side-panel .usage-controls {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px 4px;
+}
+
+.side-panel .usage-controls select {
+  flex: 1 1 90px;
+}

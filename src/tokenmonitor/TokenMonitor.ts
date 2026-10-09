@@ -10,20 +10,18 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""):
 }
 function compact(value: number): string { return new Intl.NumberFormat(getLang(), { notation: "compact", maximumFractionDigits: 1 }).format(value); }
 function resetInfo(resetsAt: number | null | undefined, now: number, cycle: string): HTMLElement {
-  const info = el("div", "", "usage-reset");
-  info.append(el("span", `${t("usage.resets")}: `));
-  if (resetsAt === null || resetsAt === undefined) {
-    info.append(el("span", t("usage.unknown")));
-  } else {
+  const info = el("time", "", "usage-reset");
+  if (resetsAt === null || resetsAt === undefined) { info.textContent = t("usage.unknown"); }
+  else {
     const date = new Date(resetsAt * 1000);
-    const time = el("time", new Intl.DateTimeFormat(getLang(), { dateStyle: "medium", timeStyle: "medium" }).format(date));
-    time.dateTime = date.toISOString(); info.append(time);
-    const seconds = Math.max(0, Math.ceil(resetsAt - now));
-    const units = [[Math.floor(seconds / 3600), "hour"], [Math.floor(seconds % 3600 / 60), "minute"], [seconds % 60, "second"]] as const;
-    const duration = units.map(([value, unit]) => new Intl.NumberFormat(getLang(), { style: "unit", unit, unitDisplay: "short" }).format(value)).join(" ");
-    info.append(el("span", seconds === 0 ? t("usage.reset_passed") : `${t("usage.reset_in")}: ${duration}`, "usage-reset-countdown"));
+    info.dateTime = date.toISOString(); info.title = `${t("usage.resets")}: ${new Intl.DateTimeFormat(getLang(), { dateStyle: "medium", timeStyle: "medium" }).format(date)}`;
+    const minutes = Math.ceil(Math.max(0, resetsAt - now) / 60);
+    const units = [[Math.floor(minutes / 1440), "day"], [Math.floor(minutes % 1440 / 60), "hour"], [minutes % 60, "minute"]] as const;
+    const first = Math.max(0, units.findIndex(([value]) => value > 0));
+    const parts = units.slice(first, first + 2).filter(([value], index) => index === 0 || value > 0);
+    info.textContent = minutes === 0 ? t("usage.reset_passed") : parts.map(([value, unit]) => new Intl.NumberFormat(getLang(), { style: "unit", unit, unitDisplay: "narrow" }).format(value)).join(" ");
   }
-  info.setAttribute("aria-label", `${cycle} · ${info.textContent}`);
+  info.setAttribute("aria-label", [cycle, info.textContent, info.title].filter(Boolean).join(" · "));
   return info;
 }
 function breakdown(tokens: TokenTotals): string {
@@ -127,8 +125,9 @@ export class TokenMonitorPane implements Pane {
     switch (this.phase) {
       case "loading": this.state.textContent = t("usage.loading"); break;
       case "error": this.state.textContent = t("usage.error"); break;
-      case "ready": this.state.textContent = t("usage.auto_refresh"); break;
+      case "ready": this.state.textContent = ""; break;
     }
+    this.state.hidden = this.state.textContent === ""; this.state.classList.toggle("usage-state--error", this.phase === "error");
   }
   private render(): void {
     this.renderState(); this.content.replaceChildren(); if (!this.data) return;
@@ -147,30 +146,30 @@ export class TokenMonitorPane implements Pane {
       const total = el("strong", remaining === null ? "—" : `${remaining.toFixed(0)}%`); total.title = `${quotaLabel}${stale ? ` · ${t("usage.stale")}` : ""}`;
       if (stale) total.classList.add("usage-stale");
       heading.append(name, total); card.append(heading);
-      const auth = el("span", t(`usage.${provider.auth_status}`), "usage-auth"); card.append(auth);
-      card.append(el("span", `${quotaLabel} · ${t(this.period === "seven_day" ? "usage.cycle_week" : "usage.cycle_five_hour")}${stale ? ` · ${t("usage.stale")}` : ""}`, "usage-quota-caption"));
+      const observed = provider.quotas.reduce((latest, quota) => Math.max(latest, quota.observed_at), 0);
+      total.title += `\n${t("usage.observed")}: ${observed ? new Date(observed * 1000).toLocaleTimeString() : "—"}`;
+      if (provider.auth_status !== "credentials_present") card.append(el("span", t(`usage.${provider.auth_status}`), "usage-auth"));
       const meters = el("div", "", "usage-meters");
       for (const [minutes, key] of [[300, "cycle_five_hour"], [10080, "cycle_week"]] as const) {
         const quota = provider.quotas.find(item => item.window_minutes === minutes);
         const row = el("div", "", "usage-meter-row"); const label = el("span", t(`usage.${key}`));
         const available = displayed(remainingQuota(quota, now));
         const percent = el("span", available === null ? "—" : `${available.toFixed(0)}%`);
-        const meter = el("progress"); meter.max = 100;
+        const fill = el("div", "", "usage-meter-fill"); const meter = el("div", "", "usage-meter"); meter.append(fill);
+        meter.setAttribute("role", "progressbar"); meter.setAttribute("aria-valuemin", "0"); meter.setAttribute("aria-valuemax", "100");
         if (available === null) meter.style.visibility = "hidden";
+        const left = available === null ? null : this.display === "used" ? 100 - available : available;
+        fill.style.width = `${available ?? 0}%`; meter.setAttribute("aria-valuenow", String(available ?? 0));
+        if (left !== null) fill.dataset.level = left <= 10 ? "critical" : left <= 25 ? "warn" : "ok";
         if (quota) {
-          meter.value = available ?? 0;
           const stale = failed || available === null || now - quota.observed_at > 120;
           if (stale) { if (available !== null) percent.textContent += " *"; row.classList.add("usage-stale"); }
           row.title = `${quotaLabel}: ${available === null ? "—" : `${available.toFixed(1)}%`}\n${t("usage.observed")}: ${new Date(quota.observed_at * 1000).toLocaleString()}${quota.resets_at === null ? "" : `\n${t("usage.resets")}: ${new Date(quota.resets_at * 1000).toLocaleString()}`}${stale ? `\n${t("usage.stale")}` : ""}`;
-        } else { meter.value = 0; row.title = `${quotaLabel}: —`; }
+        } else { row.title = `${quotaLabel}: —`; }
         meter.setAttribute("aria-label", `${quotaLabel} ${t(`usage.${key}`)} ${percent.textContent}`);
-        row.append(label, meter, percent);
-        const cycle = el("div", "", "usage-cycle");
-        cycle.append(row, resetInfo(quota?.resets_at, now, t(`usage.${key}`))); meters.append(cycle);
+        row.append(label, meter, percent, resetInfo(quota?.resets_at, now, t(`usage.${key}`))); meters.append(row);
       }
       card.append(meters);
-      const observed = provider.quotas.reduce((latest, quota) => Math.max(latest, quota.observed_at), 0);
-      card.append(el("span", `${t("usage.observed")}: ${observed ? new Date(observed * 1000).toLocaleTimeString() : "—"}`, "usage-auth"));
       const local = el("span", `${t("usage.local_tokens")}: ${compact(provider[this.period].total)}`, "usage-local-tokens");
       local.title = breakdown(provider[this.period]); card.append(local); cards.append(card);
     }

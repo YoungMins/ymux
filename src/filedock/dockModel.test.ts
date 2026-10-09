@@ -4,11 +4,13 @@ import {
   DOCK_STATE_VERSION,
   DOCK_MIN_WIDTH,
   clampDockWidth,
+  migrateDockState,
+  nextDockState,
   parseDockState,
   serializeDockState,
 } from "./dockModel";
 
-const DEFAULT = { open: false, width: DOCK_DEFAULT_WIDTH };
+const DEFAULT = { open: false, width: DOCK_DEFAULT_WIDTH, view: "files" };
 
 describe("parseDockState", () => {
   it("defaults to closed at the default width", () => {
@@ -16,7 +18,7 @@ describe("parseDockState", () => {
   });
 
   it("round-trips what serializeDockState wrote", () => {
-    const s = { open: true, width: 412 };
+    const s = { open: true, width: 412, view: "usage" as const };
     expect(parseDockState(serializeDockState(s))).toEqual(s);
   });
 
@@ -29,6 +31,7 @@ describe("parseDockState", () => {
     expect(parseDockState('{"open":true,"width":50}')).toEqual({
       open: true,
       width: DOCK_DEFAULT_WIDTH,
+      view: "files",
     });
   });
 
@@ -37,23 +40,73 @@ describe("parseDockState", () => {
     expect(parseDockState('{"open":true,"width":320}')).toEqual({
       open: true,
       width: DOCK_DEFAULT_WIDTH,
+      view: "files",
     });
     // An explicit older version is just as stale.
     expect(parseDockState('{"open":false,"width":320,"v":1}')).toEqual({
       open: false,
       width: DOCK_DEFAULT_WIDTH,
+      view: "files",
     });
   });
 
   it("keeps a width dragged since the bump", () => {
-    const dragged = serializeDockState({ open: true, width: 700 });
-    expect(parseDockState(dragged)).toEqual({ open: true, width: 700 });
+    const dragged = serializeDockState({ open: true, width: 700, view: "files" });
+    expect(parseDockState(dragged)).toEqual({ open: true, width: 700, view: "files" });
   });
 
   it("stamps the version so the next bump can tell old state apart", () => {
-    expect(JSON.parse(serializeDockState({ open: true, width: 700 })).v).toBe(
+    expect(JSON.parse(serializeDockState({ open: true, width: 700, view: "files" })).v).toBe(
       DOCK_STATE_VERSION,
     );
+  });
+});
+
+describe("nextDockState", () => {
+  const closed = { open: false, width: 400, view: "files" as const };
+
+  it("opens a closed panel on the requested view", () => {
+    expect(nextDockState(closed, "usage", true)).toEqual({ open: true, width: 400, view: "usage" });
+  });
+
+  it("closes when the already-showing view is requested with toggle", () => {
+    const open = { ...closed, open: true };
+    expect(nextDockState(open, "files", true)).toEqual({ ...open, open: false });
+  });
+
+  it("switches views when another view is requested on an open panel", () => {
+    const open = { ...closed, open: true };
+    expect(nextDockState(open, "usage", true)).toEqual({ ...open, view: "usage" });
+  });
+
+  it("never closes without toggle", () => {
+    const open = { ...closed, open: true, view: "usage" as const };
+    expect(nextDockState(open, "usage", false)).toEqual(open);
+    expect(nextDockState(closed, "files", false)).toEqual({ ...closed, open: true });
+  });
+});
+
+describe("migrateDockState", () => {
+  const dock = (open: boolean, width: number): string =>
+    serializeDockState({ open, width, view: "files" });
+
+  it("takes the file dock's state when it exists", () => {
+    expect(migrateDockState(dock(true, 500), null)).toEqual({ open: true, width: 500, view: "files" });
+    expect(migrateDockState(dock(false, 500), null)).toEqual({ open: false, width: 500, view: "files" });
+  });
+
+  it("starts on usage when only the token dock was open", () => {
+    expect(migrateDockState(dock(false, 500), dock(true, 380))).toEqual({
+      open: true,
+      width: 500,
+      view: "usage",
+    });
+    expect(migrateDockState(null, dock(true, 380))).toEqual({ open: true, width: 380, view: "usage" });
+  });
+
+  it("prefers files when both were open, and defaults when neither exists", () => {
+    expect(migrateDockState(dock(true, 500), dock(true, 380)).view).toBe("files");
+    expect(migrateDockState(null, null)).toEqual(DEFAULT);
   });
 });
 

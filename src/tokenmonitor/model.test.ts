@@ -37,7 +37,7 @@ describe("token usage aggregation", () => {
   });
 });
 describe("token monitor panel", () => {
-  it("shows both cycles' absolute reset times and countdowns and updates them every ten seconds", async () => {
+  it("shows a short countdown per cycle with the absolute reset time in the tooltip and updates it every ten seconds", async () => {
     // Given a current snapshot with different future reset times.
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-09T00:00:00Z"));
     const now = Date.now() / 1000;
@@ -49,22 +49,22 @@ describe("token monitor panel", () => {
     ] }] });
     // When the visible panel renders and advances one polling interval.
     mount(); await Promise.resolve();
-    const times = [...document.querySelectorAll<HTMLTimeElement>(".usage-reset time")];
+    const times = [...document.querySelectorAll<HTMLTimeElement>("time.usage-reset")];
     expect(times.map(time => time.dateTime)).toEqual(["2026-10-09T01:01:01.000Z", "2026-10-10T00:01:01.000Z"]);
-    expect(times[0]?.textContent).toContain(new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "medium" }).format(new Date((now + 3661) * 1000)));
-    const before = document.querySelector(".usage-reset-countdown")?.textContent;
+    expect(times[0]?.title).toContain(new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "medium" }).format(new Date((now + 3661) * 1000)));
+    expect(times.map(time => time.textContent)).toEqual(["1h 2m", "1d"]);
+    const before = times[0]?.textContent;
     await vi.advanceTimersByTimeAsync(10_000);
     // Then the remaining duration changes without hiding the reset date.
-    expect(document.querySelector(".usage-reset-countdown")?.textContent).not.toBe(before);
+    expect(document.querySelector(".usage-reset")?.textContent).not.toBe(before);
     expect(document.querySelector(".usage-reset")?.getAttribute("aria-label")).toContain("Current 5-hour cycle");
     const display = document.querySelector<HTMLSelectElement>(".usage-display-select");
     if (!display) throw new Error("Display selector missing");
     display.value = "used"; display.dispatchEvent(new Event("change"));
     expect(document.querySelector(".usage-card strong")?.textContent).toBe("75%");
-    expect(document.querySelector<HTMLTimeElement>(".usage-reset time")?.dateTime).toBe(times[0]?.dateTime);
+    expect(document.querySelector<HTMLTimeElement>("time.usage-reset")?.dateTime).toBe(times[0]?.dateTime);
     setLang("ko");
-    expect(document.querySelector(".usage-reset")?.textContent).toContain("초기화 시각");
-    expect(document.querySelector(".usage-reset-countdown")?.textContent).toContain("초기화까지");
+    expect(document.querySelector(".usage-reset")?.getAttribute("title")).toContain("초기화 시각");
   });
   it("shows unknown reset times for missing or undated cycles", async () => {
     const provider = data.providers[0];
@@ -72,8 +72,7 @@ describe("token monitor panel", () => {
     vi.spyOn(api, "getTokenUsage").mockResolvedValue({ ...data, providers: [{ ...provider, quotas: [{ window_minutes: 300, used_percent: 75, resets_at: null, observed_at: Date.now() / 1000 }] }] });
     mount();
     await vi.waitFor(() => expect(document.querySelectorAll(".usage-reset")).toHaveLength(2));
-    expect([...document.querySelectorAll(".usage-reset")].map(item => item.textContent)).toEqual(["Resets at: Unknown", "Resets at: Unknown"]);
-    expect(document.querySelector(".usage-reset-countdown")).toBeNull();
+    expect([...document.querySelectorAll(".usage-reset")].map(item => item.textContent)).toEqual(["Unknown", "Unknown"]);
   });
   it("labels expired reset snapshots without claiming the next cycle is available", async () => {
     const provider = data.providers[0];
@@ -81,10 +80,10 @@ describe("token monitor panel", () => {
     const past = Date.now() / 1000 - 10;
     vi.spyOn(api, "getTokenUsage").mockResolvedValue({ ...data, providers: [{ ...provider, quotas: [300, 10080].map(window_minutes => ({ window_minutes, used_percent: 75, resets_at: past, observed_at: past - 100 })) }] });
     mount();
-    await vi.waitFor(() => expect(document.querySelectorAll(".usage-reset-countdown")).toHaveLength(2));
-    expect([...document.querySelectorAll(".usage-reset-countdown")].every(item => item.textContent === "Recorded reset time has passed")).toBe(true);
+    await vi.waitFor(() => expect(document.querySelectorAll(".usage-reset")).toHaveLength(2));
+    expect([...document.querySelectorAll(".usage-reset")].every(item => item.textContent === "Recorded reset time has passed")).toBe(true);
     expect(document.querySelector(".usage-card strong")?.textContent).toBe("—");
-    expect([...document.querySelectorAll(".usage-meter-row progress")].every(item => item.getAttribute("aria-label")?.includes("—"))).toBe(true);
+    expect([...document.querySelectorAll(".usage-meter-row [role=progressbar]")].every(item => item.getAttribute("aria-label")?.includes("—"))).toBe(true);
   });
   it("changes quota headline, meters and labels together and remembers the selection", async () => {
     const provider = data.providers[0];
@@ -96,8 +95,8 @@ describe("token monitor panel", () => {
     if (!select) throw new Error("Quota display selector missing");
     select.value = "used"; select.dispatchEvent(new Event("change"));
     expect(document.querySelector(".usage-card strong")?.textContent).toBe("75%");
-    expect(document.querySelector("progress")?.value).toBe(75);
-    expect(document.querySelector("progress")?.getAttribute("aria-label")).toContain("Used quota");
+    expect(document.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("75");
+    expect(document.querySelector("[role=progressbar]")?.getAttribute("aria-label")).toContain("Used quota");
     active?.dispose(); mount();
     expect(document.querySelector<HTMLSelectElement>(".usage-display-select")?.value).toBe("used");
   });

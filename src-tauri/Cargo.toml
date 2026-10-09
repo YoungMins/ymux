@@ -3,6 +3,7 @@ name = "ymux"
 version = "0.13.6"
 description = "A lightweight tmux-inspired terminal multiplexer for Windows and macOS"
 edition = "2021"
+license = "MIT"
 rust-version = "1.77"
 
 [lib]

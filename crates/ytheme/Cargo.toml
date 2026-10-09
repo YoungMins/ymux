@@ -2,6 +2,7 @@
 name = "ytheme"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Shared theme and config directory utilities for ymux"
 
 [dependencies]

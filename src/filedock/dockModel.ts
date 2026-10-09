@@ -1,5 +1,6 @@
-// Pure pieces of the file dock: the persisted open/width state
-// (localStorage `ymux.fileDock`) and the width clamp used while dragging.
+// Pure pieces of the right-side panel (src/sidepanel/SidePanel.ts): the
+// persisted open/width/active-view state, the view-toggle transition and the
+// width clamp used while dragging.
 
 /// Widths are in px. They were sized for yDir's terminal columns, which is
 /// the history below; the files pane that replaced it drops its date column
@@ -31,13 +32,17 @@ export const DOCK_DEFAULT_WIDTH = 440;
 /// the upgrade is stored at the current version and kept from then on.
 export const DOCK_STATE_VERSION = 2;
 
+/// Which view the shared side panel shows.
+export type DockView = "files" | "usage";
+
 export interface DockState {
   open: boolean;
   width: number;
+  view: DockView;
 }
 
 export function parseDockState(raw: string | null): DockState {
-  const fallback: DockState = { open: false, width: DOCK_DEFAULT_WIDTH };
+  const fallback: DockState = { open: false, width: DOCK_DEFAULT_WIDTH, view: "files" };
   if (!raw) return fallback;
   try {
     const v = JSON.parse(raw) as Record<string, unknown>;
@@ -49,7 +54,7 @@ export function parseDockState(raw: string | null): DockState {
       v.width >= DOCK_MIN_WIDTH
         ? Math.round(v.width)
         : DOCK_DEFAULT_WIDTH;
-    return { open: v.open === true, width };
+    return { open: v.open === true, width, view: v.view === "usage" ? "usage" : "files" };
   } catch {
     return fallback;
   }
@@ -57,6 +62,24 @@ export function parseDockState(raw: string | null): DockState {
 
 export function serializeDockState(s: DockState): string {
   return JSON.stringify({ ...s, v: DOCK_STATE_VERSION });
+}
+
+/// Transition for "show `view`". `toggle` is the VS Code behaviour of the
+/// entry points (shortcut, bar buttons): asking for the view that is already
+/// showing closes the panel. Without it the panel only ever opens.
+export function nextDockState(state: DockState, view: DockView, toggle: boolean): DockState {
+  if (toggle && state.open && state.view === view) return { ...state, open: false };
+  return { ...state, open: true, view };
+}
+
+/// First-run state of the merged panel, from the two docks it replaces
+/// (`ymux.fileDock`, `ymux.tokenDock`). The file dock's state wins; the panel
+/// starts on the usage view only when that was the only dock left open.
+export function migrateDockState(fileRaw: string | null, tokenRaw: string | null): DockState {
+  const file = parseDockState(fileRaw);
+  const token = parseDockState(tokenRaw);
+  if (file.open || !token.open) return file;
+  return { open: true, width: fileRaw ? file.width : token.width, view: "usage" };
 }
 
 /// Width in px, kept between DOCK_MIN_WIDTH and half of `containerWidth`.

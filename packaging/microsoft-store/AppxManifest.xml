@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap5 rescap">
+  <Identity Name="37516KimYoungMin.yMux" Publisher="CN=FE47F4A6-CD23-402D-91CF-9296FD388F7F" Version="1.13.6.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>yMux</DisplayName>
+    <PublisherDisplayName>Kim YoungMin</PublisherDisplayName>
+    <Description>Lightweight terminal multiplexer</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-US" />
+    <Resource Language="ko-KR" />
+    <Resource Language="ja-JP" />
+    <Resource Language="zh-CN" />
+    <Resource Language="hi-IN" />
+    <Resource Language="es-ES" />
+    <Resource Language="fr-FR" />
+    <Resource Language="ar-SA" />
+    <Resource Language="pt-BR" />
+    <Resource Language="ru-RU" />
+    <Resource Language="tr-TR" />
+    <Resource Language="de-DE" />
+    <Resource Language="vi-VN" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Applications>
+    <Application Id="yMux" Executable="ymux.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="yMux" Description="Lightweight terminal multiplexer"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="ymux.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias>
+            <uap5:ExecutionAlias Alias="ymux.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
