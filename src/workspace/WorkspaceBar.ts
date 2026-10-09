@@ -5,6 +5,7 @@ import { mountSettings } from "../settings/SettingsOverlay";
 import { toggleWorkspacePanel } from "./WorkspacePanel";
 import { t, onLangChange } from "../i18n/i18n";
 import { toggleFileDock } from "../filedock/FileDock";
+import { openTokenDock, toggleTokenDock } from "../tokenmonitor/TokenDock";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { shellFamilyFromExecutable } from "../terminal/shellQuote";
 import { launchableAgents } from "./agentLaunch";
@@ -65,7 +66,7 @@ function launcherEntries(
   entries.push(
     "separator",
     { header: t("launcher.panes") },
-    { label: t("usage.title"), onSelect: () => void manager.splitFocusedTokenUsage("horizontal") },
+    { label: t("usage.title"), onSelect: () => openTokenDock() },
     { label: t("files.title"), onSelect: () => void manager.splitFocusedFiles("horizontal") },
     { label: t("git.title"), onSelect: () => void manager.splitFocusedGit("horizontal") },
     {
@@ -165,6 +166,12 @@ export function mountWorkspaceBar(
   dockBtn.setAttribute("aria-label", t("filedock.toggle"));
   dockBtn.addEventListener("click", () => toggleFileDock());
   bar.appendChild(dockBtn);
+  const usageBtn = document.createElement("button");
+  usageBtn.className = "workspace-bar__icon-btn"; usageBtn.type = "button";
+  usageBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10m8 10V4m8 16v-7"/></svg>`;
+  const translateUsage = (): void => { usageBtn.title = t("usage.toggle"); usageBtn.setAttribute("aria-label", t("usage.toggle")); };
+  translateUsage();
+  usageBtn.addEventListener("click", () => toggleTokenDock()); bar.appendChild(usageBtn);
 
   const kofiBtn = document.createElement("button");
   kofiBtn.className = "workspace-bar__icon-btn";
@@ -195,6 +202,7 @@ export function mountWorkspaceBar(
   host.appendChild(bar);
 
   const cleanupLang = onLangChange(() => {
+    translateUsage();
     toggleBtn.title = t("workspace.togglePanel");
     toggleBtn.setAttribute("aria-label", t("workspace.togglePanel"));
     launchBtn.title = t("launcher.button");

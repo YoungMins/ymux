@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.13.5-7fdbca?style=flat-square" alt="version 0.13.5" />
+  <img src="https://img.shields.io/badge/version-0.13.6-7fdbca?style=flat-square" alt="version 0.13.6" />
 </p>
 
 <p align="center">
@@ -207,9 +207,9 @@ is on and ymux is not running, Claude Code sessions report those hooks as failed
 
 ### AI token monitor
 
-Choose **AI token usage** from the top **+** launcher or command palette to add a saved split pane. Compact totals and five-hour / weekly meters stay visible beside your terminals; hover totals for token breakdowns and open the information disclosure for collection details. The panel shows local Claude Code and Codex CLI tokens for the last five hours, seven days, or all recorded history, grouped by AI, model, or project. Input, output, and cache tokens are shown separately.
+Choose **AI token usage** from the top **+** launcher or command palette, or use the toolbar's usage icon, to open an app-wide sidebar that stays visible across workspaces. Its open state, width, and used/remaining quota selection persist across restarts. Larger totals and five-hour / weekly meters stay visible beside your terminals; hover totals for token breakdowns and open the information disclosure for collection details. Local Claude Code and Codex CLI tokens cover the last five hours, seven days, or all recorded history, grouped by AI, model, or project. Existing saved token usage panes continue to load.
 
-Claude account quota percentages are fetched with existing local OAuth credentials and cached for five minutes. Codex quotas use the latest local session snapshot. Quotas show their observation and reset times; stale or unavailable data is labeled. Local token totals exclude web chats and other devices, can include previous accounts, and are distinct from subscription quotas. Large or unreadable logs produce a partial-data notice. The panel refreshes every minute while open.
+Claude and Codex account quota percentages are fetched with existing local credentials. Visible usage refreshes every 10 seconds; successful quota responses use a 10-second cache, and failed quota requests retain a five-minute retry backoff. Quotas show their observation and reset times; expired or unavailable values display **—**, and stale snapshots are labeled. Local token totals exclude web chats and other devices, can include previous accounts, and are distinct from subscription quotas. Large or unreadable logs produce a partial-data notice.
 
 ## Development
 

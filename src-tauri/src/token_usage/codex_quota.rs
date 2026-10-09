@@ -68,8 +68,14 @@ pub(super) fn enrich(snapshot: &mut TokenSnapshot, manual: bool) {
         .as_ref()
         .map_or(true, |c| c.needs_refresh(identity, manual))
     {
+        let started = std::time::Instant::now();
         let result = fetch(&tokens);
-        *cache = Some(Cached::refreshed(cache.take(), identity, result));
+        *cache = Some(Cached::refreshed_at(
+            cache.take(),
+            identity,
+            result,
+            started,
+        ));
     }
     if let Some(cached) = cache.as_ref() {
         provider.quotas = cached.quotas.clone();

@@ -21,6 +21,7 @@ import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
 import { mountFileDock, toggleFileDock } from "./filedock/FileDock";
+import { mountTokenDock } from "./tokenmonitor/TokenDock";
 import { runQuitGuard } from "./tray/quitGuard";
 
 async function main(): Promise<void> {
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
 
   await manager.start();
   mountFileDock(body, manager);
+  mountTokenDock(body, manager);
   // Agent tree: subscribe first, then seed, so no change slips between.
   void onAgentsChanged((s) => manager.applyAgents(s))
     .catch((e) => console.warn("agents:changed listen failed:", e))

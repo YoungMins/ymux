@@ -3,6 +3,7 @@ import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
 import { askText } from "../ui/Dialog";
 import { toggleFileDock } from "../filedock/FileDock";
+import { openTokenDock } from "../tokenmonitor/TokenDock";
 import { api } from "../ipc/bridge";
 
 export interface CommandDef {
@@ -14,7 +15,7 @@ export interface CommandDef {
 
 export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
   return [
-    { id: "usage.add", label: () => t("usage.title"), action: () => manager.splitFocusedTokenUsage("horizontal") },
+    { id: "usage.add", label: () => t("usage.title"), action: () => openTokenDock() },
     {
       id: "pane.splitH",
       label: () => t("shortcut.splitH"),

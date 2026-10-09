@@ -64,8 +64,14 @@ fn enrich_claude(snapshot: &mut TokenSnapshot, manual: bool) {
         .as_ref()
         .map_or(true, |c| c.needs_refresh(identity, manual));
     if needs_refresh {
+        let started = std::time::Instant::now();
         let result = fetch(&token);
-        *cache = Some(Cached::refreshed(cache.take(), identity, result));
+        *cache = Some(Cached::refreshed_at(
+            cache.take(),
+            identity,
+            result,
+            started,
+        ));
     }
     if let Some(cached) = cache.as_ref() {
         provider.quotas = cached.quotas.clone();
