@@ -1,45 +1,20 @@
-use std::{
-    io::Read,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, time::Duration};
 
 use parking_lot::Mutex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::{model::Quota, TokenSnapshot};
+#[cfg(test)]
+use super::quota_cache::REFRESH;
+use super::{
+    model::Quota,
+    quota_cache::{read_bounded, Cached, Unavailable},
+    TokenSnapshot,
+};
 
+#[cfg(target_os = "macos")]
 const MAX_BYTES: u64 = 1024 * 1024;
-const REFRESH: Duration = Duration::from_secs(300);
 static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
-
-struct Cached {
-    identity: [u8; 32],
-    attempted_at: Instant,
-    quotas: Vec<Quota>,
-    unavailable: bool,
-}
-
-impl Cached {
-    fn refreshed(
-        previous: Option<Self>,
-        identity: [u8; 32],
-        result: Result<Vec<Quota>, Unavailable>,
-    ) -> Self {
-        let previous = previous.filter(|c| c.identity == identity);
-        let (quotas, unavailable) = match result {
-            Ok(quotas) => (quotas, false),
-            Err(Unavailable) => (previous.map_or_else(Vec::new, |c| c.quotas), true),
-        };
-        Self {
-            identity,
-            attempted_at: Instant::now(),
-            quotas,
-            unavailable,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 struct Credentials {
@@ -65,16 +40,19 @@ struct Window {
     resets_at: Option<String>,
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("quota unavailable")]
-struct Unavailable;
-
 /// Adds account quota percentages without exposing credentials or network errors.
-pub fn enrich(snapshot: &mut TokenSnapshot) {
+pub fn enrich(snapshot: &mut TokenSnapshot, manual: bool) {
+    enrich_claude(snapshot, manual);
+    super::codex_quota::enrich(snapshot, manual);
+}
+
+fn enrich_claude(snapshot: &mut TokenSnapshot, manual: bool) {
     let Some(provider) = snapshot.providers.iter_mut().find(|p| p.id == "claude") else {
         return;
     };
     let Some(token) = credentials() else {
+        *CACHE.lock() = None;
+        provider.quotas.clear();
         return;
     };
     provider.auth_status = "credentials_present";
@@ -82,11 +60,11 @@ pub fn enrich(snapshot: &mut TokenSnapshot) {
     // This synchronous adapter runs on a blocking thread; serialize refreshes to
     // prevent concurrent panel requests from bypassing the rate-limit backoff.
     let mut cache = CACHE.lock();
-    let needs_refresh = cache.as_ref().map_or(true, |c| {
-        c.identity != identity || c.attempted_at.elapsed() >= REFRESH
-    });
+    let needs_refresh = cache
+        .as_ref()
+        .map_or(true, |c| c.needs_refresh(identity, manual));
     if needs_refresh {
-        let result = fetch(&token, snapshot.collected_at);
+        let result = fetch(&token);
         *cache = Some(Cached::refreshed(cache.take(), identity, result));
     }
     if let Some(cached) = cache.as_ref() {
@@ -145,19 +123,7 @@ fn parse_credentials(bytes: &[u8]) -> Option<String> {
     }
 }
 
-fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Unavailable> {
-    let mut bytes = Vec::new();
-    reader
-        .take(MAX_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| Unavailable)?;
-    if u64::try_from(bytes.len()).map_err(|_| Unavailable)? > MAX_BYTES {
-        return Err(Unavailable);
-    }
-    Ok(bytes)
-}
-
-fn fetch(token: &str, now: u64) -> Result<Vec<Quota>, Unavailable> {
+fn fetch(token: &str) -> Result<Vec<Quota>, Unavailable> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
@@ -170,7 +136,12 @@ fn fetch(token: &str, now: u64) -> Result<Vec<Quota>, Unavailable> {
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|_| Unavailable)?;
-    parse_usage(&read_bounded(response)?, now)
+    let bytes = read_bounded(response)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_err(|_| Unavailable)?
+        .as_secs();
+    parse_usage(&bytes, now)
 }
 
 fn parse_usage(bytes: &[u8], now: u64) -> Result<Vec<Quota>, Unavailable> {

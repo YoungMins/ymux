@@ -6,6 +6,10 @@ export interface TokenTotals {
   readonly total: number;
 }
 export type UsageWindow = "five_hour" | "seven_day" | "all_time";
+export function remainingQuota(quota: TokenUsage["providers"][number]["quotas"][number] | undefined, now: number): number | null {
+  if (!quota || !Number.isFinite(quota.used_percent) || (quota.resets_at !== null && quota.resets_at <= now)) return null;
+  return 100 - Math.min(100, Math.max(0, quota.used_percent));
+}
 export interface UsageRow {
   readonly provider: string;
   readonly model: string;

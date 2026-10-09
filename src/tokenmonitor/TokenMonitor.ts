@@ -2,7 +2,7 @@ import { api } from "../ipc/bridge";
 import { t, getLang, onLangChange } from "../i18n/i18n";
 import type { Pane } from "../layout/Pane";
 import type { Uuid } from "../types";
-import { aggregateUsage, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
+import { aggregateUsage, remainingQuota, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
 import "./tokenmonitor.css";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""): HTMLElementTagNameMap[K] {
@@ -33,6 +33,10 @@ export class TokenMonitorPane implements Pane {
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
   private busy = false;
+  private lastRefresh = Number.NEGATIVE_INFINITY;
+  private lastManualRefresh = Number.NEGATIVE_INFINITY;
+  private refreshFailed = false;
+  private readonly regainVisibility = (): void => { if (this.visible()) { this.render(); void this.refreshIfOld(); } };
   private data: TokenUsage | null = null;
   private phase: "loading" | "error" | "ready" = "loading";
   private period: UsageWindow = "five_hour";
@@ -56,7 +60,9 @@ export class TokenMonitorPane implements Pane {
       switch (this.groupSelect.value) { case "provider": case "model": case "project": this.group = this.groupSelect.value; break; }
       this.render();
     };
-    this.refreshButton.type = "button"; this.refreshButton.onclick = () => { void this.refresh(); };
+    this.refreshButton.type = "button"; this.refreshButton.onclick = () => { void this.refresh(true); };
+    document.addEventListener("visibilitychange", this.regainVisibility);
+    window.addEventListener("focus", this.regainVisibility);
     this.controls.append(this.periodSelect, this.groupSelect, this.refreshButton);
     this.element.append(this.titleEl, this.controls, this.state, this.content);
     this.setOwnChrome(options.ownChrome ?? true);
@@ -65,15 +71,20 @@ export class TokenMonitorPane implements Pane {
   setOwnChrome(enabled: boolean): void { this.titleEl.hidden = !enabled; }
   setTitle(title: string | null): void { this.title = title; this.titleEl.textContent = title || t("usage.title"); }
   focus(): void { this.element.focus(); this.options.onFocus?.(); }
-  scheduleFit(): void { if (this.timer !== null && !this.busy && this.visible()) void this.refreshIfOld(); }
+  scheduleFit(): void { if (this.timer !== null && this.visible()) { this.render(); void this.refreshIfOld(); } }
   private visible(): boolean { return !document.hidden && this.element.isConnected && !this.element.closest(".pane--tab-hidden") && this.element.getClientRects().length > 0; }
-  private async refreshIfOld(): Promise<void> { if (!this.data || Date.now() / 1000 - this.data.collected_at >= 60) await this.refresh(); }
+  private async refreshIfOld(): Promise<void> { if (performance.now() - this.lastRefresh >= 10_000) await this.refresh(); }
   async spawn(): Promise<void> {
     if (this.disposed || this.timer !== null) return;
-    this.timer = setInterval(() => { if (this.visible()) void this.refresh(); }, 60_000);
+    this.timer = setInterval(() => { if (this.visible()) { this.render(); void this.refreshIfOld(); } }, 10_000);
     if (this.visible()) await this.refresh();
   }
-  dispose(): void { this.disposed = true; if (this.timer !== null) clearInterval(this.timer); this.cleanupLang(); this.element.remove(); }
+  dispose(): void {
+    this.disposed = true; if (this.timer !== null) clearInterval(this.timer);
+    document.removeEventListener("visibilitychange", this.regainVisibility);
+    window.removeEventListener("focus", this.regainVisibility);
+    this.cleanupLang(); this.element.remove();
+  }
   private translate(): void {
     this.setTitle(this.title);
     this.periodSelect.setAttribute("aria-label", t("usage.title")); this.groupSelect.setAttribute("aria-label", t("usage.project"));
@@ -85,34 +96,48 @@ export class TokenMonitorPane implements Pane {
     switch (this.phase) {
       case "loading": this.state.textContent = t("usage.loading"); break;
       case "error": this.state.textContent = t("usage.error"); break;
-      case "ready": this.state.textContent = this.data ? `${t("usage.observed")}: ${new Date(this.data.collected_at * 1000).toLocaleTimeString()}` : ""; break;
+      case "ready": this.state.textContent = t("usage.remaining_quota"); break;
     }
   }
   private render(): void {
     this.renderState(); this.content.replaceChildren(); if (!this.data) return;
     const cards = el("div", "", "usage-cards");
+    const now = Date.now() / 1000;
     for (const provider of this.data.providers) {
       const card = el("article", "", "usage-card");
       const heading = el("div", "", "usage-provider-heading");
       const name = el("span", provider.id === "claude" ? "Claude Code" : "Codex"); name.title = t(`usage.${provider.auth_status}`);
-      const total = el("strong", compact(provider[this.period].total)); total.title = breakdown(provider[this.period]); heading.append(name, total); card.append(heading);
+      const selected = provider.quotas.find(item => item.window_minutes === (this.period === "seven_day" ? 10080 : 300));
+      const remaining = remainingQuota(selected, now);
+      const failed = this.refreshFailed || this.data.warnings.some(warning => warning.startsWith(`${provider.id}_quota_`));
+      const stale = failed || (selected !== undefined && (remaining === null || now - selected.observed_at > 120));
+      const total = el("strong", remaining === null ? "—" : `${remaining.toFixed(0)}%`); total.title = t("usage.remaining_quota");
+      if (stale) total.classList.add("usage-stale");
+      heading.append(name, total); card.append(heading);
       const auth = el("span", t(`usage.${provider.auth_status}`), "usage-auth"); card.append(auth);
+      card.append(el("span", `${t("usage.remaining_quota")} · ${t(this.period === "seven_day" ? "usage.cycle_week" : "usage.cycle_five_hour")}${stale ? ` · ${t("usage.stale")}` : ""}`, "usage-quota-caption"));
       const meters = el("div", "", "usage-meters");
-      for (const [minutes, key] of [[300, "five_hour"], [10080, "seven_day"]] as const) {
+      for (const [minutes, key] of [[300, "cycle_five_hour"], [10080, "cycle_week"]] as const) {
         const quota = provider.quotas.find(item => item.window_minutes === minutes);
         const row = el("div", "", "usage-meter-row"); const label = el("span", t(`usage.${key}`));
-        const percent = el("span", quota ? `${quota.used_percent.toFixed(0)}%` : "—");
+        const available = remainingQuota(quota, now);
+        const percent = el("span", available === null ? "—" : `${available.toFixed(0)}%`);
         const meter = el("progress"); meter.max = 100;
+        if (available === null) meter.style.visibility = "hidden";
         if (quota) {
-          meter.value = Math.min(100, Math.max(0, quota.used_percent));
-          const stale = (quota.resets_at !== null && quota.resets_at <= this.data.collected_at) || this.data.collected_at - quota.observed_at > 600;
-          if (stale) { percent.textContent += " *"; row.classList.add("usage-stale"); }
-          row.title = `${t("usage.quota")}: ${quota.used_percent.toFixed(1)}%\n${t("usage.observed")}: ${new Date(quota.observed_at * 1000).toLocaleString()}${quota.resets_at === null ? "" : `\n${t("usage.resets")}: ${new Date(quota.resets_at * 1000).toLocaleString()}`}${stale ? `\n${t("usage.stale")}` : ""}`;
-        } else { meter.value = 0; row.title = `${t("usage.quota")}: —`; }
-        meter.setAttribute("aria-label", `${t("usage.quota")} ${t(`usage.${key}`)} ${percent.textContent}`);
+          meter.value = available ?? 0;
+          const stale = failed || available === null || now - quota.observed_at > 120;
+          if (stale) { if (available !== null) percent.textContent += " *"; row.classList.add("usage-stale"); }
+          row.title = `${t("usage.remaining_quota")}: ${available === null ? "—" : `${available.toFixed(1)}%`}\n${t("usage.observed")}: ${new Date(quota.observed_at * 1000).toLocaleString()}${quota.resets_at === null ? "" : `\n${t("usage.resets")}: ${new Date(quota.resets_at * 1000).toLocaleString()}`}${stale ? `\n${t("usage.stale")}` : ""}`;
+        } else { meter.value = 0; row.title = `${t("usage.remaining_quota")}: —`; }
+        meter.setAttribute("aria-label", `${t("usage.remaining_quota")} ${t(`usage.${key}`)} ${percent.textContent}`);
         row.append(label, meter, percent); meters.append(row);
       }
-      card.append(meters); cards.append(card);
+      card.append(meters);
+      const observed = provider.quotas.reduce((latest, quota) => Math.max(latest, quota.observed_at), 0);
+      card.append(el("span", `${t("usage.observed")}: ${observed ? new Date(observed * 1000).toLocaleTimeString() : "—"}`, "usage-auth"));
+      const local = el("span", `${t("usage.local_tokens")}: ${compact(provider[this.period].total)}`, "usage-local-tokens");
+      local.title = breakdown(provider[this.period]); card.append(local); cards.append(card);
     }
     this.content.append(cards);
     const rows = aggregateUsage(this.data.rows, this.group, this.period).filter(row => row.tokens.total > 0);
@@ -129,11 +154,13 @@ export class TokenMonitorPane implements Pane {
     for (const warning of this.data.warnings) details.append(el("p", t(`usage.${warning}`)));
     this.content.append(details);
   }
-  private async refresh(): Promise<void> {
-    if (this.busy || this.disposed) return; this.busy = true; this.refreshButton.disabled = true;
+  private async refresh(refreshQuota = false): Promise<void> {
+    if (this.busy || this.disposed || (refreshQuota && performance.now() - this.lastManualRefresh < 10_000)) return;
+    this.lastRefresh = performance.now(); if (refreshQuota) this.lastManualRefresh = this.lastRefresh;
+    this.busy = true; this.refreshButton.disabled = true;
     this.phase = "loading"; this.renderState();
-    try { const next = await api.getTokenUsage(); if (!this.disposed) { this.data = next; this.phase = "ready"; this.render(); } }
-    catch (error: unknown) { if (!this.disposed) { this.phase = "error"; this.renderState(); } console.warn("Token usage read failed", error); }
+    try { const next = await api.getTokenUsage(refreshQuota); if (!this.disposed) { this.data = next; this.refreshFailed = false; this.phase = "ready"; this.render(); } }
+    catch (error: unknown) { if (!this.disposed) { this.refreshFailed = true; this.phase = "error"; this.render(); } console.warn("Token usage read failed", error); }
     finally { this.busy = false; this.refreshButton.disabled = false; }
   }
 }

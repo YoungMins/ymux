@@ -26,11 +26,12 @@ use crate::shell;
 pub async fn get_token_usage(
     webview: Webview,
     request: Request<'_>,
+    refresh_quota: Option<bool>,
 ) -> YmuxResult<crate::token_usage::TokenSnapshot> {
     guard_local(&webview, &request, "get_token_usage")?;
-    tauri::async_runtime::spawn_blocking(|| {
+    tauri::async_runtime::spawn_blocking(move || {
         let mut snapshot = crate::token_usage::collect();
-        crate::token_usage::quota::enrich(&mut snapshot);
+        crate::token_usage::quota::enrich(&mut snapshot, refresh_quota.unwrap_or(false));
         snapshot
     })
     .await

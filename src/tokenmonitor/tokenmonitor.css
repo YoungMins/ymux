@@ -12,8 +12,10 @@
 .usage-provider-heading { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-weight:600; }
 .usage-provider-heading strong { font-size:16px; font-variant-numeric:tabular-nums; }
 .usage-auth { display:block; font-size:10px; color:var(--fg-muted); margin:2px 0 6px; }
+.usage-quota-caption { display:block; font-size:10px; color:var(--fg-muted); margin-bottom:7px; }
+.usage-local-tokens { display:block; padding-top:5px; border-top:1px solid var(--border); font-size:10px; color:var(--fg-muted); font-variant-numeric:tabular-nums; }
 .usage-meters { display:grid; gap:5px; }
-.usage-meter-row { display:grid; grid-template-columns:62px minmax(20px,1fr) 36px; gap:5px; align-items:center; font-size:10px; }
+.usage-meter-row { display:grid; grid-template-columns:minmax(62px,1fr) minmax(20px,1fr) 36px; gap:5px; align-items:center; font-size:10px; }
 .usage-meter-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
 .usage-meter-row progress { width:100%; height:5px; accent-color:var(--accent); }
 .usage-stale { opacity:.65; }

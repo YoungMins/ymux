@@ -280,7 +280,7 @@ async function safeListen<T>(
 }
 
 export const api = {
-  getTokenUsage: (): Promise<TokenUsage> => call("get_token_usage"),
+  getTokenUsage: (refreshQuota = false): Promise<TokenUsage> => call("get_token_usage", { refreshQuota }),
   loadBootstrap: (): Promise<BootstrapPayload> => call("load_bootstrap"),
 
   detectShells: (): Promise<ShellProfile[]> => call("detect_shells_cmd"),
