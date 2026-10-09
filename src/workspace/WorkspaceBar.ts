@@ -4,7 +4,7 @@ import { api } from "../ipc/bridge";
 import { mountSettings } from "../settings/SettingsOverlay";
 import { toggleWorkspacePanel } from "./WorkspacePanel";
 import { t, onLangChange } from "../i18n/i18n";
-import { openTokenDock, toggleFileDock, toggleTokenDock } from "../sidepanel/SidePanel";
+import { toggleSidePanel } from "../sidepanel/SidePanel";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { shellFamilyFromExecutable } from "../terminal/shellQuote";
 import { launchableAgents } from "./agentLaunch";
@@ -65,7 +65,6 @@ function launcherEntries(
   entries.push(
     "separator",
     { header: t("launcher.panes") },
-    { label: t("usage.title"), onSelect: () => openTokenDock() },
     { label: t("files.title"), onSelect: () => void manager.splitFocusedFiles("horizontal") },
     { label: t("git.title"), onSelect: () => void manager.splitFocusedGit("horizontal") },
     {
@@ -156,21 +155,15 @@ export function mountWorkspaceBar(
   });
   bar.appendChild(browserBtn);
 
-  // File dock toggle: the mirror image of the workspace-panel toggle.
+  // Side panel toggle: the mirror image of the workspace-panel toggle.
   const dockBtn = document.createElement("button");
   dockBtn.className = "workspace-bar__icon-btn";
   dockBtn.type = "button";
   dockBtn.innerHTML = fileDockSvg;
-  dockBtn.title = t("filedock.toggle");
-  dockBtn.setAttribute("aria-label", t("filedock.toggle"));
-  dockBtn.addEventListener("click", () => toggleFileDock());
+  dockBtn.title = t("sidepanel.toggle");
+  dockBtn.setAttribute("aria-label", t("sidepanel.toggle"));
+  dockBtn.addEventListener("click", () => toggleSidePanel());
   bar.appendChild(dockBtn);
-  const usageBtn = document.createElement("button");
-  usageBtn.className = "workspace-bar__icon-btn"; usageBtn.type = "button";
-  usageBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10m8 10V4m8 16v-7"/></svg>`;
-  const translateUsage = (): void => { usageBtn.title = t("usage.toggle"); usageBtn.setAttribute("aria-label", t("usage.toggle")); };
-  translateUsage();
-  usageBtn.addEventListener("click", () => toggleTokenDock()); bar.appendChild(usageBtn);
 
   const kofiBtn = document.createElement("button");
   kofiBtn.className = "workspace-bar__icon-btn";
@@ -201,7 +194,6 @@ export function mountWorkspaceBar(
   host.appendChild(bar);
 
   const cleanupLang = onLangChange(() => {
-    translateUsage();
     toggleBtn.title = t("workspace.togglePanel");
     toggleBtn.setAttribute("aria-label", t("workspace.togglePanel"));
     launchBtn.title = t("launcher.button");
@@ -210,8 +202,8 @@ export function mountWorkspaceBar(
     browserBtn.textContent = t("workspace.addBrowser");
     browserBtn.title = t("workspace.addBrowserTitle");
     kofiBtn.title = t("workspace.supportTitle");
-    dockBtn.title = t("filedock.toggle");
-    dockBtn.setAttribute("aria-label", t("filedock.toggle"));
+    dockBtn.title = t("sidepanel.toggle");
+    dockBtn.setAttribute("aria-label", t("sidepanel.toggle"));
   });
 
   return () => {

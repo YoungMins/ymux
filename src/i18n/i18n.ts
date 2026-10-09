@@ -1240,6 +1240,13 @@ const strings: Translations = {
     ru: "Переключить панель файлов", tr: "Dosya panelini aç/kapat", de: "Dateileiste umschalten", vi: "Bật/tắt thanh tệp",
   },
 
+  "sidepanel.toggle": {
+    en: "Toggle side panel", ko: "사이드 패널 토글", ja: "サイドパネルの切り替え",
+    zh: "切换侧边栏", hi: "साइड पैनल टॉगल करें", es: "Alternar panel lateral",
+    fr: "Basculer le panneau latéral", ar: "تبديل اللوحة الجانبية", pt: "Alternar painel lateral",
+    ru: "Переключить боковую панель", tr: "Yan paneli aç/kapat", de: "Seitenleiste umschalten", vi: "Bật/tắt bảng bên",
+  },
+
   // ── Files pane (src/files/FilesPane.ts) ────────────────────────
   "files.title": {
     en: "Files", ko: "파일", ja: "ファイル",

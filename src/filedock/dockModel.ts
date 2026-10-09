@@ -72,6 +72,11 @@ export function nextDockState(state: DockState, view: DockView, toggle: boolean)
   return { ...state, open: true, view };
 }
 
+/// Toolbar toggle: open or close the panel, keeping the last-used view.
+export function toggleDockOpen(state: DockState): DockState {
+  return { ...state, open: !state.open };
+}
+
 /// First-run state of the merged panel, from the two docks it replaces
 /// (`ymux.fileDock`, `ymux.tokenDock`). The file dock's state wins; the panel
 /// starts on the usage view only when that was the only dock left open.

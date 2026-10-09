@@ -6,9 +6,10 @@ use std::{
 use super::model::Quota;
 
 const MAX_BYTES: u64 = 1024 * 1024;
-pub(super) const REFRESH: Duration = Duration::from_secs(10);
-const MANUAL_REFRESH: Duration = Duration::from_secs(10);
+pub(super) const REFRESH: Duration = Duration::from_secs(60);
+const MANUAL_REFRESH: Duration = Duration::from_secs(30);
 const FAILURE_BACKOFF: Duration = Duration::from_secs(300);
+const EMPTY_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 #[error("quota unavailable")]
@@ -27,7 +28,13 @@ impl Cached {
             return true;
         }
         let interval = if self.unavailable {
-            FAILURE_BACKOFF
+            // A first-ever failure (typically a transient 429) leaves nothing to show,
+            // so retry soon; once stale data exists, back off longer.
+            if self.quotas.is_empty() {
+                EMPTY_RETRY
+            } else {
+                FAILURE_BACKOFF
+            }
         } else if manual {
             MANUAL_REFRESH
         } else {
@@ -82,17 +89,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn successful_quota_refreshes_at_ten_seconds() {
+    fn successful_quota_refreshes_at_sixty_seconds() {
         let mut cache = Cached::refreshed(None, [1; 32], Ok(Vec::new()));
-        cache.attempted_at = Instant::now() - Duration::from_millis(9_500);
+        cache.attempted_at = Instant::now() - Duration::from_millis(59_500);
         assert!(!cache.needs_refresh([1; 32], false));
-        cache.attempted_at = Instant::now() - Duration::from_secs(10);
+        cache.attempted_at = Instant::now() - Duration::from_secs(60);
         assert!(cache.needs_refresh([1; 32], false));
     }
 
     #[test]
     fn quota_refresh_interval_starts_before_network_latency() {
-        let started = Instant::now() - Duration::from_secs(10);
+        let started = Instant::now() - Duration::from_secs(60);
         let cache = Cached::refreshed_at(None, [1; 32], Ok(Vec::new()), started);
         assert!(cache.needs_refresh([1; 32], false));
     }
@@ -106,5 +113,22 @@ mod tests {
         assert!(cache.needs_refresh([2; 32], false));
         cache.attempted_at = Instant::now() - Duration::from_secs(300);
         assert!(cache.needs_refresh([1; 32], false));
+    }
+
+    #[test]
+    fn first_failure_retries_soon_but_stale_data_backs_off() {
+        let mut empty = Cached::refreshed(None, [1; 32], Err(Unavailable));
+        empty.attempted_at = Instant::now() - Duration::from_secs(31);
+        assert!(empty.needs_refresh([1; 32], false));
+        let good = Ok(vec![Quota {
+            window_minutes: 300,
+            used_percent: 20.0,
+            resets_at: None,
+            observed_at: 42,
+        }]);
+        let first = Cached::refreshed(None, [1; 32], good);
+        let mut stale = Cached::refreshed(Some(first), [1; 32], Err(Unavailable));
+        stale.attempted_at = Instant::now() - Duration::from_secs(31);
+        assert!(!stale.needs_refresh([1; 32], false));
     }
 }

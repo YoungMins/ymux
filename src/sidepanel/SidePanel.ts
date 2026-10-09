@@ -16,6 +16,7 @@ import {
   clampDockWidth,
   migrateDockState,
   nextDockState,
+  toggleDockOpen,
   parseDockState,
   serializeDockState,
   type DockState,
@@ -189,6 +190,11 @@ class SidePanel {
     this.apply(nextDockState(this.state, view, toggle), true);
   }
 
+  /// Open on the last-used view, or close.
+  toggle(): void {
+    this.apply(toggleDockOpen(this.state), true);
+  }
+
   /// Arrow/Home/End move the selection (never close) and focus the new tab.
   private onTabKey(ev: KeyboardEvent): void {
     const i = VIEWS.indexOf(this.state.view);
@@ -281,6 +287,12 @@ export function mountSidePanel(parent: HTMLElement, manager: WorkspaceManager): 
   instance = new SidePanel(manager);
   parent.appendChild(instance.element);
   void instance.start();
+}
+
+/// Toolbar button: open on the last-used view, or close. A no-op before
+/// `mountSidePanel`.
+export function toggleSidePanel(): void {
+  instance?.toggle();
 }
 
 /// Files view: open it, or close the panel if it is already showing. A no-op

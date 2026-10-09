@@ -8,6 +8,7 @@ import {
   nextDockState,
   parseDockState,
   serializeDockState,
+  toggleDockOpen,
 } from "./dockModel";
 
 const DEFAULT = { open: false, width: DOCK_DEFAULT_WIDTH, view: "files" };
@@ -59,6 +60,15 @@ describe("parseDockState", () => {
     expect(JSON.parse(serializeDockState({ open: true, width: 700, view: "files" })).v).toBe(
       DOCK_STATE_VERSION,
     );
+  });
+});
+
+describe("toggleDockOpen", () => {
+  it("opens on the persisted view and closes again", () => {
+    const closed = { open: false, width: 400, view: "usage" as const };
+    const open = toggleDockOpen(closed);
+    expect(open).toEqual({ open: true, width: 400, view: "usage" });
+    expect(toggleDockOpen(open)).toEqual(closed);
   });
 });
 

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.13.6-7fdbca?style=flat-square" alt="version 0.13.6" />
+  <img src="https://img.shields.io/badge/version-0.13.7-7fdbca?style=flat-square" alt="version 0.13.7" />
 </p>
 
 <p align="center">
@@ -150,8 +150,8 @@ and width persist; drag the left edge to resize.
   directory as you `cd`. Enter on a file opens it in a reused editor tab, and a
   preview of the selected file or folder sits beneath the list (`Tab` shows and
   hides it).
-- **Usage**: open it from the toolbar's usage icon, the **+** launcher
-  (*AI token usage*) or the command palette. It shows:
+- **Usage**: switch to it with the panel's usage icon (the toolbar's side-panel
+  button reopens the last view) or open it from the command palette. It shows:
   - local token counts for Claude Code and Codex, read from their session logs,
     for the last 5 hours, last 7 days or all recorded history, grouped by AI
     provider, model or project;
@@ -242,8 +242,8 @@ the application switcher, and workspace switching drops the `Alt`.
 | Right-click in a terminal   | —                  | Context menu: copy/paste, split, open a files / editor / git pane |
 | `⚙` button (toolbar)        | —                  | Open Settings (language, shortcuts, syntax colors, config files) |
 
-The Usage view has no shortcut: open it from the toolbar's usage icon, the **+**
-launcher or the command palette.
+The Usage view has no shortcut: use the panel's usage icon
+or the command palette.
 
 ## Configuration
 

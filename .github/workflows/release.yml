@@ -349,6 +349,11 @@ jobs:
           {
             echo "ymux ${TAG}"
             echo ""
+            # Hand-written notes for this tag, if committed, go first.
+            if [ -f ".github/release-notes/${TAG}.md" ]; then
+              cat ".github/release-notes/${TAG}.md"
+              echo ""
+            fi
             echo "## Install"
             echo ""
             echo "### Windows"

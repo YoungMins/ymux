@@ -1,7 +1,7 @@
 # yMux Microsoft Store 패키징
 
 이 패키지는 기존 MSI와 별도로 만드는 x64 MSIX입니다. 소스 앱 버전은
-`0.13.6`, Store 패키지 버전은 `1.13.6.0`입니다.
+`0.13.7`, Store 패키지 버전은 `1.13.7.0`입니다.
 `-PackageVersion`을 생략하면 스크립트가 `src-tauri/tauri.conf.json`의 `version`(X.Y.Z)에서
 `(X+1).Y.Z.0`으로 계산합니다.
 Partner Center 예약 정보와 아래 값이 반드시 일치해야 합니다.

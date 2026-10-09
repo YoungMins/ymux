@@ -17,7 +17,7 @@ vi.mock("../files/FilesPane", () => ({
 
 import { api } from "../ipc/bridge";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
-import { mountSidePanel, toggleFileDock, toggleTokenDock } from "./SidePanel";
+import { mountSidePanel, toggleFileDock, toggleSidePanel, toggleTokenDock } from "./SidePanel";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -151,4 +151,17 @@ it("refits the workspace only when the panel opens or closes, not on view switch
   panel.querySelector<HTMLElement>(".side-panel__close")!.click();
   expect(manager.refitActive).toHaveBeenCalledTimes(2);
   vi.unstubAllGlobals();
+});
+
+it("toggleSidePanel opens on the last-used view and closes again", async () => {
+  localStorage.setItem("ymux.sidePanel", JSON.stringify({ open: false, width: 400, view: "usage", v: 2 }));
+  const { panel } = setup();
+  await vi.advanceTimersByTimeAsync(0);
+  toggleSidePanel();
+  expect(panel.classList.contains("side-panel--open")).toBe(true);
+  expect(panel.querySelector('[role="tab"][aria-selected="true"]')).toBe(
+    panel.querySelectorAll('[role="tab"]')[1],
+  );
+  toggleSidePanel();
+  expect(panel.classList.contains("side-panel--open")).toBe(false);
 });
