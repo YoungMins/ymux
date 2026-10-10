@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.microsoft.com/detail/9N20Z9NKD2Q1?mode=direct">
+    <img src="https://get.microsoft.com/images/ja%20dark.svg" width="200" alt="Microsoft Store から入手" />
+  </a>
+</p>
+
+<p align="center">
   <a href="https://ko-fi.com/youngminkim">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Ko-fi で支援する" />
   </a>
@@ -29,7 +35,7 @@ WKWebView 上で動作します。
 
 ### Windows
 
-**Microsoft Store** (ストアでの公開後に利用できます):
+**Microsoft Store**:
 <https://apps.microsoft.com/detail/9N20Z9NKD2Q1>。Store 版はシステムの Evergreen
 WebView2 ランタイム (Windows 11 に組み込み済み、Windows 10 では Windows Update で
 配布) を使用し、`ymux` アプリ実行エイリアスを登録するので、どのターミナルからでも

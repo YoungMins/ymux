@@ -83,9 +83,10 @@ yMux has no accounts, no analytics and no telemetry. Your layouts, scrollback an
 yMux is free and open source: https://github.com/YoungMins/ymux
 
 ### What's new in this version (≤1,500)
-First Microsoft Store release.
-- New side panel: switch between the file browser and AI token usage with the icons at the top.
-- Compact AI usage view with remaining quota and reset countdown for Claude Code and Codex.
+First Microsoft Store release (version 0.13.7).
+- One side panel for the file browser and AI token usage. Switch views with the icons at the top of the panel; the toolbar button reopens the last view.
+- Compact AI usage view: remaining 5-hour and weekly quota for Claude Code and Codex, with a short reset countdown.
+- Fixed Claude Code quota sometimes showing "—".
 - New app icon.
 
 ### Product features (≤20개, 각 ≤200자)
@@ -165,9 +166,10 @@ yMux에는 계정, 분석 도구, 텔레메트리가 없습니다. 레이아웃,
 yMux는 무료 오픈 소스입니다: https://github.com/YoungMins/ymux
 
 ### 이 버전의 새로운 기능
-Microsoft Store 첫 출시입니다.
-- 새 사이드 패널: 위쪽 아이콘으로 파일 브라우저와 AI 토큰 사용량을 전환합니다.
-- Claude Code와 Codex의 남은 한도와 초기화까지 남은 시간을 간결하게 보여 주는 AI 사용량 화면
+Microsoft Store 첫 출시입니다(버전 0.13.7).
+- 파일 브라우저와 AI 토큰 사용량을 하나의 사이드 패널에서 봅니다. 패널 위쪽 아이콘으로 전환하고, 툴바 버튼은 마지막으로 보던 화면을 다시 엽니다.
+- 간결해진 AI 사용량 화면: Claude Code와 Codex의 5시간·주간 남은 한도와 초기화까지 남은 시간을 보여 줍니다.
+- Claude Code 한도가 가끔 "—"로 표시되던 문제를 고쳤습니다.
 - 새 앱 아이콘
 
 ### 제품 기능

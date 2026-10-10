@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.microsoft.com/detail/9N20Z9NKD2Q1?mode=direct">
+    <img src="https://get.microsoft.com/images/ko%20dark.svg" width="200" alt="Microsoft Store에서 받기" />
+  </a>
+</p>
+
+<p align="center">
   <a href="https://ko-fi.com/youngminkim">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Ko-fi로 후원하기" />
   </a>
@@ -29,7 +35,7 @@ xterm.js로 만들었고, Windows에서는 WebView2, macOS에서는 WKWebView �
 
 ### Windows
 
-**Microsoft Store** (스토어 등록이 완료되면 이용할 수 있습니다):
+**Microsoft Store**:
 <https://apps.microsoft.com/detail/9N20Z9NKD2Q1>. 스토어 빌드는 시스템의 Evergreen
 WebView2 런타임(Windows 11에 내장, Windows 10에서는 Windows Update로 제공)을
 사용하며, `ymux` 앱 실행 별칭을 등록하므로 어느 터미널에서든 `ymux`를 실행할 수

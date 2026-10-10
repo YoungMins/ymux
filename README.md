@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.microsoft.com/detail/9N20Z9NKD2Q1?mode=direct">
+    <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200" alt="Get it from Microsoft" />
+  </a>
+</p>
+
+<p align="center">
   <a href="https://ko-fi.com/youngminkim">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support on Ko-fi" />
   </a>
@@ -29,7 +35,7 @@ built with Tauri 2 (Rust) and xterm.js, on WebView2 (Windows) and WKWebView
 
 ### Windows
 
-**Microsoft Store** (available once the listing is published):
+**Microsoft Store**:
 <https://apps.microsoft.com/detail/9N20Z9NKD2Q1>. The Store build uses the
 system Evergreen WebView2 runtime (built into Windows 11, delivered by Windows
 Update on Windows 10) and registers a `ymux` app execution alias, so `ymux`
