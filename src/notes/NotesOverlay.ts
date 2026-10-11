@@ -1,5 +1,6 @@
 import { t, onLangChange } from "../i18n/i18n";
 import { pushPopup, popPopup } from "../browser/popupBlur";
+import { formatWorkspaceLabel } from "../workspace/workspaceLabel";
 
 const STORAGE_PREFIX = "ymux-notes-";
 
@@ -13,6 +14,7 @@ let langCleanup: (() => void) | null = null;
 
 let currentWorkspaceId: number | null = null;
 let currentWorkspaceName: string | null = null;
+let currentWorkspacePosition = 0;
 let isOpen = false;
 
 const changeListeners = new Set<() => void>();
@@ -134,17 +136,18 @@ export function mountNotesOverlay(container: HTMLElement): () => void {
 export function toggle(
   workspaceId: number,
   workspaceName?: string | null,
+  position?: number,
 ): void {
   if (!modal) return;
   const visible = modal.classList.contains("notes-modal--visible");
   if (visible && currentWorkspaceId === workspaceId) {
     hide();
   } else {
-    show(workspaceId, workspaceName ?? null);
+    show(workspaceId, workspaceName ?? null, position ?? workspaceId);
   }
 }
 
-function show(workspaceId: number, workspaceName: string | null): void {
+function show(workspaceId: number, workspaceName: string | null, position: number): void {
   if (!modal || !backdrop || !textarea) return;
   if (!isOpen) {
     isOpen = true;
@@ -152,6 +155,7 @@ function show(workspaceId: number, workspaceName: string | null): void {
   }
   currentWorkspaceId = workspaceId;
   currentWorkspaceName = workspaceName;
+  currentWorkspacePosition = position;
   try {
     textarea.value = localStorage.getItem(storageKey(workspaceId)) ?? "";
   } catch {
@@ -180,12 +184,10 @@ function renderTitle(): void {
     titleEl.textContent = t("notes.title");
     return;
   }
-  const isCustom =
-    currentWorkspaceName &&
-    currentWorkspaceName !== `workspace-${currentWorkspaceId}` &&
-    currentWorkspaceName !== "main";
-  const label = isCustom
-    ? `${currentWorkspaceId}: ${currentWorkspaceName}`
-    : String(currentWorkspaceId);
+  const label = formatWorkspaceLabel(
+    currentWorkspaceId,
+    currentWorkspaceName,
+    currentWorkspacePosition,
+  );
   titleEl.textContent = `${t("notes.title")} — ${label}`;
 }

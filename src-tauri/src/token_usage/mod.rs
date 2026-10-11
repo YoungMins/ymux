@@ -13,4 +13,4 @@ mod quota_cache;
 mod tests;
 
 pub use collect::{collect, collect_from};
-pub use model::{ProviderUsage, Quota, TokenSnapshot, TokenTotals, UsageRow};
+pub use model::{HourBucket, ProviderUsage, Quota, TokenSnapshot, TokenTotals, UsageRow};

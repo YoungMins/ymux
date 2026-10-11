@@ -41,8 +41,9 @@ const noteIconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none"
 
 function wsTooltip(id: number, manager: WorkspaceManager): string {
   const name = manager.getWorkspaceName(id);
-  const base = name ? `${id}: ${name}` : `Workspace ${id}`;
-  return `${base} (Ctrl+Alt+${id}) — ${t("workspace.dblclickRename")}, ${t("workspace.dragReorder")}`;
+  const pos = manager.workspacePosition(id);
+  const base = name ? `${pos}: ${name}` : `Workspace ${pos}`;
+  return `${base} (Ctrl+Alt+${pos}) — ${t("workspace.dblclickRename")}, ${t("workspace.dragReorder")}`;
 }
 
 /// Read the persisted collapsed flag (default: expanded). localStorage may
@@ -324,7 +325,7 @@ export function mountWorkspacePanel(
 
     const btn = document.createElement("button");
     btn.className = "workspace-panel__ws";
-    btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
+    btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id), manager.workspacePosition(id));
     btn.title = wsTooltip(id, manager);
     btn.addEventListener("click", () => {
       if (dragJustEnded) return;
@@ -355,7 +356,7 @@ export function mountWorkspacePanel(
     edit.spellcheck = false;
     edit.style.display = "none";
     // What the row will read if the name is left empty — costs no i18n key.
-    edit.placeholder = String(id);
+    edit.placeholder = String(manager.workspacePosition(id));
     edit.setAttribute("aria-label", t("workspace.renamePrompt"));
     row.appendChild(edit);
     editors.set(id, edit);
@@ -364,12 +365,12 @@ export function mountWorkspacePanel(
     noteBtn.className = "workspace-panel__note-btn";
     noteBtn.type = "button";
     noteBtn.innerHTML = noteIconSvg;
-    noteBtn.title = `${t("notes.title")} — ${id}`;
-    noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${id}`);
+    noteBtn.title = `${t("notes.title")} — ${manager.workspacePosition(id)}`;
+    noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${manager.workspacePosition(id)}`);
     noteBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       if (dragJustEnded) return;
-      toggleNotes(id, manager.getWorkspaceName(id));
+      toggleNotes(id, manager.getWorkspaceName(id), manager.workspacePosition(id));
     });
     row.appendChild(noteBtn);
     noteButtons.set(id, noteBtn);
@@ -384,7 +385,7 @@ export function mountWorkspacePanel(
     delBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       if (manager.workspaces.length <= 1) return;
-      const label = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
+      const label = formatWorkspaceLabel(id, manager.getWorkspaceName(id), manager.workspacePosition(id));
       const msg = t("workspace.deleteConfirm").replace("{name}", label);
       void askConfirm(msg).then((ok) => {
         if (ok) void manager.deleteWorkspace(id); // → onWorkspacesChange → rebuild()
@@ -591,7 +592,7 @@ export function mountWorkspacePanel(
       // path that re-highlights — click, Ctrl+Alt+N, panel toggle via
       // refreshWorkspacePanel — keeps it in sync.
       blocks.get(id)?.classList.toggle("workspace-panel__block--active", active);
-      btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
+      btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id), manager.workspacePosition(id));
       // The whole row is tinted by status (idle = no tint); CSS keys off this.
       btn.dataset.status = status;
       // "idle" has no i18n key — it's the resting state, so no status suffix.
@@ -601,7 +602,7 @@ export function mountWorkspacePanel(
           : `${wsTooltip(id, manager)} — ${t(`status.${status}`)}`;
     }
     for (const [id, noteBtn] of noteButtons) {
-      const label = formatWorkspaceLabel(id, manager.getWorkspaceName(id));
+      const label = formatWorkspaceLabel(id, manager.getWorkspaceName(id), manager.workspacePosition(id));
       noteBtn.title = `${t("notes.title")} — ${label}`;
       noteBtn.setAttribute("aria-label", `${t("notes.title")} — ${label}`);
       noteBtn.classList.toggle("workspace-panel__note-btn--has-notes", hasNotes(id));

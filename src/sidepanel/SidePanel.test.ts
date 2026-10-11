@@ -26,7 +26,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const empty = { collected_at: 0, providers: [], rows: [], warnings: [] };
+const empty = { collected_at: 0, providers: [], rows: [], hourly: [], warnings: [] };
 
 function setup() {
   vi.useFakeTimers();

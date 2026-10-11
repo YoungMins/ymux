@@ -142,7 +142,7 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       keybinding: "Ctrl+Alt+N",
       action: () => {
         const wsId = manager.activeIdValue;
-        toggleNotes(wsId, manager.getWorkspaceName(wsId));
+        toggleNotes(wsId, manager.getWorkspaceName(wsId), manager.workspacePosition(wsId));
       },
     },
     {
@@ -190,7 +190,7 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       id: `workspace.${i + 1}`,
       label: () => `${t("shortcut.switchWs")} ${i + 1}`,
       keybinding: `Ctrl+Alt+${i + 1}`,
-      action: () => void manager.activate(i + 1),
+      action: () => void manager.activateByPosition(i + 1),
     })),
     {
       // The real quit (closing the window only hides it to the tray): the

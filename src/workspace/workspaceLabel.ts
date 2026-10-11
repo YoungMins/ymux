@@ -5,12 +5,34 @@ function isCustomName(id: number, name: string | null | undefined): name is stri
   return !!name && name !== `workspace-${id}` && name !== "main";
 }
 
+/// The number users see and type is the workspace's 1-based POSITION in the
+/// panel (`config.workspaces` order), never its persistent `id` — ids have gaps
+/// after a delete and keep keying scrollback/notes/drafts. Returns 0 if absent.
+export function workspacePosition(
+  workspaces: readonly { id: number }[],
+  id: number,
+): number {
+  return workspaces.findIndex((w) => w.id === id) + 1;
+}
+
+/// Inverse of `workspacePosition`: the id at 1-based `position`, or null when
+/// out of range (Ctrl+Alt+N with fewer than N workspaces does nothing).
+export function workspaceIdAtPosition(
+  workspaces: readonly { id: number }[],
+  position: number,
+): number | null {
+  return workspaces[position - 1]?.id ?? null;
+}
+
 /// Label for a workspace tab/row: `"1: build"` when custom-named, else `"1"`.
+/// `position` is the number shown; `id` only identifies the auto-assigned
+/// `workspace-<id>` default name (an "unnamed" sentinel, never displayed).
 export function formatWorkspaceLabel(
   id: number,
   name: string | null | undefined,
+  position: number,
 ): string {
-  return isCustomName(id, name) ? `${id}: ${name}` : String(id);
+  return isCustomName(id, name) ? `${position}: ${name}` : String(position);
 }
 
 /// What the in-place rename editor starts with. A workspace that was never

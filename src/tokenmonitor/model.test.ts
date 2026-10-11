@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aggregateUsage, type TokenUsage, type UsageRow } from "./model";
+import { aggregateUsage, dailyTotals, heatmapGrid, type TokenUsage, type UsageRow } from "./model";
 import { TokenMonitorPane } from "./TokenMonitor";
 import { api } from "../ipc/bridge";
 import { setLang, translationGaps } from "../i18n/i18n";
@@ -9,7 +9,7 @@ const row = (provider: string, model: string, project: string, total: number): U
 const data: TokenUsage = {
   collected_at: 1700000000,
   providers: [{ id: "claude", auth_status: "credentials_present", five_hour: totals(20), seven_day: totals(40), all_time: totals(60), quotas: [], files: 1, skipped: 0 }],
-  rows: [row("claude", "opus", "<script>unsafe</script>", 20)], warnings: [],
+  rows: [row("claude", "opus", "<script>unsafe</script>", 20)], hourly: [], warnings: [],
 };
 let active: TokenMonitorPane | null = null;
 function mount(): void {
@@ -178,5 +178,41 @@ describe("token monitor panel", () => {
     mount();
     await vi.waitFor(() => expect(document.querySelector('[role="status"]')?.textContent).toContain("Could not read"));
     expect(document.querySelector('[role="status"]')?.textContent).not.toContain("unsafe");
+  });
+});
+describe("daily activity heatmap", () => {
+  const hourAt = (y: number, m: number, d: number, h: number): number => Math.floor(new Date(y, m - 1, d, h).getTime() / 3600_000);
+  it("groups hour buckets into local calendar days and filters by provider", () => {
+    const hourly = [
+      { hour: hourAt(2026, 3, 8, 0), provider: "claude", total: 5 },
+      { hour: hourAt(2026, 3, 8, 23), provider: "codex", total: 7 },
+      { hour: hourAt(2026, 3, 9, 0), provider: "claude", total: 11 },
+      { hour: hourAt(2026, 11, 1, 12), provider: "claude", total: 1 },
+    ];
+    expect([...dailyTotals(hourly, null)]).toEqual([["2026-03-08", 12], ["2026-03-09", 11], ["2026-11-01", 1]]);
+    expect([...dailyTotals(hourly, "codex")]).toEqual([["2026-03-08", 7]]);
+  });
+  it("lays out Sunday-first week columns, omits future days and ends on today", () => {
+    const grid = heatmapGrid(new Map(), new Date(2026, 9, 14), 3); // Wednesday
+    expect(grid.map(c => c.length)).toEqual([7, 7, 4]);
+    expect(grid[0]?.[0]?.date).toBe("2026-09-27");
+    expect(grid[2]?.[3]?.date).toBe("2026-10-14");
+    expect(grid.flat().every(cell => cell.level === 0)).toBe(true);
+  });
+  it("assigns levels by quartiles of non-zero days", () => {
+    const daily = new Map([["2026-10-11", 10], ["2026-10-12", 20], ["2026-10-13", 30], ["2026-10-14", 40], ["2026-10-15", 1000]]);
+    const levels = new Map(heatmapGrid(daily, new Date(2026, 9, 17), 1).flat().map(cell => [cell.date, cell.level]));
+    expect([11, 12, 13, 14, 15, 16].map(d => levels.get(`2026-10-${d}`))).toEqual([1, 1, 2, 3, 4, 0]);
+  });
+});
+describe("activity section", () => {
+  it("renders a labelled heatmap with localized tooltips and legend", async () => {
+    const hour = Math.floor(Date.now() / 3600_000);
+    vi.spyOn(api, "getTokenUsage").mockResolvedValue({ ...data, hourly: [{ hour, provider: "claude", total: 1500 }, { hour, provider: "codex", total: 500 }] });
+    mount(); await Promise.resolve(); await Promise.resolve();
+    expect(document.querySelector(".usage-activity")?.getAttribute("aria-label")).toContain("Daily activity: 2K");
+    const cell = [...document.querySelectorAll<HTMLElement>(".usage-heat-cell")].find(c => c.title.includes("Codex"));
+    expect(cell?.title).toContain("Claude Code: 1.5K");
+    expect(document.querySelector(".usage-heat-legend")?.textContent).toBe("LessMore");
   });
 });

@@ -124,10 +124,11 @@ async function main(): Promise<void> {
     // ("Digit1"…"Digit9"), so Korean / AZERTY / etc. users who produce a
     // different character on the number row still get the right workspace.
     if (isWorkspaceSwitch(ev)) {
-      const id = Number.parseInt(ev.code.slice(-1), 10);
-      if (id >= 1 && id <= MAX_WORKSPACES) {
+      // The digit is a display POSITION (the number the panel shows), not an id.
+      const pos = Number.parseInt(ev.code.slice(-1), 10);
+      if (pos >= 1 && pos <= MAX_WORKSPACES) {
         ev.preventDefault();
-        void manager.activate(id).then(() => refreshWorkspacePanel(app));
+        void manager.activateByPosition(pos).then(() => refreshWorkspacePanel(app));
       }
       return;
     }
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
     if (mod && ev.altKey && !ev.shiftKey && ev.code === "KeyN") {
       ev.preventDefault();
       const wsId = manager.activeIdValue;
-      toggleNotes(wsId, manager.getWorkspaceName(wsId));
+      toggleNotes(wsId, manager.getWorkspaceName(wsId), manager.workspacePosition(wsId));
       refreshWorkspacePanel(app);
       return;
     }

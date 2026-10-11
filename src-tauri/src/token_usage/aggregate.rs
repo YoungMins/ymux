@@ -1,5 +1,8 @@
-use super::model::{Event, TokenSnapshot, TokenTotals, UsageRow};
+use super::model::{Event, HourBucket, TokenSnapshot, TokenTotals, UsageRow};
 use std::collections::BTreeMap;
+
+/// Heatmap history: 53 weeks.
+const HOURLY_WINDOW_SECS: u64 = 371 * 86400;
 
 pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
     let mut unique: BTreeMap<(&str, &str, &str), &Event> = BTreeMap::new();
@@ -14,6 +17,8 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
     let mut projects: BTreeMap<String, String> = BTreeMap::new();
     let mut ordered: Vec<_> = unique.into_values().collect();
     ordered.sort_by_key(|event| (event.timestamp, event.tokens.total));
+    let mut hours: BTreeMap<(u64, &'static str), u64> = BTreeMap::new();
+    let hourly_start = snapshot.collected_at.saturating_sub(HOURLY_WINDOW_SECS);
     let mut cumulative: BTreeMap<&str, TokenTotals> = BTreeMap::new();
     for event in ordered {
         if event.timestamp > snapshot.collected_at {
@@ -30,6 +35,12 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
         } else {
             event.tokens
         };
+        if tokens.total > 0 && event.timestamp >= hourly_start {
+            let bucket = hours
+                .entry((event.timestamp / 3600, event.provider))
+                .or_default();
+            *bucket = bucket.saturating_add(tokens.total);
+        }
         let project_key = ypath::comparison_key(&event.project);
         let project = projects
             .entry(project_key.clone())
@@ -52,6 +63,14 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
             row.five_hour.add(tokens);
         }
     }
+    snapshot.hourly = hours
+        .into_iter()
+        .map(|((hour, provider), total)| HourBucket {
+            hour,
+            provider,
+            total,
+        })
+        .collect();
     snapshot.rows = rows.into_values().collect();
     for row in &snapshot.rows {
         if let Some(provider) = snapshot.providers.iter_mut().find(|p| p.id == row.provider) {

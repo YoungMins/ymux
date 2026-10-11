@@ -168,3 +168,64 @@ fn projects_merge_windows_spellings_and_preserve_posix_case() {
         20
     );
 }
+
+#[test]
+fn hourly_buckets_honor_dedupe_codex_delta_window_and_order() {
+    let (_dir, claude, codex) = setup();
+    let now = crate::agent_scan_disk::parse_rfc3339_secs("2026-09-21T05:30:00Z").unwrap();
+    let claude_line = |time: &str, id: &str, input: u64, output: u64| {
+        format!("{{\"type\":\"assistant\",\"timestamp\":\"{time}\",\"message\":{{\"id\":\"{id}\",\"usage\":{{\"input_tokens\":{input},\"output_tokens\":{output}}}}}}}\n")
+    };
+    // `a` is streamed twice (the larger record wins); `old` is outside 371 days.
+    let records = [
+        claude_line("2026-09-21T05:10:00Z", "a", 10, 1),
+        claude_line("2026-09-21T05:10:00Z", "a", 10, 5),
+        claude_line("2026-09-21T03:59:59Z", "b", 7, 0),
+        claude_line("2025-09-15T05:30:00Z", "edge", 3, 0),
+        claude_line("2025-09-15T05:29:59Z", "old", 100, 0),
+    ]
+    .concat();
+    fs::write(claude.join("projects/p/h.jsonl"), records).unwrap();
+    let header = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s\",\"cwd\":\"/c\"}}\n";
+    let count = |time: &str, total: u64| {
+        format!("{{\"timestamp\":\"{time}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"total_token_usage\":{{\"input_tokens\":{total},\"total_tokens\":{total}}}}}}}}}\n")
+    };
+    let lines = format!(
+        "{header}{}{}{}",
+        count("2026-09-21T04:00:00Z", 20),
+        count("2026-09-21T04:30:00Z", 20),
+        count("2026-09-21T05:00:00Z", 50)
+    );
+    fs::write(codex.join("sessions/h.jsonl"), lines).unwrap();
+    let snapshot = collect_from(&claude, &codex, now);
+    let hour = |s: &str| crate::agent_scan_disk::parse_rfc3339_secs(s).unwrap() / 3600;
+    let got: Vec<_> = snapshot
+        .hourly
+        .iter()
+        .map(|b| (b.hour, b.provider, b.total))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (hour("2025-09-15T05:30:00Z"), "claude", 3),
+            (hour("2026-09-21T03:00:00Z"), "claude", 7),
+            (hour("2026-09-21T04:00:00Z"), "codex", 20),
+            (hour("2026-09-21T05:00:00Z"), "claude", 15),
+            (hour("2026-09-21T05:00:00Z"), "codex", 30),
+        ]
+    );
+}
+
+#[test]
+#[ignore = "reads this machine's real Claude/Codex history"]
+fn print_real_hourly_bucket_count() {
+    let snapshot = super::collect();
+    let days: std::collections::BTreeSet<_> = snapshot.hourly.iter().map(|b| b.hour / 24).collect();
+    let json = serde_json::to_string(&snapshot.hourly).unwrap();
+    println!(
+        "hourly buckets: {}, active UTC days: {}, json bytes: {}",
+        snapshot.hourly.len(),
+        days.len(),
+        json.len()
+    );
+}

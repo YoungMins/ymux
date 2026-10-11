@@ -59,11 +59,21 @@ pub struct UsageRow {
     pub all_time: TokenTotals,
 }
 
+/// Tokens used by one provider during one UTC hour. The frontend groups these
+/// into local calendar days, which Rust cannot do without a timezone database.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct HourBucket {
+    pub hour: u64,
+    pub provider: &'static str,
+    pub total: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TokenSnapshot {
     pub collected_at: u64,
     pub providers: Vec<ProviderUsage>,
     pub rows: Vec<UsageRow>,
+    pub hourly: Vec<HourBucket>,
     pub warnings: Vec<String>,
 }
 

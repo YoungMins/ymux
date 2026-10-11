@@ -40,6 +40,7 @@ pub fn collect_from(claude: &Path, codex: &Path, now: u64) -> TokenSnapshot {
         collected_at: now,
         providers: Vec::new(),
         rows: Vec::new(),
+        hourly: Vec::new(),
         warnings: Vec::new(),
     };
     let mut events = Vec::new();

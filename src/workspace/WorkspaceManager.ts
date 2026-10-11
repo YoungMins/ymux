@@ -68,6 +68,7 @@ import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
 import { pickActivePaneId } from "./activePane";
 import { viewerTabAction } from "./viewerTab";
 import { zoomAction } from "./zoom";
+import { formatWorkspaceLabel, workspaceIdAtPosition, workspacePosition } from "./workspaceLabel";
 import type { PaneStatus } from "../terminal/paneStatus";
 
 const MAX_WORKSPACES = 9;
@@ -196,6 +197,18 @@ export class WorkspaceManager {
     return this.config.workspaces;
   }
 
+  /// 1-based position of workspace `id` in display order (0 if unknown). This
+  /// is the number shown in the panel and typed with Ctrl+Alt+N.
+  workspacePosition(id: number): number {
+    return workspacePosition(this.config.workspaces, id);
+  }
+
+  /// Switch to the workspace at 1-based display `position`; no-op if out of range.
+  async activateByPosition(position: number): Promise<void> {
+    const id = workspaceIdAtPosition(this.config.workspaces, position);
+    if (id !== null) await this.activate(id);
+  }
+
   /// Mount the initial workspace and pre-create empty containers for the
   /// others. Panes are lazily spawned when a workspace is first activated.
   async start(): Promise<void> {
@@ -290,8 +303,9 @@ export class WorkspaceManager {
   }
 
   /// Switch to workspace `id`, creating it lazily if it doesn't exist yet.
-  /// There is no upper bound — `Ctrl+Alt+1..9` cover the first nine, the
-  /// toolbar `+` button reaches the rest.
+  /// There is no upper bound — `Ctrl+Alt+1..9` cover the first nine (by
+  /// position, see `activateByPosition`), the toolbar `+` button reaches the
+  /// rest. A new workspace is appended, so its position is count + 1.
   async activate(id: number): Promise<void> {
     if (id < 1) return;
     let created = false;
@@ -367,7 +381,7 @@ export class WorkspaceManager {
   /// before the one at `insertBefore` (`workspaces.length` = move to the end).
   /// Display order *is* `config.workspaces` order, which TOML's
   /// `[[workspaces]]` array preserves — so this needs no model change. Ids are
-  /// untouched, so `Ctrl+Alt+N` keeps pointing at the workspace showing `N`.
+  /// untouched; the shown number is positional, so numbers re-flow with the move.
   /// Returns whether anything actually moved.
   moveWorkspace(fromIndex: number, insertBefore: number): boolean {
     const next = moveItem(this.config.workspaces, fromIndex, insertBefore);
@@ -1873,8 +1887,7 @@ export class WorkspaceManager {
 
     // OS notification + sound.
     const name = this.getWorkspaceName(wsId);
-    const label =
-      name && name !== `workspace-${wsId}` ? `${wsId}: ${name}` : `${wsId}`;
+    const label = formatWorkspaceLabel(wsId, name, this.workspacePosition(wsId));
     const trimmed = message?.trim();
     const body =
       trimmed && trimmed.length > 0

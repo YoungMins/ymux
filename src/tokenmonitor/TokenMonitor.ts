@@ -2,7 +2,7 @@ import { api } from "../ipc/bridge";
 import { t, getLang, onLangChange } from "../i18n/i18n";
 import type { Pane } from "../layout/Pane";
 import type { Uuid } from "../types";
-import { aggregateUsage, remainingQuota, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
+import { aggregateUsage, dailyTotals, heatmapGrid, remainingQuota, type HourBucket, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
 import "./tokenmonitor.css";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""): HTMLElementTagNameMap[K] {
@@ -27,6 +27,57 @@ function resetInfo(resetsAt: number | null | undefined, now: number, cycle: stri
 function breakdown(tokens: TokenTotals): string {
   return (["total", "input", "output", "cache_read", "cache_write"] as const).map(key => `${t(`usage.${key}`)}: ${tokens[key].toLocaleString()}`).join("\n");
 }
+const HEAT_CELL = 9, HEAT_GAP = 2, HEAT_LABEL_W = 16, HEAT_MAX_WEEKS = 53;
+/** Trailing weeks that fit in `width` px (content box); an unmeasured pane gets a modest default. */
+function heatWeeks(width: number): number {
+  if (width <= 0) return 20;
+  return Math.max(4, Math.min(HEAT_MAX_WEEKS, Math.floor((width - HEAT_LABEL_W + HEAT_GAP) / (HEAT_CELL + HEAT_GAP))));
+}
+function heatmap(hourly: readonly HourBucket[], weeks: number): HTMLElement {
+  const lang = getLang();
+  const columns = heatmapGrid(dailyTotals(hourly, null), new Date(), weeks);
+  const providers = (["claude", "codex"] as const).map(id => [id === "claude" ? "Claude Code" : "Codex", dailyTotals(hourly, id)] as const).filter(([, days]) => days.size > 0);
+  const dateFormat = new Intl.DateTimeFormat(lang, { dateStyle: "medium" });
+  const monthFormat = new Intl.DateTimeFormat(lang, { month: "short" });
+  const weekdayFormat = new Intl.DateTimeFormat(lang, { weekday: "narrow" });
+  const section = el("section", "", "usage-activity"); section.style.setProperty("--cols", String(columns.length));
+  const months = el("div", "", "usage-heat-months"); const days = el("div", "", "usage-heat-days"); const grid = el("div", "", "usage-heat-grid");
+  for (let day = 0; day < 7; day++) days.append(el("span", day % 2 === 1 ? weekdayFormat.format(new Date(2023, 0, 1 + day)) : ""));
+  const cells = document.createDocumentFragment(); const labels = document.createDocumentFragment();
+  let lastMonth = -1, lastLabel = -3, sum = 0, active = 0;
+  columns.forEach((column, index) => {
+    const start = column[0]; if (!start) return;
+    const month = Number(start.date.slice(5, 7));
+    if (month !== lastMonth) {
+      lastMonth = month;
+      if (index - lastLabel >= 3 && columns.length - index >= 2) {
+        lastLabel = index;
+        const label = el("span", monthFormat.format(new Date(Number(start.date.slice(0, 4)), month - 1, 1)));
+        label.style.gridColumn = `${index + 1} / span ${Math.min(3, columns.length - index)}`; labels.append(label);
+      }
+    }
+    for (const cell of column) {
+      const node = el("i", "", "usage-heat-cell"); node.dataset.level = String(cell.level);
+      const [y = 0, m = 1, d = 1] = cell.date.split("-").map(Number);
+      const lines = [`${dateFormat.format(new Date(y, m - 1, d))}: ${compact(cell.total)}`];
+      if (cell.total > 0) {
+        sum += cell.total; active++;
+        const parts = providers.filter(([, map]) => map.has(cell.date));
+        if (parts.length > 1) for (const [name, map] of parts) lines.push(`${name}: ${compact(map.get(cell.date) ?? 0)}`);
+      }
+      node.title = lines.join("\n"); cells.append(node);
+    }
+  });
+  months.append(labels); grid.append(cells);
+  const legend = el("div", "", "usage-heat-legend");
+  legend.append(el("span", t("usage.less")));
+  for (let level = 0; level < 5; level++) { const node = el("i", "", "usage-heat-cell"); node.dataset.level = String(level); legend.append(node); }
+  legend.append(el("span", t("usage.more")));
+  const body = el("div", "", "usage-heat-body"); body.append(months, days, grid);
+  section.append(el("h3", t("usage.activity"), "usage-activity-title"), body, legend);
+  section.setAttribute("role", "img"); section.setAttribute("aria-label", `${t("usage.activity")}: ${compact(sum)} (${active})`);
+  return section;
+}
 export interface TokenMonitorOptions {
   readonly id: Uuid;
   readonly title?: string | null;
@@ -49,6 +100,8 @@ export class TokenMonitorPane implements Pane {
   private readonly cleanupLang: () => void;
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
+  private heatWeeksShown = 0;
+  private resizeObserver: ResizeObserver | null = null;
   private busy = false;
   private lastRefresh = Number.NEGATIVE_INFINITY;
   private lastManualRefresh = Number.NEGATIVE_INFINITY;
@@ -93,6 +146,10 @@ export class TokenMonitorPane implements Pane {
     window.addEventListener("focus", this.regainVisibility);
     this.controls.append(this.periodSelect, this.groupSelect, this.displaySelect, this.refreshButton);
     this.element.append(this.titleEl, this.controls, this.state, this.content);
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => { if (this.data && this.data.hourly.length > 0 && heatWeeks(this.contentWidth()) !== this.heatWeeksShown && this.visible()) this.render(); });
+      this.resizeObserver.observe(this.content);
+    }
     this.setOwnChrome(options.ownChrome ?? true);
     this.cleanupLang = onLangChange(() => this.translate()); this.translate();
   }
@@ -111,7 +168,7 @@ export class TokenMonitorPane implements Pane {
     this.disposed = true; if (this.timer !== null) clearInterval(this.timer);
     document.removeEventListener("visibilitychange", this.regainVisibility);
     window.removeEventListener("focus", this.regainVisibility);
-    this.cleanupLang(); this.element.remove();
+    this.resizeObserver?.disconnect(); this.cleanupLang(); this.element.remove();
   }
   private translate(): void {
     this.setTitle(this.title);
@@ -121,6 +178,7 @@ export class TokenMonitorPane implements Pane {
     for (const option of [...this.periodSelect.options, ...this.groupSelect.options, ...this.displaySelect.options]) option.textContent = t(`usage.${option.value}`);
     this.render();
   }
+  private contentWidth(): number { return this.content.clientWidth - 16; }
   private renderState(): void {
     switch (this.phase) {
       case "loading": this.state.textContent = t("usage.loading"); break;
@@ -174,6 +232,7 @@ export class TokenMonitorPane implements Pane {
       local.title = breakdown(provider[this.period]); card.append(local); cards.append(card);
     }
     this.content.append(cards);
+    if (this.data.hourly.length > 0) { this.heatWeeksShown = heatWeeks(this.contentWidth()); this.content.append(heatmap(this.data.hourly, this.heatWeeksShown)); }
     const rows = aggregateUsage(this.data.rows, this.group, this.period).filter(row => row.tokens.total > 0);
     const table = el("table"); const head = el("thead"); const heading = el("tr"); heading.append(el("th", t(`usage.${this.group}`)), el("th", t("usage.total"))); head.append(heading); table.append(head);
     const body = el("tbody");
