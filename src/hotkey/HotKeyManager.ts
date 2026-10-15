@@ -2,6 +2,9 @@ import type { HotKeyDef } from "../types";
 import { t } from "../i18n/i18n";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 import { ACCOUNT_NONE, getAccounts } from "../accounts/accountModel";
+import { isAutoContinue } from "../autocontinue/model";
+import { setAutoContinue } from "../autocontinue/control";
+import type { Uuid } from "../types";
 
 export function openHotKeyManager(
   initial: HotKeyDef[],
@@ -9,6 +12,7 @@ export function openHotKeyManager(
   onCommit: (next: HotKeyDef[]) => void,
   onBgColorChange: (color: string | null) => void,
   account?: { current: string; onChange: (account: string) => void },
+  paneId?: Uuid,
 ): void {
   let draft: HotKeyDef[] = initial.map((h) => ({ ...h }));
   let closed = false;
@@ -108,6 +112,38 @@ export function openHotKeyManager(
     accHint.className = "hotkey-modal__hint";
     accHint.textContent = t("account.paneHint");
     modal.appendChild(accHint);
+  }
+
+  // ── Auto-continue Section ──
+  // Runtime only (the backend forgets it on restart), so it applies at once
+  // and is never part of the saved layout.
+  if (paneId) {
+    const autoTitle = document.createElement("h2");
+    autoTitle.textContent = t("autoContinue.title");
+    modal.appendChild(autoTitle);
+
+    const autoLabel = document.createElement("label");
+    autoLabel.style.display = "flex";
+    autoLabel.style.gap = "8px";
+    autoLabel.style.alignItems = "center";
+    const autoBox = document.createElement("input");
+    autoBox.type = "checkbox";
+    autoBox.checked = isAutoContinue(paneId);
+    autoBox.addEventListener("change", () => {
+      const want = autoBox.checked;
+      setAutoContinue(paneId, want).catch((e) => {
+        console.warn("set_auto_continue failed:", e);
+        autoBox.checked = !want;
+      });
+    });
+    autoLabel.appendChild(autoBox);
+    autoLabel.appendChild(document.createTextNode(t("autoContinue.toggle")));
+    modal.appendChild(autoLabel);
+
+    const autoHint = document.createElement("p");
+    autoHint.className = "hotkey-modal__hint";
+    autoHint.textContent = t("autoContinue.hint");
+    modal.appendChild(autoHint);
   }
 
   // ── HotKey Section ──

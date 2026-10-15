@@ -68,6 +68,7 @@ import {
   toBadge,
   type AccountBadge,
 } from "../accounts/accountModel";
+import { onAutoContinueChange } from "../autocontinue/model";
 import { promptWorktreeBranch, removeWorktreeFlow, type LivePane } from "../git/worktreeFlow";
 import { askChoice, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
@@ -154,6 +155,8 @@ export class WorkspaceManager {
     this.config = config;
     this.shells = shells;
     setAccountsList(config.accounts ?? []);
+    // The AUTO badge (and its answer log) lives in the title row.
+    onAutoContinueChange(() => this.refreshAccountTitles());
     this.activeId = config.active_workspace;
     this.orderShellsByDefault();
   }

@@ -4,6 +4,7 @@ import { t } from "../i18n/i18n";
 import { askText } from "../ui/Dialog";
 import { openTokenDock, toggleFileDock } from "../sidepanel/SidePanel";
 import { api } from "../ipc/bridge";
+import { toggleAutoContinue } from "../autocontinue/control";
 
 export interface CommandDef {
   id: string;
@@ -37,6 +38,19 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       label: () => t("shortcut.close"),
       keybinding: "Ctrl+Shift+W",
       action: () => void manager.closeFocused(),
+    },
+    {
+      id: "pane.autoContinue",
+      label: () => t("autoContinue.command"),
+      action: async () => {
+        const id = manager.activePaneId();
+        if (!id) return;
+        try {
+          await toggleAutoContinue(id);
+        } catch (e) {
+          console.warn("set_auto_continue failed:", e);
+        }
+      },
     },
     {
       id: "pane.newTab",

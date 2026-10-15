@@ -4,6 +4,8 @@
 
 import { t } from "../i18n/i18n";
 import type { AccountBadge } from "./accountModel";
+import { autoLog, formatEntry, isAutoContinue } from "../autocontinue/model";
+import type { Uuid } from "../types";
 
 /// Replace the contents of a `.pane-title` element. `pending` marks a badge
 /// whose account was changed after the pane's PTY started: the running shell
@@ -13,8 +15,10 @@ export function paintPaneTitle(
   text: string,
   badge: AccountBadge | null,
   pending = false,
+  paneId?: Uuid,
 ): void {
   el.replaceChildren(document.createTextNode(text));
+  if (paneId && isAutoContinue(paneId)) el.appendChild(autoBadge(paneId));
   if (!badge) return;
   const span = document.createElement("span");
   span.className = "account-badge";
@@ -28,4 +32,18 @@ export function paintPaneTitle(
   span.appendChild(dot);
   span.appendChild(document.createTextNode(badge.name));
   el.appendChild(span);
+}
+
+/// "AUTO" badge for a pane with auto-continue on; its tooltip lists the last
+/// questions it answered.
+function autoBadge(paneId: Uuid): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "auto-badge";
+  span.textContent = t("autoContinue.badge");
+  const log = autoLog(paneId);
+  const lines = log.length
+    ? log.map((e) => formatEntry(e, t("autoContinue.denied")))
+    : [t("autoContinue.noAnswers")];
+  span.title = [t("autoContinue.badgeTitle"), ...lines].join("\n");
+  return span;
 }

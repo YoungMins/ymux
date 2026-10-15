@@ -21,6 +21,7 @@ ymux/
 │       ├── agent_scan.rs       # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
 │       ├── agent_scan_disk.rs  # Disk-scan fallback for session resume: finds an agent's transcript by cwd match (pure)
 │       ├── agent_sessions.rs   # Resumable agent sessions: resume argv/command, freshness window (pure)
+│       ├── auto_continue.rs    # Per-pane auto-answer of Claude Code's AskUserQuestion: choice fn, decision JSON, pane set (pure)
 │       ├── agent_hooks.rs      # Install/uninstall Claude Code http hooks in every account's Claude dir settings.json: merge fns + plan_hooks/apply_plan (pure; reconcile_hooks in commands.rs)
 │       ├── hook_http.rs        # Loopback receiver for those hooks: auth, parsing, port choice, listener (pure std)
 │       ├── config/             # Config model + store
@@ -362,6 +363,27 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   other 2xx body is an error. The response goes out before the registry is
   touched, so Claude never waits on ymux's locks; an oversized authenticated
   body is also a quiet 204 (dropped), never an error.
+  **The one exception is auto-continue** (`auto_continue.rs`, runtime-only
+  per-pane switch `set_auto_continue`): a `200 application/json` decision, and
+  only when ALL hold — the token is valid, the pane is one of ours
+  (`authorize` returned `Accept`), the pane is in `AppState::auto_continue`,
+  the event is `PreToolUse`, `tool_name` is `AskUserQuestion`, and the body
+  parses as `tool_input.questions[]`. Anything else, including a malformed
+  question, stays an empty 204 (no decision, normal UI). The decision is
+  computed from the already-parsed body taking only the small auto-panes
+  mutex (plus the PTY sessions lookup that already existed) and no registry
+  lock, the event is
+  queued and the response written first, and only then is the frontend told
+  (`auto-continue:answered`). It answers `allow` with the full original
+  `tool_input` plus `answers`, or `deny` with `auto_continue::DENY_REASON`
+  when any question has no `(Recommended)` option (or `DUPLICATE_REASON` when
+  two questions share the same text). Logged question/answer strings are
+  clipped to 200 chars; the decision body is not. The set is also reset to OFF
+  in `spawn_pane` after a successful spawn. The `answers` format
+  (question text → label, multi-select joined by `join_labels`) comes from the
+  docs and still needs a live check. The set is cleared on `kill_pane` and
+  never persisted (like rule 11's backend-owned state, it is not in
+  `merge_layouts_from`).
 - **The port is fixed.** Claude Code interpolates env vars into header values
   only, never into the URL, so the port is a literal in the user's
   `settings.json`. It is chosen once, kept in `Config::agent_hook_port`

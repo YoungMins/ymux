@@ -187,7 +187,7 @@ export class PaneGroup {
       return;
     }
     const { badge, pending } = this.cb.accountBadgeOf(activeId);
-    paintPaneTitle(this.titleEl, this.cb.labelOf(activeId), badge, pending);
+    paintPaneTitle(this.titleEl, this.cb.labelOf(activeId), badge, pending, activeId);
   }
 
   dispose(): void {

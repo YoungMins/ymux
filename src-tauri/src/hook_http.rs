@@ -24,6 +24,7 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::agents::HookEvent;
+use crate::auto_continue::{self, Decision};
 
 /// The one path the receiver answers on. Also the ownership marker of every
 /// hook entry `agent_hooks` installs (CLAUDE.md rule 12).
@@ -216,7 +217,11 @@ fn host_is_loopback(host: &str) -> bool {
 /// Build the agent-registry event for one hook body — the same shape
 /// `y agent-hook` used to relay — or `None` if it isn't a hook payload.
 pub fn hook_event(body: &[u8], pane: Uuid) -> Option<HookEvent> {
-    let input: Value = serde_json::from_slice(body).ok()?;
+    event_of(&serde_json::from_slice(body).ok()?, pane)
+}
+
+/// [`hook_event`] for an already-parsed body.
+fn event_of(input: &Value, pane: Uuid) -> Option<HookEvent> {
     let event = input.get("hook_event_name")?.as_str()?;
     let session_id = input
         .get("session_id")
@@ -235,8 +240,9 @@ pub fn hook_event(body: &[u8], pane: Uuid) -> Option<HookEvent> {
     HookEvent::from_payload(&Value::Object(payload))
 }
 
-/// An empty-bodied response. Never a JSON body: on a 2xx Claude Code would
-/// parse it as hook output (decisions, context), and a non-2xx is an error
+/// An empty-bodied response. Never a JSON body, except the one auto-continue
+/// answer ([`json_response`], CLAUDE.md rule 13): on a 2xx Claude Code parses
+/// the body as hook output (decisions, context), and a non-2xx is an error
 /// whatever it carries.
 pub fn response(status: u16) -> String {
     let reason = match status {
@@ -250,6 +256,16 @@ pub fn response(status: u16) -> String {
         _ => "Error",
     };
     format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+/// The one 2xx that carries a body: a `PreToolUse` decision (see
+/// [`crate::auto_continue`]). Only sent for a pane with auto-continue on.
+pub fn json_response(body: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 /// The ping answer: 200 with [`PING_BODY`]. Never sent to Claude (it only
@@ -385,6 +401,28 @@ fn bind_exclusive(addr: SocketAddr) -> io::Result<TcpListener> {
 pub type KnownPane = Arc<dyn Fn(Uuid) -> bool + Send + Sync>;
 pub type OnEvent = Arc<dyn Fn(HookEvent) + Send + Sync>;
 
+/// Callback for a sent auto-continue decision.
+pub type OnAnswer = Arc<dyn Fn(Uuid, &Decision) + Send + Sync>;
+
+/// Auto-continue wiring (see [`crate::auto_continue`]).
+#[derive(Clone)]
+pub struct AutoContinue {
+    /// Whether a (known, authenticated) pane has auto-continue on.
+    pub enabled: KnownPane,
+    /// Called after the decision has been sent, with what it was.
+    pub on_answer: OnAnswer,
+}
+
+impl AutoContinue {
+    /// Never answers anything.
+    pub fn off() -> Self {
+        Self {
+            enabled: Arc::new(|_| false),
+            on_answer: Arc::new(|_, _| {}),
+        }
+    }
+}
+
 /// One of at most `max` concurrently served connections; frees its slot on
 /// drop.
 #[derive(Debug)]
@@ -431,8 +469,9 @@ pub fn serve(
     token: String,
     known_pane: KnownPane,
     on_event: OnEvent,
+    auto: AutoContinue,
 ) -> io::Result<std::thread::JoinHandle<()>> {
-    serve_with(listener, token, known_pane, on_event, LIMITS)
+    serve_with(listener, token, known_pane, on_event, auto, LIMITS)
 }
 
 /// [`serve`] with explicit limits.
@@ -448,6 +487,7 @@ pub fn serve_with(
     token: String,
     known_pane: KnownPane,
     on_event: OnEvent,
+    auto: AutoContinue,
     limits: Limits,
 ) -> io::Result<std::thread::JoinHandle<()>> {
     let token: Arc<str> = token.into();
@@ -470,12 +510,13 @@ pub fn serve_with(
                     continue;
                 };
                 let deadline = Instant::now() + limits.deadline;
-                let (token, known_pane, tx) = (token.clone(), known_pane.clone(), tx.clone());
+                let (token, known_pane, tx, auto) =
+                    (token.clone(), known_pane.clone(), tx.clone(), auto.clone());
                 let _ = std::thread::Builder::new()
                     .name("ymux-hook-conn".into())
                     .spawn(move || {
                         let _slot = slot;
-                        let _ = handle(stream, &token, &*known_pane, &tx, deadline);
+                        let _ = handle(stream, &token, &*known_pane, &tx, &auto, deadline);
                     });
             }
         })
@@ -487,6 +528,7 @@ fn handle(
     token: &str,
     known_pane: &(dyn Fn(Uuid) -> bool + Send + Sync),
     queue: &std::sync::mpsc::Sender<HookEvent>,
+    auto: &AutoContinue,
     deadline: Instant,
 ) -> io::Result<()> {
     let mut buf = Vec::with_capacity(4096);
@@ -540,11 +582,26 @@ fn handle(
         }
     }
     body.truncate(len);
-    let Some(event) = hook_event(&body, pane) else {
+    let Ok(input) = serde_json::from_slice::<Value>(&body) else {
         return reply(&mut stream, 400, deadline);
     };
+    let Some(event) = event_of(&input, pane) else {
+        return reply(&mut stream, 400, deadline);
+    };
+    // Auto-continue: the only 2xx with a body. Decided from the parsed body
+    // alone (token and pane were checked by `authorize`), before the registry
+    // is touched; a body that isn't a well-formed `AskUserQuestion` gets the
+    // usual empty 204.
+    let decision = (event.event == "PreToolUse" && (auto.enabled)(pane))
+        .then(|| auto_continue::decide(&input))
+        .flatten();
     let _ = queue.send(event);
-    reply(&mut stream, 204, deadline)
+    let Some(decision) = decision else {
+        return reply(&mut stream, 204, deadline);
+    };
+    reply_raw(&mut stream, &json_response(&decision.body()), deadline)?;
+    (auto.on_answer)(pane, &decision);
+    Ok(())
 }
 
 /// Upper bound on request bytes discarded after an early reply.
@@ -552,9 +609,14 @@ const MAX_DRAIN: u64 = MAX_BODY as u64 + MAX_HEAD as u64;
 
 /// Write `status` (within the deadline) and half-close.
 fn reply(stream: &mut TcpStream, status: u16, deadline: Instant) -> io::Result<()> {
+    reply_raw(stream, &response(status), deadline)
+}
+
+/// Write a whole response (within the deadline) and half-close.
+fn reply_raw(stream: &mut TcpStream, raw: &str, deadline: Instant) -> io::Result<()> {
     let left = remaining(deadline, Instant::now()).ok_or(io::ErrorKind::TimedOut)?;
     stream.set_write_timeout(Some(left))?;
-    stream.write_all(response(status).as_bytes())?;
+    stream.write_all(raw.as_bytes())?;
     stream.flush()?;
     let _ = stream.shutdown(std::net::Shutdown::Write);
     Ok(())
@@ -977,6 +1039,7 @@ mod tests {
             Arc::new(move |ev| {
                 let _ = tx.lock().send(ev);
             }),
+            AutoContinue::off(),
         )
         .unwrap();
         (port, rx)
@@ -1076,6 +1139,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis((5 - n) * 40));
                 let _ = tx.lock().send(n);
             }),
+            AutoContinue::off(),
         )
         .unwrap();
         for n in 0..5 {
@@ -1125,6 +1189,7 @@ mod tests {
             Arc::new(move |ev| {
                 let _ = tx.lock().send(ev);
             }),
+            AutoContinue::off(),
             limits,
         )
         .unwrap();
@@ -1233,6 +1298,23 @@ mod tests {
                 let _ = authorize(&head, TOKEN, ours);
             }
             let _ = hook_event(&bytes, pane());
+            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                let _ = auto_continue::decide(&v);
+            }
+        }
+        // Valid JSON of hostile shape, and truncations of a real payload.
+        let real = br#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"q","multiSelect":true,"options":[{"label":"a (Recommended)"}]}]}}"#;
+        for cut in 0..=real.len() {
+            if let Ok(v) = serde_json::from_slice::<Value>(&real[..cut]) {
+                let _ = auto_continue::decide(&v);
+            }
+        }
+        for v in [
+            r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[null,1,"x",[],{"options":{}}]}}"#,
+            r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"q","options":[null,{"label":null},{"label":""}]}]}}"#,
+            r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"q","multiSelect":"yes","options":[{"label":"\u0130 (RECOMMENDED)"}]}]}}"#,
+        ] {
+            let _ = auto_continue::decide(&serde_json::from_str(v).unwrap());
         }
         for cl in [
             "-1",
@@ -1306,6 +1388,133 @@ mod tests {
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap().event,
             "Stop"
+        );
+    }
+
+    /// A receiver with auto-continue on for `pane()` only; answers it gave
+    /// arrive on the second channel.
+    fn start_auto() -> (
+        u16,
+        mpsc::Receiver<HookEvent>,
+        mpsc::Receiver<(Uuid, Decision)>,
+    ) {
+        let listener = bind_loopback(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        let tx = parking_lot::Mutex::new(tx);
+        let (atx, arx) = mpsc::channel();
+        let atx = parking_lot::Mutex::new(atx);
+        serve(
+            listener,
+            TOKEN.into(),
+            Arc::new(ours),
+            Arc::new(move |ev| {
+                let _ = tx.lock().send(ev);
+            }),
+            AutoContinue {
+                enabled: Arc::new(ours),
+                on_answer: Arc::new(move |p, d| {
+                    let _ = atx.lock().send((p, d.clone()));
+                }),
+            },
+        )
+        .unwrap();
+        (port, rx, arx)
+    }
+
+    const ASK: &str = r#"{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion",
+        "tool_input":{"questions":[{"question":"Which?","header":"H","multiSelect":false,
+        "options":[{"label":"A","description":"a"},{"label":"B (Recommended)","description":"b"}]}]}}"#;
+
+    fn body_of(resp: &str) -> &str {
+        resp.split_once("\r\n\r\n").map_or("", |(_, b)| b)
+    }
+
+    #[test]
+    fn auto_pane_asking_gets_a_json_decision() {
+        let (port, rx, arx) = start_auto();
+        let resp = send(port, &request(port, &pane().to_string(), TOKEN, "", ASK));
+        assert!(resp.starts_with("HTTP/1.1 200 OK\r\n"), "{resp}");
+        assert!(resp.contains("Content-Type: application/json\r\n"));
+        let v: Value = serde_json::from_str(body_of(&resp)).unwrap();
+        let out = &v["hookSpecificOutput"];
+        assert_eq!(out["permissionDecision"], "allow");
+        assert_eq!(out["updatedInput"]["answers"]["Which?"], "B (Recommended)");
+        let len: usize = resp
+            .lines()
+            .find_map(|l| l.strip_prefix("Content-Length: "))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(len, body_of(&resp).len());
+        // The registry still sees the event, and the log hears the answer.
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .tool_name
+                .as_deref(),
+            Some("AskUserQuestion")
+        );
+        let (p, d) = arx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(p, pane());
+        assert!(matches!(d, Decision::Answer { .. }));
+    }
+
+    #[test]
+    fn auto_pane_with_nothing_recommended_is_denied() {
+        let (port, _rx, arx) = start_auto();
+        let body = ASK.replace(" (Recommended)", "");
+        let resp = send(port, &request(port, &pane().to_string(), TOKEN, "", &body));
+        assert!(resp.starts_with("HTTP/1.1 200 OK\r\n"), "{resp}");
+        let v: Value = serde_json::from_str(body_of(&resp)).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            arx.recv_timeout(Duration::from_secs(5)).unwrap().1,
+            Decision::Deny
+        );
+    }
+
+    #[test]
+    fn everything_else_stays_an_empty_204() {
+        let (port, rx, arx) = start_auto();
+        let p = pane().to_string();
+        // Auto on, but another tool / another event / a malformed question.
+        let bash = ASK.replace("AskUserQuestion", "Bash");
+        let post = ASK.replace("PreToolUse", "PostToolUse");
+        let malformed = r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion",
+            "tool_input":{"questions":[{"question":"q"}]}}"#;
+        for body in [bash.as_str(), post.as_str(), malformed] {
+            assert_eq!(
+                send(port, &request(port, &p, TOKEN, "", body)),
+                response(204)
+            );
+        }
+        // Empty token: a session outside ymux, even naming our pane.
+        assert_eq!(send(port, &request(port, &p, "", "", ASK)), response(204));
+        // Wrong token or foreign pane: refused, never decided.
+        let bad = send(port, &request(port, &p, "guess", "", ASK));
+        assert!(bad.starts_with("HTTP/1.1 403 "), "{bad}");
+        let foreign = Uuid::new_v4().to_string();
+        let other = send(port, &request(port, &foreign, TOKEN, "", ASK));
+        assert!(other.starts_with("HTTP/1.1 403 "), "{other}");
+        let page = send(
+            port,
+            &request(port, &p, TOKEN, "Origin: https://evil.example\r\n", ASK),
+        );
+        assert!(page.starts_with("HTTP/1.1 403 "), "{page}");
+        assert!(arx.recv_timeout(Duration::from_millis(300)).is_err());
+        assert_eq!(rx.try_iter().count(), 3, "only the three accepted events");
+    }
+
+    /// The same question from a pane that is not in the auto set: normal UI.
+    #[test]
+    fn a_pane_not_in_the_auto_set_gets_a_204() {
+        let (port, rx) = start(); // `AutoContinue::off()`
+        let resp = send(port, &request(port, &pane().to_string(), TOKEN, "", ASK));
+        assert_eq!(resp, response(204));
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap().event,
+            "PreToolUse"
         );
     }
 }

@@ -112,6 +112,7 @@ export class HotKeyBar {
             this.opts.onAccountChange?.(account);
           },
         },
+        this.opts.paneId,
       );
     });
     this.element.appendChild(manage);

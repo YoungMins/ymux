@@ -17,6 +17,7 @@ import { mountStatusBar } from "./statusbar/StatusBar";
 import { initLang, onLangChange, t } from "./i18n/i18n";
 import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandPalette";
 import { builtinCommands } from "./palette/commands";
+import { listenAutoAnswers } from "./autocontinue/control";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
@@ -72,6 +73,9 @@ async function main(): Promise<void> {
     .then(() => api.getAgents())
     .then((s) => manager.applyAgents(s))
     .catch((e) => console.warn("get_agents failed:", e));
+
+  // Auto-continue answers feed the AUTO badge's tooltip log.
+  void listenAutoAnswers().catch((e) => console.warn("auto-continue listen failed:", e));
 
   // Tab labels: subscribe first, then seed, so no change slips between.
   void onPaneLabels((labels) => manager.applyPaneLabels(labels))

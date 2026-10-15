@@ -21,6 +21,7 @@ import type { YTheme, ConfigPathKind } from "../settings/types";
 import type { ResumeOutcome } from "../terminal/resumePlan";
 import type { FileEntry } from "../files/fileModel";
 import type { Eol } from "../editor/eol";
+import { forgetPane, type AutoAnswerEvent } from "../autocontinue/model";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -302,7 +303,12 @@ export const api = {
     call("save_config", { config }),
 
   spawnPane: (args: SpawnArgs): Promise<SpawnedPane> =>
-    call("spawn_pane", { args }),
+    // Ids start with auto-continue off (the backend resets it on spawn), so
+    // drop any stale AUTO state a previous pane with this id left behind.
+    call<SpawnedPane>("spawn_pane", { args }).then((p) => {
+      forgetPane(args.id);
+      return p;
+    }),
 
   writePane: (id: Uuid, data: Uint8Array): Promise<void> =>
     call("write_pane", { args: { id, data: Array.from(data) } }),
@@ -310,7 +316,14 @@ export const api = {
   resizePane: (args: ResizeArgs): Promise<void> =>
     call("resize_pane", { args }),
 
-  killPane: (id: Uuid): Promise<void> => call("kill_pane", { id }),
+  killPane: (id: Uuid): Promise<void> =>
+    call<void>("kill_pane", { id }).finally(() => forgetPane(id)),
+
+  /// Turn auto-continue (ymux answers Claude Code's AskUserQuestion from its
+  /// hook) on or off for one pane. Runtime only; the backend clears it when
+  /// the pane is killed.
+  setAutoContinue: (id: Uuid, enabled: boolean): Promise<void> =>
+    call("set_auto_continue", { id, enabled }),
 
   setActiveWorkspace: (id: number): Promise<void> =>
     call("set_active_workspace", { id }),
@@ -564,6 +577,13 @@ export function onAgentsChanged(
   handler: (snapshot: AgentSnapshot) => void,
 ): Promise<UnlistenFn> {
   return safeListen<AgentSnapshot>("agents:changed", handler);
+}
+
+/// Subscribe to auto-continue decisions (one event per answered question set).
+export function onAutoAnswer(
+  handler: (ev: AutoAnswerEvent) => void,
+): Promise<UnlistenFn> {
+  return safeListen<AutoAnswerEvent>("auto-continue:answered", handler);
 }
 
 /// Subscribe to tab-label snapshots pushed by the 2 s process scan.

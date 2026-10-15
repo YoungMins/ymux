@@ -151,6 +151,20 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   not know about accounts (it would leave the hooks in the account folders).
   ymux ships no helper binary.
 
+#### Auto-continue (Claude Code)
+
+Turn it on per terminal in the pane's ⚙ dialog or with the command palette
+("Toggle auto-continue for this pane"); an **AUTO** badge appears in the
+pane title, and hovering it lists the last answers. While it is on, ymux
+answers Claude Code's multiple-choice questions (`AskUserQuestion`) itself: it
+picks the option whose label ends with "(Recommended)" (all such options for a
+multi-select question). If any question has no recommended option, ymux
+refuses the question and tells Claude to choose for itself. It needs Claude Code
+hook tracking (Settings → General), works for Claude Code only, and is
+runtime-only: it is off again after a restart or when the terminal closes.
+Risk: the recommended option is only Claude's suggestion and is not always the
+right one, so use it where an unattended wrong answer is cheap to undo.
+
 #### Multiple accounts
 
 Keep several Claude Code or Codex logins side by side. In **Settings →

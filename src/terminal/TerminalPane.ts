@@ -892,6 +892,7 @@ export class TerminalPane implements Pane {
       this.spec.title || this.spec.shell || t("terminal.defaultTitle"),
       this.opts.accountBadge?.() ?? null,
       this.isAccountPending(),
+      this.id,
     );
   }
 

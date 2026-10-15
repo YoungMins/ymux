@@ -180,6 +180,7 @@ fn main() {
     let state = AppState {
         config,
         pty: PtyManager::default(),
+        auto_continue: Default::default(),
     };
     let eb_registry = ymux_lib::embedded_browser::EmbeddedBrowserRegistry::default();
 
@@ -295,6 +296,7 @@ fn main() {
             ymux_lib::commands::get_agents,
             ymux_lib::commands::get_pane_labels,
             ymux_lib::commands::set_agent_tracking,
+            ymux_lib::commands::set_auto_continue,
             ymux_lib::tray::set_tray_labels,
             ymux_lib::tray::quit_guard_ready,
             ymux_lib::tray::ack_quit,

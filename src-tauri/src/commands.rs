@@ -45,6 +45,8 @@ pub async fn get_token_usage(
 pub struct AppState {
     pub config: ConfigStore,
     pub pty: PtyManager,
+    /// Panes with auto-continue on (runtime only; see `auto_continue`).
+    pub auto_continue: crate::auto_continue::AutoPanes,
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,7 +282,7 @@ pub fn spawn_pane(
         account: args.account,
     };
 
-    state.pty.spawn(
+    let spawned = state.pty.spawn(
         &spec,
         &profile,
         PtySize {
@@ -290,7 +292,11 @@ pub fn spawn_pane(
             pixel_height: 0,
         },
         &remove_env,
-    )
+    )?;
+    // Ids always start OFF: a `set_auto_continue(id, true)` that raced past
+    // `kill_pane` must not leave a respawned pane auto-answering with no badge.
+    state.auto_continue.set(args.id, false);
+    Ok(spawned)
 }
 
 #[tauri::command]
@@ -331,6 +337,7 @@ pub fn kill_pane(
     id: Uuid,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "kill_pane")?;
+    state.auto_continue.set(id, false);
     state.pty.kill(id)
 }
 
@@ -358,6 +365,59 @@ pub fn get_pane_cwd(
 ) -> YmuxResult<Option<String>> {
     guard_local(&webview, &request, "get_pane_cwd")?;
     Ok(state.pty.cwd_for(id))
+}
+
+/// Turn auto-continue (answering Claude Code's `AskUserQuestion` from its
+/// hook, CLAUDE.md rule 13) on or off for one pane. Runtime only.
+#[tauri::command]
+pub fn set_auto_continue(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    id: Uuid,
+    enabled: bool,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "set_auto_continue")?;
+    if enabled && !state.pty.has(id) {
+        return Err(YmuxError::UnknownPane(id));
+    }
+    state.auto_continue.set(id, enabled);
+    Ok(())
+}
+
+/// Tauri event after each auto-continue decision (see [`AutoAnswerEvent`]).
+pub const AUTO_ANSWER_EVENT: &str = "auto-continue:answered";
+
+/// One auto-continue decision, for the pane's log.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoAnswerEvent {
+    pub pane_id: Uuid,
+    /// No option was recommended: the question was denied back to the model.
+    pub denied: bool,
+    /// `(question, answer)` pairs; empty when `denied`.
+    pub answers: Vec<(String, String)>,
+}
+
+impl AutoAnswerEvent {
+    pub fn new(pane_id: Uuid, decision: &crate::auto_continue::Decision) -> Self {
+        use crate::auto_continue::{clip_for_log, Decision};
+        match decision {
+            Decision::Answer { answers, .. } => Self {
+                pane_id,
+                denied: false,
+                answers: answers
+                    .iter()
+                    .map(|(q, a)| (clip_for_log(q), clip_for_log(a)))
+                    .collect(),
+            },
+            Decision::Deny | Decision::DenyDuplicate => Self {
+                pane_id,
+                denied: true,
+                answers: Vec::new(),
+            },
+        }
+    }
 }
 
 /// Tauri event carrying the full agent snapshot after every registry change.
@@ -872,11 +932,24 @@ pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) ->
     }
     let known = app.clone();
     let apply = app.clone();
+    let auto_on = app.clone();
+    let auto_log = app.clone();
     let served = hook_http::serve(
         listener,
         token,
         std::sync::Arc::new(move |pane| known.state::<AppState>().pty.has(pane)),
         std::sync::Arc::new(move |ev| apply_agent_hook(&apply, ev)),
+        hook_http::AutoContinue {
+            enabled: std::sync::Arc::new(move |pane| {
+                auto_on.state::<AppState>().auto_continue.contains(pane)
+            }),
+            on_answer: std::sync::Arc::new(move |pane, decision| {
+                let ev = AutoAnswerEvent::new(pane, decision);
+                if let Err(e) = auto_log.emit(AUTO_ANSWER_EVENT, &ev) {
+                    tracing::warn!(error = %e, "emit auto-continue:answered failed");
+                }
+            }),
+        },
     );
     if let Err(e) = served {
         tracing::error!(error = %e, "failed to start the Claude Code hook receiver");
