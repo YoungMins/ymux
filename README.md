@@ -264,6 +264,7 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+T`              | `Cmd+Shift+T`      | New tab in focused pane              |
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | Previous / next tab in pane         |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
+| `Ctrl+Shift+U`              | `Cmd+Shift+U`      | Jump to next pane needing attention  |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | Swap pane with previous / next       |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |

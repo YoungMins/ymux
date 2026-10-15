@@ -73,7 +73,15 @@ import { promptWorktreeBranch, removeWorktreeFlow, type LivePane } from "../git/
 import { askChoice, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
-import { newlyWaitingPanes, workspaceIdOfPane } from "./agentTree";
+import { newlyWaitingPanes, paneLabel, workspaceIdOfPane } from "./agentTree";
+import {
+  buildInbox,
+  nextAttention,
+  ReadHistory,
+  type InboxCandidate,
+  type InboxItem,
+  type ReadItem,
+} from "./inbox";
 import { pickActivePaneId } from "./activePane";
 import { viewerTabAction } from "./viewerTab";
 import { zoomAction } from "./zoom";
@@ -129,6 +137,11 @@ export class WorkspaceManager {
   /// TerminalPane's `PaneStatusMachine`. Backs both the pane's border colour
   /// and the workspace tab's status dot. Browser panes never appear here.
   paneStatus = new Map<Uuid, PaneStatus>();
+  /// When each pane entered its current status (ms epoch), for the inbox.
+  private statusSince = new Map<Uuid, number>();
+  private readHistoryLog = new ReadHistory();
+  private inboxListeners = new Set<() => void>();
+  private inboxFrame: number | null = null;
   /// Notified with the owning workspace id whenever a pane's status changes,
   /// so the workspace bar can re-colour that workspace's tab dot.
   onPaneStatusChange?: (workspaceId: number) => void;
@@ -454,7 +467,10 @@ export class WorkspaceManager {
       // Permanent: the whole workspace is being deleted, so any persisted
       // scrollback for its panes has no future mount to restore into.
       for (const pane of cache.values()) pane.dispose(true);
-      for (const paneId of cache.keys()) this.paneStatus.delete(paneId);
+      for (const paneId of cache.keys()) {
+        this.paneStatus.delete(paneId);
+        this.forgetInbox(paneId);
+      }
     }
     this.paneCaches.delete(id);
     for (const group of this.groupCaches.get(id)?.values() ?? []) group.dispose();
@@ -638,8 +654,21 @@ export class WorkspaceManager {
       onContextMenu: (ev) => this.showPaneContextMenu(spec.id, ev),
       persistScrollback: () => this.persistScrollback,
       bottomAnchor: () => this.bottomAnchor,
+      onAcknowledged: () => {
+        const item = this.buildInboxItem(spec.id);
+        if (item) {
+          this.readHistoryLog.push({
+            paneId: item.paneId,
+            readAt: Date.now(),
+            status: item.status,
+            agentKind: item.agentKind,
+          });
+        }
+      },
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
+        this.statusSince.set(spec.id, Date.now());
+        this.scheduleInboxChange();
         this.applyPaneStatusClass(spec.id, status);
         const wsId = this.workspaceOfPane(spec.id);
         if (wsId !== null) this.onPaneStatusChange?.(wsId);
@@ -1454,6 +1483,7 @@ export class WorkspaceManager {
     pane?.dispose(true);
     cache.delete(id);
     this.paneStatus.delete(id);
+    this.forgetInbox(id);
 
     if (newRoot === null) {
       // Workspace would be empty; create a replacement pane so there is
@@ -1804,6 +1834,105 @@ export class WorkspaceManager {
 
   private notifyTree(): void {
     for (const cb of this.treeListeners) cb();
+    this.scheduleInboxChange();
+  }
+
+  // ── Attention inbox ───────────────────────────────────────────────────────
+
+  private forgetInbox(paneId: Uuid): void {
+    this.statusSince.delete(paneId);
+    this.readHistoryLog.remove(paneId);
+    this.scheduleInboxChange();
+  }
+
+  /// Subscribe to inbox changes (status, tree, closes), coalesced to at most
+  /// one call per animation frame. Returns an unsubscribe function.
+  onInboxChange(cb: () => void): () => void {
+    this.inboxListeners.add(cb);
+    return () => {
+      this.inboxListeners.delete(cb);
+    };
+  }
+
+  private scheduleInboxChange(): void {
+    if (this.inboxFrame !== null || this.inboxListeners.size === 0) return;
+    this.inboxFrame = requestAnimationFrame(() => {
+      this.inboxFrame = null;
+      for (const cb of this.inboxListeners) cb();
+    });
+  }
+
+  private inboxLabels() {
+    return {
+      terminal: t("terminal.defaultTitle"),
+      browser: t("tree.browser"),
+      subagent: t("tree.subagent"),
+      git: t("git.title"),
+      token_usage: t("usage.title"),
+    };
+  }
+
+  /// The inbox row for one pane, or null when it is not in attention/done (or
+  /// is not in a hydrated workspace).
+  private buildInboxItem(paneId: Uuid, labels = this.inboxLabels()): InboxItem | null {
+    const status = this.paneStatus.get(paneId) ?? "idle";
+    if (status !== "attention" && status !== "done") return null;
+    const wsId = this.workspaceOfPane(paneId);
+    if (wsId === null) return null;
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    const spec = ws ? findPane(ws.root, paneId) : null;
+    if (!ws || !spec) return null;
+    return {
+      paneId,
+      wsId,
+      wsLabel: formatWorkspaceLabel(wsId, ws.name ?? null, this.workspacePosition(wsId)),
+      paneLabel: paneLabel(spec, labels),
+      agentKind: this._agents[paneId]?.lead?.kind ?? null,
+      status,
+      since: this.statusSince.get(paneId) ?? Date.now(),
+    };
+  }
+
+  /// Every pane in attention/done across hydrated workspaces, attention first.
+  inboxItems(): InboxItem[] {
+    const labels = this.inboxLabels();
+    const rows: InboxCandidate[] = [];
+    for (const cache of this.paneCaches.values()) {
+      for (const id of cache.keys()) {
+        const item = this.buildInboxItem(id, labels);
+        if (item) rows.push(item);
+      }
+    }
+    return buildInbox(rows);
+  }
+
+  /// Recently read items with labels resolved now; panes that no longer exist
+  /// are skipped.
+  readHistory(): ReadItem[] {
+    const labels = this.inboxLabels();
+    const out: ReadItem[] = [];
+    for (const e of this.readHistoryLog.list()) {
+      const wsId = this.workspaceOfPane(e.paneId);
+      if (wsId === null) continue;
+      const ws = this.config.workspaces.find((w) => w.id === wsId);
+      const spec = ws ? findPane(ws.root, e.paneId) : null;
+      if (!ws || !spec) continue;
+      out.push({
+        ...e,
+        wsLabel: formatWorkspaceLabel(wsId, ws.name ?? null, this.workspacePosition(wsId)),
+        paneLabel: paneLabel(spec, labels),
+      });
+    }
+    return out;
+  }
+
+  /// Jump to the next pane that needs the user. The target is computed before
+  /// `focusPane`, because focusing clears the status the inbox is built from.
+  focusNextAttention(): boolean {
+    const target = nextAttention(this.inboxItems(), this.focusedPaneId);
+    if (!target) return false;
+    void this.focusPane(target);
+    return true;
   }
 
   /// Take a new backend snapshot. A lead that just started waiting on the

@@ -14,6 +14,8 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /// Tooltip (the button's `title`).
   title?: string;
+  /// Extra class on the button (e.g. a dimmed or emphasised row).
+  className?: string;
 }
 
 /// A non-clickable section label (the "+" launcher's Agents / Terminal / …).
@@ -72,7 +74,7 @@ export function showContextMenu(
     }
     const item = document.createElement("button");
     item.type = "button";
-    item.className = "context-menu__item";
+    item.className = entry.className ? `context-menu__item ${entry.className}` : "context-menu__item";
     item.setAttribute("role", "menuitem");
     item.textContent = entry.label;
     if (entry.title) item.title = entry.title;

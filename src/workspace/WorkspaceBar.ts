@@ -2,7 +2,7 @@ import type { DetectedAgent, ShellProfile } from "../types";
 import type { WorkspaceManager } from "./WorkspaceManager";
 import { api } from "../ipc/bridge";
 import { mountSettings } from "../settings/SettingsOverlay";
-import { toggleWorkspacePanel } from "./WorkspacePanel";
+import { isWorkspacePanelCollapsed, PANEL_TOGGLED_EVENT, toggleWorkspacePanel } from "./WorkspacePanel";
 import { t, onLangChange } from "../i18n/i18n";
 import { toggleSidePanel } from "../sidepanel/SidePanel";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
@@ -99,6 +99,21 @@ export function mountWorkspaceBar(
   toggleBtn.title = t("workspace.togglePanel");
   toggleBtn.setAttribute("aria-label", t("workspace.togglePanel"));
   toggleBtn.addEventListener("click", () => toggleWorkspacePanel(manager));
+  // Unread count, only while the panel is collapsed (its own bell is hidden then).
+  const toggleBadge = document.createElement("span");
+  toggleBadge.className = "workspace-panel__bell-badge workspace-bar__badge workspace-panel__bell-badge--hidden";
+  toggleBtn.appendChild(toggleBadge);
+  const refreshToggleBadge = (): void => {
+    const items = isWorkspacePanelCollapsed() ? manager.inboxItems() : [];
+    toggleBadge.textContent = String(items.length);
+    toggleBadge.classList.toggle("workspace-panel__bell-badge--hidden", items.length === 0);
+    toggleBadge.classList.toggle(
+      "workspace-panel__bell-badge--attention",
+      items.some((i) => i.status === "attention"),
+    );
+  };
+  const cleanupBadge = manager.onInboxChange(refreshToggleBadge);
+  document.addEventListener(PANEL_TOGGLED_EVENT, refreshToggleBadge);
   bar.appendChild(toggleBtn);
 
   const spacer = document.createElement("div");
@@ -208,6 +223,8 @@ export function mountWorkspaceBar(
 
   return () => {
     cleanupLang();
+    cleanupBadge();
+    document.removeEventListener(PANEL_TOGGLED_EVENT, refreshToggleBadge);
     cleanupHelp();
     bar.remove();
   };

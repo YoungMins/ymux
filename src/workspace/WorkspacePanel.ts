@@ -12,7 +12,9 @@ import {
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
 import { askConfirm } from "../ui/Dialog";
-import { showContextMenu } from "../menu/ContextMenu";
+import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
+import { describeAge } from "../terminal/resumePlan";
+import { inboxSummary, type InboxItem } from "./inbox";
 import { describeError } from "../ipc/bridge";
 import type { Uuid } from "../types";
 import {
@@ -102,8 +104,76 @@ export function mountWorkspacePanel(
 
   const header = document.createElement("div");
   header.className = "workspace-panel__header";
-  header.textContent = t("workspace.panelTitle");
+  const headerTitle = document.createElement("span");
+  headerTitle.textContent = t("workspace.panelTitle");
+  header.appendChild(headerTitle);
   panel.appendChild(header);
+
+  // ── Attention inbox bell ───────────────────────────────────────────
+  const bell = document.createElement("button");
+  bell.type = "button";
+  bell.className = "workspace-panel__bell";
+  const bellIcon = document.createElement("span");
+  bellIcon.textContent = "\u{1F514}";
+  bellIcon.setAttribute("aria-hidden", "true");
+  const badge = document.createElement("span");
+  badge.className = "workspace-panel__bell-badge";
+  bell.append(bellIcon, badge);
+  header.appendChild(bell);
+
+  const ageText = (since: number): string => {
+    const { unit, count } = describeAge((Date.now() - since) / 1000);
+    return unit === "now"
+      ? t("terminal.agentAgeNow")
+      : `${count}${t(unit === "minutes" ? "terminal.agentAgeMinutes" : "terminal.agentAgeHours")}`;
+  };
+  const itemText = (i: Pick<InboxItem, "wsLabel" | "paneLabel" | "agentKind">): string =>
+    `${i.wsLabel} \u203A ${i.paneLabel}${i.agentKind ? ` \u2014 ${i.agentKind}` : ""}`;
+
+  function renderBell(): void {
+    const items = manager.inboxItems();
+    badge.textContent = String(items.length);
+    badge.classList.toggle("workspace-panel__bell-badge--hidden", items.length === 0);
+    badge.classList.toggle(
+      "workspace-panel__bell-badge--attention",
+      items.some((i) => i.status === "attention"),
+    );
+    const attention = items.filter((i) => i.status === "attention").length;
+    const label = inboxSummary(
+      { attention, done: items.length - attention },
+      { none: t("inbox.title"), summary: t("inbox.summary") },
+    );
+    bell.title = label;
+    bell.setAttribute("aria-label", label);
+  }
+
+  bell.addEventListener("click", () => {
+    const items = manager.inboxItems();
+    const read = manager.readHistory();
+    const entries: ContextMenuEntry[] = [{ header: t("inbox.title") }];
+    if (items.length === 0) {
+      entries.push({ label: t("inbox.empty"), disabled: true, onSelect: () => {} });
+    }
+    for (const i of items) {
+      entries.push({
+        label: `${itemText(i)} \u00B7 ${t(`status.${i.status}`)} \u00B7 ${ageText(i.since)}`,
+        className: i.status === "attention" ? "context-menu__item--strong" : undefined,
+        onSelect: () => void manager.focusPane(i.paneId),
+      });
+    }
+    if (read.length > 0) {
+      entries.push("separator", { header: t("inbox.read") });
+      for (const r of read) {
+        entries.push({
+          label: `${itemText(r)} \u00B7 ${ageText(r.readAt)}`,
+          className: "context-menu__item--dim",
+          onSelect: () => void manager.focusPane(r.paneId),
+        });
+      }
+    }
+    const rect = bell.getBoundingClientRect();
+    showContextMenu(rect.left, rect.bottom + 2, entries);
+  });
 
   const list = document.createElement("div");
   list.className = "workspace-panel__list";
@@ -641,9 +711,12 @@ export function mountWorkspacePanel(
     renderTree();
     renderHint(); // the Settings toggle reaches the panel through here
   });
+  const cleanupInbox = manager.onInboxChange(renderBell);
+  renderBell();
   const cleanupNotesSub = onNotesChange(() => highlight());
   const cleanupLang = onLangChange(() => {
-    header.textContent = t("workspace.panelTitle");
+    headerTitle.textContent = t("workspace.panelTitle");
+    renderBell();
     addBtn.title = t("workspace.addWorkspace");
     addBtn.setAttribute("aria-label", t("workspace.addWorkspace"));
     rebuild();
@@ -656,6 +729,7 @@ export function mountWorkspacePanel(
 
   return () => {
     cleanupTree();
+    cleanupInbox();
     cleanupLang();
     cleanupNotesSub();
     window.removeEventListener("pointermove", onDragMove);
@@ -678,6 +752,13 @@ export function refreshWorkspacePanel(host: HTMLElement): void {
 /// instant (CSS toggles display), so on the next animation frame we refit the
 /// active workspace's terminals — the same fit + ConPTY-resize path a window
 /// resize uses — preventing mis-sized / garbled TUI redraws.
+export const PANEL_TOGGLED_EVENT = "ymux:workspace-panel-toggled";
+
+/// Whether the left panel is currently collapsed (live DOM state).
+export function isWorkspacePanelCollapsed(): boolean {
+  return document.querySelector(".workspace-panel")?.classList.contains(COLLAPSED_CLASS) ?? false;
+}
+
 export function toggleWorkspacePanel(manager: WorkspaceManager): void {
   const panel = document.querySelector<HTMLElement>(".workspace-panel");
   if (!panel) return;
@@ -686,4 +767,5 @@ export function toggleWorkspacePanel(manager: WorkspaceManager): void {
   // Re-runs renderHint(), so the hint agrees with the panel it lives in.
   (panel as unknown as { __ymuxHighlight?: () => void }).__ymuxHighlight?.();
   requestAnimationFrame(() => manager.refitActive());
+  document.dispatchEvent(new Event(PANEL_TOGGLED_EVENT));
 }

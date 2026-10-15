@@ -248,6 +248,7 @@ pane 순환은 macOS가 `Cmd+Tab`을 앱 전환기로 쓰기 때문에 `Ctrl+Tab
 | `Ctrl+Shift+T`              | `Cmd+Shift+T`      | 포커스된 pane에 새 탭                |
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | pane 안에서 이전 / 다음 탭          |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | 포커스된 pane 확대 / 원복            |
+| `Ctrl+Shift+U`              | `Cmd+Shift+U`      | 확인이 필요한 다음 창으로 이동       |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | 이전 / 다음 pane과 자리 바꾸기       |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | 포커스된 pane 이름 변경              |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | 커맨드 팔레트 열기                   |

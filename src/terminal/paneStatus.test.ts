@@ -153,4 +153,49 @@ describe("PaneStatusMachine", () => {
     m.onFocus();
     expect(m.status).toBe("idle");
   });
+
+  describe("onAcknowledged", () => {
+    function make(): { m: PaneStatusMachine; acks: string[] } {
+      const acks: string[] = [];
+      let m!: PaneStatusMachine;
+      m = new PaneStatusMachine(() => {}, 4000, 8000, () => acks.push(m.status));
+      return { m, acks };
+    }
+
+    it("fires on focus clearing attention, before the status changes", () => {
+      const { m, acks } = make();
+      m.onWaiting();
+      m.onFocus();
+      expect(acks).toEqual(["attention"]);
+      expect(m.status).toBe("idle");
+    });
+
+    it("fires when the user answers (submit) from attention or done", () => {
+      const { m, acks } = make();
+      m.onWaiting();
+      m.onSubmit(1);
+      m.onSubmit(2);
+      m.tick(10_000, false); // inferred done, held off-screen
+      m.onSubmit(10_001);
+      expect(acks).toEqual(["attention", "done"]);
+    });
+
+    it("does not fire for the visible done -> idle timer fade", () => {
+      const { m, acks } = make();
+      m.onSubmit(0);
+      m.tick(5000, true); // done
+      m.tick(14_000, true); // faded to idle
+      expect(m.status).toBe("idle");
+      expect(acks).toEqual([]);
+    });
+
+    it("does not fire when resumed output revokes an inferred done, or for plain submits", () => {
+      const { m, acks } = make();
+      m.onSubmit(0);
+      m.tick(5000, false);
+      m.onOutput(5001);
+      m.onFocus();
+      expect(acks).toEqual([]);
+    });
+  });
 });

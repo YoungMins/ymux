@@ -28,6 +28,7 @@ export const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+Shift+←/→", tKey: "shortcut.swapPane" },
   { keys: "Ctrl+Shift+Z", tKey: "shortcut.zoom" },
   { keys: "Ctrl+Shift+R", tKey: "shortcut.rename" },
+  { keys: "Ctrl+Shift+U", tKey: "shortcut.inboxNext" },
   { keys: "Ctrl+Alt+N", tKey: "shortcut.notes" },
   { keys: "Ctrl+Shift+E", tKey: "filedock.toggle" },
   { keys: "Ctrl+Shift+P", tKey: "shortcut.palette" },

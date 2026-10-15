@@ -259,6 +259,7 @@ macOS では以下の `Ctrl` はすべて `Cmd` になります。そうする�
 | `Ctrl+Shift+T`              | `Cmd+Shift+T`      | フォーカス中のペインに新しいタブ     |
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | ペイン内で前 / 次のタブ             |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | フォーカス中のペインをズーム / 解除  |
+| `Ctrl+Shift+U`              | `Cmd+Shift+U`      | 対応が必要な次のペインへ移動         |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | 前 / 次のペインと入れ替え            |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | フォーカス中のペインの名前を変更     |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | コマンドパレットを開く               |

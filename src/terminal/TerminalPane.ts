@@ -84,6 +84,9 @@ export interface TerminalPaneOptions {
   /// Fired whenever this pane's derived status (idle/running/done/attention)
   /// changes, so the owner can render a per-pane status indicator.
   onStatusChange?: (status: PaneStatus) => void;
+  /// The user acknowledged an `attention`/`done` (focus or answer); fires
+  /// before `onStatusChange` for the resulting transition.
+  onAcknowledged?: () => void;
   /// Returns whether scrollback persistence is currently enabled (read live
   /// from WorkspaceManager's toggle rather than snapshotted at pane-creation
   /// time, so flipping the setting takes effect immediately).
@@ -174,7 +177,12 @@ export class TerminalPane implements Pane {
   /// re-saves and can't compound its own history across restarts.
   private hadUserActivity = false;
   private cleanupLang: () => void = () => {};
-  private statusMachine = new PaneStatusMachine((s) => this.opts.onStatusChange?.(s));
+  private statusMachine = new PaneStatusMachine(
+    (s) => this.opts.onStatusChange?.(s),
+    undefined,
+    undefined,
+    () => this.opts.onAcknowledged?.(),
+  );
   private isFocused = false;
   private statusTimer: number | undefined;
   private scrollbackSaveTimer: number | undefined;
@@ -316,7 +324,7 @@ export class TerminalPane implements Pane {
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
-        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t")) return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t" || k === "u")) return false;
         // Ctrl/Cmd+Shift+[ / ] → previous / next tab, handled at window level.
         // On `code`, because Shift+bracket is layout-dependent.
         if (ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight")) return false;

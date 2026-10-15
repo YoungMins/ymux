@@ -108,6 +108,14 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => manager.toggleZoomFocused(),
     },
     {
+      id: "inbox.next",
+      label: () => t("shortcut.inboxNext"),
+      keybinding: "Ctrl+Shift+U",
+      action: () => {
+        manager.focusNextAttention();
+      },
+    },
+    {
       id: "pane.rename",
       label: () => t("shortcut.rename"),
       keybinding: "Ctrl+Shift+R",

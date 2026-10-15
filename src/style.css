@@ -858,6 +858,7 @@ body,
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  position: relative;
 }
 
 .workspace-bar__icon-btn:hover {
@@ -1370,6 +1371,63 @@ body,
   letter-spacing: 0.06em;
   color: var(--fg-muted);
   border-bottom: 1px solid var(--border);
+}
+
+.workspace-panel__bell {
+  appearance: none;
+  position: relative;
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.workspace-panel__bell:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.workspace-panel__bell-badge {
+  margin-left: 3px;
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  display: inline-block;
+  text-align: center;
+  background: var(--fg-muted);
+  color: var(--bg);
+}
+
+.workspace-panel__bell-badge--attention {
+  background: var(--accent);
+}
+
+.workspace-panel__bell-badge--hidden {
+  display: none;
+}
+
+.workspace-bar__badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.context-menu__item--strong {
+  font-weight: 700;
+}
+
+.context-menu__item--dim {
+  color: var(--fg-muted);
 }
 
 .workspace-panel__list {

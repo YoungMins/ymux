@@ -232,6 +232,13 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl+Shift+U jumps to the next pane waiting on the user.
+    if (mod && ev.shiftKey && !ev.altKey && (key === "U" || key === "u")) {
+      ev.preventDefault();
+      manager.focusNextAttention();
+      return;
+    }
+
     // Ctrl+F scrollback search on the focused terminal pane.
     if (mod && !ev.shiftKey && !ev.altKey && (key === "F" || key === "f")) {
       ev.preventDefault();

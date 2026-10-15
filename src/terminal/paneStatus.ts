@@ -33,6 +33,11 @@ export class PaneStatusMachine {
     private onChange: (s: PaneStatus) => void,
     private idleAfterMs = 4000,
     private doneHoldMs = 8000,
+    /// Fired just before an `attention`/`done` is acknowledged by the user:
+    /// focusing the pane, or answering in it (submit). Not fired for the
+    /// timer fade or for resumed output revoking an inferred `done`. Runs
+    /// before the status changes, so the listener still sees the old status.
+    private onAcknowledged?: () => void,
   ) {}
 
   get status(): PaneStatus {
@@ -54,6 +59,7 @@ export class PaneStatusMachine {
   /// User pressed Enter in this pane — a command likely started. Also called
   /// for the writes that bypass xterm's `onData` (hotkey bar, `startup_cmd`).
   onSubmit(now: number): void {
+    if (this._status === "attention" || this._status === "done") this.onAcknowledged?.();
     this.lastActivity = now;
     this.doneInferred = false;
     this.set("running");
@@ -80,6 +86,7 @@ export class PaneStatusMachine {
   /// Pane gained focus — the user has now seen whatever it was flagging.
   onFocus(): void {
     if (this._status === "attention" || this._status === "done") {
+      this.onAcknowledged?.();
       this.doneInferred = false;
       this.set("idle");
     }
