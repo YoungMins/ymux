@@ -365,7 +365,7 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     use tauri::Manager;
 
-    use crate::agent_scan_disk::claude_pid_file_id;
+    use crate::agent_scan_disk::claude_pid_file_id_in;
     use crate::agent_sessions::SharedSessions;
     use crate::agents::SharedAgents;
     use crate::commands::{emit_agents_changed, flush_sessions, observe_pane_session, AppState};
@@ -385,6 +385,7 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
             loop {
                 std::thread::sleep(SCAN_INTERVAL);
                 let shells = app.state::<AppState>().pty.pids_snapshot();
+                let pane_dirs = app.state::<AppState>().pty.agent_dirs_snapshot();
                 let (found, labels, pane_agents, others) = if shells.is_empty() {
                     (HashMap::new(), HashMap::new(), HashMap::new(), Vec::new())
                 } else {
@@ -411,7 +412,25 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                     let others = if pane_agents.is_empty() {
                         Vec::new()
                     } else {
-                        other_agents(&procs, claude_pid_file_id)
+                        // A Claude outside ymux can run under any account
+                        // dir, so probe every directory ymux knows of.
+                        let home = dirs::home_dir();
+                        let accounts = app.state::<AppState>().config.snapshot().accounts;
+                        let known = crate::accounts::account_dirs(
+                            &accounts,
+                            |k| std::env::var(k).ok(),
+                            home.as_deref(),
+                        )
+                        .into_iter()
+                        .map(|(owner, d)| (owner, d.claude))
+                        .chain(pane_dirs.iter().map(|(id, d)| (id.to_string(), d.claude.clone())));
+                        let claude_dirs: Vec<String> = crate::accounts::distinct(known)
+                            .into_iter()
+                            .map(|g| g.dir)
+                            .collect();
+                        let claude_dirs: Vec<&str> =
+                            claude_dirs.iter().map(String::as_str).collect();
+                        other_agents(&procs, |p| claude_pid_file_id_in(&claude_dirs, p))
                     };
                     (
                         scan_panes(&shells, &procs),
@@ -454,10 +473,15 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                     .collect();
                 // Claude's own pid file for each pane's agent, read outside
                 // every lock (it is a file open per Claude pane per tick).
+                // Only the pane's own Claude dir: its agent runs under the
+                // variables the pane spawned with.
                 let pid_file_ids: HashMap<Uuid, String> = pane_agents
                     .iter()
                     .filter(|(_, a)| a.kind == "claude")
-                    .filter_map(|(id, a)| claude_pid_file_id(&a.process).map(|s| (*id, s)))
+                    .filter_map(|(id, a)| {
+                        let dir = pane_dirs.get(id)?.claude.as_str();
+                        claude_pid_file_id_in(&[dir], &a.process).map(|s| (*id, s))
+                    })
                     .collect();
                 // Registry lock first, session lock second — the same order
                 // `apply_agent_hook` uses, so the two threads cannot deadlock.

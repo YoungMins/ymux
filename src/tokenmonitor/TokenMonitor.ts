@@ -2,7 +2,8 @@ import { api } from "../ipc/bridge";
 import { t, getLang, onLangChange } from "../i18n/i18n";
 import type { Pane } from "../layout/Pane";
 import type { Uuid } from "../types";
-import { aggregateUsage, dailyTotals, heatmapGrid, remainingQuota, type HourBucket, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
+import { getAccounts, normalizeColor, ACCOUNT_NONE } from "../accounts/accountModel";
+import { aggregateUsage, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
 import "./tokenmonitor.css";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""): HTMLElementTagNameMap[K] {
@@ -187,19 +188,15 @@ export class TokenMonitorPane implements Pane {
     }
     this.state.hidden = this.state.textContent === ""; this.state.classList.toggle("usage-state--error", this.phase === "error");
   }
-  private render(): void {
-    this.renderState(); this.content.replaceChildren(); if (!this.data) return;
-    const cards = el("div", "", "usage-cards");
-    const now = Date.now() / 1000;
+  private providerCard(provider: ProviderUsage, now: number): HTMLElement {
     const quotaLabel = t(this.display === "used" ? "usage.used_quota" : "usage.remaining_quota");
     const displayed = (remaining: number | null): number | null => remaining === null ? null : this.display === "used" ? 100 - remaining : remaining;
-    for (const provider of this.data.providers) {
       const card = el("article", "", "usage-card");
       const heading = el("div", "", "usage-provider-heading");
       const name = el("span", provider.id === "claude" ? "Claude Code" : "Codex"); name.title = t(`usage.${provider.auth_status}`);
       const selected = provider.quotas.find(item => item.window_minutes === (this.period === "seven_day" ? 10080 : 300));
       const remaining = displayed(remainingQuota(selected, now));
-      const failed = this.refreshFailed || this.data.warnings.some(warning => warning.startsWith(`${provider.id}_quota_`));
+      const failed = this.refreshFailed || provider.warnings.some(warning => warning.startsWith("quota_"));
       const stale = failed || (selected !== undefined && (remaining === null || now - selected.observed_at > 120));
       const total = el("strong", remaining === null ? "—" : `${remaining.toFixed(0)}%`); total.title = `${quotaLabel}${stale ? ` · ${t("usage.stale")}` : ""}`;
       if (stale) total.classList.add("usage-stale");
@@ -229,7 +226,33 @@ export class TokenMonitorPane implements Pane {
       }
       card.append(meters);
       const local = el("span", `${t("usage.local_tokens")}: ${compact(provider[this.period].total)}`, "usage-local-tokens");
-      local.title = breakdown(provider[this.period]); card.append(local); cards.append(card);
+      local.title = breakdown(provider[this.period]); card.append(local);
+    return card;
+  }
+  private accountHeading(account: string, also: readonly string[]): HTMLElement {
+    const profiles = getAccounts();
+    const label = (id: string): string => id === "" ? t("usage.default_account") : id === ACCOUNT_NONE ? t("usage.home_account") : profiles.find(p => p.id === id)?.name || id;
+    const heading = el("h3", "", "usage-account-heading");
+    const dot = el("span", "", "account-badge__dot");
+    const color = normalizeColor(profiles.find(p => p.id === account)?.color ?? "");
+    if (color) dot.style.background = color;
+    heading.append(dot, el("span", label(account)));
+    if (also.length > 0) {
+      const more = el("span", `+${also.length}`, "usage-account-also");
+      more.title = `${t("usage.also_used_by")}: ${also.map(label).join(", ")}`;
+      heading.append(more);
+    }
+    return heading;
+  }
+  private render(): void {
+    this.renderState(); this.content.replaceChildren(); if (!this.data) return;
+    const cards = el("div", "", "usage-cards");
+    const now = Date.now() / 1000;
+    const groups = groupProvidersByAccount(this.data.providers);
+    for (const group of groups) {
+      // One account renders exactly as before; headings appear once there is more than one.
+      if (groups.length > 1) cards.append(this.accountHeading(group.account, group.also));
+      for (const provider of group.providers) cards.append(this.providerCard(provider, now));
     }
     this.content.append(cards);
     if (this.data.hourly.length > 0) { this.heatWeeksShown = heatWeeks(this.contentWidth()); this.content.append(heatmap(this.data.hourly, this.heatWeeksShown)); }
@@ -242,9 +265,11 @@ export class TokenMonitorPane implements Pane {
       const total = el("td", compact(row.tokens.total)); total.title = breakdown(row.tokens); tr.append(cell, total); body.append(tr);
     }
     table.append(body); this.content.append(rows.length ? table : el("p", t("usage.empty"), "usage-empty"));
-    const details = el("details", "", "usage-details"); details.append(el("summary", this.data.warnings.length ? "⚠ ⓘ" : "ⓘ")); details.querySelector("summary")?.setAttribute("aria-label", t("usage.limitations"));
+    const details = el("details", "", "usage-details"); details.append(el("summary", this.data.warnings.length || this.data.providers.some(p => p.warnings.length) ? "⚠ ⓘ" : "ⓘ")); details.querySelector("summary")?.setAttribute("aria-label", t("usage.limitations"));
     details.append(el("p", t("usage.limitations")), el("p", t("usage.history")));
-    for (const warning of this.data.warnings) details.append(el("p", t(`usage.${warning}`)));
+    const notices = new Set(this.data.warnings);
+    for (const provider of this.data.providers) for (const warning of provider.warnings) notices.add(`${provider.id}_${warning}`);
+    for (const warning of notices) details.append(el("p", t(`usage.${warning}`)));
     this.content.append(details);
   }
   private async refresh(refreshQuota = false): Promise<void> {

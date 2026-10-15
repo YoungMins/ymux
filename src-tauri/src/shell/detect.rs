@@ -1281,6 +1281,7 @@ mod tests {
                 tx,
                 Arc::clone(&cwds),
                 &[],
+                &[],
             ) {
                 Ok(s) => s,
                 Err(e) => {

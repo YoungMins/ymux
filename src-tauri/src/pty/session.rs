@@ -205,6 +205,7 @@ impl PtySession {
         events: Sender<PaneEvent>,
         cwds: CwdMap,
         extra_env: &[(String, String)],
+        remove_env: &[&str],
     ) -> YmuxResult<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -214,6 +215,11 @@ impl PtySession {
         let mut cmd = CommandBuilder::new(&profile.executable);
         for a in &profile.args {
             cmd.arg(a);
+        }
+
+        // Hard opt-outs (e.g. an account of "none") scrub inherited variables.
+        for k in remove_env {
+            cmd.env_remove(k);
         }
 
         // ymux *is* the terminal emulator, so it owes the child a `TERM`.
@@ -549,6 +555,7 @@ mod tests {
             tx,
             Arc::clone(&cwds),
             &[],
+            &[],
         )
         .expect("spawn");
         session
@@ -615,6 +622,7 @@ mod tests {
             tx,
             Arc::clone(&cwds),
             &[],
+            &[],
         )
         .expect("spawn");
         session
@@ -678,6 +686,7 @@ mod tests {
                 },
                 tx,
                 Arc::clone(&cwds),
+                &[],
                 &[],
             )
             .unwrap_or_else(|e| panic!("spawn with cwd {cwd:?} failed: {e}"));
@@ -785,6 +794,7 @@ mod tests {
                 },
                 tx,
                 Arc::clone(&cwds),
+                &[],
                 &[],
             )
             .expect("spawn");
@@ -960,7 +970,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
-            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
         let expected = format!("ymux-pane=[{}]", spec.id);
         let text = capture_until(&rx, &expected);
         assert!(
@@ -996,7 +1006,7 @@ mod tests {
         // Held, not dropped: dropping the session kills the child, which is
         // not what this test is about.
         let session =
-            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
 
         let start = std::time::Instant::now();
         let first = loop {
@@ -1023,7 +1033,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
-            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
         std::thread::sleep(std::time::Duration::from_millis(300));
         session.kill().expect("kill");
         let exits = exits_within(&rx, std::time::Duration::from_millis(1500));
@@ -1039,7 +1049,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
-            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[]).expect("spawn");
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
         assert!(
             session.pid().is_some_and(|p| p > 0),
             "pid: {:?}",

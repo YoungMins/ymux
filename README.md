@@ -138,13 +138,31 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
   session was last active. Works without agent tracking, by reading the CLI's
   own transcripts from disk. Shell-only panes keep restoring scrollback.
 - **Claude Code hook tracking** (off by default, **Settings → General**): adds
-  user-level HTTP hooks to `~/.claude/settings.json`. While it is on, *every*
-  Claude Code session on the machine, including ones outside ymux, sends its
-  hook events (prompts, tool input and output) to ymux's port on `127.0.0.1`.
-  ymux ignores events that don't come from its own panes; turning tracking off
-  removes the hooks. If ymux is not running while tracking is on, Claude Code
-  reports those hooks as failed (for example "Stop hook error occurred"), so
-  turn tracking off before you uninstall ymux. ymux ships no helper binary.
+  user-level HTTP hooks to `~/.claude/settings.json` and to the Claude folder of
+  every account (see Multiple accounts below; a folder that does not exist yet
+  is skipped until a terminal starts in it). While it is on, *every* Claude Code
+  session on the machine that uses one of those folders, including ones
+  outside ymux, sends its hook events (prompts, tool input and output) to
+  ymux's port on `127.0.0.1`. ymux ignores events that don't come from its own
+  panes; turning tracking off removes the hooks from all of those folders. If
+  ymux is not running while tracking is on, Claude Code reports those hooks as
+  failed (for example "Stop hook error occurred"), so turn tracking off before
+  you uninstall ymux, delete an account, or downgrade to a version that does
+  not know about accounts (it would leave the hooks in the account folders).
+  ymux ships no helper binary.
+
+#### Multiple accounts
+
+Keep several Claude Code or Codex logins side by side. In **Settings →
+Accounts** add a profile with its own Claude config folder (`CLAUDE_CONFIG_DIR`)
+and/or Codex folder (`CODEX_HOME`); an empty folder leaves that tool on its
+default (`~/.claude`, `~/.codex`). Pick the account per terminal in the pane's
+⚙ dialog, or give a whole workspace a default by right-clicking its row in the
+workspace panel. A terminal with an account shows a colored badge in its title.
+ymux sets the variables when a terminal starts, so a change applies to
+terminals started afterwards (a running shell keeps its account, and its badge
+is dimmed until you restart it). Token usage and session resume still read the
+default folders.
 
 ### Side panel: Files and Usage
 

@@ -34,6 +34,7 @@ export type ConfigPathKind = "theme" | "folder";
 /// Sections of the settings panel — the left nav identifier.
 export type SettingsSection =
   | "general"
+  | "accounts"
   | "syntax"
   | "shortcuts"
   | "config";

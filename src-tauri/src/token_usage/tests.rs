@@ -1,5 +1,7 @@
-use super::collect_from;
+use super::{collect_from, collect_from_roots, scan_roots};
+use crate::accounts::AgentDirs;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 const NOW: u64 = 1_790_000_000;
 
@@ -100,7 +102,8 @@ fn oversized_transcripts_report_partial_without_scanning() {
     let file = fs::File::create(claude.join("projects/p/large.jsonl")).unwrap();
     file.set_len(64 * 1024 * 1024 + 1).unwrap();
     let snapshot = collect_from(&claude, &codex, NOW);
-    assert!(snapshot.warnings.iter().any(|w| w == "claude_partial"));
+    assert!(snapshot.providers[0].warnings.contains(&"partial"));
+    assert!(snapshot.warnings.is_empty());
     assert_eq!(snapshot.providers[0].files, 0);
 }
 
@@ -216,10 +219,161 @@ fn hourly_buckets_honor_dedupe_codex_delta_window_and_order() {
     );
 }
 
+fn claude_line(time: &str, id: &str, input: u64) -> String {
+    format!("{{\"type\":\"assistant\",\"sessionId\":\"s\",\"timestamp\":\"{time}\",\"message\":{{\"id\":\"{id}\",\"usage\":{{\"input_tokens\":{input}}}}}}}\n")
+}
+
+fn dirs_of(claude: &Path, codex: &Path) -> AgentDirs {
+    AgentDirs {
+        claude: claude.display().to_string(),
+        codex: codex.display().to_string(),
+        claude_env: None,
+    }
+}
+
+/// Default account plus a "work" profile with its own directories.
+fn two_accounts() -> (tempfile::TempDir, Vec<(String, AgentDirs)>, PathBuf) {
+    let (dir, claude, codex) = setup();
+    let wclaude = dir.path().join("wclaude");
+    let wcodex = dir.path().join("wcodex");
+    fs::create_dir_all(wclaude.join("projects/p")).unwrap();
+    fs::create_dir_all(wcodex.join("sessions")).unwrap();
+    let dirs = vec![
+        (String::new(), dirs_of(&claude, &codex)),
+        ("work".to_string(), dirs_of(&wclaude, &wcodex)),
+    ];
+    (dir, dirs, wclaude)
+}
+
+#[test]
+fn two_accounts_get_own_cards_rows_hours() {
+    let (_dir, dirs, wclaude) = two_accounts();
+    let default_claude = PathBuf::from(&dirs[0].1.claude);
+    fs::write(
+        default_claude.join("projects/p/a.jsonl"),
+        claude_line("2026-09-21T00:00:00Z", "a", 10),
+    )
+    .unwrap();
+    fs::write(
+        wclaude.join("projects/p/b.jsonl"),
+        claude_line("2026-09-21T00:30:00Z", "b", 7),
+    )
+    .unwrap();
+    let snapshot = collect_from_roots(&scan_roots(&dirs), NOW);
+    let cards: Vec<_> = snapshot
+        .providers
+        .iter()
+        .map(|p| (p.account.as_str(), p.id, p.all_time.total))
+        .collect();
+    assert_eq!(
+        cards,
+        vec![
+            ("", "claude", 10),
+            ("work", "claude", 7),
+            ("", "codex", 0),
+            ("work", "codex", 0)
+        ]
+    );
+    let rows: Vec<_> = snapshot
+        .rows
+        .iter()
+        .map(|r| (r.account.as_str(), r.all_time.total))
+        .collect();
+    assert_eq!(rows, vec![("", 10), ("work", 7)]);
+    // Same UTC hour, two accounts: two buckets that still sum to the total.
+    let hours: Vec<_> = snapshot
+        .hourly
+        .iter()
+        .map(|b| (b.account.as_str(), b.total))
+        .collect();
+    assert_eq!(hours, vec![("", 10), ("work", 7)]);
+}
+
+#[test]
+fn shared_dir_scanned_once_under_first_owner() {
+    let (dir, claude, codex) = setup();
+    let wcodex = dir.path().join("wcodex");
+    fs::create_dir_all(wcodex.join("sessions")).unwrap();
+    // "work" shares the default's Claude dir but has its own Codex home.
+    let dirs = vec![
+        (String::new(), dirs_of(&claude, &codex)),
+        ("work".to_string(), dirs_of(&claude, &wcodex)),
+    ];
+    fs::write(
+        claude.join("projects/p/a.jsonl"),
+        claude_line("2026-09-21T00:00:00Z", "a", 10),
+    )
+    .unwrap();
+    let roots = scan_roots(&dirs);
+    let claude_roots: Vec<_> = roots.iter().filter(|r| r.provider == "claude").collect();
+    assert_eq!(claude_roots.len(), 1);
+    assert_eq!(claude_roots[0].owner, "");
+    assert_eq!(claude_roots[0].also, vec!["work".to_string()]);
+    let snapshot = collect_from_roots(&roots, NOW);
+    let cards: Vec<_> = snapshot
+        .providers
+        .iter()
+        .filter(|p| p.id == "claude")
+        .collect();
+    assert_eq!(cards.len(), 1);
+    assert_eq!((cards[0].files, cards[0].all_time.total), (1, 10));
+    assert_eq!(cards[0].also, vec!["work".to_string()]);
+    assert_eq!(
+        snapshot
+            .providers
+            .iter()
+            .filter(|p| p.id == "codex")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn transcript_copied_into_profile_counts_once_for_default() {
+    let (_dir, dirs, wclaude) = two_accounts();
+    let default_claude = PathBuf::from(&dirs[0].1.claude);
+    let lines = claude_line("2026-09-21T00:00:00Z", "a", 10);
+    fs::write(default_claude.join("projects/p/a.jsonl"), &lines).unwrap();
+    fs::write(wclaude.join("projects/p/a.jsonl"), &lines).unwrap();
+    let snapshot = collect_from_roots(&scan_roots(&dirs), NOW);
+    let totals: Vec<_> = snapshot
+        .providers
+        .iter()
+        .filter(|p| p.id == "claude")
+        .map(|p| (p.account.as_str(), p.all_time.total))
+        .collect();
+    assert_eq!(totals, vec![("", 10), ("work", 0)]);
+    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(snapshot.rows[0].account, "");
+}
+
+#[test]
+fn card_warnings_do_not_leak_across_accounts() {
+    let (_dir, dirs, wclaude) = two_accounts();
+    let file = fs::File::create(wclaude.join("projects/p/large.jsonl")).unwrap();
+    file.set_len(64 * 1024 * 1024 + 1).unwrap();
+    let snapshot = collect_from_roots(&scan_roots(&dirs), NOW);
+    let warnings: Vec<_> = snapshot
+        .providers
+        .iter()
+        .map(|p| (p.account.as_str(), p.id, p.warnings.clone()))
+        .collect();
+    assert_eq!(
+        warnings,
+        vec![
+            ("", "claude", vec![]),
+            ("work", "claude", vec!["partial"]),
+            ("", "codex", vec![]),
+            ("work", "codex", vec![]),
+        ]
+    );
+    assert!(snapshot.warnings.is_empty());
+}
+
 #[test]
 #[ignore = "reads this machine's real Claude/Codex history"]
 fn print_real_hourly_bucket_count() {
-    let snapshot = super::collect();
+    let snapshot = super::collect(&[]);
     let days: std::collections::BTreeSet<_> = snapshot.hourly.iter().map(|b| b.hour / 24).collect();
     let json = serde_json::to_string(&snapshot.hourly).unwrap();
     println!(

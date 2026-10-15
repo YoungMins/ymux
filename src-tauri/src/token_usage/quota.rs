@@ -1,20 +1,19 @@
-use std::{path::PathBuf, time::Duration};
+use std::{path::Path, sync::OnceLock, time::Duration};
 
-use parking_lot::Mutex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 #[cfg(test)]
-use super::quota_cache::REFRESH;
+use super::quota_cache::{Cached, REFRESH};
 use super::{
     model::Quota,
-    quota_cache::{read_bounded, Cached, Unavailable},
+    quota_cache::{read_bounded, round, Identity, KeyedCache, Unavailable},
     TokenSnapshot,
 };
 
 #[cfg(target_os = "macos")]
 const MAX_BYTES: u64 = 1024 * 1024;
-static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+static CACHE: OnceLock<KeyedCache> = OnceLock::new();
 
 #[derive(Deserialize)]
 struct Credentials {
@@ -47,73 +46,79 @@ pub fn enrich(snapshot: &mut TokenSnapshot, manual: bool) {
 }
 
 fn enrich_claude(snapshot: &mut TokenSnapshot, manual: bool) {
-    let Some(provider) = snapshot.providers.iter_mut().find(|p| p.id == "claude") else {
-        return;
-    };
-    let Some(token) = credentials() else {
-        *CACHE.lock() = None;
-        provider.quotas.clear();
-        return;
-    };
-    provider.auth_status = "credentials_present";
-    let identity: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-    // This synchronous adapter runs on a blocking thread; serialize refreshes to
-    // prevent concurrent panel requests from bypassing the rate-limit backoff.
-    let mut cache = CACHE.lock();
-    let needs_refresh = cache
-        .as_ref()
-        .map_or(true, |c| c.needs_refresh(identity, manual));
-    if needs_refresh {
-        let started = std::time::Instant::now();
-        let result = fetch(&token);
-        *cache = Some(Cached::refreshed_at(
-            cache.take(),
-            identity,
-            result,
-            started,
-        ));
+    // Each Claude card reads its own directory's login; cards that resolve to
+    // one login share a single fetch.
+    let mut jobs: Vec<(Identity, String)> = Vec::new();
+    let mut identities: Vec<Option<Identity>> = Vec::new();
+    for provider in snapshot.providers.iter_mut().filter(|p| p.id == "claude") {
+        let Some(token) = credentials_in(&provider.dir, provider.claude_env.as_deref()) else {
+            provider.quotas.clear();
+            identities.push(None);
+            continue;
+        };
+        provider.auth_status = "credentials_present";
+        let identity: Identity = Sha256::digest(token.as_bytes()).into();
+        jobs.push((identity, token));
+        identities.push(Some(identity));
     }
-    if let Some(cached) = cache.as_ref() {
-        provider.quotas = cached.quotas.clone();
-        if cached.unavailable {
-            snapshot.warnings.push(
-                if cached.quotas.is_empty() {
-                    "claude_quota_unavailable"
+    let cache = CACHE.get_or_init(Default::default);
+    let results = round(cache, jobs, manual, |token| fetch(token));
+    let mut identities = identities.into_iter();
+    for provider in snapshot.providers.iter_mut().filter(|p| p.id == "claude") {
+        let Some(Some(identity)) = identities.next() else {
+            continue;
+        };
+        if let Some((quotas, unavailable)) = results.get(&identity) {
+            provider.quotas = quotas.clone();
+            if *unavailable {
+                provider.warnings.push(if quotas.is_empty() {
+                    "quota_unavailable"
                 } else {
-                    "claude_quota_stale"
-                }
-                .into(),
-            );
+                    "quota_stale"
+                });
+            }
         }
     }
 }
 
-fn credentials() -> Option<String> {
-    let root = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".claude")))?;
-    let file_token = std::fs::File::open(root.join(".credentials.json"))
+/// The OAuth token for the Claude config home `dir`, from its
+/// `.credentials.json` or the macOS keychain.
+fn credentials_in(dir: &Path, claude_env: Option<&str>) -> Option<String> {
+    credentials_with(dir, claude_env, security_lookup)
+}
+
+/// `credentials_in` with the keychain lookup injected. Fails closed: the
+/// service name is derived from the account's own `CLAUDE_CONFIG_DIR`, and a
+/// set variable never falls back to the unsuffixed default service (that
+/// would show another login's quota on a profile card).
+fn credentials_with(
+    dir: &Path,
+    claude_env: Option<&str>,
+    keychain: impl Fn(&str) -> Option<Vec<u8>>,
+) -> Option<String> {
+    let file_token = std::fs::File::open(dir.join(".credentials.json"))
         .ok()
         .and_then(|file| read_bounded(file).ok())
         .and_then(|bytes| parse_credentials(&bytes));
     if file_token.is_some() {
         return file_token;
     }
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("/usr/bin/security")
-            .args([
-                "find-generic-password",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ])
-            .output()
-            .ok()?;
-        if output.status.success() && u64::try_from(output.stdout.len()).ok()? <= MAX_BYTES {
-            return parse_credentials(&output.stdout);
-        }
-    }
+    keychain(&crate::accounts::claude_keychain_service(claude_env))
+        .and_then(|bytes| parse_credentials(&bytes))
+}
+
+#[cfg(target_os = "macos")]
+fn security_lookup(service: &str) -> Option<Vec<u8>> {
+    let output = std::process::Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", service, "-w"])
+        .output()
+        .ok()?;
+    (output.status.success() && u64::try_from(output.stdout.len()).ok()? <= MAX_BYTES)
+        .then_some(output.stdout)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn security_lookup(_service: &str) -> Option<Vec<u8>> {
     None
 }
 
@@ -239,5 +244,48 @@ mod tests {
         assert!(same.attempted_at.elapsed() < REFRESH);
         let different = Cached::refreshed(Some(make()), [2; 32], Err(Unavailable));
         assert!(different.quotas.is_empty());
+    }
+
+    #[test]
+    fn profile_roots_never_query_unsuffixed_keychain() {
+        use crate::accounts::{account_dirs, claude_keychain_service};
+        use crate::config::model::AccountProfile;
+        use std::cell::RefCell;
+        let home = std::path::PathBuf::from(if cfg!(windows) {
+            r"C:\Users\a"
+        } else {
+            "/home/a"
+        });
+        let profile = home.join(".claude-work").display().to_string();
+        let accounts = vec![AccountProfile {
+            id: "work".into(),
+            name: "Work".into(),
+            claude_config_dir: profile.clone(),
+            ..AccountProfile::default()
+        }];
+        let dirs = account_dirs(&accounts, |_| None, Some(&home));
+        let roots = super::super::scan_roots(&dirs);
+        let asked = RefCell::new(Vec::new());
+        let lookup = |service: &str| {
+            asked.borrow_mut().push(service.to_owned());
+            None
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        for root in roots.iter().filter(|r| r.provider == "claude") {
+            asked.borrow_mut().clear();
+            assert!(credentials_with(tmp.path(), root.claude_env.as_deref(), lookup).is_none());
+            let asked = asked.borrow();
+            assert_eq!(asked.len(), 1);
+            if root.owner == "work" {
+                assert_eq!(root.claude_env.as_deref(), Some(profile.as_str()));
+                assert_ne!(asked[0], "Claude Code-credentials");
+                assert_eq!(asked[0], claude_keychain_service(Some(&profile)));
+            } else {
+                assert_eq!(asked[0], "Claude Code-credentials");
+            }
+        }
+        assert!(roots
+            .iter()
+            .any(|r| r.owner == "work" && r.provider == "claude"));
     }
 }

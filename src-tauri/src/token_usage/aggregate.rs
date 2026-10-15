@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 /// Heatmap history: 53 weeks.
 const HOURLY_WINDOW_SECS: u64 = 371 * 86400;
 
-pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
+/// `accounts` maps `Event::account` to the owning account id. Events must be
+/// pushed default-account first: the dedup key is global, so a transcript
+/// copied into a profile stays attributed to whoever listed it first.
+pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>, accounts: &[String]) {
     let mut unique: BTreeMap<(&str, &str, &str), &Event> = BTreeMap::new();
     for event in &events {
         let key = (event.provider, event.session.as_str(), event.id.as_str());
@@ -13,11 +16,11 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
             *entry = event;
         }
     }
-    let mut rows: BTreeMap<(&str, &str, String), UsageRow> = BTreeMap::new();
+    let mut rows: BTreeMap<(usize, &str, &str, String), UsageRow> = BTreeMap::new();
     let mut projects: BTreeMap<String, String> = BTreeMap::new();
     let mut ordered: Vec<_> = unique.into_values().collect();
     ordered.sort_by_key(|event| (event.timestamp, event.tokens.total));
-    let mut hours: BTreeMap<(u64, &'static str), u64> = BTreeMap::new();
+    let mut hours: BTreeMap<(u64, usize, &'static str), u64> = BTreeMap::new();
     let hourly_start = snapshot.collected_at.saturating_sub(HOURLY_WINDOW_SECS);
     let mut cumulative: BTreeMap<&str, TokenTotals> = BTreeMap::new();
     for event in ordered {
@@ -37,7 +40,7 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
         };
         if tokens.total > 0 && event.timestamp >= hourly_start {
             let bucket = hours
-                .entry((event.timestamp / 3600, event.provider))
+                .entry((event.timestamp / 3600, event.account, event.provider))
                 .or_default();
             *bucket = bucket.saturating_add(tokens.total);
         }
@@ -46,8 +49,9 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
             .entry(project_key.clone())
             .or_insert_with(|| event.project.clone());
         let row = rows
-            .entry((event.provider, &event.model, project_key))
+            .entry((event.account, event.provider, &event.model, project_key))
             .or_insert_with(|| UsageRow {
+                account: accounts.get(event.account).cloned().unwrap_or_default(),
                 provider: event.provider,
                 model: event.model.clone(),
                 project: project.clone(),
@@ -65,15 +69,20 @@ pub(super) fn aggregate(snapshot: &mut TokenSnapshot, events: Vec<Event>) {
     }
     snapshot.hourly = hours
         .into_iter()
-        .map(|((hour, provider), total)| HourBucket {
+        .map(|((hour, account, provider), total)| HourBucket {
             hour,
+            account: accounts.get(account).cloned().unwrap_or_default(),
             provider,
             total,
         })
         .collect();
     snapshot.rows = rows.into_values().collect();
     for row in &snapshot.rows {
-        if let Some(provider) = snapshot.providers.iter_mut().find(|p| p.id == row.provider) {
+        if let Some(provider) = snapshot
+            .providers
+            .iter_mut()
+            .find(|p| p.id == row.provider && p.account == row.account)
+        {
             provider.five_hour.add(row.five_hour);
             provider.seven_day.add(row.seven_day);
             provider.all_time.add(row.all_time);

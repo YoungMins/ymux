@@ -53,6 +53,7 @@ export function paneNode(spec: PaneSpec): LayoutNode {
     bg_color: spec.bg_color ?? "",
     worktree_path: spec.worktree_path ?? "",
     file_path: spec.file_path ?? "",
+    account: spec.account ?? "",
   };
 }
 
@@ -70,6 +71,7 @@ export function nodeToSpec(node: LayoutNode & { kind: "pane" }): PaneSpec {
     bg_color: node.bg_color ?? "",
     worktree_path: node.worktree_path ?? "",
     file_path: node.file_path ?? "",
+    account: node.account ?? "",
   };
 }
 
@@ -320,6 +322,7 @@ export function findAndMutatePane(
         bg_color: root.bg_color ?? "",
         worktree_path: root.worktree_path ?? "",
         file_path: root.file_path ?? "",
+        account: root.account ?? "",
       };
       patch(snapshot);
       root.title = snapshot.title;
@@ -333,6 +336,7 @@ export function findAndMutatePane(
       root.bg_color = snapshot.bg_color;
       root.worktree_path = snapshot.worktree_path;
       root.file_path = snapshot.file_path;
+      root.account = snapshot.account;
       return true;
     }
     return false;

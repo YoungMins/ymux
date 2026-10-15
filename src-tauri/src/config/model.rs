@@ -99,6 +99,40 @@ pub struct Config {
     /// `CONFIG_VERSION` bump.
     #[serde(default)]
     pub agent_hook_port: u16,
+    /// Claude config dirs (raw spellings) whose `settings.json` currently
+    /// carries ymux's hooks, so a profile removed while ymux was closed can
+    /// still be cleaned up. Backend-owned (CLAUDE.md rule 11, the third
+    /// exception): written only by `commands::reconcile_hooks` and never
+    /// copied in `merge_layouts_from`. Additive with a serde default.
+    #[serde(default)]
+    pub agent_hook_dirs: Vec<String>,
+    /// Named AI-CLI account profiles (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`
+    /// pairs) a pane or workspace can pick. User setting, so it is copied in
+    /// `merge_layouts_from`. Additive with a serde default, no
+    /// `CONFIG_VERSION` bump.
+    #[serde(default)]
+    pub accounts: Vec<AccountProfile>,
+}
+
+/// One AI-CLI account: where Claude Code and Codex keep their login/config.
+/// An empty directory means "leave that tool on its default". Every field is
+/// a plain `String` (rule 3) with a serde default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AccountProfile {
+    /// Short stable id panes and workspaces refer to; never shown.
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// Value for `CLAUDE_CONFIG_DIR`. A leading `~` expands to the home dir.
+    #[serde(default)]
+    pub claude_config_dir: String,
+    /// Value for `CODEX_HOME`. A leading `~` expands to the home dir.
+    #[serde(default)]
+    pub codex_home: String,
+    /// `#rrggbb` badge colour, or empty for the default.
+    #[serde(default)]
+    pub color: String,
 }
 
 fn default_version() -> u32 {
@@ -145,6 +179,8 @@ impl Default for Config {
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         }
     }
 }
@@ -227,6 +263,7 @@ impl Config {
         self.worktree_base_dir = incoming.worktree_base_dir;
         self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
+        self.accounts = incoming.accounts;
         // `agent_tracking` is deliberately NOT copied, the other exception to
         // the rule above: it is backend-owned. `set_agent_tracking` flips it
         // in the same step that installs/removes the Claude Code hooks, so it
@@ -234,6 +271,7 @@ impl Config {
         // stale) frontend snapshot here would let an unrelated layout save
         // turn tracking off while the hooks stay installed.
         // `agent_hook_port` likewise: the installed hooks' URL carries it.
+        // `agent_hook_dirs` likewise: it records where the hooks really are.
         if !incoming.shells.is_empty() {
             self.shells = incoming.shells;
         }
@@ -272,6 +310,11 @@ pub struct Workspace {
     pub id: u32,
     pub name: String,
     pub root: LayoutNode,
+    /// Default [`AccountProfile::id`] for this workspace's panes; empty = none
+    /// (the tools keep their own default dirs). Rides along inside the
+    /// workspaces list, so `merge_layouts_from` already carries it.
+    #[serde(default)]
+    pub account: String,
 }
 
 impl Workspace {
@@ -280,6 +323,7 @@ impl Workspace {
             id,
             name: name.into(),
             root: LayoutNode::Pane(PaneSpec::new_default()),
+            account: String::new(),
         }
     }
 
@@ -546,6 +590,11 @@ pub struct PaneSpec {
     /// and `PaneSpec` is flattened into `LayoutNode::Pane`.
     #[serde(default)]
     pub file_path: String,
+    /// [`AccountProfile::id`] this terminal pane runs under. Empty = inherit
+    /// the workspace's account; `accounts::ACCOUNT_NONE` = no account even if
+    /// the workspace has one. A `String` for the tagged-enum TOML reason.
+    #[serde(default)]
+    pub account: String,
 }
 
 impl PaneSpec {
@@ -563,6 +612,7 @@ impl PaneSpec {
             bg_color: String::new(),
             worktree_path: String::new(),
             file_path: String::new(),
+            account: String::new(),
         }
     }
 
@@ -582,6 +632,7 @@ impl PaneSpec {
             bg_color: String::new(),
             worktree_path: String::new(),
             file_path: String::new(),
+            account: String::new(),
         }
     }
 
@@ -599,6 +650,7 @@ impl PaneSpec {
             bg_color: String::new(),
             worktree_path: String::new(),
             file_path: String::new(),
+            account: String::new(),
         }
     }
 
@@ -670,6 +722,7 @@ mod tests {
             bg_color: String::new(),
             worktree_path: String::new(),
             file_path: String::new(),
+            account: String::new(),
         })
     }
 
@@ -764,6 +817,7 @@ mod tests {
         let ws = Workspace {
             id: 1,
             name: "main".into(),
+            account: String::new(),
             root: LayoutNode::Split {
                 direction: SplitDir::Horizontal,
                 ratio: 0.5,
@@ -897,6 +951,7 @@ mod tests {
         let stale_save = Config {
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
             ..Config::default()
         };
         backend.merge_layouts_from(stale_save);
@@ -948,9 +1003,30 @@ mod tests {
         };
         backend.merge_layouts_from(Config {
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
             ..Config::default()
         });
         assert_eq!(backend.agent_hook_port, 41234);
+    }
+
+    /// The set of dirs holding hooks is backend-owned like the port.
+    #[test]
+    fn merge_layouts_does_not_carry_agent_hook_dirs() {
+        let mut backend = Config {
+            agent_hook_dirs: vec!["/a/.claude".into()],
+            ..Config::default()
+        };
+        backend.merge_layouts_from(Config {
+            agent_hook_dirs: Vec::new(),
+            ..Config::default()
+        });
+        assert_eq!(backend.agent_hook_dirs, vec!["/a/.claude".to_string()]);
+        let mut other = Config::default();
+        other.merge_layouts_from(Config {
+            agent_hook_dirs: vec!["/b".into()],
+            ..Config::default()
+        });
+        assert!(other.agent_hook_dirs.is_empty());
     }
 
     #[test]
@@ -1008,6 +1084,8 @@ mod tests {
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1023,6 +1101,8 @@ mod tests {
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -1044,6 +1124,7 @@ mod tests {
             workspaces: vec![Workspace {
                 id: 1,
                 name: "main".into(),
+                account: String::new(),
                 root: LayoutNode::Split {
                     direction: SplitDir::Horizontal,
                     ratio: 0.5,
@@ -1060,6 +1141,7 @@ mod tests {
                         bg_color: String::new(),
                         worktree_path: String::new(),
                         file_path: String::new(),
+                        account: String::new(),
                     })),
                     b: Box::new(LayoutNode::Pane(PaneSpec {
                         id: b,
@@ -1074,6 +1156,7 @@ mod tests {
                         bg_color: String::new(),
                         worktree_path: String::new(),
                         file_path: String::new(),
+                        account: String::new(),
                     })),
                 },
             }],
@@ -1086,6 +1169,8 @@ mod tests {
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -1121,6 +1206,8 @@ mod tests {
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -1259,6 +1346,8 @@ shell = "PowerShell 7"
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1291,6 +1380,8 @@ shell = "PowerShell 7"
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -1338,6 +1429,7 @@ shell = "PowerShell 7"
             bg_color: "#1a2b3c".to_string(),
             worktree_path: "C:\\wt\\agent-1".to_string(),
             file_path: "C:\\src\\작업\\main.rs".to_string(),
+            account: "acc1".to_string(),
         };
         let config = Config {
             version: CONFIG_VERSION,
@@ -1346,6 +1438,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace {
                 id: 1,
                 name: "test".into(),
+                account: String::new(),
                 root: LayoutNode::Pane(spec.clone()),
             }],
             notify_on_bell: true,
@@ -1357,6 +1450,8 @@ shell = "PowerShell 7"
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1374,6 +1469,95 @@ shell = "PowerShell 7"
         assert_eq!(loaded_spec.bg_color, "#1a2b3c");
         assert_eq!(loaded_spec.worktree_path, "C:\\wt\\agent-1");
         assert_eq!(loaded_spec.file_path, "C:\\src\\작업\\main.rs");
+        assert_eq!(loaded_spec.account, "acc1");
+    }
+
+    /// `Config.accounts` and `Workspace.account` survive TOML, a pane's
+    /// `account` survives nested in a split and a tab group (rule 3's tagged
+    /// enum shapes), and files written before the fields existed still load.
+    #[test]
+    fn accounts_roundtrip_through_toml() {
+        let mut cfg = Config {
+            accounts: vec![
+                AccountProfile {
+                    id: "a1b2c3d4".into(),
+                    name: "Work".into(),
+                    claude_config_dir: "~/.claude-work".into(),
+                    codex_home: "D:\\codex\\work".into(),
+                    color: "#ff8800".into(),
+                },
+                AccountProfile {
+                    id: "e5f6a7b8".into(),
+                    name: "Personal".into(),
+                    ..AccountProfile::default()
+                },
+            ],
+            ..Config::default()
+        };
+        let ws = cfg.workspace_mut(1);
+        ws.account = "a1b2c3d4".into();
+        let pane = PaneSpec {
+            account: "e5f6a7b8".into(),
+            ..PaneSpec::new_default()
+        };
+        ws.root = LayoutNode::Split {
+            direction: SplitDir::Horizontal,
+            ratio: 0.5,
+            a: Box::new(LayoutNode::Pane(PaneSpec::new_default())),
+            b: Box::new(LayoutNode::Tabs {
+                id: Uuid::new_v4(),
+                active: 0,
+                children: vec![LayoutNode::Pane(pane)],
+            }),
+        };
+        let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(loaded.accounts, cfg.accounts);
+        assert_eq!(loaded.workspaces[0].account, "a1b2c3d4");
+        let panes = loaded.workspaces[0].panes();
+        assert_eq!(panes[0].account, "");
+        assert_eq!(panes[1].account, "e5f6a7b8");
+
+        let legacy: Config = toml::from_str(
+            "version = 11\nactive_workspace = 1\n\n[[workspaces]]\nid = 1\nname = \"m\"\n\n[workspaces.root]\nkind = \"pane\"\nid = \"00000000-0000-0000-0000-000000000001\"\n",
+        )
+        .expect("legacy config loads");
+        assert!(legacy.accounts.is_empty());
+        assert_eq!(legacy.workspaces[0].account, "");
+        assert_eq!(legacy.workspaces[0].panes()[0].account, "");
+    }
+
+    /// Rule 11: `accounts` is a plain user setting, so a layout save must
+    /// carry it (and drop deleted ones) instead of reverting it on restart.
+    #[test]
+    fn merge_layouts_copies_accounts() {
+        let acct = |id: &str| AccountProfile {
+            id: id.into(),
+            name: id.into(),
+            ..AccountProfile::default()
+        };
+        let mut backend = Config {
+            accounts: vec![acct("old")],
+            ..Config::default()
+        };
+        let mut incoming = Config {
+            accounts: vec![acct("one"), acct("two")],
+            ..Config::default()
+        };
+        incoming.workspace_mut(1).account = "one".into();
+        backend.merge_layouts_from(incoming);
+        assert_eq!(
+            backend
+                .accounts
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>(),
+            ["one", "two"]
+        );
+        assert_eq!(backend.workspaces[0].account, "one");
+
+        backend.merge_layouts_from(Config::default());
+        assert!(backend.accounts.is_empty());
     }
 
     /// An editor pane keeps its kind and its file through TOML, nested in a
@@ -1621,6 +1805,7 @@ shell = "PowerShell 7"
             workspaces: vec![Workspace {
                 id: 1,
                 name: "main".into(),
+                account: String::new(),
                 root: LayoutNode::Split {
                     direction: SplitDir::Horizontal,
                     ratio: 0.5,
@@ -1645,6 +1830,8 @@ shell = "PowerShell 7"
             default_shell: String::new(),
             agent_tracking: false,
             agent_hook_port: 0,
+            agent_hook_dirs: Vec::new(),
+            accounts: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

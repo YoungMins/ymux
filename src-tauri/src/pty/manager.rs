@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 use portable_pty::PtySize;
 use uuid::Uuid;
 
+use crate::accounts::AgentDirs;
 use crate::config::model::{PaneSpec, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
 use crate::pty::session::{CwdMap, PaneEvent, PtySession};
@@ -36,6 +37,10 @@ pub struct PtyManager {
     // Extra environment variables injected into every spawned PTY process
     // (`YMUX_HOOK_TOKEN`). Set once at startup, read on every spawn.
     extra_env: Mutex<Vec<(String, String)>>,
+    // Where each live pane's agents keep their data, derived at spawn from
+    // exactly the environment the child got (env is fixed at spawn, so a
+    // pane keeps the dirs it started with even if its account changes later).
+    agent_dirs: Mutex<HashMap<Uuid, AgentDirs>>,
 }
 
 impl Default for PtyManager {
@@ -47,6 +52,7 @@ impl Default for PtyManager {
             rx: Mutex::new(Some(rx)),
             cwds: Arc::new(Mutex::new(HashMap::new())),
             extra_env: Mutex::new(Vec::new()),
+            agent_dirs: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -70,8 +76,17 @@ impl PtyManager {
         spec: &PaneSpec,
         profile: &ShellProfile,
         size: PtySize,
+        remove_env: &[&str],
     ) -> YmuxResult<SpawnedPane> {
         let extra = self.extra_env.lock().clone();
+        // The layers mirror `PtySession::spawn`'s order: profile env, pane
+        // env (which carries the account's variables), then manager extras.
+        let dirs = crate::accounts::agent_dirs(
+            remove_env,
+            &[&profile.env, &spec.env, &extra],
+            |k| std::env::var(k).ok(),
+            dirs::home_dir().as_deref(),
+        );
         let session = PtySession::spawn(
             spec,
             profile,
@@ -79,9 +94,11 @@ impl PtyManager {
             self.tx.clone(),
             Arc::clone(&self.cwds),
             &extra,
+            remove_env,
         )?;
         let id = session.id;
         let shell = profile.name.clone();
+        self.agent_dirs.lock().insert(id, dirs);
         self.sessions.lock().insert(id, session);
         Ok(SpawnedPane { id, shell })
     }
@@ -95,6 +112,16 @@ impl PtyManager {
     /// `save_config` to patch the layout tree in one pass.
     pub fn cwds_snapshot(&self) -> HashMap<Uuid, String> {
         self.cwds.lock().clone()
+    }
+
+    /// The directories `id`'s agents use, as of its spawn.
+    pub fn agent_dirs(&self, id: Uuid) -> Option<AgentDirs> {
+        self.agent_dirs.lock().get(&id).cloned()
+    }
+
+    /// Every live pane's [`Self::agent_dirs`].
+    pub fn agent_dirs_snapshot(&self) -> HashMap<Uuid, AgentDirs> {
+        self.agent_dirs.lock().clone()
     }
 
     /// Snapshot of `pane id → shell PID` for every live session whose PID is
@@ -126,6 +153,7 @@ impl PtyManager {
         // Drop the dead pane's cached cwd so a later pane reusing the same
         // id doesn't inherit a stale directory.
         self.cwds.lock().remove(&id);
+        self.agent_dirs.lock().remove(&id);
         match session {
             Some(s) => s.kill(),
             None => Err(YmuxError::UnknownPane(id)),
@@ -148,6 +176,7 @@ impl PtyManager {
     pub fn shutdown_all(&self) {
         let mut map = self.sessions.lock();
         map.clear();
+        self.agent_dirs.lock().clear();
     }
 }
 
@@ -184,9 +213,11 @@ mod tests {
             pixel_width: 0,
             pixel_height: 0,
         };
-        mgr.spawn(&spec, &profile, size).expect("spawn");
+        mgr.spawn(&spec, &profile, size, &[]).expect("spawn");
         assert!(mgr.pids_snapshot().get(&spec.id).is_some_and(|p| *p > 0));
+        assert!(mgr.agent_dirs(spec.id).is_some());
         mgr.kill(spec.id).expect("kill");
         assert!(!mgr.pids_snapshot().contains_key(&spec.id));
+        assert!(mgr.agent_dirs(spec.id).is_none());
     }
 }

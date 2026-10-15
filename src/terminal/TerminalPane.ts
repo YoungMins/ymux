@@ -37,6 +37,8 @@ import { shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
 import { PathLinks } from "./pathLinks";
 import { pathOpenTarget } from "./pathOpen";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
+import { paintPaneTitle } from "../accounts/badge";
+import { isAccountPending, type AccountBadge } from "../accounts/accountModel";
 
 export interface TerminalPaneOptions {
   spec: PaneSpec;
@@ -51,6 +53,18 @@ export interface TerminalPaneOptions {
   /// reorder) so the owner can persist the new list into the PaneSpec.
   onHotKeysChange?: (hotkeys: HotKeyDef[]) => void;
   onBgColorChange?: (color: string | null) => void;
+  /// The account this pane is configured to run under (pane choice, else the
+  /// workspace default), or null. Read live: at spawn (to remember what the
+  /// PTY was started with) and whenever the title is painted.
+  accountBadge?: () => AccountBadge | null;
+  /// The raw account ids sent to the backend at spawn, where they resolve to
+  /// `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
+  spawnAccounts?: () => { account: string; workspaceAccount: string };
+  /// Awaited just before the backend spawn, so a debounced config save (which
+  /// carries the account profiles the backend resolves ids against) lands first.
+  beforeSpawn?: () => Promise<void>;
+  /// Fired when the user picks another account in the pane's settings dialog.
+  onAccountChange?: (account: string) => void;
   /// Fired when the terminal emits a bell (BEL) or an OSC 9 notification —
   /// the signal a long-running CLI (claude/codex/gemini) uses to say it
   /// finished or needs attention. `message` is the OSC 9 text if present,
@@ -104,6 +118,9 @@ export class TerminalPane implements Pane {
   private termHost: HTMLElement;
   private hotkeyBar: HotKeyBar | null = null;
   private titleEl: HTMLElement | null = null;
+  /// Effective account id the PTY was spawned with ("" = none); null before
+  /// the spawn. Lets the title badge flag a later change as pending.
+  private ranAccountId: string | null = null;
   private term: Terminal;
   private fit: FitAddon;
   private search: SearchAddon;
@@ -482,7 +499,7 @@ export class TerminalPane implements Pane {
 
   private updateLang(): void {
     if (this.titleEl && !this.spec.title && !this.spec.shell) {
-      this.titleEl.textContent = t("terminal.defaultTitle");
+      this.paintTitle();
     }
     if (this.searchInput) {
       this.searchInput.placeholder = t("terminal.findPlaceholder");
@@ -522,12 +539,19 @@ export class TerminalPane implements Pane {
     // failure here must never block spawn — the pane then behaves exactly as
     // it always did.
     let outcome = null;
+    // First, so the account profiles the backend resolves ids against are
+    // saved before it decides which config directory this pane will use.
+    await this.opts.beforeSpawn?.();
     try {
+      const accounts = this.opts.spawnAccounts?.();
       outcome =
         (await api.getAgentSession(
           this.id,
           this.spec.startup_cmd ?? undefined,
           this.spec.shell,
+          this.spec.env,
+          accounts?.account,
+          accounts?.workspaceAccount,
         )) ?? null;
     } catch {
       outcome = null;
@@ -626,8 +650,12 @@ export class TerminalPane implements Pane {
         cwd: this.resumePlan?.cwd || this.spec.cwd || null,
         rows,
         cols,
+        env: this.spec.env,
+        ...this.opts.spawnAccounts?.(),
       });
       this.spawned = true;
+      this.ranAccountId = this.opts.accountBadge?.()?.id ?? "";
+      this.paintTitle();
 
       // The shell may already have emitted its OSC 7 before the listener
       // above was attached (or may never emit one, on a shell without the
@@ -850,9 +878,33 @@ export class TerminalPane implements Pane {
 
   setTitle(title: string | null): void {
     this.spec = { ...this.spec, title };
-    if (this.titleEl) {
-      this.titleEl.textContent = title || this.spec.shell || t("terminal.defaultTitle");
-    }
+    this.paintTitle();
+  }
+
+  /// Draw the title row: the label, plus the account badge when one applies.
+  /// Cheap and idempotent, so the owner calls it whenever accounts change.
+  paintTitle(): void {
+    if (!this.titleEl) return;
+    // Pending: the PTY was started under a different account than the one
+    // configured now, and a running process keeps its environment.
+    paintPaneTitle(
+      this.titleEl,
+      this.spec.title || this.spec.shell || t("terminal.defaultTitle"),
+      this.opts.accountBadge?.() ?? null,
+      this.isAccountPending(),
+    );
+  }
+
+  /// Record a new account choice for this pane's own spec copy (the
+  /// `HotKeyBar` of a `PaneGroup` edits the active tab's, like `setBgColor`).
+  setAccount(account: string): void {
+    this.spec = { ...this.spec, account };
+    this.hotkeyBar?.setAccount(account);
+  }
+
+  /// The configured account differs from the one this PTY was started under.
+  isAccountPending(): boolean {
+    return isAccountPending(this.opts.accountBadge?.()?.id ?? null, this.ranAccountId);
   }
 
   /// Build this pane's own title row and hotkey bar, in front of the terminal
@@ -863,9 +915,8 @@ export class TerminalPane implements Pane {
     // when no user title has been set (via `Ctrl+Shift+R`).
     this.titleEl = document.createElement("div");
     this.titleEl.className = "pane-title";
-    this.titleEl.textContent =
-      this.spec.title || this.spec.shell || t("terminal.defaultTitle");
     this.element.insertBefore(this.titleEl, this.termHost);
+    this.paintTitle();
 
     // Mount the HotKeyBar above xterm. An empty hotkey list still renders a
     // visible ⚙ button so the user can discover the feature.
@@ -873,6 +924,7 @@ export class TerminalPane implements Pane {
       paneId: this.id,
       initial: this.spec.hotkeys ?? [],
       initialBgColor: this.spec.bg_color ?? null,
+      initialAccount: this.spec.account ?? "",
       onSubmit: () => this.statusMachine.onSubmit(Date.now()),
       onChange: (next) => {
         this.spec = { ...this.spec, hotkeys: next };
@@ -881,6 +933,10 @@ export class TerminalPane implements Pane {
       onBgColorChange: (color) => {
         this.setBgColor(color);
         this.opts.onBgColorChange?.(color);
+      },
+      onAccountChange: (account) => {
+        this.setAccount(account);
+        this.opts.onAccountChange?.(account);
       },
     });
     this.element.insertBefore(this.hotkeyBar.element, this.termHost);

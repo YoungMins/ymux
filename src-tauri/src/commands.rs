@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use std::path::Path;
 
+use crate::agent_hooks::HookDirIssue;
 use crate::agent_sessions::{ResumeOutcome, SharedSessions};
 use crate::agents::{AgentSnapshot, HookEvent, SharedAgents};
 use crate::config::{Config, ConfigStore, ShellProfile};
@@ -26,11 +27,13 @@ use crate::shell;
 pub async fn get_token_usage(
     webview: Webview,
     request: Request<'_>,
+    state: State<'_, AppState>,
     refresh_quota: Option<bool>,
 ) -> YmuxResult<crate::token_usage::TokenSnapshot> {
     guard_local(&webview, &request, "get_token_usage")?;
+    let accounts = state.config.snapshot().accounts;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut snapshot = crate::token_usage::collect();
+        let mut snapshot = crate::token_usage::collect(&accounts);
         crate::token_usage::quota::enrich(&mut snapshot, refresh_quota.unwrap_or(false));
         snapshot
     })
@@ -52,6 +55,15 @@ pub struct SpawnArgs {
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    /// The pane's own `PaneSpec::env`; wins over account-injected variables.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    /// `PaneSpec::account` (empty = inherit the workspace's).
+    #[serde(default)]
+    pub account: String,
+    /// `Workspace::account` of the workspace owning the pane.
+    #[serde(default)]
+    pub workspace_account: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +168,7 @@ pub async fn detect_agents(
 pub fn save_config(
     webview: Webview,
     request: Request<'_>,
+    app: AppHandle,
     state: State<'_, AppState>,
     config: Config,
 ) -> YmuxResult<()> {
@@ -175,25 +188,81 @@ pub fn save_config(
     // tree carries the live directory instead of the stale initial one.
     let mut incoming = config;
     incoming.patch_cwds(&state.pty.cwds_snapshot());
+    let accounts_before = state.config.snapshot().accounts;
     state.config.update(|c| c.merge_layouts_from(incoming));
     state.config.flush()?;
+    // A changed account list may add or drop Claude config dirs that carry
+    // hooks. Separate thread: the dirs can be on a slow network share.
+    if state.config.snapshot().accounts != accounts_before {
+        std::thread::spawn(move || {
+            reconcile_hooks_quietly(&app, HookTrigger::AccountsChanged, None)
+        });
+    }
     Ok(())
+}
+
+/// What a pane's account changes in its child's environment: the variables to
+/// add (after the pane's own `explicit` env, which wins) and the inherited
+/// ones to scrub ("none" is a hard opt-out). Shared by `spawn_pane` and
+/// `get_agent_session`, so the resume check sees the directories the spawn
+/// will really use.
+fn pane_env(
+    config: &Config,
+    explicit: &[(String, String)],
+    account: &str,
+    workspace_account: &str,
+) -> (Vec<(String, String)>, Vec<&'static str>) {
+    (
+        crate::accounts::account_env(
+            &config.accounts,
+            account,
+            workspace_account,
+            dirs::home_dir().as_deref(),
+            explicit,
+        ),
+        crate::accounts::account_env_removals(account, workspace_account, explicit),
+    )
 }
 
 #[tauri::command]
 pub fn spawn_pane(
     webview: Webview,
     request: Request<'_>,
+    app: AppHandle,
     state: State<'_, AppState>,
     args: SpawnArgs,
 ) -> YmuxResult<SpawnedPane> {
     guard_local(&webview, &request, "spawn_pane")?;
-    let profile = state
-        .config
-        .snapshot()
+    let config = state.config.snapshot();
+    let profile = config
         .shell(&args.shell)
         .ok_or_else(|| YmuxError::UnknownShell(args.shell.clone()))?
         .clone();
+
+    // Account-selected CLAUDE_CONFIG_DIR / CODEX_HOME, appended after the
+    // pane's own env (which wins, see `accounts::account_env`), and the
+    // inherited variables an opt-out ("none") scrubs.
+    let (account_env, remove_env) =
+        pane_env(&config, &args.env, &args.account, &args.workspace_account);
+    // Off this thread: a dead UNC path would otherwise stall the UI. Failures
+    // are only logged, and the tool creates its own dir on first use anyway.
+    if !account_env.is_empty() {
+        let dirs = account_env.clone();
+        // The Claude dir the child will use, to hook it once it exists.
+        let claude_dir = crate::accounts::agent_dirs(
+            &remove_env,
+            &[&profile.env, &args.env, &account_env],
+            |k| std::env::var(k).ok(),
+            dirs::home_dir().as_deref(),
+        )
+        .claude;
+        std::thread::spawn(move || {
+            crate::accounts::ensure_dirs(&dirs);
+            reconcile_hooks_quietly(&app, HookTrigger::SpawnPane, Some(&claude_dir));
+        });
+    }
+    let mut env = args.env;
+    env.extend(account_env);
 
     let spec = crate::config::model::PaneSpec {
         id: args.id,
@@ -201,13 +270,14 @@ pub fn spawn_pane(
         shell: profile.name.clone(),
         cwd: args.cwd,
         startup_cmd: None,
-        env: Vec::new(),
+        env,
         pane_kind: crate::config::model::PaneKind::Terminal,
         url: None,
         hotkeys: Vec::new(),
         bg_color: String::new(),
         worktree_path: String::new(),
         file_path: String::new(),
+        account: args.account,
     };
 
     state.pty.spawn(
@@ -219,6 +289,7 @@ pub fn spawn_pane(
             pixel_width: 0,
             pixel_height: 0,
         },
+        &remove_env,
     )
 }
 
@@ -361,9 +432,14 @@ pub fn apply_agent_hook(app: &AppHandle, ev: HookEvent) {
 /// pane's shell profile name: the command is typed into that shell, so it is
 /// quoted by that shell's rules (`agent_sessions::ShellFamily`).
 ///
+/// `env`, `account` and `workspace_account` are what `spawn_pane` will get:
+/// the pane's agents will use the directories they imply, and a record from
+/// another directory (another account) resumes nothing.
+///
 /// `async` so it runs off the main thread: the session lock is shared with
 /// the scan thread, and the transcript check touches the disk. The lock is
 /// never held across that check.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn get_agent_session(
     webview: Webview,
@@ -373,23 +449,45 @@ pub fn get_agent_session(
     pane_id: Uuid,
     startup_cmd: Option<String>,
     shell: Option<String>,
+    env: Option<Vec<(String, String)>>,
+    account: Option<String>,
+    workspace_account: Option<String>,
 ) -> YmuxResult<ResumeOutcome> {
     guard_local(&webview, &request, "get_agent_session")?;
-    let family = shell
-        .as_deref()
-        .and_then(|name| {
-            state
-                .config
-                .snapshot()
-                .shell(name)
-                .map(|p| crate::agent_sessions::ShellFamily::from_executable(&p.executable))
-        })
+    let config = state.config.snapshot();
+    let profile = shell.as_deref().and_then(|name| config.shell(name));
+    let family = profile
+        .map(|p| crate::agent_sessions::ShellFamily::from_executable(&p.executable))
         .unwrap_or(crate::agent_sessions::ShellFamily::Unknown);
+    // The directories the pane agents will use once spawned, from the same
+    // layers `PtyManager::spawn` records (minus its manager-level extras,
+    // which are `YMUX_*` only).
+    let explicit = env.unwrap_or_default();
+    let (account_env, remove_env) = pane_env(
+        &config,
+        &explicit,
+        account.as_deref().unwrap_or_default(),
+        workspace_account.as_deref().unwrap_or_default(),
+    );
+    let home = dirs::home_dir();
+    let pane_dirs = crate::accounts::agent_dirs(
+        &remove_env,
+        &[
+            profile.map(|p| p.env.as_slice()).unwrap_or_default(),
+            &explicit,
+            &account_env,
+        ],
+        |k| std::env::var(k).ok(),
+        home.as_deref(),
+    );
+    let home_dirs = crate::accounts::home_dirs(home.as_deref());
     let now = crate::agent_sessions::now_secs();
     // Copy the record out; the disk check below runs without the lock.
     let record = sessions.0.lock().get(pane_id).cloned();
-    let outcome = crate::agent_sessions::outcome_for(
+    let outcome = crate::agent_sessions::outcome_for_pane(
         record.as_ref(),
+        &pane_dirs,
+        &home_dirs,
         startup_cmd.as_deref().unwrap_or_default(),
         family,
         now,
@@ -398,7 +496,14 @@ pub fn get_agent_session(
     // A resume: the frontend types the command next, and until the scan sees
     // the resumed agent running the pane's old scrollback stays on disk. A
     // transcript that is gone: the record is declined now.
-    sessions.0.lock().note_outcome(pane_id, &outcome, now);
+    let owned = record.as_ref().map_or(true, |s| {
+        crate::agent_sessions::record_matches_pane(s, &pane_dirs, &home_dirs)
+    });
+    let mut tracker = sessions.0.lock();
+    tracker.note_outcome(pane_id, &outcome, now);
+    // A record of another account is not resumed, so it must not delete the
+    // scrollback this spawn restores either.
+    tracker.note_record_owner(pane_id, owned);
     Ok(outcome)
 }
 
@@ -454,10 +559,20 @@ pub fn observe_pane_session(
     tracker: &mut crate::agent_sessions::SessionTracker,
     input: PaneSessionInput<'_>,
 ) {
+    let state = app.state::<AppState>();
+    let pty = &state.pty;
+    // The pane's own dirs; a pane ymux no longer tracks reads the home ones.
+    let dirs = pty
+        .agent_dirs(input.pane_id)
+        .unwrap_or_else(|| crate::accounts::home_dirs(dirs::home_dir().as_deref()));
+    let config_dir = crate::agent_sessions::AgentKind::from_kind(input.kind)
+        .map(|a| dirs.for_agent(a).to_string())
+        .unwrap_or_default();
     let obs = crate::agent_sessions::PaneObservation {
         pane_id: input.pane_id,
         kind: input.kind.to_string(),
-        cwd: app.state::<AppState>().pty.cwd_for(input.pane_id),
+        config_dir: config_dir.clone(),
+        cwd: pty.cwd_for(input.pane_id),
         status: input.status,
         hook_session_id: input.hook_session_id,
         process: input.process,
@@ -467,7 +582,7 @@ pub fn observe_pane_session(
         &obs,
         crate::agent_sessions::now_secs(),
         input.others,
-        crate::agent_scan_disk::candidate_sessions,
+        |agent, cwd| crate::agent_scan_disk::candidate_sessions_in(agent, &config_dir, cwd),
     );
 }
 
@@ -502,38 +617,216 @@ pub fn get_pane_labels(
     Ok(labels.0.lock().clone())
 }
 
-/// Install (`true`) or remove (`false`) ymux's Claude Code hooks, then persist
-/// the setting. The file is written first: if that fails (e.g. unparseable
-/// settings.json) the error reaches the UI and the setting is not flipped.
-#[tauri::command]
+/// Install (`true`) or remove (`false`) ymux's Claude Code hooks in every
+/// account's config dir, then persist the setting. The default and home dirs
+/// are written first: if that fails (e.g. unparseable settings.json) the error
+/// reaches the UI and the setting is not flipped. A failure in any other
+/// account's dir does not block it; those come back as issues. Off the main
+/// thread: a profile dir on a dead network path would stall the UI.
+#[tauri::command(async)]
 pub fn set_agent_tracking(
     webview: Webview,
     request: Request<'_>,
-    state: State<'_, AppState>,
-    hook_port: State<'_, AgentHookPort>,
+    app: AppHandle,
     enabled: bool,
-) -> YmuxResult<()> {
+) -> YmuxResult<Vec<HookDirIssue>> {
     guard_local(&webview, &request, "set_agent_tracking")?;
-    let port = match (enabled, hook_port.0) {
-        (true, None) => {
-            return Err(YmuxError::Other(
-                "this ymux has no Claude Code hook receiver (another ymux instance \
-                 holds its port, or it failed to start)"
-                    .into(),
-            ))
-        }
-        // Uninstall doesn't need the port: it matches any ymux entry.
-        (_, port) => port.unwrap_or(0),
+    let trigger = if enabled {
+        HookTrigger::Enable
+    } else {
+        HookTrigger::Disable
     };
-    crate::agent_hooks::set_enabled(enabled, port)?;
-    state.config.update(|c| c.agent_tracking = enabled);
-    state.config.flush()?;
-    Ok(())
+    reconcile_hooks(&app, trigger)
 }
 
 /// Port the Claude Code hook receiver listens on this run (`None` if it
-/// could not start). Managed state, read by [`set_agent_tracking`].
-pub struct AgentHookPort(pub Option<u16>);
+/// could not start), and whether this run may rewrite hook files on its own
+/// (`agent_hooks::startup_refresh_allowed`). Managed state, read by
+/// [`reconcile_hooks`].
+pub struct AgentHookPort {
+    pub port: Option<u16>,
+    pub writes_allowed: bool,
+}
+
+/// What asked for a hook reconcile (CLAUDE.md rules 11-13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookTrigger {
+    /// The user turned tracking on: needs a port, installs everywhere.
+    Enable,
+    /// The user turned tracking off: removes from every dir ymux knows of.
+    Disable,
+    /// App launch: reinstalls (the port may have changed) or clears pending.
+    Startup,
+    /// The account list changed.
+    AccountsChanged,
+    /// A pane spawned into an account dir that has no hooks yet.
+    SpawnPane,
+}
+
+/// Serializes every hook-file write and the config fields that record them.
+static HOOK_WRITES: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Bring the hooks in line with the account list under one lock, reading the
+/// latest config snapshot only after taking it. `Enable`/`Disable` flip
+/// `agent_tracking` and write `agent_hook_dirs` inside that lock, so an
+/// implicit reconcile can never interleave with the toggle. Implicit triggers
+/// do nothing in debug builds and in a stand-down instance (rule 13).
+pub fn reconcile_hooks(app: &AppHandle, trigger: HookTrigger) -> YmuxResult<Vec<HookDirIssue>> {
+    use crate::agent_hooks::{
+        apply_plan, desired_dirs, next_installed, plan_hooks, plan_hooks_with, same_location,
+    };
+    let _guard = HOOK_WRITES.lock();
+    let state = app.state::<AppState>();
+    let Some(hook) = app.try_state::<AgentHookPort>() else {
+        return Err(YmuxError::Other("hook receiver state is not ready".into()));
+    };
+    let explicit = matches!(trigger, HookTrigger::Enable | HookTrigger::Disable);
+    if !explicit && !hook.writes_allowed {
+        return Ok(Vec::new());
+    }
+    let config = state.config.snapshot();
+    let desired = desired_dirs(
+        &config.accounts,
+        |k| std::env::var(k).ok(),
+        dirs::home_dir().as_deref(),
+    );
+    let installed = config.agent_hook_dirs.clone();
+    let (tracking, plan, port) = match trigger {
+        HookTrigger::Enable => {
+            let port = hook.port.ok_or_else(|| {
+                YmuxError::Other(
+                    "this ymux has no Claude Code hook receiver (another ymux instance \
+                     holds its port, or it failed to start)"
+                        .into(),
+                )
+            })?;
+            (
+                true,
+                plan_hooks_with(&desired.all, &installed, true, same_location),
+                port,
+            )
+        }
+        HookTrigger::Disable => {
+            let known: Vec<String> = installed.iter().chain(&desired.all).cloned().collect();
+            (false, plan_hooks(&[], &known, false), 0)
+        }
+        _ if config.agent_tracking => {
+            let Some(port) = hook.port else {
+                return Ok(Vec::new());
+            };
+            let refresh_all = trigger == HookTrigger::Startup;
+            (
+                true,
+                plan_hooks_with(&desired.all, &installed, refresh_all, same_location),
+                port,
+            )
+        }
+        // Tracking off: only hooks a failed uninstall left behind.
+        _ => (false, plan_hooks(&[], &installed, false), 0),
+    };
+    if plan.is_empty() && !explicit {
+        return Ok(Vec::new());
+    }
+    let may_create = |d: &str| desired.is_required(d);
+    let outcome = if trigger == HookTrigger::Enable {
+        // Required dirs (default, home) first: if one fails, no profile dir
+        // may keep live hooks while tracking stays off.
+        let (req, rest): (Vec<String>, Vec<String>) = plan
+            .install
+            .iter()
+            .cloned()
+            .partition(|d| desired.is_required(d));
+        let first = apply_plan(
+            &crate::agent_hooks::HookPlan {
+                uninstall: Vec::new(),
+                install: req,
+            },
+            port,
+            may_create,
+        );
+        if let Some(i) = first
+            .issues()
+            .into_iter()
+            .find(|i| desired.is_required(&i.dir))
+        {
+            // Record only what the first pass really wrote, so a later
+            // disable still finds it.
+            let next = next_installed(&installed, &first);
+            state.config.update(|c| c.agent_hook_dirs = next);
+            let _ = state.config.flush();
+            return Err(YmuxError::Other(format!("{}: {}", i.dir, i.error)));
+        }
+        let mut second = apply_plan(
+            &crate::agent_hooks::HookPlan {
+                uninstall: plan.uninstall.clone(),
+                install: rest,
+            },
+            port,
+            may_create,
+        );
+        second.install.splice(0..0, first.install);
+        second
+    } else {
+        apply_plan(&plan, port, may_create)
+    };
+    let next = next_installed(&installed, &outcome);
+    let issues = outcome.issues();
+    // A failure in the default or home dir blocks the toggle; other accounts'
+    // dirs only report (and, for a removal, stay recorded as pending).
+    let blocking = if explicit {
+        issues.iter().find(|i| desired.is_required(&i.dir)).cloned()
+    } else {
+        None
+    };
+    state.config.update(|c| {
+        if explicit && blocking.is_none() {
+            c.agent_tracking = tracking;
+        }
+        c.agent_hook_dirs = next;
+    });
+    let flushed = state.config.flush();
+    if let Some(b) = blocking {
+        return Err(YmuxError::Other(format!("{}: {}", b.dir, b.error)));
+    }
+    flushed?;
+    Ok(issues)
+}
+
+/// [`reconcile_hooks`] for the implicit triggers: runs inline (callers are
+/// already on a worker thread), skips when `pane_claude_dir` already carries
+/// hooks or is not an account dir, and logs instead of returning.
+fn reconcile_hooks_quietly(app: &AppHandle, trigger: HookTrigger, pane_claude_dir: Option<&str>) {
+    if let Some(dir) = pane_claude_dir {
+        let config = app.state::<AppState>().config.snapshot();
+        let desired = crate::agent_hooks::desired_dirs(
+            &config.accounts,
+            |k| std::env::var(k).ok(),
+            dirs::home_dir().as_deref(),
+        );
+        if !config.agent_tracking
+            || crate::agent_hooks::has_dir(&config.agent_hook_dirs, dir)
+            || !crate::agent_hooks::has_dir(&desired.all, dir)
+        {
+            return;
+        }
+    }
+    match reconcile_hooks(app, trigger) {
+        Ok(issues) => {
+            for i in issues {
+                tracing::warn!(dir = %i.dir, error = %i.error, "Claude Code hooks: directory not updated");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "failed to reconcile Claude Code hooks"),
+    }
+}
+
+/// App launch: re-run the hook install for every account dir (or clear
+/// leftovers when tracking is off). Off the setup thread — a profile dir on a
+/// network share must not delay the window.
+pub fn reconcile_hooks_at_startup(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || reconcile_hooks_quietly(&app, HookTrigger::Startup, None));
+}
 
 /// Start the loopback receiver for Claude Code's http hooks
 /// (`crate::hook_http`, CLAUDE.md rule 13) and return its port.

@@ -544,26 +544,22 @@ pub fn parse_rfc3339_secs(s: &str) -> Option<u64> {
     u64::try_from(secs).ok()
 }
 
-/// `~/.claude/projects`, or `None` if the OS has no home directory.
-pub fn claude_projects_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("projects"))
+/// Where `agent` keeps its transcripts inside its config directory
+/// (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, or the default).
+pub fn transcript_root(agent: AgentKind, config_dir: &str) -> PathBuf {
+    Path::new(config_dir).join(match agent {
+        AgentKind::Claude => "projects",
+        AgentKind::Codex => "sessions",
+    })
 }
 
-/// `~/.codex/sessions`.
-pub fn codex_sessions_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".codex").join("sessions"))
-}
-
-/// Every transcript for `agent` in `cwd` that a pane could be running,
-/// against the real transcript roots in the user's home directory.
-pub fn candidate_sessions(agent: AgentKind, cwd: &str) -> Vec<DiskSession> {
-    let root = match agent {
-        AgentKind::Claude => claude_projects_root(),
-        AgentKind::Codex => codex_sessions_root(),
-    };
-    let Some(root) = root else {
+/// Every transcript for `agent` in `cwd` that a pane could be running, under
+/// one config directory.
+pub fn candidate_sessions_in(agent: AgentKind, config_dir: &str, cwd: &str) -> Vec<DiskSession> {
+    if config_dir.is_empty() {
         return Vec::new();
-    };
+    }
+    let root = transcript_root(agent, config_dir);
     let now = SystemTime::now();
     match agent {
         AgentKind::Claude => claude_candidates(&root, cwd, now),
@@ -571,9 +567,10 @@ pub fn candidate_sessions(agent: AgentKind, cwd: &str) -> Vec<DiskSession> {
     }
 }
 
-/// `~/.claude/sessions`: one `<pid>.json` per running interactive Claude.
-pub fn claude_pid_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("sessions"))
+/// `<claude config dir>/sessions`: one `<pid>.json` per running interactive
+/// Claude.
+fn claude_pid_dir(config_dir: &str) -> PathBuf {
+    Path::new(config_dir).join("sessions")
 }
 
 /// Largest pid file believed. The real ones are under 1 KB.
@@ -592,10 +589,18 @@ pub fn read_claude_pid_file(dir: &Path, pid: u32) -> Option<crate::agent_binding
 }
 
 /// The session id Claude's own pid file names for `proc`, when it is
-/// believable (`agent_binding::registry_session_id`).
-pub fn claude_pid_file_id(proc: &crate::agent_binding::PaneProcess) -> Option<String> {
-    let file = read_claude_pid_file(&claude_pid_dir()?, proc.pid)?;
-    crate::agent_binding::registry_session_id(proc, &file)
+/// believable (`agent_binding::registry_session_id`). The first of
+/// `claude_dirs` that holds a believable file answers: a pid is unique on the
+/// machine, so at most one directory has a file for this very process.
+pub fn claude_pid_file_id_in(
+    claude_dirs: &[&str],
+    proc: &crate::agent_binding::PaneProcess,
+) -> Option<String> {
+    claude_dirs
+        .iter()
+        .filter(|d| !d.is_empty())
+        .filter_map(|d| read_claude_pid_file(&claude_pid_dir(d), proc.pid))
+        .find_map(|file| crate::agent_binding::registry_session_id(proc, &file))
 }
 
 /// Directory entries one existence check may visit. The check runs as a pane
@@ -703,15 +708,21 @@ pub fn transcript_exists_under(
     transcript_exists_within(agent, root, session_id, cwd_hint, MAX_EXISTS_ENTRIES)
 }
 
-/// [`transcript_exists_under`] against the real roots in the user's home
-/// directory. A machine with no home directory has no transcripts either, so
-/// nothing is resumable there.
-pub fn transcript_exists(agent: AgentKind, session_id: &str, cwd_hint: &str) -> bool {
-    let root = match agent {
-        AgentKind::Claude => claude_projects_root(),
-        AgentKind::Codex => codex_sessions_root(),
-    };
-    root.is_some_and(|r| transcript_exists_under(agent, &r, session_id, cwd_hint))
+/// [`transcript_exists_under`] inside one config directory. An empty
+/// directory (no home to default to) has no transcripts.
+pub fn transcript_exists_in(
+    agent: AgentKind,
+    config_dir: &str,
+    session_id: &str,
+    cwd_hint: &str,
+) -> bool {
+    !config_dir.is_empty()
+        && transcript_exists_under(
+            agent,
+            &transcript_root(agent, config_dir),
+            session_id,
+            cwd_hint,
+        )
 }
 
 #[cfg(test)]
@@ -1363,6 +1374,133 @@ mod tests {
             1
         ));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn codex_rollout(root: &Path, id: &str, cwd: &str) {
+        let f = root
+            .join("2026/10/01")
+            .join(format!("rollout-2026-10-01T10-00-00-{id}.jsonl"));
+        write(
+            &f,
+            &serde_json::json!({
+                "type": "session_meta",
+                "payload": { "id": id, "session_id": id, "cwd": cwd, "source": "cli" }
+            })
+            .to_string(),
+        );
+    }
+
+    #[test]
+    fn candidates_come_only_from_the_given_config_dir() {
+        let base = tempdir("cand-dirs");
+        let (a, b) = (base.join("a"), base.join("b"));
+        let (ca, cb) = (a.display().to_string(), b.display().to_string());
+        let (id_a, id_b) = (
+            "aaaaaaaa-0000-0000-0000-00000000000a",
+            "bbbbbbbb-0000-0000-0000-00000000000b",
+        );
+        for (dir, id) in [(&a, id_a), (&b, id_b)] {
+            write(
+                &dir.join("projects/D--Git-ymux").join(format!("{id}.jsonl")),
+                &claude_transcript("D:\\Git\\ymux", "cli"),
+            );
+        }
+        let cwd = "D:\\Git\\ymux";
+        let ids = |v: Vec<DiskSession>| v.into_iter().map(|d| d.session_id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(candidate_sessions_in(AgentKind::Claude, &ca, cwd)),
+            [id_a]
+        );
+        assert_eq!(
+            ids(candidate_sessions_in(AgentKind::Claude, &cb, cwd)),
+            [id_b]
+        );
+        assert!(candidate_sessions_in(AgentKind::Claude, "", cwd).is_empty());
+        assert!(candidate_sessions_in(AgentKind::Codex, &ca, cwd).is_empty());
+
+        let (x, y) = (
+            "01a00000-0000-0000-0000-0000000000a1",
+            "01a00000-0000-0000-0000-0000000000b2",
+        );
+        codex_rollout(&a.join("sessions"), x, cwd);
+        codex_rollout(&b.join("sessions"), y, cwd);
+        assert_eq!(ids(candidate_sessions_in(AgentKind::Codex, &ca, cwd)), [x]);
+        assert_eq!(ids(candidate_sessions_in(AgentKind::Codex, &cb, cwd)), [y]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn transcript_exists_in_ignores_other_dirs() {
+        let base = tempdir("exists-dirs");
+        let (a, b) = (base.join("a"), base.join("b"));
+        let (ca, cb) = (a.display().to_string(), b.display().to_string());
+        let id = "aaaaaaaa-0000-0000-0000-00000000000f";
+        write(
+            &a.join("projects/D--Git-ymux").join(format!("{id}.jsonl")),
+            &claude_transcript("D:\\Git\\ymux", "cli"),
+        );
+        let cx = "01a00000-0000-0000-0000-0000000000c3";
+        codex_rollout(&a.join("sessions"), cx, "D:\\Git\\ymux");
+        assert!(transcript_exists_in(AgentKind::Claude, &ca, id, ""));
+        assert!(transcript_exists_in(
+            AgentKind::Claude,
+            &ca,
+            id,
+            "D:\\Git\\ymux"
+        ));
+        assert!(!transcript_exists_in(AgentKind::Claude, &cb, id, ""));
+        assert!(!transcript_exists_in(AgentKind::Claude, "", id, ""));
+        assert!(transcript_exists_in(AgentKind::Codex, &ca, cx, ""));
+        assert!(!transcript_exists_in(AgentKind::Codex, &cb, cx, ""));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pid_file_probe_takes_first_believable_dir() {
+        let base = tempdir("pid-dirs");
+        let (a, b, c) = (base.join("a"), base.join("b"), base.join("c"));
+        let (ia, ib) = (
+            "aaaaaaaa-0000-0000-0000-00000000000a",
+            "bbbbbbbb-0000-0000-0000-00000000000b",
+        );
+        let started = 1_790_212_418_u64;
+        let proc = crate::agent_binding::PaneProcess {
+            pid: 4242,
+            start_secs: started,
+            argv: vec!["claude".into()],
+            subtree: [4242].into_iter().collect(),
+        };
+        let pid_file = |dir: &Path, id: &str, entrypoint: &str| {
+            write(
+                &dir.join("sessions/4242.json"),
+                &serde_json::json!({
+                    "pid": 4242, "sessionId": id,
+                    "startedAt": (started + 1) * 1000, "entrypoint": entrypoint,
+                })
+                .to_string(),
+            );
+        };
+        // `a` holds a file about this pid that is not believable (desktop
+        // entrypoint); `b` and `c` both hold believable ones.
+        pid_file(&a, ia, "claude-desktop");
+        pid_file(&b, ib, "cli");
+        pid_file(&c, ia, "cli");
+        let dirs = |v: &[&Path]| {
+            v.iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+        };
+        let probe = |v: &[&Path]| {
+            let owned = dirs(v);
+            let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            claude_pid_file_id_in(&refs, &proc)
+        };
+        assert_eq!(probe(&[&a, &b, &c]), Some(ib.to_string()));
+        assert_eq!(probe(&[&c, &b]), Some(ia.to_string()));
+        assert_eq!(probe(&[&a]), None);
+        assert_eq!(probe(&[&base.join("missing")]), None);
+        assert_eq!(claude_pid_file_id_in(&[], &proc), None);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

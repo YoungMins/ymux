@@ -14,8 +14,12 @@ export interface HotKeyBarOptions {
   paneId: Uuid;
   initial: HotKeyDef[];
   initialBgColor: string | null;
+  /// This pane's `PaneSpec.account` ("" = inherit the workspace's).
+  initialAccount?: string;
   onChange: (next: HotKeyDef[]) => void;
   onBgColorChange: (color: string | null) => void;
+  /// Fired when the pane's account is changed in the settings dialog.
+  onAccountChange?: (account: string) => void;
   /// Fired when a hotkey submits a command to the PTY. These writes go
   /// straight to `writePane` and never pass through xterm's `onData`, so
   /// without this the pane's status machine would never see the submission
@@ -42,6 +46,12 @@ export class HotKeyBar {
     this._cleanupLang();
   }
 
+  /// Keep the dialog's copy of the pane's account current when something
+  /// other than the dialog changed it (an account was deleted).
+  setAccount(account: string): void {
+    this.opts.initialAccount = account;
+  }
+
   setHotKeys(next: HotKeyDef[]): void {
     this.hotkeys = [...next];
     this.render();
@@ -50,11 +60,12 @@ export class HotKeyBar {
   /// Re-point the bar at another pane. A `PaneGroup` owns one bar for a whole
   /// tab group and calls this on every tab switch, so the bar always reads and
   /// writes the active tab's `PaneSpec` and PTY. `opts.paneId` and
-  /// `opts.initialBgColor` are the only copies (the ⚙ manager already mutates
-  /// `initialBgColor` in place), so nothing else can go stale.
-  bind(paneId: Uuid, hotkeys: HotKeyDef[], bgColor: string | null): void {
+  /// `opts.initialBgColor` / `opts.initialAccount` are the only copies (the ⚙
+  /// manager already mutates them in place), so nothing else can go stale.
+  bind(paneId: Uuid, hotkeys: HotKeyDef[], bgColor: string | null, account = ""): void {
     this.opts.paneId = paneId;
     this.opts.initialBgColor = bgColor;
+    this.opts.initialAccount = account;
     this.hotkeys = [...hotkeys];
     this.render();
   }
@@ -93,6 +104,13 @@ export class HotKeyBar {
         (color) => {
           this.opts.initialBgColor = color;
           this.opts.onBgColorChange(color);
+        },
+        {
+          current: this.opts.initialAccount ?? "",
+          onChange: (account) => {
+            this.opts.initialAccount = account;
+            this.opts.onAccountChange?.(account);
+          },
         },
       );
     });

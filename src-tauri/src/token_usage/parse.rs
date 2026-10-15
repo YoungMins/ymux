@@ -169,6 +169,7 @@ impl Parsed {
                     return;
                 };
                 self.events.push(Event {
+                    account: 0,
                     provider,
                     session: self.session.clone(),
                     id,
@@ -231,6 +232,7 @@ impl Parsed {
                         };
                         let totals = usage.totals(true);
                         self.events.push(Event {
+                            account: 0,
                             provider,
                             session: self.session.clone(),
                             id: totals.total.to_string(),

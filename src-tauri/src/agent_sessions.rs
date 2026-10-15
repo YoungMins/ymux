@@ -87,6 +87,12 @@ pub struct AgentSession {
     /// Compared with `ypath` (rule 15), never `==`; kept raw because it is
     /// also the directory the resumed pane must be spawned in.
     pub cwd: String,
+    /// The agent's config directory (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, or
+    /// the default) the conversation lives under, in the raw spelling the pane
+    /// spawned with. Empty in a record written before this field existed,
+    /// which means the home default. Compared with `ypath` (rule 15).
+    #[serde(default)]
+    pub config_dir: String,
     /// Last known agent status.
     pub state: AgentStatus,
     /// The last known state was not `done` — the conversation was cut off
@@ -778,6 +784,9 @@ pub struct PaneObservation {
     /// The id Claude's own `~/.claude/sessions/<pid>.json` names for that
     /// process, already vetted by `agent_binding::registry_session_id`.
     pub pid_file_session_id: Option<String>,
+    /// The agent's config directory in this pane (`AgentDirs::for_agent`),
+    /// stamped onto the record.
+    pub config_dir: String,
 }
 
 /// Which process a pane's record was established by, and for which id.
@@ -812,6 +821,11 @@ pub struct SessionTracker {
     /// Panes whose resume failed this run. Their old scrollback is what the
     /// next launch restores, so nothing may overwrite it until then.
     failed: HashSet<Uuid>,
+    /// Panes whose record belongs to another account's config directory than
+    /// the pane now spawns with. Such a record is not resumed, so it must not
+    /// suppress the pane's scrollback either: until an agent of the pane's own
+    /// account is recorded, the pane restores and saves like a plain shell.
+    foreign: HashSet<Uuid>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
     /// Pane id -> when a hook-borne id was last checked against the pane's
@@ -1200,11 +1214,13 @@ impl SessionTracker {
                     .map(|s| s.state)
             })
             .unwrap_or(AgentStatus::Working);
+        self.foreign.remove(&obs.pane_id);
         let changed = self.store.put(AgentSession {
             pane_id: obs.pane_id,
             agent,
             session_id: session_id.to_string(),
             cwd,
+            config_dir: obs.config_dir.clone(),
             state,
             interrupted: state != AgentStatus::Done,
             active: true,
@@ -1242,9 +1258,23 @@ impl SessionTracker {
     /// then be replayed, putting a dead Claude screen back on the display
     /// this feature exists to clear.
     pub fn suppresses_scrollback(&self, pane_id: Uuid, now: u64) -> bool {
-        self.store
-            .get(pane_id)
-            .is_some_and(|s| s.is_fresh_at(now) && !s.cwd.is_empty())
+        !self.foreign.contains(&pane_id)
+            && self
+                .store
+                .get(pane_id)
+                .is_some_and(|s| s.is_fresh_at(now) && !s.cwd.is_empty())
+    }
+
+    /// Whether the pane's record is its own (see `record_matches_pane`), as
+    /// `get_agent_session` just decided. A record that is not stays in the
+    /// store untouched — switching back to its account resumes it — but stops
+    /// suppressing the scrollback.
+    pub fn note_record_owner(&mut self, pane_id: Uuid, owned: bool) {
+        if owned {
+            self.foreign.remove(&pane_id);
+        } else {
+            self.foreign.insert(pane_id);
+        }
     }
 
     /// What to do with `pane_id`'s scrollback blob. The backend alone
@@ -1335,6 +1365,7 @@ impl SessionTracker {
         self.bindings.remove(&pane_id);
         self.pending.remove(&pane_id);
         self.failed.remove(&pane_id);
+        self.foreign.remove(&pane_id);
     }
 }
 
@@ -1424,6 +1455,23 @@ pub fn outcome_for(
     }
 }
 
+/// [`outcome_for`] for the pane about to spawn with `pane`'s directories. A
+/// record that belongs to another account's directory (or to the home default
+/// while the pane runs elsewhere) is not this pane's to resume: `None`, not
+/// `Missing` — the transcript is not gone, it is someone else's.
+pub fn outcome_for_pane(
+    session: Option<&AgentSession>,
+    pane: &crate::accounts::AgentDirs,
+    home: &crate::accounts::AgentDirs,
+    startup_cmd: &str,
+    shell: ShellFamily,
+    now: u64,
+    transcript_exists: impl FnOnce(&AgentSession) -> bool,
+) -> ResumeOutcome {
+    let own = session.filter(|s| record_matches_pane(s, pane, home));
+    outcome_for(own, startup_cmd, shell, now, transcript_exists)
+}
+
 /// Whether the transcript naming `session.session_id` is still on disk.
 ///
 /// Delegates to a search *by id* rather than a path rebuilt from the record's
@@ -1432,18 +1480,64 @@ pub fn outcome_for(
 pub fn transcript_exists(session: &AgentSession) -> bool {
     static CACHE: std::sync::OnceLock<parking_lot::Mutex<ExistsCache>> = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
-    let key = (session.agent, session.session_id.clone());
+    let home = crate::accounts::home_dirs(dirs::home_dir().as_deref());
+    let dir = session_config_dir(session, &home);
+    let key = exists_cache_key(session.agent, dir, &session.session_id);
     let now = std::time::Instant::now();
     if let Some(hit) = cache.lock().get(&key, now) {
         return hit;
     }
     // The walk runs outside the cache lock: two panes checking at once may
     // both walk, which is cheaper than serialising every spawn on one walk.
-    let found =
-        crate::agent_scan_disk::transcript_exists(session.agent, &session.session_id, &session.cwd);
+    let found = crate::agent_scan_disk::transcript_exists_in(
+        session.agent,
+        dir,
+        &session.session_id,
+        &session.cwd,
+    );
     cache.lock().put(key, found, now);
     found
 }
+
+/// The config directory `session` lives under: its own, or — for a record
+/// written before records carried one — the home default (`home`).
+pub fn session_config_dir<'a>(
+    session: &'a AgentSession,
+    home: &'a crate::accounts::AgentDirs,
+) -> &'a str {
+    if session.config_dir.is_empty() {
+        home.for_agent(session.agent)
+    } else {
+        &session.config_dir
+    }
+}
+
+/// Whether `session` belongs to a pane whose agents use `pane`'s directories.
+/// A record from another account's directory is not this pane's to resume:
+/// the id would not be found there, or worse, would resume the wrong
+/// account's conversation.
+pub fn record_matches_pane(
+    session: &AgentSession,
+    pane: &crate::accounts::AgentDirs,
+    home: &crate::accounts::AgentDirs,
+) -> bool {
+    ypath::same_path(
+        session_config_dir(session, home),
+        pane.for_agent(session.agent),
+    )
+}
+
+/// Key of one existence answer: the directory is a `ypath` comparison key, so
+/// two spellings of it share an answer and two directories never do.
+pub fn exists_cache_key(agent: AgentKind, config_dir: &str, session_id: &str) -> ExistsKey {
+    (
+        agent,
+        ypath::comparison_key(config_dir),
+        session_id.to_string(),
+    )
+}
+
+pub type ExistsKey = (AgentKind, String, String);
 
 /// How long an answer to "is this transcript still on disk?" is reused.
 pub const EXISTS_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -1452,18 +1546,18 @@ pub const EXISTS_CACHE_TTL: Duration = Duration::from_secs(30);
 /// or a quick relaunch does not walk the transcript tree once per pane.
 #[derive(Debug, Default)]
 pub struct ExistsCache {
-    entries: BTreeMap<(AgentKind, String), (bool, std::time::Instant)>,
+    entries: BTreeMap<ExistsKey, (bool, std::time::Instant)>,
 }
 
 impl ExistsCache {
-    pub fn get(&self, key: &(AgentKind, String), now: std::time::Instant) -> Option<bool> {
+    pub fn get(&self, key: &ExistsKey, now: std::time::Instant) -> Option<bool> {
         self.entries
             .get(key)
             .filter(|(_, at)| now.saturating_duration_since(*at) < EXISTS_CACHE_TTL)
             .map(|(found, _)| *found)
     }
 
-    pub fn put(&mut self, key: (AgentKind, String), found: bool, now: std::time::Instant) {
+    pub fn put(&mut self, key: ExistsKey, found: bool, now: std::time::Instant) {
         self.entries
             .retain(|_, (_, at)| now.saturating_duration_since(*at) < EXISTS_CACHE_TTL);
         self.entries.insert(key, (found, now));
@@ -1480,6 +1574,7 @@ mod tests {
             agent: AgentKind::Claude,
             session_id: id.to_string(),
             cwd: "D:\\Git\\ymux".to_string(),
+            config_dir: String::new(),
             state: AgentStatus::Working,
             interrupted: true,
             active: true,
@@ -2008,6 +2103,7 @@ mod tests {
             hook_session_id: None,
             process: Some(process(100, 0, &["claude"])),
             pid_file_session_id: None,
+            config_dir: String::new(),
         }
     }
 
@@ -2751,15 +2847,133 @@ mod tests {
     fn existence_answers_are_reused_for_a_while_then_rechecked() {
         let mut c = ExistsCache::default();
         let t0 = std::time::Instant::now();
-        let key = (AgentKind::Claude, ID_A.to_string());
+        let key = exists_cache_key(AgentKind::Claude, "/c", ID_A);
         assert_eq!(c.get(&key, t0), None);
         c.put(key.clone(), true, t0);
         assert_eq!(c.get(&key, t0 + Duration::from_secs(5)), Some(true));
         assert_eq!(c.get(&key, t0 + EXISTS_CACHE_TTL), None, "expired");
         assert_eq!(
-            c.get(&(AgentKind::Codex, ID_A.to_string()), t0),
+            c.get(&exists_cache_key(AgentKind::Codex, "/c", ID_A), t0),
             None,
             "keyed by agent too"
+        );
+    }
+
+    #[test]
+    fn exists_cache_keys_by_dir() {
+        let mut c = ExistsCache::default();
+        let t0 = std::time::Instant::now();
+        c.put(
+            exists_cache_key(AgentKind::Claude, "/srv/a", ID_A),
+            true,
+            t0,
+        );
+        let get = |dir: &str| c.get(&exists_cache_key(AgentKind::Claude, dir, ID_A), t0);
+        assert_eq!(get("/srv/a"), Some(true));
+        // Another spelling of the same directory shares the answer (rule 15)...
+        assert_eq!(get("/srv//a/"), Some(true));
+        // ...another directory (or POSIX case) does not.
+        assert_eq!(get("/srv/b"), None);
+        assert_eq!(get("/srv/A"), None);
+    }
+
+    fn dirs_at(claude: &str, codex: &str) -> crate::accounts::AgentDirs {
+        crate::accounts::AgentDirs {
+            claude: claude.to_string(),
+            codex: codex.to_string(),
+            claude_env: None,
+        }
+    }
+
+    #[test]
+    fn record_keeps_observed_config_dir() {
+        let pane = Uuid::from_u128(7);
+        let mut t = SessionTracker::default();
+        let mut o = obs(pane, "claude", Some(CWD));
+        o.pid_file_session_id = Some(ID_A.to_string());
+        o.config_dir = "/acct/claude".to_string();
+        t.observe(&o, 1_000, &[], |_, _| Vec::new());
+        let rec = t.get(pane).expect("recorded");
+        assert_eq!(rec.session_id, ID_A);
+        assert_eq!(rec.config_dir, "/acct/claude");
+        // It survives the JSON store.
+        let back: AgentSession =
+            serde_json::from_str(&serde_json::to_string(rec).unwrap()).unwrap();
+        assert_eq!(back.config_dir, "/acct/claude");
+    }
+
+    #[test]
+    fn legacy_record_loads_as_home() {
+        let rec = session(Uuid::from_u128(8), ID_A, IdSource::Hook);
+        let mut json = serde_json::to_value(&rec).unwrap();
+        json.as_object_mut().unwrap().remove("config_dir");
+        let loaded: AgentSession = serde_json::from_value(json).expect("old shape loads");
+        assert_eq!(loaded.config_dir, "");
+        let home = dirs_at("/h/.claude", "/h/.codex");
+        assert_eq!(session_config_dir(&loaded, &home), "/h/.claude");
+        // Legacy matches a pane on the home default, and no other.
+        assert!(record_matches_pane(&loaded, &home, &home));
+        assert!(!record_matches_pane(
+            &loaded,
+            &dirs_at("/acct/claude", "/h/.codex"),
+            &home
+        ));
+    }
+
+    #[test]
+    fn record_from_another_account_resumes_nothing() {
+        let pane = Uuid::from_u128(9);
+        let now = 1_000_100;
+        let home = dirs_at("/h/.claude", "/h/.codex");
+        let mut rec = session(pane, ID_A, IdSource::Hook);
+        rec.config_dir = "/acct/a".to_string();
+        let a = dirs_at("/acct/a", "/h/.codex");
+        let b = dirs_at("/acct/b", "/h/.codex");
+        let resume = |pane_dirs: &crate::accounts::AgentDirs, exists: bool| {
+            outcome_for_pane(
+                Some(&rec),
+                pane_dirs,
+                &home,
+                "",
+                ShellFamily::Unknown,
+                now,
+                |_| exists,
+            )
+        };
+        assert!(matches!(resume(&a, true), ResumeOutcome::Resume { .. }));
+        // The same record under another account: nothing — not `Missing`,
+        // which would decline the record, and not a resume.
+        assert_eq!(resume(&b, true), ResumeOutcome::None);
+        assert_eq!(resume(&b, false), ResumeOutcome::None);
+        assert_eq!(resume(&home, true), ResumeOutcome::None);
+        // Spellings of the pane's own directory still match.
+        assert!(record_matches_pane(&rec, &dirs_at("/acct//a/", ""), &home));
+    }
+
+    #[test]
+    fn a_record_from_another_account_keeps_the_scrollback() {
+        let pane = Uuid::from_u128(1);
+        let now = 100_000;
+        let mut t = tracker_with_last_launch(pane, now);
+        assert_eq!(t.scrollback_action(pane, now), ScrollbackAction::Delete);
+        // The pane now spawns under another account: its blob is restored
+        // and must keep being saved, not deleted as if an agent were resuming.
+        t.note_record_owner(pane, false);
+        assert!(!t.suppresses_scrollback(pane, now));
+        assert_eq!(t.scrollback_action(pane, now), ScrollbackAction::Save);
+        assert!(t.get(pane).is_some_and(|s| s.active), "record untouched");
+        // Switching back to the record's account suppresses again.
+        t.note_record_owner(pane, true);
+        assert_eq!(t.scrollback_action(pane, now), ScrollbackAction::Delete);
+        // An agent recorded under the new account is a live agent pane.
+        t.note_record_owner(pane, false);
+        let mut o = obs(pane, "claude", Some(CWD));
+        o.pid_file_session_id = Some(ID_B.to_string());
+        o.config_dir = "/acct/b".to_string();
+        t.observe(&o, now + 10, &[], |_, _| Vec::new());
+        assert_eq!(
+            t.scrollback_action(pane, now + 10),
+            ScrollbackAction::Delete
         );
     }
 

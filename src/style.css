@@ -3192,3 +3192,57 @@ body,
   color: var(--fg-muted);
   font-size: 12px;
 }
+
+/* ── Accounts (per-pane CLAUDE_CONFIG_DIR / CODEX_HOME) ───────────────────── */
+
+.account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--fg-muted);
+  vertical-align: baseline;
+}
+
+.account-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+/* Account changed after the shell started: not in effect yet. */
+.account-badge--pending {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.account-card {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 6px;
+}
+
+.account-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-card__color {
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+}

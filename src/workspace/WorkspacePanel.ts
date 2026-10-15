@@ -12,6 +12,7 @@ import {
 } from "../notes/NotesOverlay";
 import { t, onLangChange } from "../i18n/i18n";
 import { askConfirm } from "../ui/Dialog";
+import { showContextMenu } from "../menu/ContextMenu";
 import { describeError } from "../ipc/bridge";
 import type { Uuid } from "../types";
 import {
@@ -341,6 +342,27 @@ export function mountWorkspacePanel(
       ev.stopPropagation();
       if (dragJustEnded) return;
       beginEdit(id);
+    });
+    // Right-click: the workspace's default account (CLAUDE_CONFIG_DIR /
+    // CODEX_HOME for terminals started in it that don't pick their own).
+    btn.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      if (manager.accounts.length === 0) return;
+      const current = manager.getWorkspaceAccount(id);
+      const mark = (on: boolean, label: string): string => (on ? `● ${label}` : `    ${label}`);
+      showContextMenu(ev.clientX, ev.clientY, [
+        { header: t("account.workspaceDefault") },
+        {
+          label: mark(!manager.accounts.some((a) => a.id === current), t("account.noneDefault")),
+          onSelect: () => manager.setWorkspaceAccount(id, ""),
+        },
+        ...manager.accounts.map((a) => ({
+          label: mark(a.id === current, a.name || a.id),
+          onSelect: () => manager.setWorkspaceAccount(id, a.id),
+        })),
+        "separator" as const,
+        { header: t("account.appliesToNew") },
+      ]);
     });
     row.appendChild(btn);
     buttons.set(id, btn);

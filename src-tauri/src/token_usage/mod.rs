@@ -12,5 +12,5 @@ mod quota_cache;
 #[cfg(test)]
 mod tests;
 
-pub use collect::{collect, collect_from};
+pub use collect::{collect, collect_from, collect_from_roots, scan_roots, ScanRoot};
 pub use model::{HourBucket, ProviderUsage, Quota, TokenSnapshot, TokenTotals, UsageRow};

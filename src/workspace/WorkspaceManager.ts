@@ -4,6 +4,7 @@
 // explicitly asked for.
 
 import type {
+  AccountProfile,
   AgentSnapshot,
   Config,
   HotKeyDef,
@@ -41,7 +42,7 @@ import {
   swapPanes,
   worktreePaths,
 } from "../layout/LayoutTree";
-import { uuidv4 } from "../types";
+import { uuidv4, type HookDirIssue } from "../types";
 import { PaneGroup } from "../layout/PaneGroup";
 import { tabLabel } from "../terminal/tabLabel";
 import {
@@ -60,6 +61,13 @@ import {
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
 import { t } from "../i18n/i18n";
+import {
+  clearAccountRefs,
+  effectiveAccount,
+  setAccountsList,
+  toBadge,
+  type AccountBadge,
+} from "../accounts/accountModel";
 import { promptWorktreeBranch, removeWorktreeFlow, type LivePane } from "../git/worktreeFlow";
 import { askChoice, askText } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
@@ -106,6 +114,7 @@ export class WorkspaceManager {
   // never activates on the `.pane` DOM element.
   private _focusedPaneId: Uuid | null = null;
   private saveTimer: number | null = null;
+  private inflightSave: Promise<void> | null = null;
   /// Cache of workspace containers that have already had their panes spawned
   /// on first visit, so subsequent visits are zero-cost.
   private hydrated = new Set<number>();
@@ -144,6 +153,7 @@ export class WorkspaceManager {
   ) {
     this.config = config;
     this.shells = shells;
+    setAccountsList(config.accounts ?? []);
     this.activeId = config.active_workspace;
     this.orderShellsByDefault();
   }
@@ -612,6 +622,13 @@ export class WorkspaceManager {
       onFocus: () => {
         this.focusedPaneId = spec.id;
       },
+      accountBadge: () => this.accountBadgeFor(spec.id).badge,
+      spawnAccounts: () => ({
+        account: this.getPaneSpec(spec.id)?.account ?? spec.account ?? "",
+        workspaceAccount: this.workspaceAccountOfPane(spec.id),
+      }),
+      beforeSpawn: () => this.flushPendingSave(),
+      onAccountChange: (account) => this.setPaneAccount(spec.id, account),
       onAttention: (msg) => this.handleAttention(spec.id, msg),
       openInViewer: (path) => this.openFileInViewerTab(path, spec.id),
       isVisible: () => this.isPaneVisible(spec.id),
@@ -635,6 +652,86 @@ export class WorkspaceManager {
         });
       },
     });
+  }
+
+  // ── Accounts (CLAUDE_CONFIG_DIR / CODEX_HOME profiles) ────────────────────
+  // The backend injects the env vars when a PTY is spawned, so a change here
+  // reaches new terminals only; a live pane's badge is flagged "pending".
+
+  get accounts(): readonly AccountProfile[] {
+    return this.config.accounts ?? [];
+  }
+
+  /// Replace the profile list (Settings → Accounts) and repaint every badge.
+  setAccounts(next: AccountProfile[]): void {
+    this.config.accounts = next;
+    setAccountsList(next);
+    this.refreshAccountTitles();
+    this.persistDebounced();
+  }
+
+  /// Delete a profile. Panes that used it fall back to "inherit" and
+  /// workspaces to "no default", so nothing keeps pointing at a dead id.
+  deleteAccount(id: string): void {
+    clearAccountRefs(this.config.workspaces, id);
+    for (const cache of this.paneCaches.values()) {
+      for (const pane of cache.values()) {
+        if (pane instanceof TerminalPane) {
+          pane.setAccount(this.getPaneSpec(pane.id)?.account ?? "");
+        }
+      }
+    }
+    this.setAccounts(this.accounts.filter((a) => a.id !== id));
+  }
+
+  getWorkspaceAccount(wsId: number): string {
+    return this.config.workspaces.find((w) => w.id === wsId)?.account ?? "";
+  }
+
+  setWorkspaceAccount(wsId: number, account: string): void {
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    if (!ws || (ws.account ?? "") === account) return;
+    ws.account = account;
+    this.refreshAccountTitles();
+    this.persistDebounced();
+  }
+
+  setPaneAccount(paneId: Uuid, account: string): void {
+    this.updatePaneSpec(paneId, (p) => {
+      p.account = account;
+    });
+    const pane = this.findPaneById(paneId);
+    if (pane instanceof TerminalPane) pane.setAccount(account);
+    this.refreshAccountTitles();
+  }
+
+  private workspaceAccountOfPane(paneId: Uuid): string {
+    const wsId = workspaceIdOfPane(this.config.workspaces, paneId);
+    return wsId === null ? "" : this.getWorkspaceAccount(wsId);
+  }
+
+  /// The badge for a pane's title row and whether the running PTY predates it.
+  private accountBadgeFor(paneId: Uuid): { badge: AccountBadge | null; pending: boolean } {
+    const profile = effectiveAccount(
+      this.accounts,
+      this.getPaneSpec(paneId)?.account,
+      this.workspaceAccountOfPane(paneId),
+    );
+    const pane = this.findPaneById(paneId);
+    return {
+      badge: toBadge(profile),
+      pending: pane instanceof TerminalPane && pane.isAccountPending(),
+    };
+  }
+
+  /// Repaint every title row that can show an account badge.
+  private refreshAccountTitles(): void {
+    for (const [wsId, cache] of this.paneCaches) {
+      for (const pane of cache.values()) {
+        if (pane instanceof TerminalPane) pane.paintTitle();
+      }
+      for (const group of this.groupsFor(wsId).values()) group.refreshLabels();
+    }
   }
 
   /// Mutate the stored PaneSpec for `id` via `patch`, then debounce-persist.
@@ -725,6 +822,8 @@ export class WorkspaceManager {
             const pane = this.findPaneById(paneId);
             if (pane instanceof TerminalPane) pane.setBgColor(color);
           },
+          onAccountChange: (paneId, account) => this.setPaneAccount(paneId, account),
+          accountBadgeOf: (paneId) => this.accountBadgeFor(paneId),
           onHotKeySubmit: (paneId) => {
             const pane = this.findPaneById(paneId);
             if (pane instanceof TerminalPane) pane.noteSubmit();
@@ -940,6 +1039,7 @@ export class WorkspaceManager {
     if (launch) spec.startup_cmd = launch.startupCmd;
     spec.hotkeys = (source.hotkeys ?? []).map((h) => ({ ...h }));
     spec.bg_color = source.bg_color ?? "";
+    spec.account = source.account ?? "";
     ws.root = addTab(ws.root, group.id, spec);
     const cache = this.paneCaches.get(ws.id)!;
     const pane = this.createPane(spec);
@@ -1740,12 +1840,13 @@ export class WorkspaceManager {
 
   /// Install/remove the Claude Code hooks, then record the choice. Rejects
   /// (setting unchanged) if the backend couldn't write settings.json.
-  async setAgentTracking(enabled: boolean): Promise<void> {
-    await api.setAgentTracking(enabled);
+  async setAgentTracking(enabled: boolean): Promise<HookDirIssue[]> {
+    const issues = await api.setAgentTracking(enabled);
     this.config.agent_tracking = enabled;
     this.persistDebounced();
     // The workspace panel's "tracking is off" hint keys off this.
     this.notifyTree();
+    return issues;
   }
 
   /// The window was hidden to the tray (`ymux://main-hidden`): nothing in it
@@ -1982,13 +2083,24 @@ export class WorkspaceManager {
     }, 500) as unknown as number;
   }
 
+  /// Await any debounced save so the backend's config matches the UI before
+  /// it acts on it (spawn_pane resolves account ids against the saved config).
+  /// No-op when nothing is pending.
+  flushPendingSave(): Promise<void> {
+    if (this.saveTimer === null) return this.inflightSave ?? Promise.resolve();
+    return this.flush();
+  }
+
   /// Flush pending save immediately. Used on window close.
   async flush(): Promise<void> {
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    await api.saveConfig(this.config).catch(() => {});
+    const p = api.saveConfig(this.config).catch(() => {});
+    this.inflightSave = p;
+    await p;
+    if (this.inflightSave === p) this.inflightSave = null;
   }
 
   /// Shell profile new panes and workspaces are created with, resolved

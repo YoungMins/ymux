@@ -1,12 +1,14 @@
 import type { HotKeyDef } from "../types";
 import { t } from "../i18n/i18n";
 import { pushPopup, popPopup } from "../browser/popupBlur";
+import { ACCOUNT_NONE, getAccounts } from "../accounts/accountModel";
 
 export function openHotKeyManager(
   initial: HotKeyDef[],
   initialBgColor: string | null,
   onCommit: (next: HotKeyDef[]) => void,
   onBgColorChange: (color: string | null) => void,
+  account?: { current: string; onChange: (account: string) => void },
 ): void {
   let draft: HotKeyDef[] = initial.map((h) => ({ ...h }));
   let closed = false;
@@ -73,6 +75,40 @@ export function openHotKeyManager(
   colorRow.appendChild(resetBtn);
 
   modal.appendChild(colorRow);
+
+  // ── Account Section ──
+  // Applies immediately like the colour. Only newly started terminals pick up
+  // the change, which the hint says.
+  if (account) {
+    const accTitle = document.createElement("h2");
+    accTitle.textContent = t("account.title");
+    modal.appendChild(accTitle);
+
+    const accSelect = document.createElement("select");
+    accSelect.className = "hotkey-modal__label-input";
+    accSelect.style.width = "auto";
+    accSelect.style.marginBottom = "4px";
+    const addOption = (value: string, label: string): void => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      accSelect.appendChild(opt);
+    };
+    addOption("", t("account.inherit"));
+    for (const a of getAccounts()) addOption(a.id, a.name || a.id);
+    addOption(ACCOUNT_NONE, t("account.none"));
+    // A deleted account falls back to inherit, same as the backend ignoring it.
+    const known =
+      account.current === ACCOUNT_NONE || getAccounts().some((a) => a.id === account.current);
+    accSelect.value = known ? account.current : "";
+    accSelect.addEventListener("change", () => account.onChange(accSelect.value));
+    modal.appendChild(accSelect);
+
+    const accHint = document.createElement("p");
+    accHint.className = "hotkey-modal__hint";
+    accHint.textContent = t("account.paneHint");
+    modal.appendChild(accHint);
+  }
 
   // ── HotKey Section ──
   const title = document.createElement("h2");

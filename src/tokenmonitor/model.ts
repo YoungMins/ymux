@@ -6,11 +6,13 @@ export interface TokenTotals {
   readonly total: number;
 }
 export type UsageWindow = "five_hour" | "seven_day" | "all_time";
-export function remainingQuota(quota: TokenUsage["providers"][number]["quotas"][number] | undefined, now: number): number | null {
+export function remainingQuota(quota: ProviderUsage["quotas"][number] | undefined, now: number): number | null {
   if (!quota || !Number.isFinite(quota.used_percent) || (quota.resets_at !== null && quota.resets_at <= now)) return null;
   return 100 - Math.min(100, Math.max(0, quota.used_percent));
 }
 export interface UsageRow {
+  /** "" = default account, "none" = home folders, otherwise an account profile id. */
+  readonly account: string;
   readonly provider: string;
   readonly model: string;
   readonly project: string;
@@ -18,21 +20,46 @@ export interface UsageRow {
   readonly seven_day: TokenTotals;
   readonly all_time: TokenTotals;
 }
+export interface ProviderUsage {
+  readonly id: string;
+  /** Owning account: "" = default, "none" = home folders, otherwise a profile id. */
+  readonly account: string;
+  /** Other accounts that use the same folder (scanned once, under `account`). */
+  readonly also: readonly string[];
+  readonly auth_status: "credentials_present" | "not_detected" | "unknown";
+  readonly five_hour: TokenTotals;
+  readonly seven_day: TokenTotals;
+  readonly all_time: TokenTotals;
+  readonly quotas: readonly { readonly window_minutes: number; readonly used_percent: number; readonly resets_at: number | null; readonly observed_at: number }[];
+  readonly files: number;
+  readonly skipped: number;
+  /** Per-card notices: partial, file_limit, quota_unavailable, quota_stale. */
+  readonly warnings: readonly string[];
+}
 export interface TokenUsage {
   readonly collected_at: number;
-  readonly providers: readonly {
-    readonly id: string;
-    readonly auth_status: "credentials_present" | "not_detected" | "unknown";
-    readonly five_hour: TokenTotals;
-    readonly seven_day: TokenTotals;
-    readonly all_time: TokenTotals;
-    readonly quotas: readonly { readonly window_minutes: number; readonly used_percent: number; readonly resets_at: number | null; readonly observed_at: number }[];
-    readonly files: number;
-    readonly skipped: number;
-  }[];
+  readonly providers: readonly ProviderUsage[];
   readonly rows: readonly UsageRow[];
   readonly hourly: readonly HourBucket[];
+  /** Global notices only (collector_unavailable). */
   readonly warnings: readonly string[];
+}
+export interface AccountGroup {
+  readonly account: string;
+  /** Every other account that shares a folder with one of this group's cards. */
+  readonly also: readonly string[];
+  readonly providers: readonly ProviderUsage[];
+}
+/** Cards grouped by owning account, in order of first appearance (default first). */
+export function groupProvidersByAccount(providers: readonly ProviderUsage[]): AccountGroup[] {
+  const groups = new Map<string, { also: string[]; providers: ProviderUsage[] }>();
+  for (const provider of providers) {
+    const group = groups.get(provider.account) ?? { also: [], providers: [] };
+    group.providers.push(provider);
+    for (const other of provider.also) if (other !== provider.account && !group.also.includes(other)) group.also.push(other);
+    groups.set(provider.account, group);
+  }
+  return [...groups].map(([account, group]) => ({ account, ...group }));
 }
 export function aggregateUsage(rows: readonly UsageRow[], group: "provider" | "model" | "project", window: UsageWindow): readonly { readonly label: string; readonly tokens: TokenTotals }[] {
   const result = new Map<string, TokenTotals>();
@@ -46,6 +73,7 @@ export function aggregateUsage(rows: readonly UsageRow[], group: "provider" | "m
 }
 export interface HourBucket {
   readonly hour: number;
+  readonly account: string;
   readonly provider: string;
   readonly total: number;
 }

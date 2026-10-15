@@ -1,19 +1,19 @@
 use std::{
-    path::PathBuf,
+    path::Path,
+    sync::OnceLock,
     time::{Duration, SystemTime},
 };
 
-use parking_lot::Mutex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{
     model::Quota,
-    quota_cache::{read_bounded, Cached, Unavailable},
+    quota_cache::{read_bounded, round, Identity, KeyedCache, Unavailable},
     TokenSnapshot,
 };
 
-static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+static CACHE: OnceLock<KeyedCache> = OnceLock::new();
 
 #[derive(Deserialize)]
 struct Credentials {
@@ -46,56 +46,53 @@ struct Window {
 }
 
 pub(super) fn enrich(snapshot: &mut TokenSnapshot, manual: bool) {
-    let Some(provider) = snapshot.providers.iter_mut().find(|p| p.id == "codex") else {
-        return;
-    };
     // Session logs may belong to another login or a different model's quota.
     // Only the authenticated account endpoint can supply current limits.
-    provider.quotas.clear();
-    let Some(tokens) = credentials() else {
-        *CACHE.lock() = None;
-        snapshot.warnings.push("codex_quota_unavailable".into());
-        return;
-    };
-    provider.auth_status = "credentials_present";
-    let mut hash = Sha256::new();
-    hash.update(tokens.account_id.as_bytes());
-    hash.update([0]);
-    hash.update(tokens.access_token.as_bytes());
-    let identity: [u8; 32] = hash.finalize().into();
-    let mut cache = CACHE.lock();
-    if cache
-        .as_ref()
-        .map_or(true, |c| c.needs_refresh(identity, manual))
-    {
-        let started = std::time::Instant::now();
-        let result = fetch(&tokens);
-        *cache = Some(Cached::refreshed_at(
-            cache.take(),
-            identity,
-            result,
-            started,
-        ));
+    let mut jobs: Vec<(Identity, Tokens)> = Vec::new();
+    let mut identities: Vec<Option<Identity>> = Vec::new();
+    for provider in snapshot.providers.iter_mut().filter(|p| p.id == "codex") {
+        provider.quotas.clear();
+        let Some(tokens) = credentials_in(&provider.dir) else {
+            provider.warnings.push("quota_unavailable");
+            identities.push(None);
+            continue;
+        };
+        provider.auth_status = "credentials_present";
+        let identity = identity_of(&tokens);
+        jobs.push((identity, tokens));
+        identities.push(Some(identity));
     }
-    if let Some(cached) = cache.as_ref() {
-        provider.quotas = cached.quotas.clone();
-        if cached.unavailable {
-            snapshot.warnings.push(
-                if cached.quotas.is_empty() {
-                    "codex_quota_unavailable"
+    let cache = CACHE.get_or_init(Default::default);
+    let results = round(cache, jobs, manual, fetch);
+    let mut identities = identities.into_iter();
+    for provider in snapshot.providers.iter_mut().filter(|p| p.id == "codex") {
+        let Some(Some(identity)) = identities.next() else {
+            continue;
+        };
+        if let Some((quotas, unavailable)) = results.get(&identity) {
+            provider.quotas = quotas.clone();
+            if *unavailable {
+                provider.warnings.push(if quotas.is_empty() {
+                    "quota_unavailable"
                 } else {
-                    "codex_quota_stale"
-                }
-                .into(),
-            );
+                    "quota_stale"
+                });
+            }
         }
     }
 }
 
-fn credentials() -> Option<Tokens> {
-    let root = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
+/// sha256(account_id, 0, access_token): a new login or a refreshed token is a
+/// new identity.
+fn identity_of(tokens: &Tokens) -> Identity {
+    let mut hash = Sha256::new();
+    hash.update(tokens.account_id.as_bytes());
+    hash.update([0]);
+    hash.update(tokens.access_token.as_bytes());
+    hash.finalize().into()
+}
+
+fn credentials_in(root: &Path) -> Option<Tokens> {
     let file = std::fs::File::open(root.join("auth.json")).ok()?;
     let bytes = read_bounded(file).ok()?;
     let credentials: Credentials = serde_json::from_slice(&bytes).ok()?;

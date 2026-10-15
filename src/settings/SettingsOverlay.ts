@@ -13,6 +13,8 @@ import type { YTheme, SettingsSection } from "./types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
 import { SHORTCUTS, splitShortcutKeys } from "./shortcutList";
+import { newAccountId, normalizeColor } from "../accounts/accountModel";
+import type { AccountProfile } from "../types";
 
 interface SyntaxField {
   key: keyof YTheme["syntax"];
@@ -32,6 +34,7 @@ const SYNTAX_FIELDS: SyntaxField[] = [
 
 const SECTIONS: { id: SettingsSection; tKey: string; icon: string }[] = [
   { id: "general", tKey: "settings.section.general", icon: "⚙" },
+  { id: "accounts", tKey: "settings.section.accounts", icon: "👤" },
   { id: "syntax", tKey: "settings.section.syntax", icon: "✦" },
   { id: "shortcuts", tKey: "settings.section.shortcuts", icon: "⌨" },
   { id: "config", tKey: "settings.section.config", icon: "📁" },
@@ -133,6 +136,9 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
       case "general":
         renderGeneral(section);
         break;
+      case "accounts":
+        renderAccounts(section);
+        break;
       case "syntax":
         renderSyntax(section);
         break;
@@ -144,6 +150,137 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
         break;
     }
     content.appendChild(section);
+  }
+
+  // ── Section: Accounts ───────────────────────────────────────────────
+  // Profiles pointing Claude Code (CLAUDE_CONFIG_DIR) and Codex (CODEX_HOME)
+  // at separate login folders. Edits commit on `change` (not every keystroke)
+  // through `manager.setAccounts`, which persists and repaints the badges; the
+  // list only re-renders on add/delete so typing never loses focus.
+  const ACCOUNT_COLORS = ["#e5873b", "#4aa3df", "#5cb85c", "#b07cd8", "#e0587a", "#d9b341"];
+
+  function renderAccounts(host: HTMLElement): void {
+    const h = document.createElement("h3");
+    h.textContent = t("settings.accounts.heading");
+    host.appendChild(h);
+    const intro = document.createElement("p");
+    intro.className = "settings-row__hint";
+    intro.textContent = t("settings.accounts.hint");
+    host.appendChild(intro);
+
+    const list = manager.accounts.map((a) => ({ ...a }));
+    const commit = (): void => manager.setAccounts(list.map((a) => ({ ...a })));
+
+    const textRow = (
+      label: string,
+      value: string,
+      placeholder: string,
+      onChange: (v: string) => void,
+    ): HTMLElement => {
+      const row = document.createElement("div");
+      row.className = "settings-row";
+      const l = document.createElement("div");
+      l.className = "settings-row__label";
+      l.textContent = label;
+      row.appendChild(l);
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "settings-hex-input";
+      input.style.width = "100%";
+      input.spellcheck = false;
+      input.value = value;
+      input.placeholder = placeholder;
+      input.addEventListener("change", () => onChange(input.value.trim()));
+      row.appendChild(input);
+      return row;
+    };
+
+    const cards = document.createElement("div");
+    host.appendChild(cards);
+
+    const rebuild = (): void => {
+      cards.replaceChildren();
+      if (list.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "settings-row__hint";
+        empty.textContent = t("settings.accounts.empty");
+        cards.appendChild(empty);
+      }
+      for (const acct of list) cards.appendChild(renderCard(acct));
+    };
+
+    const renderCard = (acct: AccountProfile): HTMLElement => {
+      const card = document.createElement("div");
+      card.className = "account-card";
+
+      const head = document.createElement("div");
+      head.className = "settings-row account-card__head";
+      const color = document.createElement("input");
+      color.type = "color";
+      color.className = "account-card__color";
+      color.value = normalizeColor(acct.color) || "#8892a0";
+      color.title = t("settings.accounts.color");
+      color.addEventListener("change", () => {
+        acct.color = normalizeColor(color.value);
+        commit();
+      });
+      head.appendChild(color);
+      const name = document.createElement("input");
+      name.type = "text";
+      name.className = "settings-hex-input";
+      name.style.width = "100%";
+      name.value = acct.name;
+      name.placeholder = t("settings.accounts.namePlaceholder");
+      name.setAttribute("aria-label", t("settings.accounts.name"));
+      name.addEventListener("change", () => {
+        acct.name = name.value.trim();
+        commit();
+      });
+      head.appendChild(name);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "hotkey-modal__btn";
+      del.textContent = t("settings.accounts.delete");
+      del.addEventListener("click", () => {
+        list.splice(list.indexOf(acct), 1);
+        manager.deleteAccount(acct.id);
+        rebuild();
+      });
+      head.appendChild(del);
+      card.appendChild(head);
+
+      card.appendChild(
+        textRow(t("settings.accounts.claudeDir"), acct.claude_config_dir, "~/.claude", (v) => {
+          acct.claude_config_dir = v;
+          commit();
+        }),
+      );
+      card.appendChild(
+        textRow(t("settings.accounts.codexDir"), acct.codex_home, "~/.codex", (v) => {
+          acct.codex_home = v;
+          commit();
+        }),
+      );
+      return card;
+    };
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "hotkey-modal__btn hotkey-modal__btn--primary";
+    add.textContent = t("settings.accounts.add");
+    add.addEventListener("click", () => {
+      list.push({
+        id: newAccountId(),
+        name: `${t("settings.accounts.defaultName")} ${list.length + 1}`,
+        claude_config_dir: "",
+        codex_home: "",
+        color: ACCOUNT_COLORS[list.length % ACCOUNT_COLORS.length],
+      });
+      commit();
+      rebuild();
+    });
+    host.appendChild(add);
+    rebuild();
   }
 
   // ── Section: General ────────────────────────────────────────────────
@@ -283,12 +420,23 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     agentToggle.checked = manager.agentTracking;
     const agentError = document.createElement("div");
     agentError.className = "settings-row__hint settings-row__hint--error";
+    const agentNote = document.createElement("div");
+    agentNote.className = "settings-row__hint";
     agentToggle.addEventListener("change", () => {
       const want = agentToggle.checked;
       agentToggle.disabled = true;
       agentError.textContent = "";
+      agentNote.textContent = "";
       manager
         .setAgentTracking(want)
+        .then((issues) => {
+          // Non-fatal: the setting flipped, but some other account's folder
+          // could not be updated.
+          if (issues.length > 0) {
+            const dirs = issues.map((i) => i.dir).join(", ");
+            agentNote.textContent = `${t("settings.general.agentTrackingPartial")} ${dirs}`;
+          }
+        })
         .catch((e) => {
           agentToggle.checked = !want;
           agentError.textContent = `${t("settings.general.agentTrackingFailed")} ${describeError(e)}`;
@@ -301,6 +449,7 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     const agentSpacer = document.createElement("div");
     agentRow.appendChild(agentSpacer);
     agentRow.appendChild(agentError);
+    agentRow.appendChild(agentNote);
     host.appendChild(agentRow);
 
     const anchorRow = document.createElement("div");

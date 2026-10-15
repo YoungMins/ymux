@@ -219,6 +219,54 @@ describe("editor_file_path_survives_save_load", () => {
   });
 });
 
+// Same three hand-written copies (rule 2) for `account`: a miss here makes a
+// pane silently lose its account on the next save.
+describe("account_survives_save_load", () => {
+  it("paneNode -> nodeToSpec keeps account", () => {
+    const spec = newPane("bash");
+    spec.account = "a1b2c3d4";
+    const back = nodeToSpec(paneNode(spec) as LayoutNode & { kind: "pane" });
+    expect(back.account).toBe("a1b2c3d4");
+  });
+
+  it("findAndMutatePane writes account back and keeps every other field", () => {
+    const spec = newPane("bash");
+    spec.title = "t";
+    spec.bg_color = "#010203";
+    const tree = paneNode(spec);
+    expect(findAndMutatePane(tree, spec.id, (p) => (p.account = "x1"))).toBe(true);
+    const got = findPane(tree, spec.id)!;
+    expect(got.account).toBe("x1");
+    expect(got.title).toBe("t");
+    expect(got.bg_color).toBe("#010203");
+  });
+
+  it("an unrelated patch does not drop account", () => {
+    const spec = newPane("bash");
+    spec.account = "keep";
+    const tree = paneNode(spec);
+    findAndMutatePane(tree, spec.id, (p) => (p.title = "renamed"));
+    expect(findPane(tree, spec.id)!.account).toBe("keep");
+  });
+
+  it("survives a JSON round-trip inside tabs, and an old pane reads back as empty", () => {
+    const spec = newPane("bash");
+    spec.account = "in-tabs";
+    const tree: LayoutNode = {
+      kind: "tabs",
+      id: "g1",
+      active: 0,
+      children: [paneNode(spec)],
+    };
+    const loaded = JSON.parse(JSON.stringify(tree)) as LayoutNode;
+    expect(panes(loaded)[0].account).toBe("in-tabs");
+
+    const node = paneNode(newPane("bash")) as LayoutNode & { kind: "pane" };
+    delete (node as { account?: string }).account;
+    expect(nodeToSpec(node).account).toBe("");
+  });
+});
+
 describe("splitPane with tab groups", () => {
   const split = (direction: "horizontal" | "vertical", a: LayoutNode, b: LayoutNode): LayoutNode => ({
     kind: "split",

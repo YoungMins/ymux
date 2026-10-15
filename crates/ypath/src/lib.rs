@@ -41,6 +41,13 @@ pub fn is_windows_path_like(path: &str) -> bool {
     path.starts_with("\\\\") || path.starts_with("//")
 }
 
+/// `path` in Unicode NFC, spelling otherwise untouched. For values another
+/// program hashes byte for byte; comparing two of our own paths is
+/// [`comparison_key`]'s job.
+pub fn nfc(path: &str) -> String {
+    path.nfc().collect()
+}
+
 /// Comparison key for `path`. See the module doc: **never a real path.**
 ///
 /// NFC first, then: a path that proves Windows syntax gets `\` folded to `/`,

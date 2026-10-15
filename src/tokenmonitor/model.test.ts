@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aggregateUsage, dailyTotals, heatmapGrid, type TokenUsage, type UsageRow } from "./model";
+import { aggregateUsage, dailyTotals, groupProvidersByAccount, heatmapGrid, type ProviderUsage, type TokenUsage, type UsageRow } from "./model";
 import { TokenMonitorPane } from "./TokenMonitor";
 import { api } from "../ipc/bridge";
 import { setLang, translationGaps } from "../i18n/i18n";
 const totals = (total: number) => ({ input: total - 2, output: 2, cache_read: 0, cache_write: 0, total });
-const row = (provider: string, model: string, project: string, total: number): UsageRow => ({ provider, model, project, five_hour: totals(total), seven_day: totals(total * 2), all_time: totals(total * 3) });
+const row = (provider: string, model: string, project: string, total: number, account = ""): UsageRow => ({ account, provider, model, project, five_hour: totals(total), seven_day: totals(total * 2), all_time: totals(total * 3) });
 const data: TokenUsage = {
   collected_at: 1700000000,
-  providers: [{ id: "claude", auth_status: "credentials_present", five_hour: totals(20), seven_day: totals(40), all_time: totals(60), quotas: [], files: 1, skipped: 0 }],
+  providers: [{ id: "claude", account: "", also: [], warnings: [], auth_status: "credentials_present", five_hour: totals(20), seven_day: totals(40), all_time: totals(60), quotas: [], files: 1, skipped: 0 }],
   rows: [row("claude", "opus", "<script>unsafe</script>", 20)], hourly: [], warnings: [],
 };
 let active: TokenMonitorPane | null = null;
@@ -34,6 +34,23 @@ describe("token usage aggregation", () => {
   });
   it("translates every token panel key into all 13 languages", () => {
     expect(translationGaps("usage.")).toEqual([]);
+  });
+});
+describe("groupProvidersByAccount", () => {
+  const card = (id: string, account: string, also: string[] = []): ProviderUsage => ({ ...data.providers[0]!, id, account, also });
+  it("keeps one group, in order, for a single account", () => {
+    const groups = groupProvidersByAccount([card("claude", ""), card("codex", "")]);
+    expect(groups.map(g => [g.account, g.providers.map(p => p.id)])).toEqual([["", ["claude", "codex"]]]);
+  });
+  it("groups cards by account in order of first appearance and merges shared-folder accounts", () => {
+    const groups = groupProvidersByAccount([card("claude", "", ["work"]), card("claude", "work"), card("codex", "", ["work", "x"]), card("codex", "work")]);
+    expect(groups.map(g => g.account)).toEqual(["", "work"]);
+    expect(groups[0]?.also).toEqual(["work", "x"]);
+    expect(groups[1]?.providers.map(p => p.id)).toEqual(["claude", "codex"]);
+  });
+  it("sums rows across accounts when grouped by project", () => {
+    const rows = [row("claude", "m", "/a", 10, ""), row("claude", "m", "/a", 5, "work")];
+    expect(aggregateUsage(rows, "project", "five_hour")[0]?.tokens.total).toBe(15);
   });
 });
 describe("token monitor panel", () => {
@@ -184,10 +201,10 @@ describe("daily activity heatmap", () => {
   const hourAt = (y: number, m: number, d: number, h: number): number => Math.floor(new Date(y, m - 1, d, h).getTime() / 3600_000);
   it("groups hour buckets into local calendar days and filters by provider", () => {
     const hourly = [
-      { hour: hourAt(2026, 3, 8, 0), provider: "claude", total: 5 },
-      { hour: hourAt(2026, 3, 8, 23), provider: "codex", total: 7 },
-      { hour: hourAt(2026, 3, 9, 0), provider: "claude", total: 11 },
-      { hour: hourAt(2026, 11, 1, 12), provider: "claude", total: 1 },
+      { hour: hourAt(2026, 3, 8, 0), account: "", provider: "claude", total: 5 },
+      { hour: hourAt(2026, 3, 8, 23), account: "", provider: "codex", total: 7 },
+      { hour: hourAt(2026, 3, 9, 0), account: "", provider: "claude", total: 11 },
+      { hour: hourAt(2026, 11, 1, 12), account: "", provider: "claude", total: 1 },
     ];
     expect([...dailyTotals(hourly, null)]).toEqual([["2026-03-08", 12], ["2026-03-09", 11], ["2026-11-01", 1]]);
     expect([...dailyTotals(hourly, "codex")]).toEqual([["2026-03-08", 7]]);
@@ -208,11 +225,34 @@ describe("daily activity heatmap", () => {
 describe("activity section", () => {
   it("renders a labelled heatmap with localized tooltips and legend", async () => {
     const hour = Math.floor(Date.now() / 3600_000);
-    vi.spyOn(api, "getTokenUsage").mockResolvedValue({ ...data, hourly: [{ hour, provider: "claude", total: 1500 }, { hour, provider: "codex", total: 500 }] });
+    vi.spyOn(api, "getTokenUsage").mockResolvedValue({ ...data, hourly: [{ hour, account: "", provider: "claude", total: 1500 }, { hour, account: "", provider: "codex", total: 500 }] });
     mount(); await Promise.resolve(); await Promise.resolve();
     expect(document.querySelector(".usage-activity")?.getAttribute("aria-label")).toContain("Daily activity: 2K");
     const cell = [...document.querySelectorAll<HTMLElement>(".usage-heat-cell")].find(c => c.title.includes("Codex"));
     expect(cell?.title).toContain("Claude Code: 1.5K");
     expect(document.querySelector(".usage-heat-legend")?.textContent).toBe("LessMore");
+  });
+});
+describe("accounts on the panel", () => {
+  const twoAccounts = (): TokenUsage => {
+    const provider = data.providers[0];
+    if (!provider) throw new Error("Provider fixture missing");
+    return { ...data, providers: [provider, { ...provider, account: "work", warnings: ["quota_unavailable"] }] };
+  };
+  it("renders no account headings for a single account", async () => {
+    vi.spyOn(api, "getTokenUsage").mockResolvedValue(data);
+    mount();
+    await vi.waitFor(() => expect(document.querySelector(".usage-card")).not.toBeNull());
+    expect(document.querySelector(".usage-account-heading")).toBeNull();
+  });
+  it("renders a heading per account and reads quota warnings per card", async () => {
+    vi.spyOn(api, "getTokenUsage").mockResolvedValue(twoAccounts());
+    mount();
+    await vi.waitFor(() => expect(document.querySelectorAll(".usage-account-heading").length).toBe(2));
+    expect(document.querySelectorAll(".usage-account-heading")[0]?.textContent).toBe("Default account");
+    const cards = [...document.querySelectorAll(".usage-card")];
+    expect(cards.length).toBe(2);
+    expect(cards[0]?.querySelector(".usage-stale")).toBeNull();
+    expect(cards[1]?.querySelector(".usage-stale")).not.toBeNull();
   });
 });

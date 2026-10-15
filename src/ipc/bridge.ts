@@ -11,6 +11,7 @@ import type {
   BootstrapPayload,
   Config,
   DetectedAgent,
+  HookDirIssue,
   ResolvedPath,
   ShellProfile,
   SpawnedPane,
@@ -27,6 +28,12 @@ export interface SpawnArgs {
   cwd?: string | null;
   rows: number;
   cols: number;
+  /// The pane's `PaneSpec.env`; wins over account-injected variables.
+  env?: [string, string][];
+  /// `PaneSpec.account` ("" = inherit the workspace's).
+  account?: string;
+  /// `Workspace.account` of the workspace owning the pane.
+  workspaceAccount?: string;
 }
 
 export interface ResizeArgs {
@@ -413,16 +420,25 @@ export const api = {
   /// resumes its agent skips the replay entirely (spec §4/§5). `startupCmd` is
   /// the pane's own saved startup command, whose provably safe flags carry
   /// over; `shell` is the pane's shell profile name, because the command is
-  /// typed into that shell and quoted by its rules.
+  /// typed into that shell and quoted by its rules. `env`, `account` and
+  /// `workspaceAccount` are what the spawn will get: they decide which config
+  /// directory the pane's agents will use, and a record from another one
+  /// (another account) resumes nothing.
   getAgentSession: (
     id: Uuid,
     startupCmd?: string,
     shell?: string,
+    env?: [string, string][],
+    account?: string,
+    workspaceAccount?: string,
   ): Promise<ResumeOutcome | null> =>
     call("get_agent_session", {
       paneId: id,
       startupCmd: startupCmd ?? null,
       shell: shell ?? null,
+      env: env ?? null,
+      account: account ?? null,
+      workspaceAccount: workspaceAccount ?? null,
     }),
 
   /// Forget a pane's agent session. Called when the user closes a pane for
@@ -499,8 +515,10 @@ export const api = {
   getPaneLabels: (): Promise<Record<Uuid, string>> => call("get_pane_labels"),
 
   /// Install (true) or remove (false) ymux's Claude Code hooks in
-  /// ~/.claude/settings.json and persist the setting.
-  setAgentTracking: (enabled: boolean): Promise<void> =>
+  /// every account's Claude config dir and persist the setting. Resolves
+  /// with the dirs (other than the default and home) that could not be
+  /// updated; rejects, setting unchanged, when the default or home one fails.
+  setAgentTracking: (enabled: boolean): Promise<HookDirIssue[]> =>
     call("set_agent_tracking", { enabled }),
 
   // Close-to-tray (src-tauri/src/tray.rs).

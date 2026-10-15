@@ -24,6 +24,8 @@ import type { Pane } from "./Pane";
 import type { PaneNode, TabsNode } from "./tabs";
 import { sameTabIds, tabIds } from "./tabs";
 import { HotKeyBar } from "../terminal/HotKeyBar";
+import { paintPaneTitle } from "../accounts/badge";
+import type { AccountBadge } from "../accounts/accountModel";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { t, onLangChange } from "../i18n/i18n";
 
@@ -38,6 +40,10 @@ export interface PaneGroupCallbacks {
   onRenameTab: (paneId: Uuid) => void;
   onHotKeysChange: (paneId: Uuid, hotkeys: HotKeyDef[]) => void;
   onBgColorChange: (paneId: Uuid, color: string | null) => void;
+  onAccountChange: (paneId: Uuid, account: string) => void;
+  /// Account badge for the title row of `paneId` (null = none applies), and
+  /// whether the running PTY predates the configured account.
+  accountBadgeOf: (paneId: Uuid) => { badge: AccountBadge | null; pending: boolean };
   /// A hotkey wrote straight to the PTY, bypassing xterm's `onData`.
   onHotKeySubmit: (paneId: Uuid) => void;
 }
@@ -78,6 +84,7 @@ export class PaneGroup {
       paneId: id,
       initial: [],
       initialBgColor: null,
+      initialAccount: "",
       onSubmit: () => {
         if (this.boundId) this.cb.onHotKeySubmit(this.boundId);
       },
@@ -86,6 +93,9 @@ export class PaneGroup {
       },
       onBgColorChange: (color) => {
         if (this.boundId) this.cb.onBgColorChange(this.boundId, color);
+      },
+      onAccountChange: (account) => {
+        if (this.boundId) this.cb.onAccountChange(this.boundId, account);
       },
     });
     this.element.appendChild(this.hotkeyBar.element);
@@ -116,7 +126,7 @@ export class PaneGroup {
     const ids = tabIds(node);
     const activeId = ids[node.active] ?? ids[0] ?? null;
 
-    this.titleEl.textContent = activeId ? this.cb.labelOf(activeId) : "";
+    this.paintTitle(activeId);
     this.renderStrip(node);
 
     // The child nodes *are* pane specs, so the bar's list and colour come
@@ -131,7 +141,12 @@ export class PaneGroup {
     this.element.classList.toggle("pane-group--no-hotkeys", !isTerminal);
     if (activeId && isTerminal && activeId !== this.boundId) {
       this.boundId = activeId;
-      this.hotkeyBar.bind(activeId, spec?.hotkeys ?? [], spec?.bg_color || null);
+      this.hotkeyBar.bind(
+        activeId,
+        spec?.hotkeys ?? [],
+        spec?.bg_color || null,
+        spec?.account ?? "",
+      );
     }
 
     this.body.replaceChildren();
@@ -162,8 +177,17 @@ export class PaneGroup {
     if (!this.node) return;
     const ids = tabIds(this.node);
     const activeId = ids[this.node.active] ?? ids[0] ?? null;
-    this.titleEl.textContent = activeId ? this.cb.labelOf(activeId) : "";
+    this.paintTitle(activeId);
     this.renderStrip(this.node);
+  }
+
+  private paintTitle(activeId: Uuid | null): void {
+    if (!activeId) {
+      this.titleEl.textContent = "";
+      return;
+    }
+    const { badge, pending } = this.cb.accountBadgeOf(activeId);
+    paintPaneTitle(this.titleEl, this.cb.labelOf(activeId), badge, pending);
   }
 
   dispose(): void {

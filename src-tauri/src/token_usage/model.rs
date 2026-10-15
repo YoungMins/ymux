@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TokenTotals {
@@ -40,6 +41,10 @@ pub struct Quota {
 #[derive(Debug, Serialize)]
 pub struct ProviderUsage {
     pub id: &'static str,
+    /// Owning account: `""` = default, `"none"` = home, otherwise a profile id.
+    pub account: String,
+    /// Other accounts that use the same directory (scanned once, here).
+    pub also: Vec<String>,
     pub auth_status: &'static str,
     pub five_hour: TokenTotals,
     pub seven_day: TokenTotals,
@@ -47,10 +52,20 @@ pub struct ProviderUsage {
     pub quotas: Vec<Quota>,
     pub files: usize,
     pub skipped: usize,
+    /// Per-card notices (`partial`, `file_limit`, `quota_unavailable`,
+    /// `quota_stale`); the frontend looks up `usage.<id>_<warning>`.
+    pub warnings: Vec<&'static str>,
+    /// Where this card's data lives; read by the quota adapters.
+    #[serde(skip)]
+    pub dir: PathBuf,
+    /// The literal `CLAUDE_CONFIG_DIR` of the owning account (Claude cards).
+    #[serde(skip)]
+    pub claude_env: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct UsageRow {
+    pub account: String,
     pub provider: &'static str,
     pub model: String,
     pub project: String,
@@ -64,6 +79,7 @@ pub struct UsageRow {
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct HourBucket {
     pub hour: u64,
+    pub account: String,
     pub provider: &'static str,
     pub total: u64,
 }
@@ -79,6 +95,8 @@ pub struct TokenSnapshot {
 
 #[derive(Debug)]
 pub(super) struct Event {
+    /// Index into the account list `aggregate` is given.
+    pub account: usize,
     pub provider: &'static str,
     pub session: String,
     pub id: String,

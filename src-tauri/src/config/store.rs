@@ -30,6 +30,9 @@ pub fn config_path() -> PathBuf {
 pub struct ConfigStore {
     path: PathBuf,
     inner: Mutex<Inner>,
+    /// Held from the snapshot through the rename, so concurrent flushes land
+    /// in order and the last one on disk is the latest state.
+    write: Mutex<()>,
 }
 
 struct Inner {
@@ -58,6 +61,7 @@ impl ConfigStore {
         Ok(Self {
             path,
             inner: Mutex::new(Inner { config, dirty }),
+            write: Mutex::new(()),
         })
     }
 
@@ -93,24 +97,23 @@ impl ConfigStore {
 
     /// Persist to disk if anything has changed since the last flush.
     pub fn flush_if_dirty(&self) -> YmuxResult<bool> {
-        let (to_write, was_dirty) = {
+        let _write = self.write.lock();
+        let to_write = {
             let mut guard = self.inner.lock();
             if !guard.dirty {
                 return Ok(false);
             }
-            let cloned = guard.config.clone();
             guard.dirty = false;
-            (cloned, true)
+            guard.config.clone()
         };
-        if was_dirty {
-            write_atomic(&self.path, &to_write)?;
-        }
-        Ok(was_dirty)
+        write_atomic(&self.path, &to_write)?;
+        Ok(true)
     }
 
     /// Force an immediate write regardless of dirty flag. Used on
     /// `close-requested`.
     pub fn flush(&self) -> YmuxResult<()> {
+        let _write = self.write.lock();
         let cloned = {
             let mut guard = self.inner.lock();
             guard.dirty = false;
@@ -131,7 +134,7 @@ fn write_atomic(path: &Path, config: &Config) -> YmuxResult<()> {
         std::fs::create_dir_all(parent)?;
     }
     let text = toml::to_string_pretty(config)?;
-    let tmp = path.with_extension("toml.tmp");
+    let tmp = path.with_extension(format!("toml.{}.tmp", uuid::Uuid::new_v4().simple()));
     std::fs::write(&tmp, text.as_bytes())?;
     std::fs::rename(&tmp, path)?;
     Ok(())
@@ -187,6 +190,7 @@ mod tests {
         new_cfg.workspaces.push(Workspace {
             id: 3,
             name: "three".into(),
+            account: String::new(),
             root: super::super::model::LayoutNode::Pane(PaneSpec::new_default()),
         });
         new_cfg.active_workspace = 3;
@@ -198,6 +202,31 @@ mod tests {
         assert_eq!(snap.active_workspace, 3);
         assert_eq!(snap.workspaces[0].id, 3);
         assert_eq!(snap.workspaces[0].name, "three");
+    }
+
+    #[test]
+    fn concurrent_flushes_end_with_latest_state() {
+        let dir = tempdir();
+        let path = dir.join("config.toml");
+        let store = std::sync::Arc::new(ConfigStore::load(&path).expect("load"));
+        let handles: Vec<_> = (0..8u16)
+            .map(|i| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for j in 0..10u16 {
+                        store.update(|c| c.agent_hook_port = i * 100 + j + 1);
+                        store.flush().expect("flush");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread");
+        }
+        store.update(|c| c.agent_hook_port = 4242);
+        store.flush_if_dirty().expect("flush");
+        let reloaded = ConfigStore::load(&path).expect("reload");
+        assert_eq!(reloaded.snapshot().agent_hook_port, 4242);
     }
 
     fn tempdir() -> PathBuf {

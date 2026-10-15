@@ -11,6 +11,8 @@
 .usage-content { overflow:auto; min-height:0; padding:0 8px 8px; }
 .usage-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr)); gap:4px; }
 .usage-card { min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-alt); }
+.usage-account-heading { display:flex; align-items:center; gap:6px; margin:8px 0 4px; font-size:12px; font-weight:600; opacity:.85; }
+.usage-account-also { font-weight:400; opacity:.7; cursor:help; }
 .usage-provider-heading { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-weight:600; margin-bottom:4px; }
 .usage-provider-heading strong { font-size:16px; font-variant-numeric:tabular-nums; }
 .usage-auth { display:block; font-size:11px; color:var(--fg-muted); margin-bottom:4px; }

@@ -56,6 +56,22 @@ export interface PaneSpec {
   /// The file an `editor` pane has open. Empty = untitled. A plain string,
   /// not `Option`, for the TOML reason rule 3 gives (see model.rs).
   file_path?: string;
+  /// An `AccountProfile.id`. "" = inherit the workspace's account; "none" =
+  /// no account even if the workspace has one. Plain string for the TOML
+  /// reason rule 3 gives.
+  account?: string;
+}
+
+/// One AI-CLI account: where Claude Code (`CLAUDE_CONFIG_DIR`) and Codex
+/// (`CODEX_HOME`) keep their login. An empty dir leaves that tool on its
+/// default. Mirrors `AccountProfile` in src-tauri/src/config/model.rs.
+export interface AccountProfile {
+  id: string;
+  name: string;
+  claude_config_dir: string;
+  codex_home: string;
+  /// "#rrggbb" or "".
+  color: string;
 }
 
 export type SplitDir = "horizontal" | "vertical";
@@ -72,6 +88,8 @@ export interface Workspace {
   id: number;
   name: string;
   root: LayoutNode;
+  /// Default `AccountProfile.id` for the workspace's panes; "" = none.
+  account?: string;
 }
 
 export interface Config {
@@ -94,6 +112,8 @@ export interface Config {
   /// Claude Code hooks installed in ~/.claude/settings.json (agent tree).
   /// Optional: absent in configs written before the setting existed.
   agent_tracking?: boolean;
+  /// Account profiles panes and workspaces can pick. Absent in older configs.
+  accounts?: AccountProfile[];
 }
 
 export interface BootstrapPayload {
@@ -178,4 +198,11 @@ export function uuidv4(): Uuid {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
   return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
+}
+
+/// A Claude config dir whose hooks could not be written or removed by
+/// `set_agent_tracking`. Mirrors `HookDirIssue` in src-tauri/src/agent_hooks.rs.
+export interface HookDirIssue {
+  dir: string;
+  error: string;
 }

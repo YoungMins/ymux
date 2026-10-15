@@ -16,11 +16,12 @@ ymux/
 │       ├── main.rs             # Entry point (desktop only)
 │       ├── lib.rs              # Library crate (all modules)
 │       ├── commands.rs         # Tauri IPC commands (desktop)
+│       ├── accounts.rs         # Per-pane AI-CLI accounts: effective account -> CLAUDE_CONFIG_DIR / CODEX_HOME env at PTY spawn (pure)
 │       ├── agents.rs           # Agent tree registry state machine (pure, not desktop-gated)
 │       ├── agent_scan.rs       # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
 │       ├── agent_scan_disk.rs  # Disk-scan fallback for session resume: finds an agent's transcript by cwd match (pure)
 │       ├── agent_sessions.rs   # Resumable agent sessions: resume argv/command, freshness window (pure)
-│       ├── agent_hooks.rs      # Install/uninstall Claude Code http hooks in ~/.claude/settings.json (merge fns pure; file IO desktop)
+│       ├── agent_hooks.rs      # Install/uninstall Claude Code http hooks in every account's Claude dir settings.json: merge fns + plan_hooks/apply_plan (pure; reconcile_hooks in commands.rs)
 │       ├── hook_http.rs        # Loopback receiver for those hooks: auth, parsing, port choice, listener (pure std)
 │       ├── config/             # Config model + store
 │       ├── drafts.rs           # Editor pane crash-safety drafts, debounced by pane id (pure)
@@ -256,7 +257,7 @@ rustup target add x86_64-pc-windows-msvc
 cargo check --target x86_64-pc-windows-msvc --no-default-features --lib -p ymux
 ```
 
-### 11. `agent_tracking` / `agent_hook_port` are backend-authoritative — don't add them to `merge_layouts_from`
+### 11. `agent_tracking` / `agent_hook_port` / `agent_hook_dirs` are backend-authoritative — don't add them to `merge_layouts_from`
 
 Every other `Config` setting added since rule 8's `CONFIG_VERSION` note must be
 copied in `Config::merge_layouts_from` (see the memory note: a setting missing
@@ -266,14 +267,22 @@ also installs/uninstalls the Claude Code hooks as a side effect, so a stale
 frontend save overwriting it out-of-band would desync the config from the
 actual hook state on disk. `agent_hook_port` is the same kind of exception:
 it is the literal port in the installed hooks' URL (rule 13), chosen and
-persisted only by `commands::start_hook_receiver`. If you add a new bool/enum setting, copy it in
+persisted only by `commands::start_hook_receiver`. `agent_hook_dirs` is the
+third: the Claude config dirs whose `settings.json` carries ymux's hooks (raw
+spellings), written only by `commands::reconcile_hooks` inside its
+`HOOK_WRITES` lock, in the same step as the file writes — and, for the toggle,
+as the `agent_tracking` flip. A stale save overwriting it would strand hooks
+in an account dir that nothing remembers to clean. If you add a new bool/enum setting, copy it in
 `merge_layouts_from` like the rest — only mirror this exception if the setting
 is similarly owned by a backend side effect, not just because it's convenient.
 
 ### 12. The Claude Code hook settings merge is marker-based — never reorder or drop foreign hooks
 
 `agent_hooks::install_hooks` / `uninstall_hooks` rewrite the user's
-`~/.claude/settings.json` in place. Every hook ymux owns is an `http` entry
+`settings.json` in place — one file per Claude config dir (`~/.claude` plus
+every account's `CLAUDE_CONFIG_DIR`; `apply_plan` runs `install_at` /
+`uninstall_at` on each, uninstalls before installs, and one dir failing never
+stops the others). Everything below holds per file. Every hook ymux owns is an `http` entry
 whose URL is a loopback host with the `/ymux-agent-hook` path (any port); the
 retired `y` command entries are recognised by their `--ymux-agent-hook`
 marker. Install only touches ymux entries (refreshing the port, dropping the
@@ -309,8 +318,21 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   `bind_loopback` sets `SO_EXCLUSIVEADDRUSE` (defence in depth: on Windows 11
   a same-address `SO_REUSEADDR` squat is refused anyway, and a wildcard
   squatter loses every `127.0.0.1` connection to the specific socket).
+- **One install per account dir.** Hooks go into `settings.json` of every
+  distinct (rule 15) Claude dir in `accounts::account_dirs` — the default, home
+  (the "none" account) and each profile — and `Config::agent_hook_dirs`
+  remembers where. `commands::reconcile_hooks` (enable, disable, startup,
+  accounts changed in `save_config`, `spawn_pane`) is the only writer, under
+  the static `HOOK_WRITES` lock, re-reading the config under it. Only the
+  default/home dirs may be created; a missing profile dir is skipped (and not
+  recorded) until a pane spawns into it. A failed uninstall stays recorded and
+  is retried; a failure in a profile dir is an issue returned to the UI, not an
+  error, but one in the default/home dir blocks the toggle. Implicit triggers
+  never write in debug builds (without `YMUX_DEV_AGENT_HOOKS=1`) or in a
+  stand-down instance.
 - **Hooks are user-level, so every Claude session sends to the port.** While
-  tracking is on, Claude sessions *outside* ymux POST their hook events —
+  tracking is on, Claude sessions *outside* ymux that use any of those dirs
+  POST their hook events —
   prompts, tool input and output — to `127.0.0.1:<port>` too. A running ymux
   answers them with a quiet 204 and reads nothing (no token); while ymux is
   closed, whatever process holds the port receives them. Turning tracking off

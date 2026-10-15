@@ -1,4 +1,5 @@
-//! Install / uninstall ymux's Claude Code hooks in `~/.claude/settings.json`.
+//! Install / uninstall ymux's Claude Code hooks in `<config dir>/settings.json`
+//! for every account's Claude config dir (`~/.claude` by default).
 //!
 //! Every hook ymux adds is a `type: "http"` handler that POSTs the event to
 //! ymux's loopback receiver (`crate::hook_http`):
@@ -23,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
+use crate::config::model::AccountProfile;
 use crate::error::{YmuxError, YmuxResult};
 use crate::hook_http::{HOOK_PATH, TOKEN_ENV};
 
@@ -280,9 +282,10 @@ pub fn uninstall_hooks(settings: &mut Value) -> bool {
     changed || stripped
 }
 
-/// `~/.claude/settings.json`, Claude Code's user-level settings.
-pub fn claude_settings_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("settings.json"))
+/// `<dir>/settings.json`: Claude Code's user-level settings for the config
+/// home `dir` (`CLAUDE_CONFIG_DIR` or `~/.claude`).
+pub fn settings_file(dir: &str) -> PathBuf {
+    Path::new(dir).join("settings.json")
 }
 
 /// `settings.json` → `settings.json.<suffix>`.
@@ -391,16 +394,214 @@ pub fn startup_refresh_allowed(debug_build: bool, env_value: Option<&str>) -> bo
     !debug_build || env_value == Some("1")
 }
 
-/// Apply the `agent_tracking` setting to `~/.claude/settings.json`, pointing
-/// the hooks at the receiver on `port`.
-pub fn set_enabled(enabled: bool, port: u16) -> YmuxResult<()> {
-    let path = claude_settings_path()
-        .ok_or_else(|| YmuxError::Other("cannot resolve the home directory".into()))?;
-    if enabled {
-        install_at(&path, port)
-    } else {
-        uninstall_at(&path)
+/// Claude config dirs that should carry the hooks: every account's, plus
+/// home (the "none" account) and the default (whatever ymux inherited).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesiredDirs {
+    /// Distinct dirs (rule 15), default first.
+    pub all: Vec<String>,
+    /// The default and home dirs: the only ones a failure blocks the
+    /// tracking toggle for, and the only ones installing may create.
+    pub required: Vec<String>,
+}
+
+impl DesiredDirs {
+    pub fn is_required(&self, dir: &str) -> bool {
+        self.required.iter().any(|r| ypath::same_path(r, dir))
     }
+}
+
+pub fn desired_dirs(
+    accounts: &[AccountProfile],
+    inherited: impl Fn(&str) -> Option<String>,
+    home: Option<&Path>,
+) -> DesiredDirs {
+    let all = crate::accounts::account_dirs(accounts, inherited, home);
+    let required = all.iter().take(2).map(|(_, d)| d.claude.clone()).collect();
+    let all = crate::accounts::distinct(all.into_iter().map(|(owner, d)| (owner, d.claude)))
+        .into_iter()
+        .map(|g| g.dir)
+        .collect();
+    DesiredDirs { all, required }
+}
+
+/// What a reconcile should do, both lists distinct by `ypath` key.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookPlan {
+    pub uninstall: Vec<String>,
+    pub install: Vec<String>,
+}
+
+impl HookPlan {
+    pub fn is_empty(&self) -> bool {
+        self.uninstall.is_empty() && self.install.is_empty()
+    }
+}
+
+fn dedup_by_key(dirs: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for d in dirs {
+        let key = ypath::comparison_key(&d);
+        if !d.is_empty() && !seen.contains(&key) {
+            seen.push(key);
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// Whether `dir` is in `list`, compared with `ypath` (rule 15).
+pub fn has_dir(list: &[String], dir: &str) -> bool {
+    let key = ypath::comparison_key(dir);
+    list.iter().any(|d| ypath::comparison_key(d) == key)
+}
+
+/// Whether `a` and `b` name one directory: equal by `ypath` (rule 15), or,
+/// when the filesystem can answer, the same canonical location (symlinks,
+/// junctions, 8.3 names). A path that no longer exists falls back to `ypath`.
+pub fn same_location(a: &str, b: &str) -> bool {
+    if ypath::same_path(a, b) {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Uninstall from `installed − desired`; install into `desired` (all of it
+/// when `refresh_all`, e.g. the port may have changed, else only
+/// `desired − installed`). Pure `ypath` comparison; see [`plan_hooks_with`].
+pub fn plan_hooks(desired: &[String], installed: &[String], refresh_all: bool) -> HookPlan {
+    plan_hooks_with(desired, installed, refresh_all, |a, b| {
+        ypath::same_path(a, b)
+    })
+}
+
+/// [`plan_hooks`] with an injected location test. An installed dir that
+/// resolves to the same location as any still-desired dir (an alias spelling)
+/// is never uninstalled: that would strip the hooks the desired dir needs.
+pub fn plan_hooks_with(
+    desired: &[String],
+    installed: &[String],
+    refresh_all: bool,
+    same_location: impl Fn(&str, &str) -> bool,
+) -> HookPlan {
+    HookPlan {
+        uninstall: dedup_by_key(
+            installed
+                .iter()
+                .filter(|d| !has_dir(desired, d) && !desired.iter().any(|w| same_location(w, d)))
+                .cloned(),
+        ),
+        install: dedup_by_key(
+            desired
+                .iter()
+                .filter(|d| refresh_all || !has_dir(installed, d))
+                .cloned(),
+        ),
+    }
+}
+
+/// How one directory fared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirResult {
+    Done,
+    /// Nothing written on purpose (a profile directory that does not exist).
+    Skipped,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanOutcome {
+    pub uninstall: Vec<(String, DirResult)>,
+    pub install: Vec<(String, DirResult)>,
+}
+
+/// A directory whose hooks could not be written or removed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct HookDirIssue {
+    pub dir: String,
+    pub error: String,
+}
+
+impl PlanOutcome {
+    pub fn issues(&self) -> Vec<HookDirIssue> {
+        self.uninstall
+            .iter()
+            .chain(&self.install)
+            .filter_map(|(dir, r)| match r {
+                DirResult::Failed(error) => Some(HookDirIssue {
+                    dir: dir.clone(),
+                    error: error.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The dirs that carry hooks after `outcome`: a failed uninstall stays
+/// pending (still recorded), a failed or skipped install is not added.
+pub fn next_installed(installed: &[String], outcome: &PlanOutcome) -> Vec<String> {
+    let removed: Vec<&String> = outcome
+        .uninstall
+        .iter()
+        .filter(|(_, r)| *r == DirResult::Done)
+        .map(|(d, _)| d)
+        .collect();
+    let mut out = dedup_by_key(
+        installed
+            .iter()
+            .filter(|d| !removed.iter().any(|r| ypath::same_path(r, d)))
+            .cloned(),
+    );
+    for (dir, r) in &outcome.uninstall {
+        if matches!(r, DirResult::Failed(_)) && !has_dir(&out, dir) {
+            out.push(dir.clone());
+        }
+    }
+    for (dir, r) in &outcome.install {
+        if *r == DirResult::Done && !has_dir(&out, dir) {
+            out.push(dir.clone());
+        }
+    }
+    out
+}
+
+/// Run `plan`: every uninstall first, then every install, so a directory that
+/// moves between spellings never ends up without hooks. Per file this is
+/// `uninstall_at` / `install_at` (rule 12). One directory failing never stops
+/// the rest. Only directories `may_create` accepts are created: a profile
+/// directory that does not exist is skipped, not made.
+pub fn apply_plan(plan: &HookPlan, port: u16, may_create: impl Fn(&str) -> bool) -> PlanOutcome {
+    let mut outcome = PlanOutcome::default();
+    for dir in &plan.uninstall {
+        // We only ever write absolute dirs; anything else holds nothing of ours.
+        let result = if !Path::new(dir).is_absolute() {
+            DirResult::Done
+        } else {
+            match uninstall_at(&settings_file(dir)) {
+                Ok(()) => DirResult::Done,
+                Err(e) => DirResult::Failed(e.to_string()),
+            }
+        };
+        outcome.uninstall.push((dir.clone(), result));
+    }
+    for dir in &plan.install {
+        let result =
+            if !Path::new(dir).is_absolute() || (!Path::new(dir).is_dir() && !may_create(dir)) {
+                DirResult::Skipped
+            } else {
+                match install_at(&settings_file(dir), port) {
+                    Ok(()) => DirResult::Done,
+                    Err(e) => DirResult::Failed(e.to_string()),
+                }
+            };
+        outcome.install.push((dir.clone(), result));
+    }
+    outcome
 }
 
 #[cfg(test)]
@@ -920,5 +1121,214 @@ mod tests {
         let path = tempdir().join("settings.json");
         uninstall_at(&path).unwrap();
         assert!(!path.exists());
+    }
+
+    fn s(p: &Path) -> String {
+        p.display().to_string()
+    }
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn compact(v: &Value) -> String {
+        serde_json::to_string(v).unwrap()
+    }
+
+    #[test]
+    fn plan_installs_each_distinct_dir_once() {
+        let plan = plan_hooks(&strs(&["/srv/a", "/srv/a/", "/srv/b"]), &[], false);
+        assert_eq!(plan.install, strs(&["/srv/a", "/srv/b"]));
+        assert!(plan.uninstall.is_empty());
+        // Already installed (another spelling) is not installed again.
+        let plan = plan_hooks(&strs(&["/srv/a", "/srv/b"]), &strs(&["/srv/a/"]), false);
+        assert_eq!(plan.install, strs(&["/srv/b"]));
+        assert!(plan.uninstall.is_empty());
+        // Stale dirs are uninstalled once.
+        let plan = plan_hooks(&strs(&["/srv/a"]), &strs(&["/srv/x", "/srv/x/"]), false);
+        assert_eq!(plan.uninstall, strs(&["/srv/x"]));
+    }
+
+    #[test]
+    fn deleting_profile_aliasing_home_keeps_home_installed() {
+        let home = tempdir();
+        let alias = format!("{}/", home.join(".claude").display());
+        let profile = AccountProfile {
+            id: "p".into(),
+            name: "p".into(),
+            claude_config_dir: alias,
+            codex_home: String::new(),
+            color: String::new(),
+        };
+        let with = desired_dirs(&[profile], |_| None, Some(&home));
+        let without = desired_dirs(&[], |_| None, Some(&home));
+        assert_eq!(with.all, without.all, "alias folds into home");
+        let plan = plan_hooks(&without.all, &with.all, false);
+        assert!(plan.is_empty(), "{plan:?}");
+        assert!(without.is_required(&s(&home.join(".claude"))));
+    }
+
+    #[test]
+    fn refresh_all_reinstalls_every_desired_dir() {
+        let plan = plan_hooks(&strs(&["/srv/a", "/srv/b"]), &strs(&["/srv/a"]), true);
+        assert_eq!(plan.install, strs(&["/srv/a", "/srv/b"]));
+        assert!(plan.uninstall.is_empty());
+    }
+
+    #[test]
+    fn failed_uninstall_of_unrecorded_dir_becomes_pending() {
+        let outcome = PlanOutcome {
+            uninstall: vec![("/srv/x".into(), DirResult::Failed("busy".into()))],
+            install: vec![],
+        };
+        assert_eq!(next_installed(&[], &outcome), strs(&["/srv/x"]));
+    }
+
+    #[test]
+    fn alias_of_a_desired_dir_is_never_uninstalled() {
+        let same = |a: &str, b: &str| a.trim_end_matches('~') == b.trim_end_matches('~');
+        let plan = plan_hooks_with(
+            &strs(&["/srv/real"]),
+            &strs(&["/srv/real~", "/srv/other"]),
+            false,
+            same,
+        );
+        assert_eq!(plan.uninstall, strs(&["/srv/other"]));
+    }
+
+    #[test]
+    fn symlinked_alias_of_a_desired_dir_is_never_uninstalled() {
+        let base = tempdir();
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(&real).expect("mkdir");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&real, &link).is_ok();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_dir(&real, &link).is_ok();
+        #[cfg(not(any(unix, windows)))]
+        let made = false;
+        if !made {
+            return; // link creation not permitted here
+        }
+        assert!(same_location(&s(&real), &s(&link)));
+        let plan = plan_hooks_with(&[s(&real)], &[s(&link)], false, same_location);
+        assert!(plan.uninstall.is_empty(), "{plan:?}");
+    }
+
+    #[test]
+    fn next_installed_keeps_failed_uninstalls_pending() {
+        let installed = strs(&["/srv/a", "/srv/b", "/srv/c"]);
+        let outcome = PlanOutcome {
+            uninstall: vec![
+                ("/srv/b".into(), DirResult::Done),
+                ("/srv/c".into(), DirResult::Failed("busy".into())),
+            ],
+            install: vec![
+                ("/srv/d".into(), DirResult::Done),
+                ("/srv/e".into(), DirResult::Failed("bad".into())),
+                ("/srv/f".into(), DirResult::Skipped),
+                ("/srv/a/".into(), DirResult::Done),
+            ],
+        };
+        assert_eq!(
+            next_installed(&installed, &outcome),
+            strs(&["/srv/a", "/srv/c", "/srv/d"])
+        );
+        let issues = outcome.issues();
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0].dir, "/srv/c");
+    }
+
+    #[test]
+    fn apply_plan_round_trips_foreign_settings_in_every_dir() {
+        let (a, b) = (tempdir(), tempdir());
+        for d in [&a, &b] {
+            std::fs::write(settings_file(&s(d)), FOREIGN).unwrap();
+        }
+        let dirs = vec![s(&a), s(&b)];
+        let out = apply_plan(&plan_hooks(&dirs, &[], false), PORT, |_| false);
+        assert!(out.install.iter().all(|(_, r)| *r == DirResult::Done));
+        for d in &dirs {
+            let v = read(&settings_file(d));
+            for (event, _) in HOOK_EVENTS {
+                assert_eq!(ours_in(&v, event), vec![hook_entry(PORT)], "{d} {event}");
+            }
+        }
+        let installed = next_installed(&[], &out);
+        assert_eq!(installed, dirs);
+        let out = apply_plan(&plan_hooks(&[], &installed, false), PORT, |_| false);
+        assert!(out.uninstall.iter().all(|(_, r)| *r == DirResult::Done));
+        for d in &dirs {
+            let file = settings_file(d);
+            assert_eq!(compact(&read(&file)), compact(&foreign()), "{d}");
+            assert_eq!(
+                std::fs::read_to_string(sibling(&file, "ymux-bak")).unwrap(),
+                FOREIGN,
+                "the untouched original is still the backup"
+            );
+        }
+        assert!(next_installed(&installed, &out).is_empty());
+    }
+
+    #[test]
+    fn skips_missing_profile_dir_without_creating_it() {
+        let base = tempdir();
+        let profile = s(&base.join("profile"));
+        let home = s(&base.join("home-claude"));
+        let plan = plan_hooks(&[profile.clone(), home.clone()], &[], false);
+        let h = home.clone();
+        let out = apply_plan(&plan, PORT, |d| d == h);
+        assert_eq!(out.install[0], (profile.clone(), DirResult::Skipped));
+        assert_eq!(out.install[1], (home.clone(), DirResult::Done));
+        assert!(!Path::new(&profile).exists(), "profile dir not created");
+        assert!(settings_file(&home).exists(), "home dir may be created");
+        assert_eq!(next_installed(&[], &out), vec![home]);
+    }
+
+    #[test]
+    fn uninstall_of_a_missing_dir_is_success() {
+        let gone = s(&tempdir().join("nope"));
+        let plan = HookPlan {
+            uninstall: vec![gone.clone()],
+            install: vec![],
+        };
+        let out = apply_plan(&plan, PORT, |_| false);
+        assert_eq!(out.uninstall, vec![(gone, DirResult::Done)]);
+    }
+
+    #[test]
+    fn uninstalls_before_installs() {
+        let d = tempdir();
+        let dir = s(&d);
+        install_at(&settings_file(&dir), 1111).unwrap();
+        // The same dir on both lists: only "uninstall, then install" leaves
+        // hooks behind, and at the new port.
+        let plan = HookPlan {
+            uninstall: vec![dir.clone()],
+            install: vec![dir.clone()],
+        };
+        apply_plan(&plan, PORT, |_| false);
+        assert_eq!(
+            ours_in(&read(&settings_file(&dir)), "Stop"),
+            vec![hook_entry(PORT)]
+        );
+    }
+
+    #[test]
+    fn bad_settings_in_one_dir_does_not_stop_others() {
+        let (bad, good) = (tempdir(), tempdir());
+        std::fs::write(settings_file(&s(&bad)), "{ not json").unwrap();
+        let plan = plan_hooks(&[s(&bad), s(&good)], &[], false);
+        let out = apply_plan(&plan, PORT, |_| false);
+        assert!(matches!(out.install[0].1, DirResult::Failed(_)));
+        assert_eq!(out.install[1].1, DirResult::Done);
+        assert_eq!(
+            std::fs::read_to_string(settings_file(&s(&bad))).unwrap(),
+            "{ not json"
+        );
+        assert!(settings_file(&s(&good)).exists());
+        assert_eq!(next_installed(&[], &out), vec![s(&good)]);
+        assert_eq!(out.issues().len(), 1);
     }
 }
