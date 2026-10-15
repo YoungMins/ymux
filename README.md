@@ -175,8 +175,9 @@ default (`~/.claude`, `~/.codex`). Pick the account per terminal in the pane's
 workspace panel. A terminal with an account shows a colored badge in its title.
 ymux sets the variables when a terminal starts, so a change applies to
 terminals started afterwards (a running shell keeps its account, and its badge
-is dimmed until you restart it). Token usage and session resume still read the
-default folders.
+is dimmed until you restart it). Token usage reads every configured account's
+folders, and session resume looks in the folder of the account the terminal
+ran under.
 
 ### Side panel: Files and Usage
 
@@ -198,7 +199,10 @@ and width persist; drag the left edge to resize.
     and OpenAI using the sign-in token those CLIs already stored on your PC
     (see [Privacy](#privacy)).
 
-  It refreshes every 10 seconds while visible. Local totals exclude web chats
+  Local totals refresh every 10 seconds while visible; account quotas are
+  fetched at most once a minute (a failed fetch is retried sooner, and the ↻
+  button at most every 30 seconds) and the rest of the time shown from the
+  last result. Local totals exclude web chats
   and other devices and can include previously used accounts, so they are not
   the same as your subscription quota. When a quota can't be fetched, a recorded
   snapshot is shown and labelled stale.
