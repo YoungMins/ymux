@@ -30,6 +30,7 @@ import {
 import { t, onLangChange } from "../i18n/i18n";
 import { IS_MAC } from "../platform";
 import { askChoice } from "../ui/Dialog";
+import { openDiffReview } from "../diff/DiffReview";
 import { CwdFollow } from "../filedock/cwdFollow";
 import { baseName } from "../files/fileModel";
 import { assignLanes, type LaneLayout, type LaneRow } from "./graphLanes";
@@ -106,6 +107,7 @@ const ICON = {
     '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="4.5" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 5.1v5.8M4.5 8.5c0-2 7-1.5 7-4.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M11.5 9.5v5M9 12h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
   terminal:
     '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4 6l2 2-2 2M7.5 10.5H11" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  diff: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5.5 4.5v4M3.5 6.5h4M8.5 10.5h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
 };
 
 interface RowEls {
@@ -215,9 +217,10 @@ export class GitPane implements Pane {
     const refresh = this.makeButton(ICON.refresh, "git.refresh", () => void this.load());
     const term = this.makeButton(ICON.terminal, "git.openTerminal", () => this.openTerminal());
     const add = this.makeButton(ICON.worktree, "git.newWorktree", () => void this.addWorktree());
+    const review = this.makeButton(ICON.diff, "diff.command", () => this.reviewChanges());
     const sep = document.createElement("span");
     sep.className = "files__bar-sep";
-    bar.append(where, sep, this.pinBtn, refresh, term, add);
+    bar.append(where, sep, this.pinBtn, refresh, term, add, review);
 
     // ── Body: the log beside (or above) branches and worktrees
     const main = document.createElement("div");
@@ -957,6 +960,13 @@ export class GitPane implements Pane {
 
   private selectedWorktree(): WorktreeEntry | null {
     return this.worktrees[this.cursor.worktrees] ?? null;
+  }
+
+  /// Open the diff review for the selected worktree, else this repository.
+  private reviewChanges(): void {
+    const w = this.section === "worktrees" ? this.selectedWorktree() : null;
+    const dir = w?.path ?? this.root;
+    if (dir) void openDiffReview(dir);
   }
 
   private openTerminal(): void {

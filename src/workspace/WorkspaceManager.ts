@@ -1837,6 +1837,67 @@ export class WorkspaceManager {
     this.paneCaches.get(wsId)?.get(paneId)?.focus();
   }
 
+  /// "Workspace › pane — agent" for the picker that chooses which agent
+  /// receives a review.
+  paneChoiceLabel(paneId: Uuid): string {
+    const wsId = this.workspaceOfPane(paneId);
+    const ws =
+      wsId === null
+        ? ""
+        : formatWorkspaceLabel(wsId, this.getWorkspaceName(wsId), this.workspacePosition(wsId));
+    const agent = this._agents[paneId]?.lead?.kind ?? "";
+    return `${ws} › ${this.tabLabelFor(paneId)}${agent ? ` — ${agent}` : ""}`;
+  }
+
+  /// The kind of agent leading `paneId` right now ("claude", ...), if any.
+  leadKindOf(paneId: Uuid): string | undefined {
+    return this._agents[paneId]?.lead?.kind;
+  }
+
+  /// Paste `text` into a pane running an agent and focus it. `gone` when the
+  /// pane is not a live terminal, has no lead agent, or (with `expectKind`)
+  /// its agent is no longer of that kind; `waiting` while the agent is on a
+  /// permission prompt, where a pasted block would answer it; `no-paste` when
+  /// the app has not turned bracketed paste on; `failed` when a paste write
+  /// was rejected. Nothing is written on a refusal. The Enter (`submit`) is
+  /// re-checked against the same conditions right before it is written.
+  async sendToPane(
+    paneId: Uuid,
+    text: string,
+    submit: boolean,
+    expectKind?: string,
+  ): Promise<"sent" | "waiting" | "no-paste" | "gone" | "failed"> {
+    const pane = this.findPaneById(paneId);
+    if (!(pane instanceof TerminalPane)) return "gone";
+    const lead = () => this._agents[paneId]?.lead;
+    const fit = (): "gone" | "waiting" | null => {
+      const l = lead();
+      if (!l || (expectKind !== undefined && l.kind !== expectKind)) return "gone";
+      return l.status === "waiting" ? "waiting" : null;
+    };
+    const refusal = fit();
+    if (refusal) return refusal;
+    if (!pane.pasteText(text)) return "no-paste";
+    if (!(await pane.pasteFlushed())) return "failed";
+    if (submit) pane.submitAfterPaste(300, () => fit() === null);
+    await this.focusPane(paneId);
+    return "sent";
+  }
+
+  /// Directory of the focused pane: the live cwd when the shell reports one,
+  /// else the saved one. Null when there is no focused pane or no directory.
+  async focusedCwd(): Promise<string | null> {
+    const id = this.activePaneId();
+    if (!id) return null;
+    try {
+      const live = await api.getPaneCwd(id);
+      if (live) return live;
+    } catch {
+      /* not spawned yet or no OSC 7: use the saved cwd */
+    }
+    return this.getPaneSpec(id)?.cwd || null;
+  }
+
   get agentTracking(): boolean {
     return this.config.agent_tracking ?? false;
   }

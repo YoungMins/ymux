@@ -724,6 +724,685 @@ pub fn validate_ref_name(name: &str) -> YmuxResult<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Diff review: `git diff` against a base, plus synthesized untracked files.
+// ---------------------------------------------------------------------------
+
+/// Most files a [`DiffSummary`] lists; the rest set `truncated`.
+pub const MAX_DIFF_FILES: usize = 3000;
+/// Most patch bytes read for one file; the rest sets `truncated`.
+pub const MAX_FILE_PATCH_BYTES: usize = 512 * 1024;
+/// A diff line longer than this many chars is clipped (minified bundles).
+pub const MAX_LINE_CHARS: usize = 2000;
+/// Largest untracked file shown as an all-added hunk.
+pub const MAX_UNTRACKED_BYTES: usize = 256 * 1024;
+
+/// One changed file of a [`DiffSummary`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct DiffFile {
+    pub path: String,
+    /// The old path of a rename; empty otherwise.
+    pub orig: String,
+    pub added: u32,
+    pub deleted: u32,
+    pub binary: bool,
+    pub untracked: bool,
+    /// An untracked file whose line count was not taken (the summary's
+    /// read budget ran out); `added` is 0 and the UI shows "?".
+    pub counts_unknown: bool,
+}
+
+/// What the diff overlay lists: every file that differs from `base_rev`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct DiffSummary {
+    pub root: String,
+    /// The commit (or the empty tree, in an unborn repo) the working tree
+    /// was compared against, as a full hash. Handed back to
+    /// [`diff_file`] so both calls agree even if HEAD moves in between.
+    pub base_rev: String,
+    pub files: Vec<DiffFile>,
+    /// More than [`MAX_DIFF_FILES`] files differ.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffLineKind {
+    Ctx,
+    Add,
+    Del,
+    /// `\ No newline at end of file`: describes the line above it.
+    Noeol,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    /// 1-based line number in the old file; `None` for an added line.
+    pub old_no: Option<u32>,
+    /// 1-based line number in the new file; `None` for a deleted line.
+    pub new_no: Option<u32>,
+    /// Without the `+`/`-`/space marker and without a trailing `\r`.
+    pub text: String,
+    /// The line ended in `\r\n`.
+    pub cr: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Hunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    /// Git's function-context text after the closing `@@`; may be empty.
+    pub header: String,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct FileDiff {
+    pub hunks: Vec<Hunk>,
+    pub binary: bool,
+    /// The patch (or the untracked file) was cut at a size cap.
+    pub truncated: bool,
+}
+
+/// Parse `git diff --numstat -z`.
+///
+/// A plain record is `ADDED\tDELETED\tPATH\0`; a binary file shows `-\t-`
+/// for the counts. A rename or copy is `ADDED\tDELETED\t\0OLD\0NEW\0`: the
+/// path field after the tabs is empty and the two paths follow as their own
+/// NUL-terminated fields, which must be consumed or they would be misread
+/// as records.
+pub fn parse_numstat_z(out: &str) -> Vec<DiffFile> {
+    let mut files = Vec::new();
+    let mut fields = out.split('\0');
+    while let Some(rec) = fields.next() {
+        let mut parts = rec.splitn(3, '\t');
+        let (Some(a), Some(d), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let binary = a == "-" && d == "-";
+        let (path, orig) = if path.is_empty() {
+            let old = fields.next().unwrap_or("");
+            let new = fields.next().unwrap_or("");
+            (new, old)
+        } else {
+            (path, "")
+        };
+        if path.is_empty() {
+            continue;
+        }
+        files.push(DiffFile {
+            path: path.to_string(),
+            orig: orig.to_string(),
+            added: a.parse().unwrap_or(0),
+            deleted: d.parse().unwrap_or(0),
+            binary,
+            untracked: false,
+            counts_unknown: false,
+        });
+    }
+    files
+}
+
+/// `@@ -a[,b] +c[,d] @@ header`.
+fn parse_hunk_header(line: &str) -> Option<Hunk> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, header) = rest.split_once(" @@")?;
+    let (old, new) = ranges.split_once(" +")?;
+    let range = |s: &str| -> Option<(u32, u32)> {
+        match s.split_once(',') {
+            Some((start, len)) => Some((start.parse().ok()?, len.parse().ok()?)),
+            None => Some((s.parse().ok()?, 1)),
+        }
+    };
+    let (old_start, old_lines) = range(old)?;
+    let (new_start, new_lines) = range(new)?;
+    Some(Hunk {
+        old_start,
+        old_lines,
+        new_start,
+        new_lines,
+        header: header.trim().to_string(),
+        lines: Vec::new(),
+    })
+}
+
+/// Clip `s` to [`MAX_LINE_CHARS`] chars, marking the cut with `…`.
+fn clip_line(s: &str) -> String {
+    match s.char_indices().nth(MAX_LINE_CHARS) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_string(),
+    }
+}
+
+/// Parse one file's unified patch into hunks.
+///
+/// Everything before the first `@@` (the `diff --git`, `index`, `---`,
+/// `+++` and rename headers) is skipped. Line numbers are counted from the
+/// hunk header, so a patch cut mid-hunk still numbers what it has. A
+/// trailing `\r` moves into [`DiffLine::cr`] so the view can show CRLF
+/// files without a `^M` on every line.
+pub fn parse_hunks(patch: &str) -> Vec<Hunk> {
+    let mut hunks: Vec<Hunk> = Vec::new();
+    let (mut old_no, mut new_no) = (0u32, 0u32);
+    let mut in_file = false;
+    for raw in patch.split('\n') {
+        // A pathspec can match several files (a deleted `f` and a new
+        // `f/g`): only the first section is the file asked for.
+        if raw.starts_with("diff --git ") {
+            if in_file || !hunks.is_empty() {
+                break;
+            }
+            in_file = true;
+            continue;
+        }
+        if raw.starts_with("@@ ") {
+            if let Some(h) = parse_hunk_header(raw.trim_end_matches('\r')) {
+                old_no = h.old_start;
+                new_no = h.new_start;
+                hunks.push(h);
+                continue;
+            }
+        }
+        let Some(hunk) = hunks.last_mut() else {
+            continue;
+        };
+        // Once the header's counts are met, only a no-newline marker can
+        // still belong to the hunk.
+        let full =
+            old_no - hunk.old_start >= hunk.old_lines && new_no - hunk.new_start >= hunk.new_lines;
+        if full && raw.as_bytes().first() != Some(&b'\\') {
+            continue;
+        }
+        let (text, cr) = match raw.strip_suffix('\r') {
+            Some(t) => (t, true),
+            None => (raw, false),
+        };
+        let line = match raw.as_bytes().first() {
+            Some(b'+') => {
+                let l = DiffLine {
+                    kind: DiffLineKind::Add,
+                    old_no: None,
+                    new_no: Some(new_no),
+                    text: clip_line(&text[1..]),
+                    cr,
+                };
+                new_no += 1;
+                l
+            }
+            Some(b'-') => {
+                let l = DiffLine {
+                    kind: DiffLineKind::Del,
+                    old_no: Some(old_no),
+                    new_no: None,
+                    text: clip_line(&text[1..]),
+                    cr,
+                };
+                old_no += 1;
+                l
+            }
+            Some(b'\\') => DiffLine {
+                kind: DiffLineKind::Noeol,
+                old_no: None,
+                new_no: None,
+                text: text.to_string(),
+                cr: false,
+            },
+            _ => {
+                // An empty line is a context line (an editor stripped the
+                // lone space); the hunk is known not to be full here.
+                let l = DiffLine {
+                    kind: DiffLineKind::Ctx,
+                    old_no: Some(old_no),
+                    new_no: Some(new_no),
+                    text: clip_line(text.get(1..).unwrap_or("")),
+                    cr,
+                };
+                old_no += 1;
+                new_no += 1;
+                l
+            }
+        };
+        hunk.lines.push(line);
+    }
+    hunks
+}
+
+/// The patch up to (not including) the second `diff --git` line.
+fn first_section(patch: &str) -> &str {
+    match patch.find("\ndiff --git ") {
+        Some(i) => &patch[..i],
+        None => patch,
+    }
+}
+
+/// Line count of one untracked file, from a stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UntrackedCount {
+    Text(u32),
+    Binary,
+    /// The shared read budget ran out first.
+    Unknown,
+}
+
+/// Bytes the untracked files of one summary may cost in reads, in total.
+const SUMMARY_UNTRACKED_BUDGET: u64 = 16 * 1024 * 1024;
+/// Leading bytes sniffed for a NUL.
+const BINARY_SNIFF: usize = 8 * 1024;
+
+/// Count the lines of `r` without holding it: sniff the first 8 KiB for a
+/// NUL, then stream the rest, charging every byte read to `budget`.
+fn count_untracked<R: std::io::Read>(mut r: R, budget: &mut u64) -> UntrackedCount {
+    let mut head = vec![0u8; BINARY_SNIFF];
+    let mut n = 0;
+    while n < head.len() {
+        match r.read(&mut head[n..]) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => n += k,
+        }
+    }
+    if n == 0 {
+        return UntrackedCount::Text(0);
+    }
+    let mut charge = |k: usize| -> bool {
+        if k as u64 > *budget {
+            *budget = 0;
+            return false;
+        }
+        *budget -= k as u64;
+        true
+    };
+    if !charge(n) {
+        return UntrackedCount::Unknown;
+    }
+    if head[..n].contains(&0u8) {
+        return UntrackedCount::Binary;
+    }
+    let nl = |b: &[u8]| b.iter().filter(|c| **c == b'\n').count() as u32;
+    let mut lines = nl(&head[..n]);
+    let mut last = head[n - 1];
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => {
+                if !charge(k) {
+                    return UntrackedCount::Unknown;
+                }
+                lines = lines.saturating_add(nl(&buf[..k]));
+                last = buf[k - 1];
+            }
+        }
+    }
+    UntrackedCount::Text(lines + u32::from(last != b'\n'))
+}
+
+/// The all-added diff of an untracked file whose first `bytes` we hold.
+/// `total_len` is its size on disk; more than [`MAX_UNTRACKED_BYTES`] cuts
+/// the text at the last whole line and sets `truncated`.
+pub fn untracked_diff_from_bytes(bytes: &[u8], total_len: u64) -> FileDiff {
+    if crate::fsx::is_probably_binary(bytes) {
+        return FileDiff {
+            binary: true,
+            ..FileDiff::default()
+        };
+    }
+    let truncated = total_len > MAX_UNTRACKED_BYTES as u64 || bytes.len() > MAX_UNTRACKED_BYTES;
+    let mut bytes = &bytes[..bytes.len().min(MAX_UNTRACKED_BYTES)];
+    if truncated {
+        if let Some(i) = bytes.iter().rposition(|b| *b == b'\n') {
+            bytes = &bytes[..=i];
+        }
+    }
+    let text = String::from_utf8_lossy(bytes);
+    if text.is_empty() {
+        return FileDiff {
+            truncated,
+            ..FileDiff::default()
+        };
+    }
+    let ends_nl = text.ends_with('\n');
+    let body = text.strip_suffix('\n').unwrap_or(&text);
+    let mut lines: Vec<DiffLine> = body
+        .split('\n')
+        .enumerate()
+        .map(|(i, l)| {
+            let (t, cr) = match l.strip_suffix('\r') {
+                Some(t) => (t, true),
+                None => (l, false),
+            };
+            DiffLine {
+                kind: DiffLineKind::Add,
+                old_no: None,
+                new_no: Some(i as u32 + 1),
+                text: clip_line(t),
+                cr,
+            }
+        })
+        .collect();
+    let n = lines.len() as u32;
+    if !ends_nl && !truncated {
+        lines.push(DiffLine {
+            kind: DiffLineKind::Noeol,
+            old_no: None,
+            new_no: None,
+            text: "\\ No newline at end of file".to_string(),
+            cr: false,
+        });
+    }
+    FileDiff {
+        hunks: vec![Hunk {
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: n,
+            header: String::new(),
+            lines,
+        }],
+        binary: false,
+        truncated,
+    }
+}
+
+/// Is `rel` a path an untracked-file read may follow under `root`?
+/// Relative, no `..`, and — by `fsx::within_each`, the boundary test the
+/// file dock uses — inside `root` once joined.
+fn untracked_path_ok(root: &Path, rel: &str) -> bool {
+    let p = Path::new(rel);
+    if rel.is_empty() || p.is_absolute() || rel.contains('\0') {
+        return false;
+    }
+    if rel.split(['/', '\\']).any(|c| c == "..") {
+        return false;
+    }
+    let joined = root.join(p).to_string_lossy().into_owned();
+    crate::fsx::within_each(&root.to_string_lossy(), &[joined])[0]
+}
+
+/// What an untracked path is, once it is known to stay inside the repo.
+enum UntrackedSrc {
+    /// A symlink, shown as its target text and never followed.
+    Link(String),
+    File(PathBuf, u64),
+    Other,
+}
+
+/// Does `rel` under `root` stay inside `root` after resolving symlinks in
+/// its *parent* directories? The leaf itself is not followed (a symlink
+/// leaf is shown as text), so only the parent is canonicalized.
+fn parent_stays_inside(root: &Path, full: &Path) -> bool {
+    let (Ok(canon_root), Some(name), Some(parent)) =
+        (root.canonicalize(), full.file_name(), full.parent())
+    else {
+        return false;
+    };
+    let Ok(canon_parent) = parent.canonicalize() else {
+        return false;
+    };
+    crate::fsx::is_within(
+        &canon_root.to_string_lossy(),
+        &canon_parent.join(name).to_string_lossy(),
+    )
+}
+
+fn classify_untracked(root: &Path, rel: &str) -> YmuxResult<UntrackedSrc> {
+    if !untracked_path_ok(root, rel) || !parent_stays_inside(root, &root.join(rel)) {
+        return Err(YmuxError::Git(format!(
+            "path outside the repository: {rel}"
+        )));
+    }
+    let full = root.join(rel);
+    let meta = std::fs::symlink_metadata(&full).map_err(YmuxError::Io)?;
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(&full).map_err(YmuxError::Io)?;
+        return Ok(UntrackedSrc::Link(target.to_string_lossy().into_owned()));
+    }
+    if !meta.is_file() {
+        return Ok(UntrackedSrc::Other);
+    }
+    Ok(UntrackedSrc::File(full, meta.len()))
+}
+
+/// Read an untracked file for [`untracked_diff_from_bytes`]. A symlink is
+/// shown as its target text and never followed (it may point out of `root`).
+fn read_untracked(root: &Path, rel: &str) -> YmuxResult<FileDiff> {
+    match classify_untracked(root, rel)? {
+        UntrackedSrc::Link(t) => Ok(untracked_diff_from_bytes(
+            format!("{t}\n").as_bytes(),
+            t.len() as u64 + 1,
+        )),
+        UntrackedSrc::Other => Ok(FileDiff::default()),
+        UntrackedSrc::File(full, len) => {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            std::fs::File::open(&full)
+                .map_err(YmuxError::Io)?
+                .take(MAX_UNTRACKED_BYTES as u64 + 1)
+                .read_to_end(&mut buf)
+                .map_err(YmuxError::Io)?;
+            Ok(untracked_diff_from_bytes(&buf, len))
+        }
+    }
+}
+
+/// [`count_untracked`] for one path of the summary: same containment and
+/// symlink rules as [`read_untracked`], but streamed under `budget`.
+fn count_untracked_file(root: &Path, rel: &str, budget: &mut u64) -> YmuxResult<UntrackedCount> {
+    Ok(match classify_untracked(root, rel)? {
+        UntrackedSrc::Link(_) => UntrackedCount::Text(1),
+        UntrackedSrc::Other => UntrackedCount::Text(0),
+        UntrackedSrc::File(full, _) => {
+            count_untracked(std::fs::File::open(&full).map_err(YmuxError::Io)?, budget)
+        }
+    })
+}
+
+/// The hash of the empty tree. Asked of git rather than hardcoded: a
+/// SHA-256 repository has a different one.
+fn empty_tree(cwd: &Path) -> YmuxResult<String> {
+    let out = git_command(cwd)
+        .args(["hash-object", "-t", "tree", "--stdin"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(YmuxError::Io)?;
+    if !out.status.success() {
+        return Err(YmuxError::Git(format!(
+            "git hash-object: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The commit a diff is taken against, as a full hash.
+///
+/// Empty `base` is HEAD — or the empty tree in an unborn repository, so
+/// everything staged shows as added. A named `base` is the merge-base of it
+/// and HEAD: the changes *this* branch made, not the base's own progress.
+pub fn resolve_base(cwd: &Path, base: &str) -> YmuxResult<String> {
+    let base = base.trim();
+    if base.is_empty() {
+        if !has_commits(cwd) {
+            return empty_tree(cwd);
+        }
+        return Ok(run_git(cwd, &["rev-parse", "--verify", "HEAD"])?
+            .trim()
+            .to_string());
+    }
+    validate_ref_name(base)?;
+    Ok(run_git(cwd, &["merge-base", base, "HEAD"])?
+        .trim()
+        .to_string())
+}
+
+/// The pinned prefix of every diff call: unquoted paths, no pathspec magic,
+/// no external diff driver or textconv (both run user-configured programs),
+/// fixed prefixes whatever `diff.noprefix` says.
+fn diff_args<'a>(ignore_cr: bool, rest: &[&'a str]) -> Vec<&'a str> {
+    let mut a = vec![
+        "-c",
+        "core.quotepath=off",
+        "--literal-pathspecs",
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "-M",
+    ];
+    if ignore_cr {
+        a.push("--ignore-cr-at-eol");
+    }
+    a.extend_from_slice(rest);
+    a
+}
+
+/// Files that differ between `base` (see [`resolve_base`]) and the working
+/// tree, untracked ones included.
+pub fn diff_summary(cwd: &Path, base: &str, ignore_cr: bool) -> YmuxResult<DiffSummary> {
+    let root = repo_root_checked(cwd)?;
+    let rootp = Path::new(&root);
+    let base_rev = resolve_base(rootp, base)?;
+    let out = run_git(
+        rootp,
+        &diff_args(ignore_cr, &["--numstat", "-z", &base_rev, "--"]),
+    )?;
+    let mut files = parse_numstat_z(&out);
+    let others = run_git(rootp, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    let mut budget = SUMMARY_UNTRACKED_BUDGET;
+    for rel in others.split('\0').filter(|p| !p.is_empty()) {
+        // A nested repository is listed as `dir/`; it has no content to show.
+        if rel.ends_with('/') || files.len() > MAX_DIFF_FILES {
+            continue;
+        }
+        let mut f = DiffFile {
+            path: rel.to_string(),
+            untracked: true,
+            ..DiffFile::default()
+        };
+        match count_untracked_file(rootp, rel, &mut budget) {
+            Ok(UntrackedCount::Text(n)) => f.added = n,
+            Ok(UntrackedCount::Binary) => f.binary = true,
+            Ok(UntrackedCount::Unknown) => f.counts_unknown = true,
+            Err(_) => {}
+        }
+        files.push(f);
+    }
+    let truncated = files.len() > MAX_DIFF_FILES;
+    files.truncate(MAX_DIFF_FILES);
+    Ok(DiffSummary {
+        root,
+        base_rev,
+        files,
+        truncated,
+    })
+}
+
+/// Run git and keep at most `cap` bytes of stdout; the rest is dropped and
+/// git is killed. Returns whether the output was cut.
+fn run_git_capped(cwd: &Path, args: &[&str], cap: usize) -> YmuxResult<(Vec<u8>, bool)> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = git_command(cwd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(YmuxError::Io)?;
+    let mut buf = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        out.take(cap as u64 + 1)
+            .read_to_end(&mut buf)
+            .map_err(YmuxError::Io)?;
+    }
+    let cut = buf.len() > cap;
+    if cut {
+        let _ = child.kill();
+        buf.truncate(cap);
+    }
+    let status = child.wait().map_err(YmuxError::Io)?;
+    if !cut && !status.success() {
+        return Err(YmuxError::Git(format!("git diff failed ({status})")));
+    }
+    Ok((buf, cut))
+}
+
+/// Is `s` a hash [`DiffSummary::base_rev`] could have produced?
+fn is_hex_rev(s: &str) -> bool {
+    (4..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// One file's hunks against `base_rev`. `orig` is passed as a second
+/// pathspec so a rename is shown as one; `untracked` files are read from
+/// disk instead.
+pub fn diff_file(
+    cwd: &Path,
+    base_rev: &str,
+    path: &str,
+    orig: &str,
+    untracked: bool,
+    ignore_cr: bool,
+) -> YmuxResult<FileDiff> {
+    let root = repo_root(cwd)?;
+    if untracked {
+        return read_untracked(&root, path);
+    }
+    if !is_hex_rev(base_rev) {
+        return Err(YmuxError::Git(format!("not a commit hash: {base_rev}")));
+    }
+    if path.is_empty() || path.contains('\0') || orig.contains('\0') {
+        return Err(YmuxError::Git("bad path".into()));
+    }
+    let mut rest = vec!["-U3", base_rev, "--", path];
+    if !orig.is_empty() {
+        rest.push(orig);
+    }
+    let (bytes, truncated) =
+        run_git_capped(&root, &diff_args(ignore_cr, &rest), MAX_FILE_PATCH_BYTES)?;
+    let mut patch = String::from_utf8_lossy(&bytes).into_owned();
+    if truncated {
+        if let Some(i) = patch.rfind('\n') {
+            patch.truncate(i + 1);
+        }
+    }
+    // The pathspec may also match `path/...`; keep the file asked for.
+    let patch = first_section(&patch);
+    let hunks = parse_hunks(patch);
+    let binary = hunks.is_empty() && patch.lines().any(|l| l.starts_with("Binary files "));
+    Ok(FileDiff {
+        hunks,
+        binary,
+        truncated,
+    })
+}
+
+/// Which of `cwds` (pane id, shell cwd) work in the worktree `root`?
+///
+/// Each cwd belongs to the **most specific** worktree containing it — the
+/// longest comparison key — because a linked worktree is often nested under
+/// the main one (`repo/.worktrees/x`), and a pane there is not a pane of
+/// `repo`. Containment and the final equality are `ypath`'s (rule 15).
+pub fn pick_agent_panes(
+    root: &str,
+    worktrees: &[String],
+    cwds: &[(uuid::Uuid, String)],
+) -> Vec<uuid::Uuid> {
+    cwds.iter()
+        .filter(|(_, cwd)| {
+            worktrees
+                .iter()
+                .filter(|wt| crate::fsx::is_within(wt, cwd))
+                .max_by_key(|wt| ypath::comparison_key(wt).len())
+                .is_some_and(|wt| ypath::same_path(wt, root))
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1748,5 +2427,474 @@ branch refs/heads/lockedish
 
         cleanup_dir(&clone);
         cleanup_dir(&repo);
+    }
+
+    // --- Diff review -------------------------------------------------------
+
+    #[test]
+    fn numstat_plain_binary_and_odd_paths() {
+        let out = "3\t1\tsrc/a.rs\0-\t-\tlogo.png\0\
+                   2\t0\t한글 dir/파일 이름.txt\0\
+                   0\t0\tdir with space/x y.md\0";
+        let f = parse_numstat_z(out);
+        assert_eq!(f.len(), 4);
+        assert_eq!(
+            (f[0].path.as_str(), f[0].added, f[0].deleted, f[0].binary),
+            ("src/a.rs", 3, 1, false)
+        );
+        assert!(f[1].binary);
+        assert_eq!((f[1].added, f[1].deleted), (0, 0));
+        assert_eq!(f[2].path, "한글 dir/파일 이름.txt");
+        assert_eq!(f[3].path, "dir with space/x y.md");
+        assert!(f.iter().all(|d| d.orig.is_empty() && !d.untracked));
+    }
+
+    #[test]
+    fn numstat_rename_consumes_both_path_fields() {
+        // The rename's two paths must not be misread as records, and the
+        // record after it must still parse.
+        let out = "5\t2\t\0old/이름 a.txt\0new/이름 b.txt\x001\t1\tz.txt\0";
+        let f = parse_numstat_z(out);
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert_eq!(f[0].path, "new/이름 b.txt");
+        assert_eq!(f[0].orig, "old/이름 a.txt");
+        assert_eq!((f[0].added, f[0].deleted), (5, 2));
+        assert_eq!(f[1].path, "z.txt");
+        assert!(parse_numstat_z("").is_empty());
+    }
+
+    const PATCH: &str = "diff --git a/x.txt b/x.txt\n\
+index 111..222 100644\n\
+--- a/x.txt\n\
++++ b/x.txt\n\
+@@ -1,4 +1,4 @@ fn main() {\n \
+one\n\
+-two\n\
++TWO\n \
+three\n\
+@@ -20 +20,2 @@\n \
+tail\n\
++more\n";
+
+    #[test]
+    fn hunks_number_lines_and_keep_header_text() {
+        let h = parse_hunks(PATCH);
+        assert_eq!(h.len(), 2);
+        assert_eq!(
+            (
+                h[0].old_start,
+                h[0].old_lines,
+                h[0].new_start,
+                h[0].new_lines
+            ),
+            (1, 4, 1, 4)
+        );
+        assert_eq!(h[0].header, "fn main() {");
+        let l = &h[0].lines;
+        assert_eq!(l.len(), 4);
+        assert_eq!(
+            (l[0].kind, l[0].old_no, l[0].new_no),
+            (DiffLineKind::Ctx, Some(1), Some(1))
+        );
+        assert_eq!(
+            (l[1].kind, l[1].old_no, l[1].new_no),
+            (DiffLineKind::Del, Some(2), None)
+        );
+        assert_eq!(l[1].text, "two");
+        assert_eq!(
+            (l[2].kind, l[2].old_no, l[2].new_no),
+            (DiffLineKind::Add, None, Some(2))
+        );
+        assert_eq!((l[3].old_no, l[3].new_no), (Some(3), Some(3)));
+        // `@@ -20 +20,2 @@`: a missing count means 1.
+        assert_eq!((h[1].old_lines, h[1].new_lines), (1, 2));
+        assert_eq!(h[1].header, "");
+        assert_eq!(h[1].lines.len(), 2);
+        assert_eq!(h[1].lines[1].new_no, Some(21));
+        assert!(parse_hunks("diff --git a/b b/b\nBinary files a/b and b/b differ\n").is_empty());
+    }
+
+    #[test]
+    fn hunks_move_a_trailing_cr_into_the_flag() {
+        let h = parse_hunks("@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r\n");
+        let l = &h[0].lines;
+        assert_eq!(l.len(), 3);
+        assert!(l.iter().all(|x| x.cr));
+        assert_eq!(l[0].text, "a");
+        assert_eq!(l[2].text, "c");
+    }
+
+    #[test]
+    fn hunks_keep_the_no_newline_marker_without_numbering_it() {
+        let h = parse_hunks(
+            "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n",
+        );
+        let l = &h[0].lines;
+        assert_eq!(l.len(), 4);
+        assert_eq!(l[1].kind, DiffLineKind::Noeol);
+        assert_eq!((l[1].old_no, l[1].new_no), (None, None));
+        assert_eq!(l[1].text, "\\ No newline at end of file");
+        assert_eq!(l[2].new_no, Some(1));
+        assert_eq!(l[3].kind, DiffLineKind::Noeol);
+    }
+
+    #[test]
+    fn hunks_do_not_mistake_a_dashed_line_for_a_header_and_clip_long_lines() {
+        // A deleted line whose text starts with `-- ` reads `--- ...`.
+        let long = "x".repeat(MAX_LINE_CHARS + 50);
+        let patch = format!("@@ -1,2 +1,1 @@\n--- not a header\n-- also\n+{long}\n");
+        let h = parse_hunks(&patch);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].lines.len(), 3);
+        assert_eq!(h[0].lines[0].kind, DiffLineKind::Del);
+        assert_eq!(h[0].lines[0].text, "-- not a header");
+        let t = &h[0].lines[2].text;
+        assert_eq!(t.chars().count(), MAX_LINE_CHARS + 1);
+        assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn hunks_stop_at_a_second_file_section_and_ignore_overrun() {
+        // `git diff -- f` also matches `f/g`: a deleted file `f` followed by
+        // a new file `f/g`. Only the first section is the file asked for.
+        let patch = concat!(
+            "diff --git a/f b/f\ndeleted file mode 100644\n--- a/f\n+++ /dev/null\n",
+            "@@ -1,2 +0,0 @@\n-one\n-two\n",
+            "diff --git a/f/g b/f/g\nnew file mode 100644\n--- /dev/null\n+++ b/f/g\n",
+            "@@ -0,0 +1 @@\n+inner\n",
+        );
+        let h = parse_hunks(patch);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].lines.len(), 2);
+        // Lines past the counted hunk (anything but a no-newline marker) are
+        // not part of it.
+        let h = parse_hunks(concat!(
+            "@@ -1 +1 @@\n-a\n+b\n+stray\n-stray\n context\n",
+            "\\ No newline at end of file\n",
+        ));
+        assert_eq!(h[0].lines.len(), 3);
+        assert_eq!(h[0].lines[2].kind, DiffLineKind::Noeol);
+    }
+
+    #[test]
+    fn first_section_cuts_at_the_next_file_header() {
+        let p =
+            "diff --git a/f b/f\nBinary files a/f and /dev/null differ\ndiff --git a/f/g b/f/g\n";
+        assert_eq!(
+            first_section(p),
+            "diff --git a/f b/f\nBinary files a/f and /dev/null differ"
+        );
+        assert_eq!(first_section("no header\n"), "no header\n");
+    }
+
+    #[test]
+    fn stream_count_budget_and_binary_sniff() {
+        let mut budget = 100u64;
+        assert_eq!(
+            count_untracked(&b"a\nb\nc"[..], &mut budget),
+            UntrackedCount::Text(3)
+        );
+        assert_eq!(budget, 95);
+        assert_eq!(
+            count_untracked(&b"a\0b"[..], &mut budget),
+            UntrackedCount::Binary
+        );
+        let mut budget = 4u64;
+        assert_eq!(
+            count_untracked(&b"a\nb\nc\nd\ne\n"[..], &mut budget),
+            UntrackedCount::Unknown
+        );
+        assert_eq!(count_untracked(&b""[..], &mut 10), UntrackedCount::Text(0));
+        assert_eq!(
+            count_untracked(&b"x\n"[..], &mut 10),
+            UntrackedCount::Text(1)
+        );
+    }
+
+    #[test]
+    fn untracked_text_binary_cap_and_missing_eol() {
+        let d = untracked_diff_from_bytes(b"a\r\nb\r\n", 6);
+        let h = &d.hunks[0];
+        assert_eq!((h.old_lines, h.new_start, h.new_lines), (0, 1, 2));
+        assert!(h.lines.iter().all(|l| l.kind == DiffLineKind::Add && l.cr));
+        assert_eq!(h.lines[1].new_no, Some(2));
+
+        let d = untracked_diff_from_bytes("한글\nend".as_bytes(), 9);
+        let h = &d.hunks[0];
+        assert_eq!(h.new_lines, 2);
+        assert_eq!(h.lines.last().unwrap().kind, DiffLineKind::Noeol);
+
+        assert!(untracked_diff_from_bytes(b"ab\0cd", 5).binary);
+        assert!(untracked_diff_from_bytes(b"", 0).hunks.is_empty());
+
+        let big = "line\n".repeat(MAX_UNTRACKED_BYTES / 5 + 100);
+        let d = untracked_diff_from_bytes(big.as_bytes(), big.len() as u64);
+        assert!(d.truncated);
+        assert_eq!(d.hunks[0].new_lines as usize, MAX_UNTRACKED_BYTES / 5);
+    }
+
+    #[test]
+    fn untracked_paths_cannot_leave_the_root() {
+        let root = Path::new(if cfg!(windows) { "C:\\repo" } else { "/repo" });
+        assert!(untracked_path_ok(root, "a/b.txt"));
+        assert!(untracked_path_ok(root, "한글 dir/파일.txt"));
+        assert!(!untracked_path_ok(root, "../x"));
+        assert!(!untracked_path_ok(root, "a/../../x"));
+        assert!(!untracked_path_ok(root, "a\\..\\..\\x"));
+        assert!(!untracked_path_ok(root, ""));
+        assert!(!untracked_path_ok(root, "/etc/passwd"));
+        assert!(!untracked_path_ok(root, "C:\\Windows\\x"));
+    }
+
+    fn pane(n: u128) -> uuid::Uuid {
+        uuid::Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn pick_prefers_the_most_specific_nested_worktree() {
+        let wts = vec!["/srv/repo".to_string(), "/srv/repo/.wt/feat".to_string()];
+        let cwds = vec![
+            (pane(1), "/srv/repo".to_string()),
+            (pane(2), "/srv/repo/src/deep".to_string()),
+            (pane(3), "/srv/repo/.wt/feat".to_string()),
+            (pane(4), "/srv/repo/.wt/feat/src".to_string()),
+            (pane(5), "/srv/other".to_string()),
+            (pane(6), "/srv/repository".to_string()),
+        ];
+        assert_eq!(
+            pick_agent_panes("/srv/repo", &wts, &cwds),
+            vec![pane(1), pane(2)]
+        );
+        assert_eq!(
+            pick_agent_panes("/srv/repo/.wt/feat", &wts, &cwds),
+            vec![pane(3), pane(4)]
+        );
+        assert!(pick_agent_panes("/srv/repo", &wts, &[]).is_empty());
+    }
+
+    #[test]
+    fn pick_compares_spellings_by_path_syntax() {
+        // Windows: drive-letter case and separators; macOS: NFD vs NFC.
+        let wts = vec!["C:/Repo".to_string(), "C:/Repo/.wt/한글".to_string()];
+        let cwds = vec![
+            (pane(1), "c:\\repo\\src".to_string()),
+            (pane(2), "c:\\REPO\\.wt\\한글\\x".to_string()),
+        ];
+        assert_eq!(pick_agent_panes("c:\\repo", &wts, &cwds), vec![pane(1)]);
+        assert_eq!(
+            pick_agent_panes("C:\\Repo\\.wt\\한글", &wts, &cwds),
+            vec![pane(2)]
+        );
+
+        let nfd = "/Users/me/\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}".to_string();
+        let nfc = "/Users/me/한글".to_string();
+        let got = pick_agent_panes(
+            &nfc,
+            std::slice::from_ref(&nfc),
+            &[(pane(7), format!("{nfd}/sub"))],
+        );
+        assert_eq!(got, vec![pane(7)]);
+
+        // POSIX paths are case-sensitive: `/srv/A` is not `/srv/a`.
+        let got = pick_agent_panes(
+            "/srv/a",
+            &["/srv/a".to_string()],
+            &[(pane(8), "/srv/A/x".to_string())],
+        );
+        assert!(got.is_empty());
+    }
+
+    fn write_file(dir: &Path, rel: &str, bytes: &[u8]) {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, bytes).unwrap();
+    }
+
+    #[test]
+    fn diff_round_trip_against_real_git() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("diff_round_trip");
+        git_ok(&repo, &["config", "core.autocrlf", "false"]);
+        let body: String = (1..=12).map(|i| format!("line {i}\n")).collect();
+        write_file(&repo, "한글 dir/파일 이름.txt", b"a\nb\nc\n");
+        write_file(&repo, "crlf.txt", b"x\r\ny\r\n");
+        write_file(&repo, "eol.txt", b"p\nq\n");
+        write_file(&repo, "bin.dat", &[0, 1, 2, 3]);
+        write_file(&repo, "old name.txt", body.as_bytes());
+        git_ok(&repo, &["add", "-A"]);
+        git_ok(&repo, &["commit", "-q", "-m", "base"]);
+        let first = git_ok(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+
+        write_file(&repo, "f.txt", b"hello\nworld");
+        write_file(&repo, "한글 dir/파일 이름.txt", b"a\nB\nc\n");
+        write_file(&repo, "crlf.txt", b"x\r\nz\r\n");
+        write_file(&repo, "eol.txt", b"p\r\nq\r\n");
+        write_file(&repo, "bin.dat", &[0, 9, 9, 3]);
+        git_ok(&repo, &["mv", "old name.txt", "new name.txt"]);
+        write_file(
+            &repo,
+            "new name.txt",
+            body.replace("line 6", "LINE 6").as_bytes(),
+        );
+        write_file(&repo, "새 파일.txt", "첫 줄\nno eol".as_bytes());
+        write_file(&repo, "raw.bin", &[0, 0, 1]);
+
+        let s = diff_summary(&repo, "", false).unwrap();
+        assert_eq!(s.base_rev, first);
+        assert!(!s.truncated);
+        let by = |p: &str| {
+            s.files
+                .iter()
+                .find(|f| f.path == p)
+                .unwrap_or_else(|| panic!("{p} in {:?}", s.files))
+        };
+        assert_eq!((by("f.txt").added, by("f.txt").deleted), (1, 0));
+        assert_eq!(by("한글 dir/파일 이름.txt").added, 1);
+        assert!(by("bin.dat").binary);
+        let r = by("new name.txt");
+        assert_eq!(r.orig, "old name.txt");
+        assert_eq!((r.added, r.deleted), (1, 1));
+        assert!(by("새 파일.txt").untracked);
+        assert_eq!(by("새 파일.txt").added, 2);
+        assert!(by("raw.bin").untracked && by("raw.bin").binary);
+
+        // f.txt: the new last line has no newline.
+        let d = diff_file(&repo, &s.base_rev, "f.txt", "", false, false).unwrap();
+        assert!(!d.binary && !d.truncated);
+        let kinds: Vec<_> = d.hunks[0].lines.iter().map(|l| l.kind).collect();
+        assert!(kinds.contains(&DiffLineKind::Noeol), "{kinds:?}");
+
+        let d = diff_file(
+            &repo,
+            &s.base_rev,
+            "한글 dir/파일 이름.txt",
+            "",
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(d.hunks[0]
+            .lines
+            .iter()
+            .any(|l| l.kind == DiffLineKind::Add && l.text == "B"));
+
+        let d = diff_file(&repo, &s.base_rev, "crlf.txt", "", false, false).unwrap();
+        assert!(d.hunks[0].lines.iter().all(|l| l.cr));
+
+        let d = diff_file(&repo, &s.base_rev, "bin.dat", "", false, false).unwrap();
+        assert!(d.binary && d.hunks.is_empty());
+
+        let d = diff_file(
+            &repo,
+            &s.base_rev,
+            "new name.txt",
+            "old name.txt",
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(d.hunks.len(), 1);
+        assert!(d.hunks[0].lines.iter().any(|l| l.text == "LINE 6"));
+
+        let d = diff_file(&repo, &s.base_rev, "새 파일.txt", "", true, false).unwrap();
+        assert_eq!(d.hunks[0].lines[0].text, "첫 줄");
+        assert!(
+            diff_file(&repo, &s.base_rev, "raw.bin", "", true, false)
+                .unwrap()
+                .binary
+        );
+
+        // A CRLF-only change is noise with ignore-cr, a hunk without.
+        let eol = |ignore| diff_file(&repo, &s.base_rev, "eol.txt", "", false, ignore).unwrap();
+        assert!(!eol(false).hunks.is_empty());
+        assert!(eol(true).hunks.is_empty());
+
+        // Guards: a traversing untracked path and a non-hash base.
+        assert!(diff_file(&repo, &s.base_rev, "../x", "", true, false).is_err());
+        assert!(diff_file(&repo, "--output=x", "f.txt", "", false, false).is_err());
+        assert!(diff_summary(&repo, "--output=x", false).is_err());
+
+        // A named base is the merge-base with HEAD.
+        git_ok(&repo, &["branch", "basebranch", &first]);
+        git_ok(&repo, &["add", "-A"]);
+        git_ok(&repo, &["commit", "-q", "-m", "second"]);
+        let s2 = diff_summary(&repo, "basebranch", false).unwrap();
+        assert_eq!(s2.base_rev, first);
+        assert!(s2.files.iter().any(|f| f.path == "f.txt"));
+        assert!(!s2.files.iter().any(|f| f.untracked));
+        let s3 = diff_summary(&repo, "", false).unwrap();
+        assert_ne!(s3.base_rev, first);
+        assert!(s3.files.is_empty());
+
+        cleanup_dir(&repo);
+    }
+
+    #[test]
+    fn a_deleted_file_is_not_mixed_up_with_a_new_directory_of_the_same_name() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("file_to_dir");
+        git_ok(&repo, &["config", "core.autocrlf", "false"]);
+        write_file(&repo, "f", b"one\ntwo\n");
+        git_ok(&repo, &["add", "-A"]);
+        git_ok(&repo, &["commit", "-q", "-m", "base"]);
+        std::fs::remove_file(repo.join("f")).unwrap();
+        write_file(&repo, "f/g", b"inner\n");
+        git_ok(&repo, &["add", "-A"]);
+        let s = diff_summary(&repo, "", false).unwrap();
+        let d = diff_file(&repo, &s.base_rev, "f", "", false, false).unwrap();
+        assert_eq!(d.hunks.len(), 1);
+        assert!(d.hunks[0].lines.iter().all(|l| l.kind == DiffLineKind::Del));
+        assert_eq!(d.hunks[0].lines.len(), 2);
+        let d = diff_file(&repo, &s.base_rev, "f/g", "", false, false).unwrap();
+        assert_eq!(d.hunks[0].lines.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untracked_reads_do_not_follow_a_symlinked_parent_out_of_the_repo() {
+        let base = std::env::temp_dir().join(format!("ymux_untracked_link_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        let outside = base.join("outside");
+        write_file(&outside, "secret.txt", b"secret\n");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::os::unix::fs::symlink(&outside, repo.join("link")).unwrap();
+        write_file(&repo, "ok.txt", b"fine\n");
+        assert!(read_untracked(&repo, "link/secret.txt").is_err());
+        let mut budget = 100;
+        assert!(count_untracked_file(&repo, "link/secret.txt", &mut budget).is_err());
+        assert!(read_untracked(&repo, "ok.txt").is_ok());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn diff_in_an_unborn_repo_shows_the_index_as_added() {
+        if !git_available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("ymux_git_test_unborn_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git_ok(&dir, &["init", "-q"]);
+        write_file(&dir, "staged.txt", b"one\ntwo\n");
+        git_ok(&dir, &["add", "staged.txt"]);
+        write_file(&dir, "loose.txt", b"x\n");
+
+        let s = diff_summary(&dir, "", false).unwrap();
+        assert!(s.base_rev.len() >= 40, "{}", s.base_rev);
+        let staged = s.files.iter().find(|f| f.path == "staged.txt").unwrap();
+        assert_eq!(
+            (staged.added, staged.deleted, staged.untracked),
+            (2, 0, false)
+        );
+        assert!(s.files.iter().any(|f| f.path == "loose.txt" && f.untracked));
+        let d = diff_file(&dir, &s.base_rev, "staged.txt", "", false, false).unwrap();
+        assert_eq!(d.hunks[0].lines.len(), 2);
+
+        cleanup_dir(&dir);
     }
 }

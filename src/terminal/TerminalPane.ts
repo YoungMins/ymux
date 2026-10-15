@@ -30,7 +30,7 @@ import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
 import { spawnAction, describeAge, type ResumePlan } from "./resumePlan";
 import { hasMod, isWorkspaceSwitch, IS_MAC, IS_WINDOWS } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
-import { claimPasteEvent, pasteKeyOwner, runPaste } from "./paste";
+import { claimPasteEvent, pasteKeyOwner, preparePaste, runPaste } from "./paste";
 import { formatDroppedPaths } from "./dropPaths";
 import { MONO_FONT_STACK } from "../ui/fonts";
 import { shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
@@ -129,6 +129,11 @@ export class TerminalPane implements Pane {
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
+  /// Tail of the `pasteText` write chain, so a later Enter lands after it.
+  private pasteTail: Promise<void> = Promise.resolve();
+  /// A `pasteText` chunk write rejected; the Enter that would have followed
+  /// it is skipped.
+  private pasteFailed = false;
   /// The plan this pane came up with, once `spawn()` has asked for one.
   /// Non-null means the agent is being resumed, so the pane did not replay
   /// its saved scrollback. Whether it *saves* scrollback is the backend's
@@ -738,6 +743,48 @@ export class TerminalPane implements Pane {
   /// runs, the same gap `startup_cmd` and the per-pane bar already close.
   noteSubmit(): void {
     this.statusMachine.onSubmit(Date.now());
+  }
+
+  /// Paste `text` the way Ctrl+V would (`preparePaste`, chunked, straight to
+  /// the PTY). Only when the foreground app has bracketed paste on: without
+  /// the frame a multi-line prompt would run line by line. `false` = nothing
+  /// was written. The writes finish in order behind this call.
+  pasteText(text: string): boolean {
+    if (!this.spawned || !this.term.modes.bracketedPasteMode) return false;
+    const chunks = preparePaste(text, { bracketed: true });
+    if (chunks.length === 0) return false;
+    this.pasteFailed = false;
+    this.pasteTail = this.pasteTail
+      .then(async () => {
+        for (const chunk of chunks) await api.writePane(this.id, ENCODER.encode(chunk));
+      })
+      .catch((e) => {
+        this.pasteFailed = true;
+        console.warn("pasteText failed:", e);
+      });
+    return true;
+  }
+
+  /// Resolves once the pending `pasteText` writes are out; `false` when one
+  /// of them failed (nothing further should be sent after a torn paste).
+  async pasteFlushed(): Promise<boolean> {
+    await this.pasteTail;
+    return !this.pasteFailed;
+  }
+
+  /// Press Enter once the pending `pasteText` writes are out, after a short
+  /// gap so the app has taken the pasted frame before the key arrives.
+  /// The Enter is skipped when a paste write failed or `stillOk` (re-checked
+  /// at write time, after the gap) says the target is no longer fit for it.
+  submitAfterPaste(delayMs = 300, stillOk: () => boolean = () => true): void {
+    this.pasteTail = this.pasteTail
+      .then(() => new Promise<void>((r) => setTimeout(r, delayMs)))
+      .then(async () => {
+        if (this.pasteFailed || !stillOk()) return;
+        await api.writePane(this.id, ENCODER.encode("\r"));
+        this.noteSubmit();
+      })
+      .catch((e) => console.warn("submitAfterPaste failed:", e));
   }
 
   get status(): PaneStatus {

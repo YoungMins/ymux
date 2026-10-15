@@ -40,6 +40,10 @@ describe("sanitizePaste", () => {
     );
   });
 
+  it("drops C1 controls (8-bit CSI/OSC introducers)", () => {
+    expect(sanitizePaste("a\x9b31mb\x85c\x9d")).toBe("a31mbc");
+  });
+
   it("keeps the payload the same length when defanging ESC", () => {
     const text = "\x1b\x1b\x1b";
     expect(sanitizePaste(text)).toHaveLength(text.length);

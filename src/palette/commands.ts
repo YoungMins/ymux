@@ -3,7 +3,8 @@ import { toggle as toggleNotes } from "../notes/NotesOverlay";
 import { t } from "../i18n/i18n";
 import { askText } from "../ui/Dialog";
 import { openTokenDock, toggleFileDock } from "../sidepanel/SidePanel";
-import { api } from "../ipc/bridge";
+import { api, errorKind, gitApi } from "../ipc/bridge";
+import { openDiffReview } from "../diff/DiffReview";
 import { toggleAutoContinue } from "../autocontinue/control";
 
 export interface CommandDef {
@@ -27,6 +28,20 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       label: () => t("shortcut.splitV"),
       keybinding: "Ctrl+Shift+V",
       action: () => void manager.splitFocused("vertical"),
+    },
+    {
+      id: "diff.review",
+      label: () => t("diff.command"),
+      action: async () => {
+        const notify = (body: string) => void api.notify(t("diff.command"), body).catch(() => {});
+        const cwd = await manager.focusedCwd();
+        if (!cwd) return notify(t("diff.noCwd"));
+        try {
+          await openDiffReview(await gitApi.repoRoot(cwd));
+        } catch (e) {
+          notify(errorKind(e) === "not_a_repo" ? t("diff.notRepo") : t("diff.noCwd"));
+        }
+      },
     },
     {
       id: "pane.worktree",

@@ -19,6 +19,7 @@ import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandP
 import { builtinCommands } from "./palette/commands";
 import { listenAutoAnswers } from "./autocontinue/control";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
+import { isDiffReviewOpen, mountDiffReview } from "./diff/DiffReview";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
 import { mountSidePanel, toggleFileDock } from "./sidepanel/SidePanel";
@@ -101,6 +102,9 @@ async function main(): Promise<void> {
   // Notes overlay (Ctrl+Alt+N)
   mountNotesOverlay(document.body);
 
+  // Diff review overlay (palette "Review changes", Git pane button)
+  mountDiffReview(document.body, manager);
+
   // Replay shortcuts that were captured inside a child browser webview
   // (its `initialization_script` forwards them via the `forward_keystroke`
   // command, which re-emits this event). Synthesize a KeyboardEvent so the
@@ -118,6 +122,10 @@ async function main(): Promise<void> {
   // Global keybindings. Tauri's global-shortcut plugin is overkill for
   // window-local bindings — plain DOM events are sufficient inside WebView2.
   window.addEventListener("keydown", (ev) => {
+    // The diff review covers the window: the shortcuts below act on the
+    // panes behind it (close, split, new tab, workspace switch), so they
+    // stand down while it is open. Its own keys are handled inside it.
+    if (isDiffReviewOpen()) return;
     const key = ev.key;
     // Primary modifier: Cmd on macOS, Ctrl elsewhere. See src/platform.ts.
     const mod = hasMod(ev);

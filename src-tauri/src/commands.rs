@@ -1384,6 +1384,74 @@ pub fn git_worktree_list(
     git::worktree_list(Path::new(&repo))
 }
 
+/// Files that differ between `base` (empty = HEAD; a branch = its merge-base
+/// with HEAD) and the working tree of the repository containing `cwd`,
+/// untracked files included. See [`crate::git::diff_summary`].
+#[tauri::command(async)]
+pub fn git_diff_files(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    base: String,
+    ignore_cr: bool,
+) -> YmuxResult<git::DiffSummary> {
+    guard_local(&webview, &request, "git_diff_files")?;
+    git::diff_summary(Path::new(&cwd), &base, ignore_cr)
+}
+
+/// One file's hunks against the `base_rev` a [`git_diff_files`] call returned.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+pub fn git_diff_file(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    base_rev: String,
+    path: String,
+    orig: String,
+    untracked: bool,
+    ignore_cr: bool,
+) -> YmuxResult<git::FileDiff> {
+    guard_local(&webview, &request, "git_diff_file")?;
+    git::diff_file(
+        Path::new(&cwd),
+        &base_rev,
+        &path,
+        &orig,
+        untracked,
+        ignore_cr,
+    )
+}
+
+/// Panes that run an agent (a lead in the agents snapshot) with their shell
+/// in the worktree `root`, not in a worktree nested under it. See
+/// [`crate::git::pick_agent_panes`].
+#[tauri::command(async)]
+pub fn agent_panes_for_root(
+    webview: Webview,
+    request: Request<'_>,
+    state: State<'_, AppState>,
+    agents: State<'_, SharedAgents>,
+    root: String,
+) -> YmuxResult<Vec<Uuid>> {
+    guard_local(&webview, &request, "agent_panes_for_root")?;
+    let root = git::repo_root_checked(Path::new(&root))?;
+    let worktrees: Vec<String> = git::worktree_list(Path::new(&root))?
+        .into_iter()
+        .filter(|w| !w.bare)
+        .map(|w| w.path)
+        .collect();
+    let snapshot = agents.0.lock().snapshot();
+    let cwds = state.pty.cwds_snapshot();
+    // BTreeMap order: the answer is stable between calls.
+    let with_agent: Vec<(Uuid, String)> = snapshot
+        .iter()
+        .filter(|(_, p)| p.lead.is_some())
+        .filter_map(|(id, _)| cwds.get(id).map(|c| (*id, c.clone())))
+        .collect();
+    Ok(git::pick_agent_panes(&root, &worktrees, &with_agent))
+}
+
 /// Start the reader thread that drains PTY output and forwards it to the
 /// frontend as Tauri events. Must be called once, at startup, after the
 /// [`AppState`] is installed.

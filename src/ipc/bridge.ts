@@ -21,6 +21,7 @@ import type { YTheme, ConfigPathKind } from "../settings/types";
 import type { ResumeOutcome } from "../terminal/resumePlan";
 import type { FileEntry } from "../files/fileModel";
 import type { Eol } from "../editor/eol";
+import type { DiffSummary, FileDiff } from "../diff/types";
 import { forgetPane, type AutoAnswerEvent } from "../autocontinue/model";
 
 export interface SpawnArgs {
@@ -269,6 +270,25 @@ export const gitApi = {
   /// `.ymux-worktrees` folder.
   worktreeAdd: (cwd: string, branch: string, base: string): Promise<string> =>
     callKind("git_worktree_add", { cwd, branch, base }),
+  /// Files differing from `base` (empty = HEAD, a branch = its merge-base
+  /// with HEAD), untracked ones included. `base_rev` in the result is what
+  /// `diffFile` wants back.
+  diffFiles: (cwd: string, base: string, ignoreCr: boolean): Promise<DiffSummary> =>
+    callKind("git_diff_files", { cwd, base, ignoreCr }),
+  /// One file's hunks. `orig` is a rename's old path (else empty).
+  diffFile: (
+    cwd: string,
+    baseRev: string,
+    path: string,
+    orig: string,
+    untracked: boolean,
+    ignoreCr: boolean,
+  ): Promise<FileDiff> =>
+    callKind("git_diff_file", { cwd, baseRev, path, orig, untracked, ignoreCr }),
+  /// Panes running an agent with their shell in worktree `root` (not in a
+  /// worktree nested under it).
+  agentPanesForRoot: (root: string): Promise<Uuid[]> =>
+    callKind("agent_panes_for_root", { root }),
   worktreeRemove: (path: string, force: boolean): Promise<void> =>
     callKind("git_worktree_remove", { path, force }),
 };

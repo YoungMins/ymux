@@ -80,7 +80,11 @@ export function preparePaste(text: string, opts: PasteOptions): string[] {
 /// afterwards (the frame markers, which legitimately contain ESC) is eaten by
 /// it.
 export function sanitizePaste(text: string): string {
-  return text.replace(/\r?\n/g, "\r").replace(/\x1b/g, ESC_SYMBOL);
+  // C1 controls (U+0080-U+009F) are dropped: 8-bit terminals act on them.
+  return text
+    .replace(/\r?\n/g, "\r")
+    .replace(/[\x80-\x9f]/g, "")
+    .replace(/\x1b/g, ESC_SYMBOL);
 }
 
 /// Cut `text` into pieces of at most `size` code units, never between the two
