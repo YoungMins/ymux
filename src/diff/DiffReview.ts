@@ -20,6 +20,7 @@ import type { CommentSide, ReviewComment } from "./model-types";
 import { cachedFile, excerpt, fileCacheKey, numberOn, reanchor, toSideBySide } from "./diffModel";
 import { composePrompt, PROMPT_WARN, prefixLines } from "./reviewPrompt";
 import { chooseTarget } from "./targetPick";
+import { trapTab } from "../ui/trapTab";
 
 /// Rows rendered per file before "Show more lines"; keeps a huge diff from
 /// building tens of thousands of nodes.
@@ -39,6 +40,8 @@ let mountEl: HTMLElement | null = null;
 let openSeq = 0;
 /// Least recently shown first.
 const reviews = new Map<string, Review>();
+/// Separates the root from a preset base in an instance key.
+const BASE_SEP = "\u0000base:";
 
 /// Wire the overlay to the app. Call once, after the manager exists.
 export function mountDiffReview(container: HTMLElement, manager: WorkspaceManager): void {
@@ -56,7 +59,9 @@ export function isDiffReviewOpen(): boolean {
 /// Show the review for the repository containing `root`, creating it on
 /// first use. The instance is keyed by the backend's spelling of the root so
 /// the palette and the Git pane share one.
-export async function openDiffReview(root: string): Promise<void> {
+/// `base` (a branch or sha) opens a separate instance compared against that
+/// base, so it never changes the base of the repository's ordinary review.
+export async function openDiffReview(root: string, base?: string): Promise<void> {
   if (!mountEl || !host) return;
   const seq = ++openSeq;
   let canon = root;
@@ -68,15 +73,28 @@ export async function openDiffReview(root: string): Promise<void> {
     resolved = false;
   }
   if (seq !== openSeq || !mountEl || !host) return;
-  let key = canon.normalize("NFC");
+  const rootKey = canon.normalize("NFC");
+  const suffix = base ? BASE_SEP + base : "";
+  let key = rootKey + suffix;
   if (!resolved && !reviews.has(key)) {
     // The raw spelling may be another spelling of a root that already has an
     // instance: reuse it (it reports the root gone) rather than add a twin.
-    for (const [k, v] of reviews) if (v.root.normalize("NFC") === key) key = k;
+    for (const [k, v] of reviews) {
+      if (
+        v.root.normalize("NFC") === rootKey &&
+        k.endsWith(suffix) &&
+        (suffix !== "" || !k.includes(BASE_SEP))
+      ) {
+        key = k;
+      }
+    }
   }
   let r = reviews.get(key);
   if (r) reviews.delete(key);
-  else r = new Review(canon, mountEl, host, () => reviews.delete(key));
+  else {
+    r = new Review(canon, mountEl, host, () => reviews.delete(key));
+    if (base) r.presetBase(base);
+  }
   reviews.set(key, r);
   for (const other of reviews.values()) if (other !== r) other.hide(false);
   r.show();
@@ -314,27 +332,8 @@ class Review {
     this.onDrop();
   }
 
-  /// Keep Tab inside the dialog: wrap at either end.
   private trapTab(ev: KeyboardEvent): void {
-    const items = [
-      ...this.el.querySelectorAll<HTMLElement>(
-        'button, select, input, textarea, [tabindex]:not([tabindex="-1"])',
-      ),
-    ].filter((x) => !(x as HTMLButtonElement).disabled && x.offsetParent !== null);
-    if (items.length === 0) {
-      ev.preventDefault();
-      return;
-    }
-    const first = items[0];
-    const last = items[items.length - 1];
-    const cur = document.activeElement;
-    if (ev.shiftKey && (cur === first || cur === this.el || !this.el.contains(cur))) {
-      ev.preventDefault();
-      last.focus();
-    } else if (!ev.shiftKey && (cur === last || !this.el.contains(cur))) {
-      ev.preventDefault();
-      first.focus();
-    }
+    trapTab(this.el, ev);
   }
 
   private leadStatuses(): Map<string, string> {
@@ -449,6 +448,12 @@ class Review {
 
   // ── Base ─────────────────────────────────────────────────────────────────
 
+  /// Set the base of a fresh instance before `show()` reads the diff.
+  presetBase(base: string): void {
+    this.base = base;
+    this.renderBaseOptions();
+  }
+
   private async loadBranches(): Promise<void> {
     try {
       const b = await gitApi.branches(this.root);
@@ -470,9 +475,17 @@ class Review {
       o.value = b;
       opts.push(o);
     }
-    // A chosen base that has since disappeared stays listed until changed.
-    if (this.base && !this.branches.includes(this.base) && this.branchesLoaded) {
-      const o = el("option", undefined, fill(t("diff.baseBranch"), { branch: this.base }));
+    // A chosen base that has since disappeared stays listed until changed. A
+    // preset sha is listed at once (it is never in the branch list).
+    const sha = /^[0-9a-f]{7,64}$/i.test(this.base);
+    if (this.base && !this.branches.includes(this.base) && (this.branchesLoaded || sha)) {
+      const o = el(
+        "option",
+        undefined,
+        sha
+          ? fill(t("diff.baseSha"), { sha: this.base.slice(0, 7) })
+          : fill(t("diff.baseBranch"), { branch: this.base }),
+      );
       o.value = this.base;
       opts.push(o);
     }
@@ -930,10 +943,13 @@ class Review {
     if (this.sending || this.comments.length === 0) return;
     this.sending = true;
     this.sendBtn.disabled = true;
+    // The Enter can wait several seconds for a fresh scan; show that.
+    this.sendBtn.textContent = t("diff.sending");
     try {
       await this.doSend();
     } finally {
       this.sending = false;
+      this.sendBtn.textContent = t("diff.send");
       this.renderFooter();
     }
   }
@@ -980,14 +996,18 @@ class Review {
       console.warn("sendToPane failed:", e);
       res = "failed";
     }
-    if (res === "sent") {
+    if (res === "sent" || res === "pasted") {
       this.lastTarget = id;
       const sent = new Set(batch.map((c) => c.id));
       this.comments = this.comments.filter((c) => !sent.has(c.id));
       this.renderList();
       this.renderFooter();
       this.renderFileKeepingScroll();
-      this.notice(fill(t("diff.sent"), { n: batch.length, target: label }));
+      // "pasted": the text is in the agent's input, Enter was not pressed
+      // (the box was off, or the Enter was withheld because the agent changed).
+      const key =
+        res === "sent" ? "diff.sent" : this.submitBox.checked ? "diff.unsent" : "diff.pasted";
+      this.notice(fill(t(key), { n: batch.length, target: label }));
       this.hide(false);
       return;
     }

@@ -154,6 +154,49 @@ describe("PaneStatusMachine", () => {
     expect(m.status).toBe("idle");
   });
 
+  describe("onWaitingCleared", () => {
+    it("restores the status onWaiting replaced", () => {
+      const m = new PaneStatusMachine(() => {});
+      m.onSubmit(0);
+      m.onWaiting();
+      expect(m.status).toBe("attention");
+      m.onWaitingCleared();
+      expect(m.status).toBe("running");
+    });
+    it("restores idle", () => {
+      const m = new PaneStatusMachine(() => {});
+      m.onWaiting();
+      m.onWaitingCleared();
+      expect(m.status).toBe("idle");
+    });
+    it("leaves a bell's attention alone", () => {
+      const m = new PaneStatusMachine(() => {});
+      m.onAttention(false, 0); // attention from a bell
+      m.onWaiting();
+      m.onWaitingCleared();
+      expect(m.status).toBe("attention");
+    });
+    it("does nothing after the user already answered", () => {
+      const m = new PaneStatusMachine(() => {});
+      m.onWaiting();
+      m.onFocus(); // idle
+      m.onWaitingCleared();
+      expect(m.status).toBe("idle");
+      m.onSubmit(1); // running
+      m.onWaitingCleared();
+      expect(m.status).toBe("running");
+    });
+    it("a stale prior is not reused by a later waiting that began as attention", () => {
+      const m = new PaneStatusMachine(() => {});
+      m.onSubmit(0);
+      m.onWaiting();
+      m.onFocus(); // idle
+      m.onAttention(false, 5); // bell
+      m.onWaitingCleared();
+      expect(m.status).toBe("attention");
+    });
+  });
+
   describe("onAcknowledged", () => {
     function make(): { m: PaneStatusMachine; acks: string[] } {
       const acks: string[] = [];

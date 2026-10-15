@@ -8,7 +8,7 @@ import "./style.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { forwardedKeyInit } from "./browser/forwardedKeys";
-import { api, onAgentsChanged, onPaneLabels } from "./ipc/bridge";
+import { api, onAgentsChanged, onAgentsScanned, onPaneLabels } from "./ipc/bridge";
 import { WorkspaceManager, MAX_WORKSPACES } from "./workspace/WorkspaceManager";
 import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountWorkspacePanel, refreshWorkspacePanel } from "./workspace/WorkspacePanel";
@@ -20,6 +20,7 @@ import { builtinCommands } from "./palette/commands";
 import { listenAutoAnswers } from "./autocontinue/control";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { isDiffReviewOpen, mountDiffReview } from "./diff/DiffReview";
+import { isFanoutCompareOpen, mountFanoutCompare } from "./fanout/FanoutCompare";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
 import { mountSidePanel, toggleFileDock } from "./sidepanel/SidePanel";
@@ -74,6 +75,10 @@ async function main(): Promise<void> {
     .then(() => api.getAgents())
     .then((s) => manager.applyAgents(s))
     .catch((e) => console.warn("get_agents failed:", e));
+  // Scan heartbeat: tells the fan-out ready gate the lead list is current.
+  void onAgentsScanned((ms) => manager.noteAgentScan(ms)).catch((e) =>
+    console.warn("agents:scanned listen failed:", e),
+  );
 
   // Auto-continue answers feed the AUTO badge's tooltip log.
   void listenAutoAnswers().catch((e) => console.warn("auto-continue listen failed:", e));
@@ -104,6 +109,7 @@ async function main(): Promise<void> {
 
   // Diff review overlay (palette "Review changes", Git pane button)
   mountDiffReview(document.body, manager);
+  mountFanoutCompare(document.body, manager);
 
   // Replay shortcuts that were captured inside a child browser webview
   // (its `initialization_script` forwards them via the `forward_keystroke`
@@ -125,7 +131,7 @@ async function main(): Promise<void> {
     // The diff review covers the window: the shortcuts below act on the
     // panes behind it (close, split, new tab, workspace switch), so they
     // stand down while it is open. Its own keys are handled inside it.
-    if (isDiffReviewOpen()) return;
+    if (isDiffReviewOpen() || isFanoutCompareOpen()) return;
     const key = ev.key;
     // Primary modifier: Cmd on macOS, Ctrl elsewhere. See src/platform.ts.
     const mod = hasMod(ev);

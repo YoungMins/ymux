@@ -34,7 +34,7 @@ function close(value: string | null, restore: Element | null): void {
 
 /// Shared shell: backdrop + centred card, Esc to cancel, click-outside to
 /// cancel. `build` fills the card and returns the element to focus on open.
-function open(
+export function open(
   build: (card: HTMLElement, done: (v: string | null) => void) => HTMLElement,
 ): Promise<string | null> {
   // A second dialog cancels the first rather than stacking on top of it.

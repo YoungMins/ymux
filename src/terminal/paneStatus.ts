@@ -28,6 +28,9 @@ export class PaneStatusMachine {
   /// output — a real completion signal has to survive the trailing repaints a
   /// TUI emits right after it finishes.
   private doneInferred = false;
+  /// The status `onWaiting` replaced, so `onWaitingCleared` can restore it;
+  /// null when the current `attention` is not from a waiting signal.
+  private waitingPrior: PaneStatus | null = null;
 
   constructor(
     private onChange: (s: PaneStatus) => void,
@@ -46,6 +49,7 @@ export class PaneStatusMachine {
 
   private set(next: PaneStatus): void {
     if (next === this._status) return;
+    if (next !== "attention") this.waitingPrior = null;
     this._status = next;
     this.onChange(next);
   }
@@ -96,7 +100,17 @@ export class PaneStatusMachine {
   /// PermissionRequest, via the agent registry). Same loud state as an unseen
   /// bell: focus, or the Enter that answers the prompt, clears it.
   onWaiting(): void {
+    if (this._status !== "attention") this.waitingPrior = this._status;
     this.set("attention");
+  }
+
+  /// The agent is no longer blocked on the user: take back the `attention`
+  /// `onWaiting` raised, restoring the status it replaced. Does nothing when
+  /// the attention came from anywhere else (a bell) or was already cleared.
+  onWaitingCleared(): void {
+    const prior = this.waitingPrior;
+    if (prior !== null && this._status === "attention") this.set(prior);
+    this.waitingPrior = null;
   }
 
   /// Called on a timer. Turns a quiet `running` into `done`, and lets an

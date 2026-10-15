@@ -422,6 +422,9 @@ impl AutoAnswerEvent {
 
 /// Tauri event carrying the full agent snapshot after every registry change.
 pub const AGENTS_CHANGED_EVENT: &str = "agents:changed";
+/// Emitted after every process scan (changed or not); the payload is the
+/// epoch-ms time the process list was sampled.
+pub const AGENTS_SCANNED_EVENT: &str = "agents:scanned";
 
 /// Callers hold the [`SharedAgents`] lock across this call so snapshots reach
 /// the frontend in the order they were taken.
@@ -1356,6 +1359,74 @@ pub fn git_worktree_add(
     let path = git::suggested_worktree_path(&repo, &branch, &base);
     git::worktree_add(&repo, &branch, &path)?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Create a fan-out lane: a worktree on the new branch `branch` started at
+/// `start`, under `base_dir` (empty = sibling `.ymux-worktrees`), with the
+/// start sha and `run_id` stored as branch config. Returns the path.
+#[tauri::command(async)]
+pub fn git_worktree_add_from(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    branch: String,
+    base_dir: String,
+    start: String,
+    run_id: String,
+) -> YmuxResult<String> {
+    guard_local(&webview, &request, "git_worktree_add_from")?;
+    let repo = git::repo_root(Path::new(&cwd))?;
+    let path = git::suggested_worktree_path(&repo, &branch, &base_dir);
+    git::worktree_add_lane(&repo, &branch, &path, &start, &run_id)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Resolve `rev` (a branch or sha) to a full commit sha, once, so every
+/// fan-out lane starts from the same commit.
+#[tauri::command(async)]
+pub fn git_resolve_commit(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    rev: String,
+) -> YmuxResult<String> {
+    guard_local(&webview, &request, "git_resolve_commit")?;
+    git::resolve_commit(Path::new(&cwd), &rev)
+}
+
+/// Commits in HEAD that `base` (a hex sha) lacks: `git rev-list --count`.
+#[tauri::command(async)]
+pub fn git_commits_ahead(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    base: String,
+) -> YmuxResult<u32> {
+    guard_local(&webview, &request, "git_commits_ahead")?;
+    git::commits_ahead(Path::new(&cwd), &base)
+}
+
+/// Fan-out lane metadata of the branch checked out at `cwd`.
+#[tauri::command(async)]
+pub fn git_lane_meta(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+) -> YmuxResult<git::LaneMeta> {
+    guard_local(&webview, &request, "git_lane_meta")?;
+    git::lane_meta(Path::new(&cwd))
+}
+
+/// `git branch -d` (merged only). Refuses the branch checked out at `cwd`.
+#[tauri::command(async)]
+pub fn git_branch_delete(
+    webview: Webview,
+    request: Request<'_>,
+    cwd: String,
+    branch: String,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "git_branch_delete")?;
+    git::branch_delete(Path::new(&cwd), &branch)
 }
 
 /// Remove the worktree at `path`. `force` is passed through to `git worktree

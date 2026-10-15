@@ -368,7 +368,9 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
     use crate::agent_scan_disk::claude_pid_file_id_in;
     use crate::agent_sessions::SharedSessions;
     use crate::agents::SharedAgents;
-    use crate::commands::{emit_agents_changed, flush_sessions, observe_pane_session, AppState};
+    use crate::commands::{
+        emit_agents_changed, flush_sessions, observe_pane_session, AppState, AGENTS_SCANNED_EVENT,
+    };
 
     std::thread::Builder::new()
         .name("ymux-agent-scan".into())
@@ -386,6 +388,11 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 std::thread::sleep(SCAN_INTERVAL);
                 let shells = app.state::<AppState>().pty.pids_snapshot();
                 let pane_dirs = app.state::<AppState>().pty.agent_dirs_snapshot();
+                // Taken before the process list is read: a heartbeat only
+                // vouches for what existed at this instant.
+                let sampled_at_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
                 let (found, labels, pane_agents, others) = if shells.is_empty() {
                     (HashMap::new(), HashMap::new(), HashMap::new(), Vec::new())
                 } else {
@@ -486,6 +493,14 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 // Registry lock first, session lock second — the same order
                 // `apply_agent_hook` uses, so the two threads cannot deadlock.
                 drop(reg);
+                // A scan finished, whether or not anything moved: lets the
+                // fan-out ready gate tell "no change" from "no scan yet".
+                // The payload is when the process list was sampled (epoch
+                // ms), so a consumer can order it against its own writes.
+                // Emitted without the registry lock held.
+                if let Err(e) = tauri::Emitter::emit(&app, AGENTS_SCANNED_EVENT, sampled_at_ms) {
+                    tracing::warn!(error = %e, "emit agents:scanned failed");
+                }
                 let sessions = app.state::<SharedSessions>();
                 let mut tracker = sessions.0.lock();
                 for pane in exited {

@@ -115,6 +115,158 @@ pub fn worktree_add(repo: &Path, branch: &str, path: &Path) -> YmuxResult<()> {
     Ok(())
 }
 
+/// Create a worktree at `path` on a **new** branch `branch` starting at
+/// `start` (a ref or a sha). Unlike [`worktree_add`] it never attaches to an
+/// existing branch: a fan-out lane must own its branch, so a clash is an error.
+pub fn worktree_add_new(repo: &Path, branch: &str, path: &Path, start: &str) -> YmuxResult<()> {
+    // Both reach git as argv entries; a leading `-` would be an option.
+    validate_ref_name(branch)?;
+    validate_ref_name(start)?;
+    let heads_ref = format!("refs/heads/{branch}");
+    if run_git(repo, &["show-ref", "--verify", "--quiet", "--", &heads_ref]).is_ok() {
+        return Err(YmuxError::Git(format!("branch already exists: {branch}")));
+    }
+    let path_s = path.to_string_lossy();
+    run_git(
+        repo,
+        &["worktree", "add", "-b", branch, "--", &path_s, start],
+    )
+    .map(|_| ())
+}
+
+/// Resolve `rev` to a full commit sha.
+pub fn resolve_commit(cwd: &Path, rev: &str) -> YmuxResult<String> {
+    validate_ref_name(rev)?;
+    let spec = format!("{rev}^{{commit}}");
+    let out = run_git(cwd, &["rev-parse", "--verify", "--quiet", &spec])?;
+    Ok(out.trim().to_string())
+}
+
+/// Fan-out lane metadata kept in git config on the lane's branch.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct LaneMeta {
+    /// The sha the lane branched from; empty when absent.
+    pub base: String,
+    /// The fan-out run id; empty when absent.
+    pub fanout: String,
+}
+
+fn valid_run_id(id: &str) -> bool {
+    (1..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn valid_sha(s: &str) -> bool {
+    (40..=64).contains(&s.len()) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Record `base` (a full sha) and `run_id` on `branch` as
+/// `branch.<b>.ymuxBase` / `branch.<b>.ymuxFanout`.
+pub fn lane_meta_set(repo: &Path, branch: &str, base: &str, run_id: &str) -> YmuxResult<()> {
+    validate_ref_name(branch)?;
+    if !valid_sha(base) {
+        return Err(YmuxError::Git(format!("not a full commit sha: {base}")));
+    }
+    if !valid_run_id(run_id) {
+        return Err(YmuxError::Git(format!("invalid fan-out run id: {run_id}")));
+    }
+    run_git(
+        repo,
+        &["config", &format!("branch.{branch}.ymuxBase"), base],
+    )?;
+    run_git(
+        repo,
+        &["config", &format!("branch.{branch}.ymuxFanout"), run_id],
+    )?;
+    Ok(())
+}
+
+/// Lane metadata of the branch checked out at `cwd`; empty strings when HEAD
+/// is detached or the keys are unset.
+pub fn lane_meta(cwd: &Path) -> YmuxResult<LaneMeta> {
+    if !is_git_repo(cwd) {
+        return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
+    }
+    let Some(branch) = current_branch(cwd) else {
+        return Ok(LaneMeta::default());
+    };
+    let get = |key: &str| -> String {
+        git_command(cwd)
+            .args(["config", "--get", &format!("branch.{branch}.{key}")])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    Ok(LaneMeta {
+        base: get("ymuxBase"),
+        fanout: get("ymuxFanout"),
+    })
+}
+
+/// Short name of the branch HEAD points at in `cwd`; `None` when detached.
+fn current_branch(cwd: &Path) -> Option<String> {
+    let out = git_command(cwd)
+        .args(["symbolic-ref", "-q", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Create a fan-out lane: a worktree on new branch `branch` at `path`,
+/// started at `start`, tagged with the resolved start sha and `run_id`.
+pub fn worktree_add_lane(
+    repo: &Path,
+    branch: &str,
+    path: &Path,
+    start: &str,
+    run_id: &str,
+) -> YmuxResult<()> {
+    if !valid_run_id(run_id) {
+        return Err(YmuxError::Git(format!("invalid fan-out run id: {run_id}")));
+    }
+    let sha = resolve_commit(repo, start)?;
+    worktree_add_new(repo, branch, path, &sha)?;
+    lane_meta_set(repo, branch, &sha, run_id).map_err(|e| untagged_error(path, &e))
+}
+
+/// The worktree exists but its lane tags could not be written: say where it
+/// is, so the user can use or remove it.
+fn untagged_error(path: &Path, cause: &YmuxError) -> YmuxError {
+    YmuxError::Git(format!(
+        "worktree created but not tagged: {} ({cause})",
+        path.display()
+    ))
+}
+
+/// Commits reachable from HEAD but not from `base` (`git rev-list --count
+/// <base>..HEAD`). `base` must be a hex sha (4-64 digits): it is placed in a
+/// revision range, so nothing else may reach git.
+pub fn commits_ahead(cwd: &Path, base: &str) -> YmuxResult<u32> {
+    if !(4..=64).contains(&base.len()) || !base.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(YmuxError::Git(format!("not a commit sha: {base}")));
+    }
+    let range = format!("{base}..HEAD");
+    let out = run_git(cwd, &["rev-list", "--count", &range])?;
+    out.trim()
+        .parse()
+        .map_err(|_| YmuxError::Git(format!("unexpected rev-list output: {}", out.trim())))
+}
+
+/// Delete a fully merged local branch (`git branch -d`, never `-D`). Refuses
+/// the branch checked out at `cwd`.
+pub fn branch_delete(cwd: &Path, branch: &str) -> YmuxResult<()> {
+    validate_ref_name(branch)?;
+    if current_branch(cwd).as_deref() == Some(branch) {
+        return Err(YmuxError::Git(format!(
+            "refusing to delete the current branch: {branch}"
+        )));
+    }
+    run_git(cwd, &["branch", "-d", "--", branch]).map(|_| ())
+}
+
 /// Remove the worktree at `path`, optionally forcing removal even with
 /// uncommitted changes.
 ///
@@ -2038,6 +2190,102 @@ branch refs/heads/lockedish
         }
 
         cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn untagged_error_names_the_worktree_path() {
+        let e = untagged_error(Path::new("/w/lane"), &YmuxError::Git("boom".into()));
+        let msg = e.to_string();
+        assert!(msg.contains("worktree created but not tagged: "), "{msg}");
+        assert!(msg.contains("lane") && msg.contains("boom"), "{msg}");
+    }
+
+    #[test]
+    fn commits_ahead_counts_and_validates_base() {
+        if !git_available() {
+            eprintln!("skipping commits_ahead test: git not on PATH");
+            return;
+        }
+        let repo = init_test_repo("ahead");
+        let base = git_ok(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+        assert_eq!(commits_ahead(&repo, &base).unwrap(), 0);
+        for i in 0..3 {
+            std::fs::write(repo.join(format!("a{i}.txt")), "x\n").unwrap();
+            git_ok(&repo, &["add", "."]);
+            git_ok(&repo, &["commit", "-q", "-m", &format!("c{i}")]);
+        }
+        assert_eq!(commits_ahead(&repo, &base).unwrap(), 3);
+        // Past the old 100-commit log window the count is still exact.
+        assert_eq!(commits_ahead(&repo, &base[..7]).unwrap(), 3);
+        // Anything but a hex sha never reaches git.
+        for bad in [
+            "",
+            "abc",
+            "--all",
+            "HEAD",
+            "main",
+            "zzzzzzz",
+            "abcd..",
+            "abcd efgh",
+        ] {
+            assert!(commits_ahead(&repo, bad).is_err(), "{bad}");
+        }
+        // Unknown but well-formed sha: git's error, not a count.
+        assert!(commits_ahead(&repo, "deadbeefdeadbeef").is_err());
+        cleanup_dir(&repo);
+    }
+
+    #[test]
+    fn fanout_lane_meta_branch_exists_and_delete_rules() {
+        if !git_available() {
+            eprintln!("skipping fanout lane test: git not on PATH");
+            return;
+        }
+        let repo = init_test_repo("lane");
+        let wt_base = PathBuf::from(format!("{}_wt", repo.display()));
+        let head = git_ok(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+        let main_branch = git_ok(&repo, &["symbolic-ref", "--short", "HEAD"])
+            .trim()
+            .to_string();
+
+        // Create a lane from a ref name; meta stores the resolved sha.
+        let path = suggested_worktree_path(&repo, "lane/a", &wt_base.to_string_lossy());
+        worktree_add_lane(&repo, "lane/a", &path, &main_branch, "run-1").expect("create lane");
+        let meta = lane_meta(&path).unwrap();
+        assert_eq!(meta.base, head);
+        assert_eq!(meta.fanout, "run-1");
+        // The main worktree's branch has no meta.
+        assert_eq!(lane_meta(&repo).unwrap(), LaneMeta::default());
+
+        // An existing branch is an error, and nothing is created.
+        let path2 = suggested_worktree_path(&repo, "lane/b", &wt_base.to_string_lossy());
+        let err = worktree_add_new(&repo, "lane/a", &path2, &head).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+        assert!(!path2.exists());
+        // Bad names / run ids are refused before git runs.
+        assert!(worktree_add_new(&repo, "-x", &path2, &head).is_err());
+        assert!(worktree_add_new(&repo, "lane/b", &path2, "--force").is_err());
+        assert!(worktree_add_lane(&repo, "lane/b", &path2, &head, "bad id!").is_err());
+        assert!(!path2.exists());
+        // A full hex sha is accepted as `start`.
+        worktree_add_new(&repo, "lane/c", &path2, &head).expect("sha start");
+
+        // An unmerged branch survives `-d`.
+        std::fs::write(path.join("g.txt"), "x\n").unwrap();
+        git_ok(&path, &["add", "g.txt"]);
+        git_ok(&path, &["commit", "-q", "-m", "work"]);
+        worktree_remove(&path, false).unwrap();
+        assert!(branch_delete(&repo, "lane/a").is_err());
+        assert!(git_ok(&repo, &["branch", "--list", "lane/a"]).contains("lane/a"));
+        // The current branch is refused outright.
+        let err = branch_delete(&repo, &main_branch).unwrap_err();
+        assert!(err.to_string().contains("current branch"), "{err}");
+        // A merged one goes.
+        worktree_remove(&path2, false).unwrap();
+        branch_delete(&repo, "lane/c").expect("merged branch deletes");
+
+        cleanup_dir(&repo);
+        cleanup_dir(&wt_base);
     }
 
     #[test]

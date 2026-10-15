@@ -3749,3 +3749,102 @@ body,
   white-space: nowrap;
   color: var(--fg-muted);
 }
+
+/* Fan-out dialog (src/fanout/FanoutDialog.ts) */
+.dialog--fanout {
+  width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.fanout__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fanout__label {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.fanout__lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fanout__lane {
+  display: flex;
+  gap: 6px;
+}
+.fanout__lane select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.fanout__prompt {
+  resize: vertical;
+  min-height: 90px;
+}
+.fanout__error {
+  color: var(--status-critical);
+  font-size: 12px;
+  min-height: 1em;
+}
+
+.fcmp-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fcmp-msg {
+  padding: 16px;
+  color: var(--fg-muted);
+}
+
+.fcmp-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.fcmp-row__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fcmp-row__meta {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fcmp-row__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.fcmp-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12.5px;
+}

@@ -12,7 +12,9 @@ import "@xterm/xterm/css/xterm.css";
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import type { HotKeyDef, PaneSpec, Uuid } from "../types";
+import type { Agent, HotKeyDef, PaneSpec, Uuid } from "../types";
+import { ReadyGate, deliveryCheck, enterDecision, plainWriteAllowed, shellReady } from "../fanout/readyGate";
+import { detectBlockingScreen, SCAN_ROWS, type BlockKind } from "../fanout/blockingScreen";
 import type { Pane } from "../layout/Pane";
 import { api, describeError, onPaneCwd, onPaneData, onPaneExit } from "../ipc/bridge";
 import { HotKeyBar } from "./HotKeyBar";
@@ -115,6 +117,18 @@ export interface TerminalPaneOptions {
 /// the default on modern Windows Terminal.
 const ENCODER = new TextEncoder();
 
+/// Progress of a fan-out prompt delivery (`TerminalPane.setPendingPrompt`).
+export type PendingPromptState =
+  | "waiting"
+  | "blocked"
+  | "sent"
+  | "pasted"
+  | "unsent"
+  | "confirmed"
+  | "check"
+  | "timeout"
+  | "failed";
+
 export class TerminalPane implements Pane {
   readonly id: Uuid;
   readonly element: HTMLElement;
@@ -132,6 +146,18 @@ export class TerminalPane implements Pane {
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
+  /// Last time PTY output arrived (ms), for the fan-out ready gate.
+  private lastOutputAt = 0;
+  /// Count of OSC 7 cwd reports (a fresh shell's first one means its prompt is up).
+  private cwdEvents = 0;
+  /// When the last OSC 7 cwd report arrived / the last command was submitted
+  /// (ms). The prompt is back when a report is newer than the submit.
+  private lastCwdAt = 0;
+  private lastSubmitAt = 0;
+  /// Pending `waitForFirstPrompt` polls; dispose() stops them.
+  private promptWaiters = new Set<() => void>();
+  /// Stops the runtime-only fan-out prompt delivery (never saved).
+  private stopPending: (() => void) | null = null;
   /// Tail of the `pasteText` write chain, so a later Enter lands after it.
   private pasteTail: Promise<void> = Promise.resolve();
   /// A `pasteText` chunk write rejected; the Enter that would have followed
@@ -483,7 +509,7 @@ export class TerminalPane implements Pane {
           `[scrollback-diag] activity set by onData: ${JSON.stringify(data)}`,
         );
       }
-      if (data.includes("\r")) this.statusMachine.onSubmit(Date.now());
+      if (data.includes("\r")) this.markSubmit();
       if (!this.spawned) return;
       const bytes = ENCODER.encode(data);
       void api.writePane(this.id, bytes);
@@ -634,6 +660,7 @@ export class TerminalPane implements Pane {
       // undone by that clear.
       this.term.write(bytes, () => this.revealRestored());
       this.statusMachine.onOutput(Date.now());
+      this.lastOutputAt = Date.now();
       this.scheduleScrollbackSave();
     });
     const exitUnlisten = await onPaneExit(this.id, (code) => {
@@ -645,6 +672,8 @@ export class TerminalPane implements Pane {
     // down along with them.
     const noop = (): void => {};
     const cwdUnlisten = await onPaneCwd(this.id, (cwd) => {
+      this.cwdEvents++;
+      this.lastCwdAt = Date.now();
       if (cwd) this.liveCwd = cwd;
     }).catch(() => noop);
     this.unlisteners.push(dataUnlisten, exitUnlisten, cwdUnlisten);
@@ -704,7 +733,7 @@ export class TerminalPane implements Pane {
           // Same reason as the HotKeyBar's onSubmit: this write bypasses
           // xterm's onData, so tell the status machine a command started or
           // the pane would sit at `idle` while the command runs.
-          this.statusMachine.onSubmit(Date.now());
+          this.markSubmit();
           void api.writePane(this.id, ENCODER.encode(`${startup}\r`));
         }, 200);
       }
@@ -740,9 +769,63 @@ export class TerminalPane implements Pane {
     this.isFocused = false;
   }
 
+  /// The visible screen shows a dialog that needs the user (folder trust,
+  /// first run, numbered select menu), or null. Only the viewport is read, not
+  /// scrollback, so a menu that scrolled away is not mistaken for a live one.
+  /// `echoOf`: text we pasted ourselves; rows echoing its start are ignored
+  /// (Codex shows a pasted `1. do x` as `› 1. do x`, which looks like a menu).
+  screenBlock(echoOf?: string): BlockKind | null {
+    if (!this.spawned) return null;
+    const buf = this.term.buffer.active;
+    const lines: string[] = [];
+    const end = Math.min(buf.length, buf.baseY + this.term.rows);
+    for (let y = Math.max(buf.baseY, end - SCAN_ROWS); y < end; y++) {
+      lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+    }
+    return detectBlockingScreen(lines, echoOf);
+  }
+
+  /// Bracketed paste is on in the foreground app (a shell's line editor or an
+  /// agent TUI that takes pastes as one block).
+  get bracketedPaste(): boolean {
+    return this.spawned && this.term.modes.bracketedPasteMode;
+  }
+
+  /// Resolves when a freshly spawned shell has shown its first prompt: it
+  /// reported its cwd (OSC 7), or it printed something and stayed quiet for
+  /// 500 ms. Gives up after `capMs` (default 10 s); never rejects.
+  waitForFirstPrompt(capMs = 10000): Promise<void> {
+    const startedAt = Date.now();
+    return new Promise((resolve) => {
+      const done = () => {
+        window.clearInterval(timer);
+        this.promptWaiters.delete(done);
+        resolve();
+      };
+      const timer = window.setInterval(() => {
+        const d = shellReady({
+          now: Date.now(),
+          startedAt,
+          firstOutputAt: this.lastOutputAt > 0 ? this.lastOutputAt : null,
+          lastOutputAt: this.lastOutputAt,
+          cwdSeen: this.cwdEvents > 0,
+          capMs,
+        });
+        if (d !== "wait") done();
+      }, 100);
+      this.promptWaiters.add(done);
+    });
+  }
+
   /// The agent registry reports this pane's agent is waiting on the user.
   markWaiting(): void {
     this.statusMachine.onWaiting();
+  }
+
+  /// The dialog that had this pane's agent blocked is gone: take back the
+  /// attention `markWaiting` raised (restoring the status it replaced).
+  markWaitingCleared(): void {
+    this.statusMachine.onWaitingCleared();
   }
 
   /// A command was submitted to this pane by something that bypasses xterm's
@@ -750,7 +833,37 @@ export class TerminalPane implements Pane {
   /// `writePane`. Without it the pane would sit at `idle` while the command
   /// runs, the same gap `startup_cmd` and the per-pane bar already close.
   noteSubmit(): void {
-    this.statusMachine.onSubmit(Date.now());
+    this.markSubmit();
+  }
+
+  private markSubmit(): void {
+    this.lastSubmitAt = Date.now();
+    this.statusMachine.onSubmit(this.lastSubmitAt);
+  }
+
+  /// Write `text` as plain keystrokes (no bracketed frame, no Enter) when the
+  /// shell's prompt is provably back (see `plainWriteAllowed`). `false` =
+  /// nothing was written.
+  async typePlain(text: string, shellExecutable: string | null | undefined): Promise<boolean> {
+    if (!this.spawned) return false;
+    if (
+      !plainWriteAllowed({
+        text,
+        shellExecutable,
+        lastCwdAt: this.lastCwdAt,
+        lastSubmitAt: this.lastSubmitAt,
+        lastOutputAt: this.lastOutputAt,
+      })
+    ) {
+      return false;
+    }
+    try {
+      await api.writePane(this.id, ENCODER.encode(text));
+      return true;
+    } catch (e) {
+      console.warn("typePlain failed:", e);
+      return false;
+    }
   }
 
   /// Paste `text` the way Ctrl+V would (`preparePaste`, chunked, straight to
@@ -759,6 +872,8 @@ export class TerminalPane implements Pane {
   /// was written. The writes finish in order behind this call.
   pasteText(text: string): boolean {
     if (!this.spawned || !this.term.modes.bracketedPasteMode) return false;
+    // A trust / first-run / select dialog is up: a paste could answer it.
+    if (this.screenBlock() !== null) return false;
     const chunks = preparePaste(text, { bracketed: true });
     if (chunks.length === 0) return false;
     this.pasteFailed = false;
@@ -782,17 +897,161 @@ export class TerminalPane implements Pane {
 
   /// Press Enter once the pending `pasteText` writes are out, after a short
   /// gap so the app has taken the pasted frame before the key arrives.
-  /// The Enter is skipped when a paste write failed or `stillOk` (re-checked
-  /// at write time, after the gap) says the target is no longer fit for it.
-  submitAfterPaste(delayMs = 300, stillOk: () => boolean = () => true): void {
+  /// Resolves `true` only when the Enter was actually written; `false` when a
+  /// paste write failed, `stillOk` (re-checked at write time) said the target
+  /// is no longer fit, or `snapshotAt` was given and no agent snapshot newer
+  /// than the paste arrived in time (see `enterDecision`: a lead the process
+  /// scan has not yet noticed gone must not receive the Enter).
+  submitAfterPaste(
+    delayMs = 300,
+    stillOk: () => boolean = () => true,
+    snapshotAt?: () => number,
+  ): Promise<boolean> {
+    let sent = false;
     this.pasteTail = this.pasteTail
-      .then(() => new Promise<void>((r) => setTimeout(r, delayMs)))
       .then(async () => {
-        if (this.pasteFailed || !stillOk()) return;
+        const pastedAt = Date.now();
+        await new Promise<void>((r) => setTimeout(r, delayMs));
+        for (;;) {
+          if (this.pasteFailed) return;
+          const fit = stillOk();
+          const d = snapshotAt
+            ? enterDecision({ now: Date.now(), pastedAt, snapshotAt: snapshotAt(), fit })
+            : fit
+              ? "send"
+              : "abort";
+          if (d === "abort") return;
+          if (d === "send") break;
+          await new Promise<void>((r) => setTimeout(r, 100));
+        }
         await api.writePane(this.id, ENCODER.encode("\r"));
         this.noteSubmit();
+        sent = true;
       })
       .catch((e) => console.warn("submitAfterPaste failed:", e));
+    return this.pasteTail.then(() => sent);
+  }
+
+  /// Deliver `text` once, when the agent in this pane looks ready (a lead in
+  /// a snapshot newer than the last output, bracketed paste on, output quiet
+  /// for 2.5 s; see `ReadyGate`), then press Enter unless `submit` is false.
+  /// Polled; nothing is persisted. States via `onState`: waiting -> sent ->
+  /// confirmed | check (Claude only: its hook never reported the prompt in
+  /// time); waiting -> pasted (no Enter wanted); waiting -> unsent (pasted,
+  /// but the Enter was withheld because the agent changed under us);
+  /// waiting <-> blocked (a dialog needs the user); waiting -> timeout |
+  /// failed. On `timeout` the caller offers "Send now" / "Copy". While the
+  /// lead waits on a permission prompt nothing is written.
+  setPendingPrompt(
+    text: string,
+    opts: {
+      lead: () => Agent | null;
+      /// When the last agent snapshot / scan heartbeat arrived (ms).
+      snapshotAt: () => number;
+      /// Press Enter after the paste (default true).
+      submit?: boolean;
+      onState: (s: PendingPromptState) => void;
+      pollMs?: number;
+    },
+  ): void {
+    this.cancelPendingPrompt();
+    const gate = new ReadyGate({ start: Date.now() });
+    gate.noteOutput(this.lastOutputAt);
+    let phase: "gate" | "flushing" | "confirm" = "gate";
+    let submittedAt = 0;
+    let blockedShown = false;
+    let cancelled = false;
+    const finish = () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      if (this.stopPending === finish) this.stopPending = null;
+    };
+    const deliver = async (kind: string) => {
+      if (!(await this.pasteFlushed())) {
+        if (!cancelled) opts.onState("failed");
+        finish();
+        return;
+      }
+      if (cancelled) return;
+      if (opts.submit === false) {
+        opts.onState("pasted");
+        finish();
+        return;
+      }
+      const entered = await this.submitAfterPaste(
+        300,
+        () => {
+          const l = opts.lead();
+          return (
+            !cancelled &&
+            l !== null &&
+            l.kind === kind &&
+            l.status !== "waiting" &&
+            this.screenBlock(text) === null
+          );
+        },
+        opts.snapshotAt,
+      );
+      if (cancelled) return;
+      if (!entered) {
+        opts.onState("unsent");
+        finish();
+        return;
+      }
+      submittedAt = Date.now();
+      opts.onState("sent");
+      if (kind === "claude") phase = "confirm";
+      else finish();
+    };
+    const tick = () => {
+      const now = Date.now();
+      const lead = opts.lead();
+      if (phase === "flushing") return;
+      if (phase === "confirm") {
+        // Only a hook-fed lead flipping to working vouches for the prompt.
+        const seen = lead && lead.source === "hook" && lead.status === "working" ? now : null;
+        const d = deliveryCheck(submittedAt, seen, now);
+        if (d === "pending") return;
+        opts.onState(d === "confirmed" ? "confirmed" : "check");
+        finish();
+        return;
+      }
+      gate.noteOutput(this.lastOutputAt);
+      gate.noteSnapshot(opts.snapshotAt());
+      gate.setLead(lead !== null);
+      gate.setBracketed(this.bracketedPaste);
+      gate.setBlocked(this.screenBlock() !== null);
+      const g = gate.poll(now);
+      if (g === "blocked") {
+        // The user must answer the dialog; nothing is written meanwhile.
+        if (!blockedShown) {
+          blockedShown = true;
+          opts.onState("blocked");
+        }
+        return;
+      }
+      if (blockedShown) {
+        blockedShown = false;
+        opts.onState("waiting");
+      }
+      if (g === "timeout") {
+        opts.onState("timeout");
+        finish();
+        return;
+      }
+      if (g !== "ready" || !lead || lead.status === "waiting") return;
+      if (!this.pasteText(text)) return;
+      phase = "flushing";
+      void deliver(lead.kind);
+    };
+    const timer = window.setInterval(tick, opts.pollMs ?? 250);
+    this.stopPending = finish;
+    opts.onState("waiting");
+  }
+
+  cancelPendingPrompt(): void {
+    this.stopPending?.();
+    this.stopPending = null;
   }
 
   get status(): PaneStatus {
@@ -981,7 +1240,7 @@ export class TerminalPane implements Pane {
       initial: this.spec.hotkeys ?? [],
       initialBgColor: this.spec.bg_color ?? null,
       initialAccount: this.spec.account ?? "",
-      onSubmit: () => this.statusMachine.onSubmit(Date.now()),
+      onSubmit: () => this.markSubmit(),
       onChange: (next) => {
         this.spec = { ...this.spec, hotkeys: next };
         this.opts.onHotKeysChange?.(next);
@@ -1249,6 +1508,8 @@ export class TerminalPane implements Pane {
   ///    caller is added without reading this comment.
   dispose(permanent = false): void {
     this.cleanupLang();
+    this.cancelPendingPrompt();
+    for (const done of [...this.promptWaiters]) done();
     this.hotkeyBar?.dispose();
     if (this.statusTimer !== undefined) window.clearInterval(this.statusTimer);
     if (this.scrollbackSaveTimer !== undefined) {

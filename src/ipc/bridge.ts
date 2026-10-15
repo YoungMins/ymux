@@ -270,6 +270,29 @@ export const gitApi = {
   /// `.ymux-worktrees` folder.
   worktreeAdd: (cwd: string, branch: string, base: string): Promise<string> =>
     callKind("git_worktree_add", { cwd, branch, base }),
+  /// Fan-out lane: a worktree on NEW branch `branch` started at `start`
+  /// (errors if the branch exists). Stores the start sha and `runId`
+  /// (`[A-Za-z0-9-]{1,64}`) as branch config. Returns the worktree path.
+  worktreeAddFrom: (
+    cwd: string,
+    branch: string,
+    baseDir: string,
+    start: string,
+    runId: string,
+  ): Promise<string> =>
+    callKind("git_worktree_add_from", { cwd, branch, baseDir, start, runId }),
+  /// Full commit sha of `rev` (a branch or sha).
+  resolveCommit: (cwd: string, rev: string): Promise<string> =>
+    callKind("git_resolve_commit", { cwd, rev }),
+  /// Commits in HEAD that `base` (a hex sha) lacks: `git rev-list --count`.
+  commitsAhead: (cwd: string, base: string): Promise<number> =>
+    callKind("git_commits_ahead", { cwd, base }),
+  /// Lane metadata of the branch checked out at `cwd`; empty strings when absent.
+  laneMeta: (cwd: string): Promise<{ base: string; fanout: string }> =>
+    callKind("git_lane_meta", { cwd }),
+  /// `git branch -d` only (merged branches); refuses the current branch.
+  branchDelete: (cwd: string, branch: string): Promise<void> =>
+    callKind("git_branch_delete", { cwd, branch }),
   /// Files differing from `base` (empty = HEAD, a branch = its merge-base
   /// with HEAD), untracked ones included. `base_rev` in the result is what
   /// `diffFile` wants back.
@@ -597,6 +620,13 @@ export function onAgentsChanged(
   handler: (snapshot: AgentSnapshot) => void,
 ): Promise<UnlistenFn> {
   return safeListen<AgentSnapshot>("agents:changed", handler);
+}
+
+/// Subscribe to the heartbeat the backend sends after every agent process
+/// scan, changed or not (the snapshot itself arrives only on a change). The
+/// handler gets when the scan sampled the process list (epoch ms).
+export function onAgentsScanned(handler: (sampledAtMs: number) => void): Promise<UnlistenFn> {
+  return safeListen<number>("agents:scanned", (ms) => handler(Number(ms)));
 }
 
 /// Subscribe to auto-continue decisions (one event per answered question set).

@@ -5,6 +5,7 @@ import { askText } from "../ui/Dialog";
 import { openTokenDock, toggleFileDock } from "../sidepanel/SidePanel";
 import { api, errorKind, gitApi } from "../ipc/bridge";
 import { openDiffReview } from "../diff/DiffReview";
+import { openFanoutCompare } from "../fanout/FanoutCompare";
 import { toggleAutoContinue } from "../autocontinue/control";
 
 export interface CommandDef {
@@ -42,6 +43,16 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
           notify(errorKind(e) === "not_a_repo" ? t("diff.notRepo") : t("diff.noCwd"));
         }
       },
+    },
+    {
+      id: "fanout.start",
+      label: () => t("fanout.command"),
+      action: () => void manager.openFanout(),
+    },
+    {
+      id: "fanout.compare",
+      label: () => t("fanoutCmp.command"),
+      action: () => void openFanoutCompare(),
     },
     {
       id: "pane.worktree",

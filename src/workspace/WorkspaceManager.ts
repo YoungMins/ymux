@@ -7,6 +7,7 @@ import type {
   AccountProfile,
   AgentSnapshot,
   Config,
+  DetectedAgent,
   HotKeyDef,
   LayoutNode,
   PaneSpec,
@@ -16,8 +17,8 @@ import type {
   Workspace,
 } from "../types";
 import { listen as tauriListen } from "@tauri-apps/api/event";
-import { api, gitApi } from "../ipc/bridge";
-import { TerminalPane } from "../terminal/TerminalPane";
+import { api, fsApi, gitApi } from "../ipc/bridge";
+import { TerminalPane, type PendingPromptState } from "../terminal/TerminalPane";
 import { clampFontSize, DEFAULT_FONT_SIZE } from "./fontSize";
 import { BrowserPane } from "../browser/BrowserPane";
 import { EmbeddedBrowserPane } from "../browser/EmbeddedBrowserPane";
@@ -71,6 +72,13 @@ import {
 import { onAutoContinueChange } from "../autocontinue/model";
 import { promptWorktreeBranch, removeWorktreeFlow, type LivePane } from "../git/worktreeFlow";
 import { askChoice, askText } from "../ui/Dialog";
+import { askFanout, type FanoutRequest } from "../fanout/FanoutDialog";
+import { showFanoutNotice } from "../fanout/FanoutCompare";
+import { laneBranches, newRunId } from "../fanout/lanes";
+import { attachNode, fanoutLayout } from "../fanout/layout";
+import { laneAgents, laneSpec, plainAgentCommand } from "../fanout/plan";
+import { fill, gitErrorText } from "../git/worktreeFlow";
+import { shellFamilyFromExecutable, type ShellFamily } from "../terminal/shellQuote";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
 import { newlyWaitingPanes, paneLabel, workspaceIdOfPane } from "./agentTree";
@@ -152,6 +160,12 @@ export class WorkspaceManager {
   onFontSizeChange?: (px: number) => void;
   /// Latest agent-tree snapshot from the backend (pane id → agents).
   private _agents: AgentSnapshot = {};
+  /// When the agent list was last confirmed current: a snapshot arrived or the
+  /// backend's process scan finished (ms). The fan-out gate trusts a lead only
+  /// if this is newer than the pane's last output.
+  private agentSnapshotAt = 0;
+  /// Panes a fan-out marked as waiting because a dialog blocks them.
+  private fanoutBlocked = new Set<Uuid>();
   /// Tree listeners (the workspace panel), fired when agents change or any
   /// layout/pane metadata changes. A set so other views can subscribe too.
   private treeListeners = new Set<() => void>();
@@ -332,7 +346,7 @@ export class WorkspaceManager {
   /// There is no upper bound — `Ctrl+Alt+1..9` cover the first nine (by
   /// position, see `activateByPosition`), the toolbar `+` button reaches the
   /// rest. A new workspace is appended, so its position is count + 1.
-  async activate(id: number): Promise<void> {
+  async activate(id: number, seedRoot?: LayoutNode): Promise<void> {
     if (id < 1) return;
     let created = false;
     if (!this.workspaceContainers.has(id)) {
@@ -342,7 +356,7 @@ export class WorkspaceManager {
       const ws: Workspace = {
         id,
         name: `workspace-${id}`,
-        root: {
+        root: seedRoot ?? {
           kind: "pane",
           id: newPane(defaultShell).id,
           title: null,
@@ -960,10 +974,12 @@ export class WorkspaceManager {
   }
 
   /// Split the currently focused pane.
-  async splitFocused(direction: SplitDir): Promise<void> {
+  /// `cwd` starts the new pane there instead of in the parent's directory.
+  /// Returns the new pane's id (null when nothing was split).
+  async splitFocused(direction: SplitDir, cwd?: string): Promise<Uuid | null> {
     const ws = this.active;
     const focusId = this.activePaneId();
-    if (!focusId) return;
+    if (!focusId) return null;
     const existing = findPane(ws.root, focusId);
     // Use the picker's currently selected default shell (it lives at
     // `this.shells[0]` after `setDefaultShell`), not the focused pane's
@@ -983,11 +999,11 @@ export class WorkspaceManager {
       // Backend didn't have a cwd (pane not spawned yet, or shell never
       // emitted OSC 7). Fall through to the config-stored cwd below.
     }
-    const inheritedCwd = liveCwd ?? existing?.cwd ?? null;
+    const inheritedCwd = cwd ?? liveCwd ?? existing?.cwd ?? null;
     const spec = newPane(shellName, inheritedCwd);
     // A target the tree cannot split must not leave a live, unplaced pane.
     const next = splitPane(ws.root, focusId, direction, spec);
-    if (!findPane(next, spec.id)) return;
+    if (!findPane(next, spec.id)) return null;
     ws.root = next;
 
     const cache = this.paneCaches.get(ws.id)!;
@@ -1001,6 +1017,7 @@ export class WorkspaceManager {
       console.error("split spawn failed", e);
     }
     this.persistDebounced();
+    return spec.id;
   }
 
   /// Open a tab next to the focused pane, wrapping it in a group first if it
@@ -1315,6 +1332,238 @@ export class WorkspaceManager {
       console.error("worktree spawn failed", e);
     }
     this.persistDebounced();
+  }
+
+  // ── Fan-out ───────────────────────────────────────────────────────────────
+  /// Serialises the timeout dialogs: `Dialog` shows one at a time and a second
+  /// would cancel the first.
+  private fanoutDialogs: Promise<void> = Promise.resolve();
+
+  /// "Fan out prompt to agents…": ask, then `startFanout`.
+  async openFanout(): Promise<void> {
+    const notify = (body: string) =>
+      void api.notify(t("fanout.command"), body).catch(() => {});
+    const cwd = await this.focusedCwd();
+    if (!cwd) return notify(t("worktree.noCwd"));
+    let repo: string;
+    let branches;
+    try {
+      repo = await gitApi.repoRoot(cwd);
+      branches = await gitApi.branches(repo);
+    } catch {
+      return notify(t("worktree.notRepo"));
+    }
+    const detected = await api.detectAgents().catch(() => []);
+    const req = await askFanout({
+      repo,
+      branches,
+      agents: laneAgents(detected),
+      accounts: this.accounts,
+    });
+    if (req) await this.startFanout(req, detected);
+  }
+
+  /// Create one worktree per lane, lay the lanes out, start the plain agent
+  /// CLIs, and hand each its prompt once it is ready. A lane that cannot be
+  /// created is reported; the ones that were created are kept and started.
+  /// The base is resolved to one sha first, so every lane starts from the
+  /// same commit.
+  async startFanout(req: FanoutRequest, detected: readonly DetectedAgent[]): Promise<void> {
+    const ack = (body: string) =>
+      askChoice(t("fanout.title"), body, [{ id: "ok", label: t("dialog.ok"), primary: true }]);
+    let start: string;
+    try {
+      start = await gitApi.resolveCommit(req.repo, req.base);
+    } catch (e) {
+      await ack(fill(t("fanout.laneFailed"), { lanes: `${req.base}: ${gitErrorText(e)}` }));
+      return;
+    }
+    const runId = newRunId(new Date(), Math.random);
+    const existing = await gitApi
+      .branches(req.repo)
+      .then((b) => b.local)
+      .catch(() => [] as string[]);
+    const branches = laneBranches(req.prefix, runId, req.lanes, existing);
+    const shell = this.resolveShell(this.shells[0]?.name ?? "");
+    const family = shellFamilyFromExecutable(this.shells.find((s) => s.name === shell)?.executable);
+    const specs: PaneSpec[] = [];
+    const failed: string[] = [];
+    for (let i = 0; i < req.lanes.length; i++) {
+      const lane = req.lanes[i];
+      const agent = detected.find((a) => a.id === lane.agent);
+      const command = agent ? plainAgentCommand(agent, family) : null;
+      if (!agent || command === null) {
+        failed.push(`${branches[i]}: ${fill(t("fanout.noAgentCmd"), { agent: lane.agent })}`);
+        continue;
+      }
+      try {
+        const path = await gitApi.worktreeAddFrom(
+          req.repo,
+          branches[i],
+          this.worktreeBaseDir,
+          start,
+          runId,
+        );
+        specs.push(
+          laneSpec({ shell, path, command, account: lane.account, title: branches[i] }),
+        );
+      } catch (e) {
+        failed.push(`${branches[i]}: ${gitErrorText(e)}`);
+      }
+    }
+    if (failed.length > 0) await ack(fill(t("fanout.laneFailed"), { lanes: failed.join("\n") }));
+    if (specs.length === 0) return;
+
+    const wsId = await this.placeFanout(specs, req.newWorkspace);
+    if (wsId === null) {
+      // The worktrees exist; never leave them unannounced.
+      await ack(
+        fill(t("fanout.placeFailed"), {
+          lanes: specs.map((s) => `${s.title ?? ""}: ${s.worktree_path ?? s.cwd ?? ""}`).join("\n"),
+        }),
+      );
+      return;
+    }
+
+    const cache = this.paneCaches.get(wsId);
+    for (const spec of specs) {
+      const pane = cache?.get(spec.id);
+      if (!(pane instanceof TerminalPane)) continue;
+      const lane = spec.title ?? "";
+      pane.setPendingPrompt(req.prompt, {
+        lead: () => this._agents[spec.id]?.lead ?? null,
+        snapshotAt: () => this.agentSnapshotAt,
+        submit: req.submit,
+        onState: (s) => this.onFanoutLaneState(spec.id, lane, req.prompt, s),
+      });
+    }
+    showFanoutNotice(specs.length);
+  }
+
+  /// Put the lane panes on screen and spawn them, trying in order: beside the
+  /// focused pane (or a new workspace when asked and one is free), then a new
+  /// workspace, then a tab group beside the whole workspace. Returns the
+  /// workspace they landed in, or null when nothing worked.
+  private async placeFanout(specs: PaneSpec[], newWorkspace: boolean): Promise<number | null> {
+    const room = () => this.config.workspaces.length < MAX_WORKSPACES;
+    const separate = newWorkspace && room();
+    const layout = fanoutLayout(specs, newWorkspace && !separate);
+
+    const inNewWorkspace = async (): Promise<number | null> => {
+      if (!room()) return null;
+      const id = this.lowestFreeId();
+      await this.activate(id, layout);
+      return id;
+    };
+    const adopt = async (root: LayoutNode): Promise<number> => {
+      const ws = this.active;
+      ws.root = root;
+      const cache = this.paneCaches.get(ws.id)!;
+      for (const spec of specs) cache.set(spec.id, this.createPane(spec));
+      this.renderWorkspace(ws);
+      for (const spec of specs) {
+        try {
+          await cache.get(spec.id)?.spawn();
+        } catch (e) {
+          console.error("fanout spawn failed", e);
+        }
+      }
+      this.persistDebounced();
+      return ws.id;
+    };
+    const beside = async (): Promise<number | null> => {
+      const anchor = this.activePaneId();
+      const next = anchor ? attachNode(this.active.root, anchor, layout) : this.active.root;
+      return next === this.active.root ? null : adopt(next);
+    };
+    const tabsBesideRoot = async (): Promise<number | null> =>
+      adopt({
+        kind: "split",
+        direction: "horizontal",
+        ratio: 0.5,
+        a: this.active.root,
+        b: fanoutLayout(specs, true),
+      });
+
+    const attempts = separate
+      ? [inNewWorkspace, beside, tabsBesideRoot]
+      : [beside, inNewWorkspace, tabsBesideRoot];
+    for (const attempt of attempts) {
+      try {
+        const id = await attempt();
+        if (id !== null) return id;
+      } catch (e) {
+        console.error("fanout placement failed", e);
+      }
+    }
+    return null;
+  }
+
+  private onFanoutLaneState(
+    paneId: Uuid,
+    lane: string,
+    prompt: string,
+    state: PendingPromptState,
+  ): void {
+    const notify = (body: string) =>
+      void api.notify(t("fanout.command"), body).catch(() => {});
+    // Leaving "blocked": take back the attention markWaiting raised.
+    if (state !== "blocked" && this.fanoutBlocked.delete(paneId)) {
+      const pane = this.findPaneById(paneId);
+      if (pane instanceof TerminalPane) pane.markWaitingCleared();
+      this.notifyTree();
+    }
+    if (state === "blocked") {
+      // Show up in the inbox / status dots, and say what to do.
+      this.fanoutBlocked.add(paneId);
+      const pane = this.findPaneById(paneId);
+      if (pane instanceof TerminalPane) pane.markWaiting();
+      this.notifyTree();
+      notify(fill(t("fanout.blocked"), { lane }));
+    } else if (state === "check") notify(fill(t("fanout.check"), { lane }));
+    else if (state === "pasted") notify(fill(t("fanout.pasted"), { lane }));
+    else if (state === "failed") notify(fill(t("fanout.sendFailed"), { lane }));
+    else if (state === "unsent") {
+      notify(fill(t("fanout.unsent"), { lane }));
+      this.fanoutDialogs = this.fanoutDialogs.then(async () => {
+        const a = await askChoice(fill(t("fanout.unsent"), { lane }), null, [
+          { id: "enter", label: t("fanout.pressEnter"), primary: true },
+          { id: "close", label: t("dialog.cancel") },
+        ]);
+        if (a?.id === "enter" && !(await this.submitPending(paneId, prompt))) {
+          notify(`${lane}: ${t("fanout.notSent")}`);
+        }
+      });
+    } else if (state === "timeout") {
+      this.fanoutDialogs = this.fanoutDialogs.then(async () => {
+        const a = await askChoice(fill(t("fanout.timeout"), { lane }), null, [
+          { id: "send", label: t("fanout.sendNow"), primary: true },
+          { id: "copy", label: t("fanout.copy") },
+          { id: "close", label: t("dialog.cancel") },
+        ]);
+        if (a?.id === "copy") {
+          await navigator.clipboard.writeText(prompt).catch(() => {});
+        } else if (a?.id === "send") {
+          const res = await this.sendToPane(paneId, prompt, true);
+          if (res === "pasted") notify(fill(t("fanout.unsent"), { lane }));
+          else if (res !== "sent") notify(`${lane}: ${t("fanout.notSent")}`);
+        }
+      });
+    }
+  }
+
+  /// Press Enter for a prompt already typed into `paneId` (`echoOf`), under
+  /// the same conditions as a fan-out submit: a lead present and not waiting,
+  /// no dialog showing, and a fresh agent snapshot after the keypress is due.
+  private async submitPending(paneId: Uuid, echoOf: string): Promise<boolean> {
+    const pane = this.findPaneById(paneId);
+    if (!(pane instanceof TerminalPane)) return false;
+    const fit = () => {
+      const l = this._agents[paneId]?.lead;
+      return !!l && l.status !== "waiting" && pane.screenBlock(echoOf) === null;
+    };
+    if (!fit()) return false;
+    return pane.submitAfterPaste(0, fit, () => this.agentSnapshotAt);
   }
 
   /// Split the focused pane and drop a browser pane into the new slot instead
@@ -1651,7 +1900,7 @@ export class WorkspaceManager {
   /// stored one), a files or git pane's folder, an editor's file. Browser
   /// panes have none. Paths are raw — the worktree check compares them in
   /// Rust (rule 15).
-  private async livePanes(): Promise<LivePane[]> {
+  async livePanes(): Promise<LivePane[]> {
     const out: LivePane[] = [];
     for (const [wsId, cache] of this.paneCaches) {
       const ws = this.config.workspaces.find((w) => w.id === wsId);
@@ -1944,8 +2193,20 @@ export class WorkspaceManager {
       const pane = this.findPaneById(id);
       if (pane instanceof TerminalPane) pane.markWaiting();
     }
+    // Arrival time says nothing about when the process list was sampled, so
+    // only the scan heartbeat (`noteAgentScan`) advances `agentSnapshotAt`.
     this._agents = next;
     this.notifyTree();
+  }
+
+  /// The backend finished a process scan (whether or not the agents changed).
+  /// `sampledAtMs`: when it read the process list (epoch ms), not when this
+  /// event arrived; a scan sampled before a paste cannot vouch for the lead
+  /// afterwards.
+  noteAgentScan(sampledAtMs: number): void {
+    if (Number.isFinite(sampledAtMs) && sampledAtMs > this.agentSnapshotAt) {
+      this.agentSnapshotAt = sampledAtMs;
+    }
   }
 
   /// Switch to the workspace owning `paneId` (hydrating it if never visited)
@@ -1986,16 +2247,19 @@ export class WorkspaceManager {
   /// Paste `text` into a pane running an agent and focus it. `gone` when the
   /// pane is not a live terminal, has no lead agent, or (with `expectKind`)
   /// its agent is no longer of that kind; `waiting` while the agent is on a
-  /// permission prompt, where a pasted block would answer it; `no-paste` when
-  /// the app has not turned bracketed paste on; `failed` when a paste write
-  /// was rejected. Nothing is written on a refusal. The Enter (`submit`) is
+  /// permission prompt or a dialog is showing, where a pasted block would
+  /// answer it; `no-paste` when the app has not turned bracketed paste on;
+  /// `failed` when a paste write was rejected. Nothing is written on a refusal.
+  /// `sent`: pasted and Enter written. `pasted`: pasted, no Enter (`submit`
+  /// was false, or the Enter was withheld because the agent changed or no
+  /// agent snapshot newer than the paste confirmed it). The Enter is
   /// re-checked against the same conditions right before it is written.
   async sendToPane(
     paneId: Uuid,
     text: string,
     submit: boolean,
     expectKind?: string,
-  ): Promise<"sent" | "waiting" | "no-paste" | "gone" | "failed"> {
+  ): Promise<"sent" | "pasted" | "waiting" | "no-paste" | "gone" | "failed"> {
     const pane = this.findPaneById(paneId);
     if (!(pane instanceof TerminalPane)) return "gone";
     const lead = () => this._agents[paneId]?.lead;
@@ -2006,11 +2270,97 @@ export class WorkspaceManager {
     };
     const refusal = fit();
     if (refusal) return refusal;
+    // A dialog (trust, select menu) needs the user: a paste could answer it.
+    if (pane.screenBlock() !== null) return "waiting";
     if (!pane.pasteText(text)) return "no-paste";
     if (!(await pane.pasteFlushed())) return "failed";
-    if (submit) pane.submitAfterPaste(300, () => fit() === null);
     await this.focusPane(paneId);
-    return "sent";
+    if (!submit) return "pasted";
+    const entered = await pane.submitAfterPaste(
+      300,
+      () => fit() === null && pane.screenBlock(text) === null,
+      () => this.agentSnapshotAt,
+    );
+    return entered ? "sent" : "pasted";
+  }
+
+  /// Terminal panes (any workspace) whose directory is inside `dir`. The
+  /// containment test is the backend's (`ypath` keys, rule 15).
+  async terminalPanesWithin(dir: string): Promise<{ id: Uuid; hasAgent: boolean; shell: ShellFamily }[]> {
+    const found: { id: Uuid; cwd: string; shell: string }[] = [];
+    for (const [wsId, cache] of this.paneCaches) {
+      const ws = this.config.workspaces.find((w) => w.id === wsId);
+      if (!ws) continue;
+      for (const [id, pane] of cache) {
+        if (!(pane instanceof TerminalPane)) continue;
+        const spec = findPane(ws.root, id);
+        const cwd = (await api.getPaneCwd(id).catch(() => null)) ?? spec?.cwd ?? null;
+        if (cwd) found.push({ id, cwd, shell: spec?.shell ?? "" });
+      }
+    }
+    if (found.length === 0) return [];
+    let inside: boolean[];
+    try {
+      inside = await fsApi.pathsWithin(dir, found.map((f) => f.cwd));
+    } catch {
+      return [];
+    }
+    return found
+      .filter((_, i) => inside[i])
+      .map((f) => ({
+        id: f.id,
+        hasAgent: !!this._agents[f.id]?.lead,
+        shell: shellFamilyFromExecutable(this.shells.find((s) => s.name === f.shell)?.executable),
+      }));
+  }
+
+  /// Resolves when the terminal pane `paneId` (just spawned) has shown its
+  /// first prompt, or after the 10 s cap.
+  async waitForFirstPrompt(paneId: Uuid): Promise<void> {
+    const pane = this.findPaneById(paneId);
+    if (pane instanceof TerminalPane) await pane.waitForFirstPrompt();
+  }
+
+  /// The shell family of pane `paneId`'s configured shell (for quoting).
+  paneShellFamily(paneId: Uuid): ShellFamily {
+    return shellFamilyFromExecutable(this.paneShellExecutable(paneId));
+  }
+
+  /// The executable of pane `paneId`'s configured shell, if known.
+  private paneShellExecutable(paneId: Uuid): string | undefined {
+    for (const [wsId] of this.paneCaches) {
+      const ws = this.config.workspaces.find((w) => w.id === wsId);
+      const spec = ws ? findPane(ws.root, paneId) : null;
+      if (spec) return this.shells.find((s) => s.name === spec.shell)?.executable;
+    }
+    return undefined;
+  }
+
+  /// Type `text` into a plain shell pane WITHOUT pressing Enter, as a bracketed
+  /// paste. Refused (never written) for text holding a control character (it
+  /// could act as Enter or an escape sequence), a pane running an agent, a
+  /// command or a dialog, and a pane whose app has not turned bracketed paste
+  /// on (a program that is not a line editor).
+  async typeIntoShell(
+    paneId: Uuid,
+    text: string,
+  ): Promise<"ok" | "control" | "busy" | "no-paste" | "gone" | "failed"> {
+    const pane = this.findPaneById(paneId);
+    if (!(pane instanceof TerminalPane)) return "gone";
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) return "control";
+    if (this._agents[paneId]?.lead || pane.status === "running" || pane.screenBlock() !== null) {
+      return "busy";
+    }
+    if (!pane.bracketedPaste || !pane.pasteText(text)) {
+      // A shell with no bracketed paste (cmd, say): the one fixed merge
+      // command may go as plain keystrokes once the prompt is provably back.
+      if (!(await pane.typePlain(text, this.paneShellExecutable(paneId)))) return "no-paste";
+    } else if (!(await pane.pasteFlushed())) {
+      return "failed";
+    }
+    await this.focusPane(paneId);
+    return "ok";
   }
 
   /// Directory of the focused pane: the live cwd when the shell reports one,
