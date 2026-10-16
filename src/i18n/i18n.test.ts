@@ -19,6 +19,32 @@ describe("i18n completeness (rule 7)", () => {
     expect(translationGaps("launcher.")).toEqual([]);
   });
 
+  it("has every Activity & notifications string in all 13 languages", () => {
+    expect(t("settings.section.activity")).toBe("Activity & notifications");
+    expect(translationGaps("settings.activity.")).toEqual([]);
+    expect(translationGaps("settings.section.activity")).toEqual([]);
+  });
+
+  it("defines every settings.activity key the section uses", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(
+      fileURLToPath(new URL("../settings/ActivitySection.ts", import.meta.url)),
+      "utf8",
+    );
+    const keys = [...src.matchAll(/t\("(settings\.activity\.[A-Za-z0-9_.]+)"\)/g)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThan(50);
+    expect(keys.filter((k) => t(k) === k)).toEqual([]);
+    // Template keys: one per format / event / attachment group.
+    for (const k of [
+      ...["json", "slack", "discord", "teams"].flatMap((f) => [`format.${f}`, `formatNote.${f}`]),
+      "event.turn_end", "event.attention",
+      ...["images", "pdf", "audio", "video", "text", "office"].map((g) => `group.${g}`),
+    ]) {
+      expect(t(`settings.activity.${k}`)).not.toBe(`settings.activity.${k}`);
+    }
+  });
+
   it("has every backend error kind in all 13 languages", () => {
     expect(translationGaps("fsError.")).toEqual([]);
   });

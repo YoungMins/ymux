@@ -14,7 +14,7 @@ import { mountWorkspaceBar } from "./workspace/WorkspaceBar";
 import { mountWorkspacePanel, refreshWorkspacePanel } from "./workspace/WorkspacePanel";
 import { mountUpdateBanner } from "./update/UpdateBanner";
 import { mountStatusBar } from "./statusbar/StatusBar";
-import { initLang, onLangChange, t } from "./i18n/i18n";
+import { getLang, initLang, onLangChange, t } from "./i18n/i18n";
 import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandPalette";
 import { builtinCommands } from "./palette/commands";
 import { listenAutoAnswers } from "./autocontinue/control";
@@ -410,6 +410,10 @@ async function main(): Promise<void> {
       .catch((e) => console.warn("set_tray_labels failed:", e));
   pushTrayLabels();
   onLangChange(pushTrayLabels);
+  // The backend's rule-based summaries follow the app language.
+  const pushActivityLang = () => manager.setActivityLanguage(getLang());
+  pushActivityLang();
+  onLangChange(pushActivityLang);
 
   window.addEventListener("beforeunload", (ev) => {
     // A reload with unsaved editors: let the webview ask. Not on the real

@@ -114,6 +114,92 @@ export interface Config {
   agent_tracking?: boolean;
   /// Account profiles panes and workspaces can pick. Absent in older configs.
   accounts?: AccountProfile[];
+  /// Activity log settings; absent in older configs (backend defaults apply).
+  activity?: ActivityConfig;
+  /// Turn-summary provider settings; absent in older configs.
+  summarizer?: SummarizerConfig;
+  /// Webhook destinations; absent in older configs. URL and secret are never here.
+  webhooks?: WebhookDestination[];
+}
+
+/// Mirror of `ActivityConfig` in `config/model.rs`.
+export interface ActivityConfig {
+  enabled: boolean;
+  retention_days: number;
+  max_total_mb: number;
+  record_prompts: boolean;
+  report_dir: string;
+  /// UI language code; the backend uses it for the rule-based summary.
+  language: string;
+}
+
+/// One line of the activity log (`activity::store::Record`). `kind` is
+/// "prompt" | "tool" | "permission" | "turn_end" | "summary"; `data` depends on it.
+export interface ActivityRecord {
+  v: number;
+  id: string;
+  /// Unix milliseconds.
+  ts: number;
+  ws: number;
+  pane: Uuid;
+  agent: string;
+  account: string;
+  session: string;
+  turn: string;
+  cwd: string;
+  branch: string;
+  kind: string;
+  data: Record<string, unknown>;
+}
+
+/// Mirror of `webhooks::WebhookDestination`. `id` is a uuidv4 made by the
+/// frontend (the backend drops anything else). `url_hint` (scheme+host) is
+/// computed by the backend; whatever the frontend sends is overwritten.
+export interface WebhookDestination {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /// "json" | "slack" | "discord" | "teams".
+  format: string;
+  url_hint: string;
+  /// "turn_end" | "attention".
+  events: string[];
+  /// "summary" | "full".
+  detail: string;
+  include_prompts: boolean;
+  debounce_secs: number;
+  attach: boolean;
+  attach_types: string[];
+  max_file_mb: number;
+  max_total_mb: number;
+  max_files: number;
+}
+
+/// Mirror of `delivery::DestStatus`: kinds and counts only.
+export interface WebhookDestStatus {
+  queued: number;
+  last_ok_at: number | null;
+  last_error: string | null;
+  dropped: number;
+}
+
+/// Mirror of `runtime::WebhookPreview`. `payload` is the JSON body that would
+/// be sent (no URL, secret or signature).
+export interface WebhookPreview {
+  format: string;
+  payload: unknown;
+  attachments: { name: string; size: number; mime: string }[];
+  listed: { name: string; size: number; reason: string }[];
+}
+
+/// Mirror of `SummarizerConfig`. `provider`: "rule" | "ollama" | "openai".
+export interface SummarizerConfig {
+  provider: string;
+  endpoint: string;
+  model: string;
+  timeout_secs: number;
+  max_input_chars: number;
+  allow_remote: boolean;
 }
 
 export interface BootstrapPayload {

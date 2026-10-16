@@ -16,11 +16,13 @@ ymux/
 │       ├── main.rs             # Entry point (desktop only)
 │       ├── lib.rs              # Library crate (all modules)
 │       ├── commands.rs         # Tauri IPC commands (desktop)
+│       ├── activity/           # Opt-in activity log: hook/Codex events -> worker (redact, git stat, per-day JSONL store, hub); ActivityTap fed by hook_http (pure; runtime.rs is desktop)
 │       ├── accounts.rs         # Per-pane AI-CLI accounts: effective account -> CLAUDE_CONFIG_DIR / CODEX_HOME env at PTY spawn (pure)
 │       ├── agents.rs           # Agent tree registry state machine (pure, not desktop-gated)
 │       ├── agent_scan.rs       # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
 │       ├── agent_scan_disk.rs  # Disk-scan fallback for session resume: finds an agent's transcript by cwd match (pure)
 │       ├── agent_sessions.rs   # Resumable agent sessions: resume argv/command, freshness window (pure)
+│       ├── attach.rs           # Which files may ride along with a webhook delivery: eligible() + open_verified() at send time (pure std)
 │       ├── auto_continue.rs    # Per-pane auto-answer of Claude Code's AskUserQuestion: choice fn, decision JSON, pane set (pure)
 │       ├── agent_hooks.rs      # Install/uninstall Claude Code http hooks in every account's Claude dir settings.json: merge fns + plan_hooks/apply_plan (pure; reconcile_hooks in commands.rs)
 │       ├── hook_http.rs        # Loopback receiver for those hooks: auth, parsing, port choice, listener (pure std)
@@ -36,12 +38,15 @@ ymux/
 │       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
 │       ├── pty/                # PTY session management
 │       ├── quit_gate.rs        # Close-to-tray / real-quit handshake state machine (pure)
+│       ├── secrets.rs          # Backend-owned secret store (webhook URL / HMAC secret / LLM API key): DPAPI on Windows, 0600 elsewhere; write-only over IPC
 │       ├── scrollback.rs       # Persist/restore per-pane terminal scrollback (pure)
 │       ├── shell/              # Shell detection (detect.rs)
+│       ├── summarizer/         # Turn summaries: rule-based, Ollama, OpenAI-compatible request/parse + transport with loopback guard (pure; http executor in transport)
 │       ├── textfile.rs         # EOL/BOM/encoding-safe text read/write (pure)
 │       ├── tray.rs             # Tray icon, hide-to-tray, quit handshake commands (desktop)
 │       ├── sysmonitor.rs       # System monitor (desktop)
 │       ├── updater.rs          # Update checker (desktop)
+│       ├── webhooks/           # Webhook destinations: payload builders (json/slack/discord/teams), HMAC, backoff, retry queue, delivery worker (runtime.rs is desktop)
 │       ├── webview.rs          # Native browser (desktop, experimental)
 │       ├── embedded_browser.rs # Child-webview browser panes via Window::add_child (desktop)
 │       └── settings.rs         # Settings panel commands: theme load/save, open config dir (desktop)
@@ -58,14 +63,16 @@ ymux/
 │   ├── files/              # Files pane (FilesPane, fileModel, preview, clipboard)
 │   ├── editor/             # Editor pane (EditorPane, CodeMirror 6 setup, eol, theme)
 │   ├── git/                # Git pane (GitPane, graphLanes, worktreeFlow)
-│   ├── workspace/          # WorkspaceManager + WorkspaceBar + agentTree (workspace panel tree)
+│   ├── diff/               # Diff review overlay (DiffReview, diffModel, reviewPrompt, targetPick): runtime-only, not a pane kind
+│   ├── fanout/             # Fan-out dialog + compare overlay (FanoutDialog, FanoutCompare, lanes, plan, layout, readyGate, blockingScreen)
+│   ├── workspace/          # WorkspaceManager + WorkspaceBar + agentTree (workspace panel tree) + inbox.ts (attention inbox model)
 │   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt), pathLinks (clickable paths)
 │   ├── browser/            # BrowserPane (iframe) + NativeBrowserPane
 │   ├── layout/             # SplitContainer + LayoutTree + PaneGroup/tabs (pane tab groups)
 │   ├── palette/            # Command Palette (Ctrl+Shift+P)
 │   ├── menu/               # Terminal right-click context menu (ContextMenu.ts)
 │   ├── notes/              # Per-workspace notes overlay (NotesOverlay.ts)
-│   ├── settings/           # Settings panel (⚙): general, syntax colors, shortcuts (shortcutList.ts), config files
+│   ├── settings/           # Settings panel (⚙): general, syntax colors, shortcuts (shortcutList.ts), config files, ActivitySection.ts (activity log / summarizer / webhooks)
 │   ├── hotkey/             # HotKeyManager modal (⚙)
 │   ├── statusbar/          # System monitor status bar
 │   ├── ui/                 # Small shared UI primitives (Dialog.ts)
@@ -428,6 +435,11 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   Claude Code treats as non-blocking but *reports* (e.g. "Stop hook error
   occurred · ctrl+o to see" per turn). That is the cost of having no relay
   binary; the answer is turning tracking off before uninstalling.
+- **The hook path also feeds `ActivityTap` (rule 17).** On the `Accept` path
+  only, the already-parsed body is reduced to clipped fields and handed to the
+  activity worker with `try_send`, before the reply. Unauthenticated, 403 and
+  quiet-204 requests never reach it, and it may not change the status, body or
+  timing of the response.
 - **Migration.** Install removes every retired `y … --ymux-agent-hook` command
   entry (`agent_hooks::LEGACY_MARKER`), `SessionStart` included; uninstall
   removes both shapes. Keep that until no supported upgrade path can still
@@ -512,6 +524,52 @@ forwarded keystroke *means* (`ipc_guard::forwarded_shortcut_key` /
 never close-pane). Anything that creates a PTY must not be triggerable from
 a web page either, so split (Ctrl+Shift+H/V) and new tab (Ctrl+Shift+T) are
 not forwardable.
+
+### 17. Activity capture never blocks the hook reply, and nothing leaves the machine unredacted
+
+The opt-in activity log, turn summaries and webhooks (`activity/`,
+`summarizer/`, `webhooks/`, `secrets.rs`, `attach.rs`) sit on the hook path and
+send data to hosts the user names. The rules:
+
+- **Capture is Accept-only, bounded and non-blocking.** `hook_http::ActivityTap`
+  extracts clipped fields from the already-parsed body of an `Accept`ed event
+  and `try_send`s them on a bounded `sync_channel` (`ACTIVITY_QUEUE`, 1024)
+  *before* the reply goes out. A full channel drops the message; it never waits.
+  Redaction, git, disk and Codex file work all run on the worker thread, never
+  on the receiver. Workspace, account and cwd come from backend state, never
+  from a hook claim.
+- **Redact before anything else.** `activity::redact` runs on the worker before
+  a record reaches disk, the hub or a summarizer, and prompts and assistant
+  text are dropped unless `record_prompts` is on. Payload builders clip and
+  strip again, and prompts reach a destination only with `include_prompts`.
+  Redaction is pattern matching, so keep the defaults conservative.
+- **Secrets stay in `secrets.rs`.** A webhook URL, HMAC secret or LLM API key
+  is never in `config.toml`, a log line, `Debug` output or an IPC response; the
+  commands are write-only and return presence booleans. `url_hint` is
+  scheme + host only and is rewritten by the backend. `activity`, `summarizer`
+  and `webhooks` ARE user settings copied in `merge_layouts_from`
+  (unlike rule 11's backend-owned fields).
+- **Outbound HTTP uses the shared clients only** (`webhooks::client`,
+  `summarizer::transport`): no redirects, connect and total timeouts, response
+  and body size caps. The summarizer additionally resolves the host and refuses
+  any non-loopback address unless `allow_remote` is set, so a name that points
+  elsewhere does not pass on its spelling. A new feature that talks to the
+  network goes through one of them, not a fresh client.
+- **A file is attached only after `attach::eligible`**, and is re-verified at
+  send time. The leaf is opened without following links, the handle must be a
+  regular file with one hard link and the identity (device + inode, or volume
+  serial + file index), size and mtime that planning recorded, its real path
+  (read back from the handle) must still be inside the canonical root and clear
+  of the deny list, and the bytes sent are the ones read from that handle
+  (`open_verified`). Containment uses `fsx::is_within` (rule 15). A failure
+  lists the file; it never fails the delivery.
+- **Codex is tailed only for tracker-bound sessions** whose rollout
+  `session_meta.cwd` matches the pane's cwd (`ypath::same_path`), from the
+  file's current end, with a read cap per poll. A session id alone is not trusted.
+- **Unattended git is defanged.** The end-of-turn diff stat runs with
+  `core.fsmonitor=false` and is skipped for any repo whose local config defines
+  `filter.*` drivers (`git::has_local_filter_drivers`), since diffing would run
+  them. Never add a git call here that can execute repo-controlled commands.
 
 ## TDD / Testing
 

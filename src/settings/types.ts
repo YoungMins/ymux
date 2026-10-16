@@ -35,6 +35,7 @@ export type ConfigPathKind = "theme" | "folder";
 export type SettingsSection =
   | "general"
   | "accounts"
+  | "activity"
   | "syntax"
   | "shortcuts"
   | "config";

@@ -16,13 +16,15 @@
 
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::activity::{extract, ActivityMsg};
 use crate::agents::HookEvent;
 use crate::auto_continue::{self, Decision};
 
@@ -423,6 +425,77 @@ impl AutoContinue {
     }
 }
 
+/// Capacity of the activity channel. Full means the worker is behind: the
+/// event is dropped and counted, never waited for.
+pub const ACTIVITY_QUEUE: usize = 1024;
+
+/// Counters shared by the tap and the worker.
+#[derive(Debug, Default)]
+pub struct TapStats {
+    /// Messages queued and not yet taken by the worker.
+    pub pending: AtomicUsize,
+    /// Messages dropped because the queue was full.
+    pub dropped: AtomicU64,
+}
+
+/// Activity-log capture (CLAUDE.md rule 17). On the *Accept* path only,
+/// after the body parsed and before the reply, the already-parsed body is
+/// reduced to a small clipped [`extract::ActivityRaw`] and handed to the
+/// worker with `try_send`. It never blocks, never keeps the `Value`, and
+/// leaves the response (empty 204 or the auto-continue decision) untouched.
+#[derive(Clone)]
+pub struct ActivityTap {
+    pub enabled: Arc<AtomicBool>,
+    pub tx: SyncSender<(Uuid, ActivityMsg)>,
+    pub stats: Arc<TapStats>,
+}
+
+impl ActivityTap {
+    /// A tap with its receiving end, switched off.
+    pub fn new(capacity: usize) -> (Self, Receiver<(Uuid, ActivityMsg)>) {
+        let (tx, rx) = std::sync::mpsc::sync_channel(capacity);
+        (
+            Self {
+                enabled: Arc::new(AtomicBool::new(false)),
+                tx,
+                stats: Arc::new(TapStats::default()),
+            },
+            rx,
+        )
+    }
+
+    /// Never records anything (no receiver exists).
+    pub fn off() -> Self {
+        Self::new(1).0
+    }
+
+    /// Queue `msg` without waiting; a full or closed queue drops it.
+    pub fn offer(&self, pane: Uuid, msg: ActivityMsg) {
+        // Counted before the send so the worker's decrement can never run
+        // first and underflow.
+        self.stats.pending.fetch_add(1, Ordering::SeqCst);
+        match self.tx.try_send((pane, msg)) {
+            Ok(()) => {}
+            Err(e) => {
+                self.stats.pending.fetch_sub(1, Ordering::SeqCst);
+                if matches!(e, TrySendError::Full(_)) {
+                    self.stats.dropped.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    /// Reduce an accepted hook body and queue it.
+    fn offer_hook(&self, pane: Uuid, input: &Value) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Some(raw) = extract::from_hook(input) {
+            self.offer(pane, ActivityMsg::Hook(raw));
+        }
+    }
+}
+
 /// One of at most `max` concurrently served connections; frees its slot on
 /// drop.
 #[derive(Debug)]
@@ -470,8 +543,9 @@ pub fn serve(
     known_pane: KnownPane,
     on_event: OnEvent,
     auto: AutoContinue,
+    tap: ActivityTap,
 ) -> io::Result<std::thread::JoinHandle<()>> {
-    serve_with(listener, token, known_pane, on_event, auto, LIMITS)
+    serve_with(listener, token, known_pane, on_event, auto, tap, LIMITS)
 }
 
 /// [`serve`] with explicit limits.
@@ -488,6 +562,7 @@ pub fn serve_with(
     known_pane: KnownPane,
     on_event: OnEvent,
     auto: AutoContinue,
+    tap: ActivityTap,
     limits: Limits,
 ) -> io::Result<std::thread::JoinHandle<()>> {
     let token: Arc<str> = token.into();
@@ -510,13 +585,18 @@ pub fn serve_with(
                     continue;
                 };
                 let deadline = Instant::now() + limits.deadline;
-                let (token, known_pane, tx, auto) =
-                    (token.clone(), known_pane.clone(), tx.clone(), auto.clone());
+                let (token, known_pane, tx, auto, tap) = (
+                    token.clone(),
+                    known_pane.clone(),
+                    tx.clone(),
+                    auto.clone(),
+                    tap.clone(),
+                );
                 let _ = std::thread::Builder::new()
                     .name("ymux-hook-conn".into())
                     .spawn(move || {
                         let _slot = slot;
-                        let _ = handle(stream, &token, &*known_pane, &tx, &auto, deadline);
+                        let _ = handle(stream, &token, &*known_pane, &tx, &auto, &tap, deadline);
                     });
             }
         })
@@ -529,6 +609,7 @@ fn handle(
     known_pane: &(dyn Fn(Uuid) -> bool + Send + Sync),
     queue: &std::sync::mpsc::Sender<HookEvent>,
     auto: &AutoContinue,
+    tap: &ActivityTap,
     deadline: Instant,
 ) -> io::Result<()> {
     let mut buf = Vec::with_capacity(4096);
@@ -595,6 +676,7 @@ fn handle(
     let decision = (event.event == "PreToolUse" && (auto.enabled)(pane))
         .then(|| auto_continue::decide(&input))
         .flatten();
+    tap.offer_hook(pane, &input);
     let _ = queue.send(event);
     let Some(decision) = decision else {
         return reply(&mut stream, 204, deadline);
@@ -1040,6 +1122,7 @@ mod tests {
                 let _ = tx.lock().send(ev);
             }),
             AutoContinue::off(),
+            ActivityTap::off(),
         )
         .unwrap();
         (port, rx)
@@ -1140,6 +1223,7 @@ mod tests {
                 let _ = tx.lock().send(n);
             }),
             AutoContinue::off(),
+            ActivityTap::off(),
         )
         .unwrap();
         for n in 0..5 {
@@ -1190,6 +1274,7 @@ mod tests {
                 let _ = tx.lock().send(ev);
             }),
             AutoContinue::off(),
+            ActivityTap::off(),
             limits,
         )
         .unwrap();
@@ -1300,6 +1385,32 @@ mod tests {
             let _ = hook_event(&bytes, pane());
             if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
                 let _ = auto_continue::decide(&v);
+            }
+        }
+        // The activity tap sees the same hostile bodies; a tiny queue that is
+        // never drained also exercises the full-queue path.
+        let (tap, _held) = ActivityTap::new(4);
+        tap.enabled.store(true, Ordering::Relaxed);
+        let mut seed = 0x1234_5678_9abc_def1u64;
+        for _ in 0..20_000 {
+            let len = (rng(&mut seed) % 200) as usize;
+            let bytes: Vec<u8> = (0..len)
+                .map(|_| alphabet[(rng(&mut seed) % alphabet.len() as u64) as usize])
+                .collect();
+            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                tap.offer_hook(pane(), &v);
+            }
+        }
+        for v in [
+            r#"{"hook_event_name":"PostToolUse","session_id":7,"cwd":[],"tool_name":{},"tool_input":"oops","tool_response":5}"#,
+            r#"{"hook_event_name":"PostToolUse","tool_name":"MultiEdit","tool_input":{"edits":[null,1,{"file_path":7}]},"tool_response":{"stdout":[1]}}"#,
+            r#"{"hook_event_name":"UserPromptSubmit","prompt":"İ x"}"#,
+            r#"{"hook_event_name":["Stop"]}"#,
+            r#"[1,2,3]"#,
+            r#""Stop""#,
+        ] {
+            if let Ok(v) = serde_json::from_str::<Value>(v) {
+                tap.offer_hook(pane(), &v);
             }
         }
         // Valid JSON of hostile shape, and truncations of a real payload.
@@ -1417,6 +1528,7 @@ mod tests {
                     let _ = atx.lock().send((p, d.clone()));
                 }),
             },
+            ActivityTap::off(),
         )
         .unwrap();
         (port, rx, arx)
@@ -1516,5 +1628,151 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(5)).unwrap().event,
             "PreToolUse"
         );
+    }
+    /// A receiver with the activity tap on (queue of `cap`) and nobody
+    /// reading the activity side.
+    fn start_tapped(
+        cap: usize,
+        enabled: bool,
+    ) -> (
+        u16,
+        mpsc::Receiver<HookEvent>,
+        ActivityTap,
+        Receiver<(Uuid, ActivityMsg)>,
+    ) {
+        let listener = bind_loopback(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        let tx = parking_lot::Mutex::new(tx);
+        let (tap, arx) = ActivityTap::new(cap);
+        tap.enabled.store(enabled, Ordering::Relaxed);
+        serve(
+            listener,
+            TOKEN.into(),
+            Arc::new(ours),
+            Arc::new(move |ev| {
+                let _ = tx.lock().send(ev);
+            }),
+            AutoContinue::off(),
+            tap.clone(),
+        )
+        .unwrap();
+        (port, rx, tap, arx)
+    }
+
+    const WRITE: &str = r#"{"hook_event_name":"PostToolUse","session_id":"s1","cwd":"/hook/claim",
+        "tool_name":"Write","tool_input":{"file_path":"/r/a.txt","content":"SECRET BODY"},
+        "tool_response":{"filePath":"/r/a.txt"}}"#;
+
+    #[test]
+    fn tap_queues_a_clipped_event_and_the_reply_is_unchanged() {
+        let (port, rx, tap, arx) = start_tapped(8, true);
+        assert_eq!(
+            send(port, &request(port, &pane().to_string(), TOKEN, "", WRITE)),
+            response(204)
+        );
+        let (p, msg) = arx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(p, pane());
+        let ActivityMsg::Hook(raw) = msg else {
+            panic!("expected a hook message")
+        };
+        assert_eq!(raw.paths, vec!["/r/a.txt"]);
+        assert!(!format!("{raw:?}").contains("SECRET BODY"));
+        assert_eq!(tap.stats.pending.load(Ordering::SeqCst), 1);
+        // The registry still got its event.
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap().event,
+            "PostToolUse"
+        );
+    }
+
+    #[test]
+    fn tap_off_or_not_accepted_queues_nothing() {
+        let (port, _rx, tap, arx) = start_tapped(8, false);
+        let p = pane().to_string();
+        assert_eq!(
+            send(port, &request(port, &p, TOKEN, "", WRITE)),
+            response(204)
+        );
+        // Enabled, but the request is refused, ignored or malformed.
+        tap.enabled.store(true, Ordering::Relaxed);
+        assert_eq!(
+            send(port, &request(port, &p, "wrong", "", WRITE)),
+            response(403)
+        );
+        assert_eq!(send(port, &request(port, &p, "", "", WRITE)), response(204));
+        assert_eq!(
+            send(
+                port,
+                &request(port, &p, TOKEN, "Origin: http://evil\r\n", WRITE)
+            ),
+            response(403)
+        );
+        assert_eq!(
+            send(port, &request(port, &p, TOKEN, "", "{nope")),
+            response(400)
+        );
+        assert!(arx.recv_timeout(Duration::from_millis(300)).is_err());
+        assert_eq!(tap.stats.pending.load(Ordering::SeqCst), 0);
+    }
+
+    /// The worker is stalled and the queue is full: replies stay fast, the
+    /// registry still gets every event, and the overflow is counted.
+    #[test]
+    fn a_full_activity_queue_never_delays_the_reply() {
+        let (port, rx, tap, _arx) = start_tapped(1, true);
+        let p = pane().to_string();
+        let t = Instant::now();
+        for _ in 0..30 {
+            assert_eq!(
+                send(port, &request(port, &p, TOKEN, "", WRITE)),
+                response(204)
+            );
+        }
+        assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+        for _ in 0..30 {
+            rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        assert_eq!(tap.stats.dropped.load(Ordering::Relaxed), 29);
+        assert_eq!(tap.stats.pending.load(Ordering::SeqCst), 1);
+    }
+
+    /// A closed worker (receiver gone) is the same as a full one.
+    #[test]
+    fn a_closed_activity_queue_is_harmless() {
+        let (port, _rx, tap, arx) = start_tapped(4, true);
+        drop(arx);
+        let p = pane().to_string();
+        assert_eq!(
+            send(port, &request(port, &p, TOKEN, "", WRITE)),
+            response(204)
+        );
+        assert_eq!(tap.stats.pending.load(Ordering::SeqCst), 0);
+    }
+
+    /// Auto-continue's JSON decision is unchanged with the tap on.
+    #[test]
+    fn tap_does_not_change_the_auto_continue_decision() {
+        let listener = bind_loopback(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tap, arx) = ActivityTap::new(8);
+        tap.enabled.store(true, Ordering::Relaxed);
+        serve(
+            listener,
+            TOKEN.into(),
+            Arc::new(ours),
+            Arc::new(|_| {}),
+            AutoContinue {
+                enabled: Arc::new(ours),
+                on_answer: Arc::new(|_, _| {}),
+            },
+            tap,
+        )
+        .unwrap();
+        let resp = send(port, &request(port, &pane().to_string(), TOKEN, "", ASK));
+        assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");
+        // PreToolUse is recorded as a tool start.
+        let (_, msg) = arx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(msg, ActivityMsg::Hook(_)));
     }
 }

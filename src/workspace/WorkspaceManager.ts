@@ -5,6 +5,7 @@
 
 import type {
   AccountProfile,
+  ActivityConfig,
   AgentSnapshot,
   Config,
   DetectedAgent,
@@ -13,9 +14,12 @@ import type {
   PaneSpec,
   ShellProfile,
   SplitDir,
+  SummarizerConfig,
   Uuid,
+  WebhookDestination,
   Workspace,
 } from "../types";
+import { defaultActivity, defaultSummarizer } from "../settings/activityModel";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { api, fsApi, gitApi } from "../ipc/bridge";
 import { TerminalPane, type PendingPromptState } from "../terminal/TerminalPane";
@@ -61,7 +65,7 @@ import {
 } from "../layout/tabs";
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
-import { t } from "../i18n/i18n";
+import { getLang, t } from "../i18n/i18n";
 import {
   clearAccountRefs,
   effectiveAccount,
@@ -2624,6 +2628,51 @@ export class WorkspaceManager {
         console.error("saveConfig failed", e);
       });
     }, 500) as unknown as number;
+  }
+
+  /// Mirror the UI language into `activity.language` so the backend's rule-based
+  /// summaries follow it. No-op when unchanged (or the config predates the field).
+  setActivityLanguage(lang: string): void {
+    const a = this.config.activity;
+    if (!a || a.language === lang) return;
+    a.language = lang;
+    this.persistDebounced();
+  }
+
+  // ── Activity log / summarizer / webhooks (Settings -> Activity) ───────────
+  // Plain config sections: the backend reads them from the saved config, so
+  // each setter just stores and schedules a save. Secrets are NOT here.
+
+  get activityConfig(): ActivityConfig {
+    return this.config.activity ?? defaultActivity(getLang());
+  }
+
+  setActivityConfig(next: ActivityConfig): void {
+    this.config.activity = next;
+    this.persistDebounced();
+  }
+
+  get summarizerConfig(): SummarizerConfig {
+    return this.config.summarizer ?? defaultSummarizer();
+  }
+
+  setSummarizerConfig(next: SummarizerConfig): void {
+    this.config.summarizer = next;
+    this.persistDebounced();
+  }
+
+  get webhookDestinations(): readonly WebhookDestination[] {
+    return this.config.webhooks ?? [];
+  }
+
+  setWebhookDestinations(next: WebhookDestination[]): void {
+    this.config.webhooks = next;
+    this.persistDebounced();
+  }
+
+  /// Display name of a workspace for the activity list; "" when it no longer exists.
+  workspaceName(wsId: number): string {
+    return this.config.workspaces.find((w) => w.id === wsId)?.name ?? "";
   }
 
   /// Await any debounced save so the backend's config matches the UI before

@@ -9,6 +9,8 @@ pub mod agent_binding;
 pub mod agent_hooks;
 // The "+" launcher's agent table and PATH/known-dir detection (pure).
 pub mod accounts;
+// Activity log: redaction, hook/Codex extraction, turn tracking, JSONL store (pure).
+pub mod activity;
 pub mod agent_launch;
 pub mod agent_scan;
 pub mod agent_scan_disk;
@@ -39,9 +41,17 @@ pub mod pty;
 // Close-to-tray / quit handshake state machine (pure; wired in `tray`).
 pub mod quit_gate;
 pub mod scrollback;
+// Webhook/LLM secret store: DPAPI on Windows, 0600 elsewhere (pure file I/O).
+pub mod secrets;
+// Attachment eligibility for webhooks: containment, deny globs, type sniff, caps.
+pub mod attach;
 pub mod shell;
 pub mod textfile;
 pub mod token_usage;
+// Activity summaries (rule/LLM request builders + parsers) and webhook
+// delivery (payloads, signing, backoff, queue). Pure; no network here.
+pub mod summarizer;
+pub mod webhooks;
 
 // Reading an image off the OS clipboard. Desktop-only because `arboard` pulls
 // X11/Wayland system deps on Linux; the PNG encoding it needs is in the

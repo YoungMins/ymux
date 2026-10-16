@@ -7,6 +7,9 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  ActivityRecord,
+  WebhookDestStatus,
+  WebhookPreview,
   AgentSnapshot,
   BootstrapPayload,
   Config,
@@ -329,6 +332,43 @@ async function safeListen<T>(
     throw new Error(`listen ${channel}: ${describeError(e)}`);
   }
 }
+
+/// The activity log (src-tauri/src/activity/runtime.rs). Records are
+/// redacted before they reach disk, so nothing here is sensitive.
+export const activityApi = {
+  /// Newest `n` records (the backend caps it at 1000), oldest first.
+  read: (n: number): Promise<ActivityRecord[]> => call("activity_read", { n }),
+  /// Delete every daily log file; resolves with how many were removed.
+  clear: (): Promise<{ files: number }> => call("activity_clear"),
+  /// Open the log folder in the OS file manager.
+  openDir: (): Promise<void> => call("activity_open_dir"),
+};
+
+/// Webhook destinations and LLM summaries (src-tauri/src/webhooks/runtime.rs).
+/// Secrets are write-only: nothing here ever returns a URL, HMAC secret or key.
+export const webhookApi = {
+  /// Store (empty clears) a destination's "url" or "secret". The destination
+  /// must already be saved. Resolves with the new display hint (scheme+host).
+  setSecret: (id: string, field: "url" | "secret", value: string): Promise<string> =>
+    call("webhook_set_secret", { id, field, value }),
+  secretStatus: (id: string): Promise<{ url: boolean; secret: boolean; insecure: boolean }> =>
+    call("webhook_secret_status", { id }),
+  /// Sends a synthetic event through the real path; `error` is a kind only.
+  test: (id: string): Promise<{ ok: boolean; status: number | null; error: string | null }> =>
+    call("webhook_test", { id }),
+  /// What the latest turn_end would send (null when there is none yet).
+  preview: (id: string): Promise<WebhookPreview | null> => call("webhook_preview", { id }),
+  status: (): Promise<Record<string, WebhookDestStatus>> => call("webhook_status"),
+};
+
+export const summarizerApi = {
+  listModels: (): Promise<string[]> =>
+    call("summarizer_list_models"),
+  /// `used_llm` false means the model failed and `text` is the rule summary.
+  test: (): Promise<{ used_llm: boolean; text: string }> => call("summarizer_test"),
+  setApiKey: (value: string): Promise<void> => call("summarizer_set_api_key", { value }),
+  keyStatus: (): Promise<{ set: boolean }> => call("summarizer_key_status"),
+};
 
 export const api = {
   getTokenUsage: (refreshQuota = false): Promise<TokenUsage> => call("get_token_usage", { refreshQuota }),

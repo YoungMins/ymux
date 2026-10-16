@@ -46,9 +46,16 @@ pub struct WorktreeEntry {
 /// `GIT_OPTIONAL_LOCKS=0` (the env form of `--no-optional-locks`): a pane
 /// that refreshes on focus must not take `index.lock` for a `git status`
 /// stat-cache refresh while the user runs `git commit` in a terminal pane.
+///
+/// `-c core.fsmonitor=false`: a repository can configure `core.fsmonitor` as a
+/// command, which git runs on `status`/`diff`. ymux runs git unattended in
+/// whatever directory an agent works in, so a repo-supplied hook must never
+/// execute from here.
 fn git_command(cwd: &Path) -> Command {
     let mut cmd = Command::new("git");
-    cmd.current_dir(cwd).env("GIT_OPTIONAL_LOCKS", "0");
+    cmd.current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(["-c", "core.fsmonitor=false"]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -82,6 +89,21 @@ pub fn is_git_repo(cwd: &Path) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Does the repo's own config define a `filter.*` driver (clean/smudge/
+/// process)? `git diff` and `git status` run those drivers, i.e. a command the
+/// repo chose, so best-effort background callers skip such repos. Anything
+/// other than a clean "no match" (exit 1) also answers `true`.
+pub fn has_local_filter_drivers(cwd: &Path) -> bool {
+    match git_command(cwd)
+        .args(["config", "--local", "--get-regexp", r"^filter\."])
+        .output()
+    {
+        Ok(o) if o.status.code() == Some(1) => false,
+        Ok(o) if o.status.success() => !o.stdout.iter().all(u8::is_ascii_whitespace),
+        _ => true,
+    }
 }
 
 /// Resolve the top-level directory of the repo containing `cwd`.
@@ -205,7 +227,7 @@ pub fn lane_meta(cwd: &Path) -> YmuxResult<LaneMeta> {
 }
 
 /// Short name of the branch HEAD points at in `cwd`; `None` when detached.
-fn current_branch(cwd: &Path) -> Option<String> {
+pub fn current_branch(cwd: &Path) -> Option<String> {
     let out = git_command(cwd)
         .args(["symbolic-ref", "-q", "--short", "HEAD"])
         .output()
@@ -3144,5 +3166,48 @@ tail\n\
         assert_eq!(d.hunks[0].lines.len(), 2);
 
         cleanup_dir(&dir);
+    }
+
+    /// A repo-configured `core.fsmonitor` command must not run from ymux's
+    /// unattended git calls.
+    #[test]
+    fn git_command_never_runs_a_repo_fsmonitor_hook() {
+        if !git_available() {
+            return;
+        }
+        let repo = init_test_repo("fsmonitor-off");
+        let marker = repo.join("fsmonitor-ran.marker");
+        let script = repo.join("fsmon.sh");
+        let fwd = |p: &Path| p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho ran > '{}'\nexit 1\n", fwd(&marker)),
+        )
+        .unwrap();
+        git_ok(
+            &repo,
+            &[
+                "config",
+                "core.fsmonitor",
+                &format!("sh '{}'", fwd(&script)),
+            ],
+        );
+        // Control: plain git does run it (else this test proves nothing).
+        let _ = Command::new("git")
+            .current_dir(&repo)
+            .args(["status", "--porcelain"])
+            .output();
+        let control = marker.exists();
+        let _ = std::fs::remove_file(&marker);
+        let out = git_command(&repo)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("run git");
+        assert!(out.status.success());
+        assert!(!marker.exists(), "fsmonitor hook ran under git_command");
+        if !control {
+            eprintln!("note: this git never ran the fsmonitor control");
+        }
+        cleanup_dir(&repo);
     }
 }

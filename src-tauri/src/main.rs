@@ -157,6 +157,9 @@ fn main() {
             .expect("default load cannot fail")
     });
 
+    // A defaulted config must never delete webhook secrets.
+    ymux_lib::webhooks::runtime::set_prune_allowed(layout_from_disk);
+
     // Resumable agent sessions, loaded from disk once at startup. A missing
     // or corrupt file loads as an empty store (see `agent_sessions::load_from`)
     // — panes then just start normally. Records for panes the saved layout no
@@ -231,6 +234,18 @@ fn main() {
             ymux_lib::commands::write_pane,
             ymux_lib::commands::resize_pane,
             ymux_lib::commands::kill_pane,
+            ymux_lib::activity::runtime::activity_read,
+            ymux_lib::activity::runtime::activity_clear,
+            ymux_lib::activity::runtime::activity_open_dir,
+            ymux_lib::webhooks::runtime::webhook_set_secret,
+            ymux_lib::webhooks::runtime::webhook_secret_status,
+            ymux_lib::webhooks::runtime::webhook_test,
+            ymux_lib::webhooks::runtime::webhook_preview,
+            ymux_lib::webhooks::runtime::webhook_status,
+            ymux_lib::webhooks::runtime::summarizer_list_models,
+            ymux_lib::webhooks::runtime::summarizer_test,
+            ymux_lib::webhooks::runtime::summarizer_set_api_key,
+            ymux_lib::webhooks::runtime::summarizer_key_status,
             ymux_lib::commands::set_active_workspace,
             ymux_lib::commands::get_pane_cwd,
             ymux_lib::commands::open_url,
@@ -352,6 +367,10 @@ fn main() {
                 let opt_in = std::env::var(DEV_HOOKS_ENV).ok();
                 startup_refresh_allowed(cfg!(debug_assertions), opt_in.as_deref())
             };
+            // The activity worker and its tap, before the receiver takes the tap.
+            ymux_lib::activity::runtime::start(app.handle());
+            // Webhooks and LLM summaries subscribe to the activity hub.
+            ymux_lib::webhooks::runtime::start(app.handle());
             let token = ymux_lib::hook_http::new_token();
             let hook_port = ymux_lib::commands::start_hook_receiver(
                 app.handle(),

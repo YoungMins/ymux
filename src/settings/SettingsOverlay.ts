@@ -15,6 +15,7 @@ import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
 import { SHORTCUTS, splitShortcutKeys } from "./shortcutList";
 import { newAccountId, normalizeColor } from "../accounts/accountModel";
 import type { AccountProfile } from "../types";
+import { renderActivitySection } from "./ActivitySection";
 
 interface SyntaxField {
   key: keyof YTheme["syntax"];
@@ -35,6 +36,7 @@ const SYNTAX_FIELDS: SyntaxField[] = [
 const SECTIONS: { id: SettingsSection; tKey: string; icon: string }[] = [
   { id: "general", tKey: "settings.section.general", icon: "⚙" },
   { id: "accounts", tKey: "settings.section.accounts", icon: "👤" },
+  { id: "activity", tKey: "settings.section.activity", icon: "🔔" },
   { id: "syntax", tKey: "settings.section.syntax", icon: "✦" },
   { id: "shortcuts", tKey: "settings.section.shortcuts", icon: "⌨" },
   { id: "config", tKey: "settings.section.config", icon: "📁" },
@@ -128,7 +130,12 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     renderCurrentSection();
   }
 
+  // Stops the Activity section's status polling when it is left or closed.
+  let disposeSection: (() => void) | null = null;
+
   function renderCurrentSection(): void {
+    disposeSection?.();
+    disposeSection = null;
     content.innerHTML = "";
     const section = document.createElement("section");
     section.className = "settings-section";
@@ -138,6 +145,11 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
         break;
       case "accounts":
         renderAccounts(section);
+        break;
+      case "activity":
+        disposeSection = renderActivitySection(section, manager, {
+          goToGeneral: () => switchSection("general"),
+        });
         break;
       case "syntax":
         renderSyntax(section);
@@ -714,6 +726,8 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
   function hide(): void {
     if (!isOpen) return;
     isOpen = false;
+    disposeSection?.();
+    disposeSection = null;
     popPopup();
     backdrop.classList.remove("settings-backdrop--visible");
     modal.classList.remove("settings-modal--visible");
@@ -740,6 +754,7 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
 
   return () => {
     cleanupLang();
+    disposeSection?.();
     document.removeEventListener("keydown", onKey);
     btn.remove();
     backdrop.remove();

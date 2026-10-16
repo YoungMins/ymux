@@ -193,6 +193,12 @@ pub fn save_config(
     let accounts_before = state.config.snapshot().accounts;
     state.config.update(|c| c.merge_layouts_from(incoming));
     state.config.flush()?;
+    if let Some(rt) = app.try_state::<crate::activity::runtime::ActivityRuntime>() {
+        rt.apply_config(&state.config.snapshot().activity);
+    }
+    if let Some(wh) = app.try_state::<crate::webhooks::runtime::WebhookRuntime>() {
+        wh.sync_destinations(&state.config.snapshot().webhooks);
+    }
     // A changed account list may add or drop Claude config dirs that carry
     // hooks. Separate thread: the dirs can be on a slow network share.
     if state.config.snapshot().accounts != accounts_before {
@@ -333,11 +339,15 @@ pub fn resize_pane(
 pub fn kill_pane(
     webview: Webview,
     request: Request<'_>,
+    app: AppHandle,
     state: State<'_, AppState>,
     id: Uuid,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "kill_pane")?;
     state.auto_continue.set(id, false);
+    if let Some(rt) = app.try_state::<crate::activity::runtime::ActivityRuntime>() {
+        rt.forget_pane(id);
+    }
     state.pty.kill(id)
 }
 
@@ -937,6 +947,11 @@ pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) ->
     let apply = app.clone();
     let auto_on = app.clone();
     let auto_log = app.clone();
+    // Created in `setup` before this runs; without it capture is simply off.
+    let tap = app
+        .try_state::<crate::activity::runtime::ActivityRuntime>()
+        .map(|rt| rt.tap.clone())
+        .unwrap_or_else(hook_http::ActivityTap::off);
     let served = hook_http::serve(
         listener,
         token,
@@ -953,6 +968,7 @@ pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) ->
                 }
             }),
         },
+        tap,
     );
     if let Err(e) = served {
         tracing::error!(error = %e, "failed to start the Claude Code hook receiver");

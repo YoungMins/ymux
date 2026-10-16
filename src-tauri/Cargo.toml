@@ -84,6 +84,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # reason `ypath` and `png` are unconditional.
 url = "2"
 
+# Secret redaction patterns for the activity log (`activity::redact`). Pure
+# Rust, already in the dependency graph, and not behind `desktop` so the
+# redaction tests run under `--no-default-features` on Linux CI.
+regex = "1"
+
 # OS desktop notifications, exposed to the frontend via the `notify` command.
 # Desktop-only because it wraps a native Tauri plugin.
 tauri-plugin-notification = { version = "2", optional = true }
@@ -133,11 +138,18 @@ windows = { version = "0.56", features = [
     "Win32_Storage_FileSystem",
     # setsockopt(SO_EXCLUSIVEADDRUSE) for the hook receiver (hook_http).
     "Win32_Networking_WinSock",
+    # CryptProtectData / CryptUnprotectData: DPAPI seal of secrets.json (secrets).
+    "Win32_Security_Cryptography",
 ] }
 # Creates the hook receiver's socket so SO_EXCLUSIVEADDRUSE can be set before
 # bind. Already in the lock via reqwest/tokio; Windows-only because Unix
 # needs no extra socket option.
 socket2 = "0.6"
+
+# O_NOFOLLOW for the attachment no-follow open (attach.rs). Already in the
+# lock via std's dependencies and Tauri.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = ["desktop"]

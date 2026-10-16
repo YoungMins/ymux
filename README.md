@@ -179,6 +179,178 @@ is dimmed until you restart it). Token usage reads every configured account's
 folders, and session resume looks in the folder of the account the terminal
 ran under.
 
+#### Review changes
+
+Read an agent's work as a diff and send line comments straight back to it.
+Open it from the command palette (**"Review changes"**), the Git pane's
+**Review changes** button or a worktree row, or **Review** in the fan-out
+compare view. It is a full-window overlay for one repository or worktree (Esc
+or ✕ closes it; it is kept alive while hidden, and nothing about it is saved to
+your layout).
+
+- **Files and hunks**: the changed files are listed on the left, the selected
+  file's hunks on the right, in **unified** or **split** view. Untracked files
+  show as additions, binary files are marked, and very large diffs are
+  truncated (3000 files; 512 KiB of patch per file).
+- **Compare with**: `HEAD` (everything uncommitted, the default) or a branch,
+  which diffs against the merge-base. **Ignore CR** hides CRLF-only noise. The
+  view refreshes when the window regains focus and when the agent finishes.
+- **Comments**: click a line to comment, Shift+click to extend a range. Comments
+  live only in the overlay (closing it discards them); if the code moves under
+  a comment, it is marked "moved or gone" instead of pointing at the wrong line.
+- **Send to agent**: pastes your comments (each with its file, line and a few
+  lines of context) into the terminal of the agent running in that repository.
+  If several agents match, you pick one. ymux presses Enter for you **only if
+  "Press Enter after sending" is ticked**; it is off by default. It will not
+  paste while the agent is waiting on a permission or trust prompt, nor into a
+  terminal that is not accepting pasted text, and when there is no agent at all
+  it copies the text to the clipboard instead. A prompt over 32 KiB asks first.
+
+#### Attention inbox
+
+The workspace bar has a bell with a badge counting panes that need attention
+(an agent asked a question or needs approval) or have finished while you were
+elsewhere. Click it for the list (attention items first), plus the last 20
+you have already read; picking a row jumps to that pane. `Ctrl+Shift+U` jumps
+straight to the next pane that needs attention. Focusing a pane marks it read.
+
+#### Fan-out
+
+Give one prompt to several agents, each in its own git worktree, and compare
+what comes back. Run **"Fan out prompt to agents…"** from the command palette:
+
+| Field | Meaning |
+|-------|---------|
+| Repository / Base branch | Where the worktrees branch from |
+| Agents | 1 to 8 lanes; each is Claude Code or Codex, with an optional account |
+| Branch prefix | Default `fanout`. Branches are named `<prefix>/<run>-<agent>-<n>` |
+| Prompt | Up to 32 KiB, sent to every lane |
+| Open in a new workspace | Put the lanes in a fresh workspace |
+| Press Enter automatically | On by default. Off: the prompt is typed and you press Enter |
+
+Each lane gets a new branch and worktree (the same location as worktree panes,
+`.ymux-worktrees` unless `worktree_base_dir` is set) and a terminal running the
+plain agent command. Fan-out adds **no** permission-bypass flags. Two lanes sit
+side by side, up to four in a grid, more in tabs. The prompt is pasted once the
+agent is ready, never put on the command line. If the agent shows a trust
+dialog or any other question, that lane waits until you answer it in its pane.
+After 90 seconds without a ready agent you get **Send now** or **Copy prompt**.
+A lane that fails to start is reported and everything already created is kept.
+
+**"Compare fan-out lanes…"** lists each lane's status, files changed (+/−) and
+commits ahead, with **Review** (opens the diff against the fan-out base),
+**Focus pane** and **Keep…**. Keep never merges: it shows the merge command,
+types it in the main worktree for you to run, and offers to clean up the other
+lanes. Cleanup removes the worktrees you confirm and deletes branches with
+`git branch -d`, so an unmerged branch survives.
+
+### Activity log & notifications
+
+Optional and **off by default**: **Settings → Activity & notifications**. ymux
+can keep a local log of what your agents did and send a short report to chat or
+a webhook when a turn ends or an agent needs you. It costs no model tokens;
+nothing leaves your PC unless you add a destination.
+
+**What is recorded.** One JSON line per prompt, tool call, permission request
+and finished turn. Claude Code events come from the hook tracking above (so it
+must be on); Codex turns are read from the CLI's own session file, only for
+terminals ymux already tracks. A tool record keeps the tool name, the file paths
+it touched (clipped), a clipped command line and its exit code. A finished turn
+adds duration, changed files with +/− counts from `git diff --stat`, and
+whether a test run passed. **Not recorded**: file contents, tool output,
+full transcripts, and, unless you tick **Record prompt text**,
+your prompts and the assistant's reply text.
+
+**Redaction.** Everything is redacted before it reaches disk, a summarizer or a
+webhook: private-key blocks, vendor tokens (`sk-…`, `ghp_…`, `xox…`, AWS and
+Google keys), JWTs, `Bearer` headers, `user:pass@` URLs, chat-webhook URLs and
+`key=value` secrets. This is pattern matching, not a guarantee.
+
+**Storage.** One file per day, `activity/YYYY-MM-DD.jsonl` in the ymux config
+directory (see [Configuration](#configuration)). Logs are deleted after 14 days
+(**Keep logs**), the total is capped at 200 MiB (`max_total_mb`) and one day at
+20 MiB, dropping tool records first. **Open log folder** and **Clear log** are
+in the same section, which also lists recent turns.
+
+**Summaries.** Written when a turn ends, from the facts above, never from
+transcripts:
+
+- **Built-in rules** (default): no model, offline. Templates exist for English,
+  Korean and Japanese (other languages get English).
+- **Ollama**: use **Load models** to list what you have pulled and pick one. A
+  small model is plenty. Install [Ollama](https://ollama.com), then for example:
+
+  ```sh
+  ollama pull gemma3:1b
+  ```
+
+  The default endpoint is `http://127.0.0.1:11434`.
+- **OpenAI-compatible** (LM Studio and similar): endpoint, model and an API key
+  that is stored encrypted and never shown again.
+
+The endpoint must be on this computer: the host is checked after name
+resolution, so a name that points elsewhere is refused. **Allow remote
+endpoint** lifts that, after which turn text is sent to that server. Requests
+time out after 20 seconds by default, and any failure falls back to the
+built-in summary. **Test summary** shows what a model returns.
+
+**Webhook destinations.** Add as many as you like (up to 20), each with its own
+settings:
+
+| Format | Notes |
+|--------|-------|
+| JSON (generic) | Signed (below); multipart when files are attached |
+| Slack | Incoming-webhook blocks; attachments are listed by name only |
+| Discord | Embeds; files uploaded within Discord's size limit, up to 10 |
+| Microsoft Teams | Workflows Adaptive Card; attachments are listed by name only |
+
+Per destination: enabled, name, URL, events (**Turn finished**, **Needs
+attention**), detail (**Summary** or **Full**: adds pane, account, working
+folder, files and test result), **Include prompts** (off), a batch window
+(default 10 s; up to 10 events go in one message), and an optional HMAC secret.
+**Send test** and **Preview payload** show what would go out. Failed deliveries
+are queued on disk (200 messages or 5 MiB per destination) and retried with
+back-off (5 s doubling to 30 min, 8 tries, honoring `Retry-After`); redirects
+are never followed. **A webhook URL is a credential**: anyone who has it can
+post to that channel, so ymux stores it (and the secret and API key) encrypted
+in `secrets.json` (Windows DPAPI; a `0600` file on macOS), never in
+`config.toml`, and never shows it again. An `http://` URL is flagged because
+the report would cross the network unencrypted.
+
+Verifying the JSON format. Each request carries `X-Ymux-Timestamp` (Unix
+seconds), `X-Ymux-Delivery` (a unique id) and, when a secret is set,
+`X-Ymux-Signature: sha256=<hex>` with `hex(HMAC-SHA256(secret, timestamp + "." +
+body))`. For a multipart request the signed body is the first part, `payload`.
+
+```python
+import hmac, hashlib
+
+def verify(secret: str, timestamp: str, body: bytes, signature: str) -> bool:
+    mac = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256)
+    return hmac.compare_digest("sha256=" + mac.hexdigest(), signature)
+```
+
+Also reject timestamps far from now and repeated delivery ids.
+
+**Attachments.** Per destination, off by default: send the files a turn
+produced with its report. Candidates are files the turn created or changed
+inside the terminal's repository or worktree, plus anything placed in the
+report folder (`.ymux/report` by default, **Report folder**) during the turn.
+Allowed types, which you choose (none by default): images (png, jpg, gif, webp),
+PDF, audio (mp3, wav, ogg), video (mp4, webm), Office documents (docx, xlsx,
+pptx) and text (md, txt, csv). Defaults: 8 MB per file, 8 MB in total, 4 files
+(limits 25 MB and 10 files). A file is sent only if it is a regular file, not a
+symlink, with a single hard link, whose contents match its extension (a text
+file that contains a secret is refused), and whose name is not sensitive
+(`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*secret*`, `*credentials*`, and similar,
+or anything under `.git`, `.ssh`, `.aws`). It is checked again, from the open
+file, at the moment of sending. Anything that fails or exceeds a limit is listed
+by name instead; the delivery itself never fails because of it.
+
+**Downgrading.** Versions up to 0.13.9 do not know this feature: opening one
+drops the webhook list from `config.toml` (the encrypted secrets stay in
+`secrets.json`), so back up your destinations first.
+
 ### Side panel: Files and Usage
 
 One panel on the right, shared by all workspaces. Icons at the top switch
@@ -217,7 +389,7 @@ launcher, or the command palette.
 |------|--------------|
 | **Files** | Browse, preview, rename, create, multi-select, copy/move, overwrite prompts, delete to trash (with confirmation) |
 | **Editor** | Syntax-highlighted text editor: save, find/replace, go to line, CRLF/BOM preserved, unsaved-changes guard, crash-safety drafts, external-change detection |
-| **Git** | Commit graph, branch list and checkout, worktree add/remove (with confirmation) |
+| **Git** | Commit graph, branch list and checkout, worktree add/remove (with confirmation), **Review changes** (diff review) |
 | **Browser** | Iframe browser with URL bar and back / forward / reload; the URL persists across switches and restarts |
 
 > **Note:** the browser pane is an HTML `<iframe>`, so sites that refuse
@@ -314,8 +486,10 @@ ymux has no accounts, analytics or telemetry, and runs no servers. Layouts,
 scrollback, notes and settings stay on your PC. The only requests ymux makes on
 its own are the GitHub update check and, if you use the Usage view, quota
 requests to Anthropic and OpenAI that send the token those CLIs already stored
-locally to the provider that issued it. See the full
-[privacy policy](./packaging/microsoft-store/PRIVACY.md).
+locally to the provider that issued it. If you turn on the activity log you
+may also point ymux at webhook destinations and a summarizer endpoint; data goes
+only where you send it (see [Activity log & notifications](#activity-log--notifications)).
+See the full [privacy policy](./packaging/microsoft-store/PRIVACY.md).
 
 ## Development
 

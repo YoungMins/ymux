@@ -112,6 +112,78 @@ pub struct Config {
     /// `CONFIG_VERSION` bump.
     #[serde(default)]
     pub accounts: Vec<AccountProfile>,
+    /// Activity log (opt-in). User setting, copied in `merge_layouts_from`.
+    /// Additive with a serde default, no `CONFIG_VERSION` bump.
+    #[serde(default)]
+    pub activity: ActivityConfig,
+    /// How turn summaries are produced. User setting, copied in
+    /// `merge_layouts_from`. Additive with a serde default.
+    #[serde(default)]
+    pub summarizer: SummarizerConfig,
+    /// Webhook destinations. User setting, copied (sanitized) in
+    /// `merge_layouts_from`. Only `url_hint` is backend-owned: the URL and
+    /// HMAC secret live in the secrets store. Additive, serde default.
+    #[serde(default)]
+    pub webhooks: Vec<crate::webhooks::WebhookDestination>,
+}
+
+/// Activity log settings. Off by default: recording what an agent did is
+/// opt-in. Plain scalars and strings only (rule 3).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ActivityConfig {
+    pub enabled: bool,
+    /// Daily log files older than this many days are deleted.
+    pub retention_days: u32,
+    /// Total size cap across all daily files, in MiB.
+    pub max_total_mb: u32,
+    /// Keep (clipped, redacted) prompt text in the log.
+    pub record_prompts: bool,
+    /// Per-repo folder whose files ride along with a turn's report.
+    pub report_dir: String,
+    /// App language code (the frontend mirrors its UI language here) for the
+    /// rule-based summary. Anything unknown falls back to English.
+    pub language: String,
+}
+
+impl Default for ActivityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention_days: 14,
+            max_total_mb: 200,
+            record_prompts: false,
+            report_dir: ".ymux/report".to_owned(),
+            language: "en".to_owned(),
+        }
+    }
+}
+
+/// Turn-summary provider settings. `provider` is "rule" (default, offline),
+/// "ollama" or "openai". The endpoint must be loopback unless `allow_remote`.
+/// The API key is never here: it lives in the backend-owned secrets store.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SummarizerConfig {
+    pub provider: String,
+    pub endpoint: String,
+    pub model: String,
+    pub timeout_secs: u32,
+    pub max_input_chars: u32,
+    pub allow_remote: bool,
+}
+
+impl Default for SummarizerConfig {
+    fn default() -> Self {
+        Self {
+            provider: "rule".to_owned(),
+            endpoint: "http://127.0.0.1:11434".to_owned(),
+            model: String::new(),
+            timeout_secs: 20,
+            max_input_chars: 8000,
+            allow_remote: false,
+        }
+    }
 }
 
 /// One AI-CLI account: where Claude Code and Codex keep their login/config.
@@ -181,6 +253,9 @@ impl Default for Config {
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         }
     }
 }
@@ -264,6 +339,11 @@ impl Config {
         self.font_size = incoming.font_size;
         self.default_shell = incoming.default_shell;
         self.accounts = incoming.accounts;
+        self.activity = incoming.activity;
+        self.summarizer = incoming.summarizer;
+        // Sanitized: invalid/duplicate ids dropped, and `url_hint` is never
+        // taken from the frontend (the backend derives it from the secret URL).
+        self.webhooks = crate::webhooks::sanitize_destinations(incoming.webhooks, &self.webhooks);
         // `agent_tracking` is deliberately NOT copied, the other exception to
         // the rule above: it is backend-owned. `set_agent_tracking` flips it
         // in the same step that installs/removes the Claude Code hooks, so it
@@ -992,6 +1072,131 @@ mod tests {
         assert!(!parsed.agent_tracking);
     }
 
+    #[test]
+    fn activity_and_summarizer_default_when_absent() {
+        let parsed: Config = toml::from_str("version = 9\n").expect("parse");
+        assert_eq!(parsed.activity, ActivityConfig::default());
+        assert!(!parsed.activity.enabled);
+        assert_eq!(parsed.activity.retention_days, 14);
+        assert_eq!(parsed.activity.max_total_mb, 200);
+        assert!(!parsed.activity.record_prompts);
+        assert_eq!(parsed.activity.report_dir, ".ymux/report");
+        assert_eq!(parsed.activity.language, "en");
+        assert_eq!(parsed.summarizer, SummarizerConfig::default());
+        assert_eq!(parsed.summarizer.provider, "rule");
+        assert_eq!(parsed.summarizer.endpoint, "http://127.0.0.1:11434");
+        assert_eq!(parsed.summarizer.timeout_secs, 20);
+        assert_eq!(parsed.summarizer.max_input_chars, 8000);
+        assert!(!parsed.summarizer.allow_remote);
+        // A partial table keeps the other fields at their defaults.
+        let partial: Config =
+            toml::from_str("[activity]\nenabled = true\n[summarizer]\nmodel = \"gemma3:1b\"\n")
+                .expect("parse");
+        assert!(partial.activity.enabled);
+        assert_eq!(partial.activity.retention_days, 14);
+        assert_eq!(partial.summarizer.model, "gemma3:1b");
+        assert_eq!(partial.summarizer.provider, "rule");
+    }
+
+    #[test]
+    fn activity_and_summarizer_roundtrip() {
+        let config = Config {
+            activity: ActivityConfig {
+                enabled: true,
+                retention_days: 3,
+                max_total_mb: 50,
+                record_prompts: true,
+                report_dir: "out/report".into(),
+                language: "ko".into(),
+            },
+            summarizer: SummarizerConfig {
+                provider: "ollama".into(),
+                endpoint: "http://localhost:1234".into(),
+                model: "gemma3:1b".into(),
+                timeout_secs: 5,
+                max_input_chars: 100,
+                allow_remote: true,
+            },
+            ..Config::default()
+        };
+        let s = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&s).expect("parse");
+        assert_eq!(loaded.activity, config.activity);
+        assert_eq!(loaded.summarizer, config.summarizer);
+    }
+
+    /// Unlike `agent_tracking`, these are plain user settings: a save from
+    /// the frontend must stick (rule 11), or they revert on every restart.
+    #[test]
+    fn merge_layouts_sanitizes_webhooks_and_keeps_the_backend_hint() {
+        use crate::webhooks::WebhookDestination;
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut backend = Config {
+            webhooks: vec![WebhookDestination {
+                id: id.clone(),
+                url_hint: "https://hooks.example.com".into(),
+                ..Default::default()
+            }],
+            ..Config::default()
+        };
+        let incoming = Config {
+            webhooks: vec![
+                WebhookDestination {
+                    id: id.clone(),
+                    name: "Team".into(),
+                    url_hint: "https://evil.example".into(),
+                    ..Default::default()
+                },
+                WebhookDestination {
+                    id: "../../x".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Config::default()
+        };
+        backend.merge_layouts_from(incoming);
+        assert_eq!(backend.webhooks.len(), 1);
+        assert_eq!(backend.webhooks[0].name, "Team");
+        assert_eq!(backend.webhooks[0].url_hint, "https://hooks.example.com");
+    }
+
+    #[test]
+    fn webhooks_default_and_roundtrip_in_config_toml() {
+        let parsed: Config = toml::from_str(
+            "version = 9
+",
+        )
+        .expect("parse");
+        assert!(parsed.webhooks.is_empty());
+        let c = Config {
+            webhooks: vec![crate::webhooks::WebhookDestination {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "n".into(),
+                attach_types: vec!["png".into()],
+                ..Default::default()
+            }],
+            ..Config::default()
+        };
+        let s = toml::to_string_pretty(&c).expect("serialize");
+        let loaded: Config = toml::from_str(&s).expect("parse");
+        assert_eq!(loaded.webhooks, c.webhooks);
+    }
+
+    #[test]
+    fn merge_layouts_carries_activity_and_summarizer() {
+        let mut backend = Config::default();
+        let mut incoming = Config::default();
+        incoming.activity.enabled = true;
+        incoming.activity.report_dir = "r".into();
+        incoming.summarizer.provider = "openai".into();
+        incoming.summarizer.allow_remote = true;
+        backend.merge_layouts_from(incoming);
+        assert!(backend.activity.enabled);
+        assert_eq!(backend.activity.report_dir, "r");
+        assert_eq!(backend.summarizer.provider, "openai");
+        assert!(backend.summarizer.allow_remote);
+    }
+
     /// The hook receiver's port is backend-owned like `agent_tracking`: it is
     /// written into `~/.claude/settings.json`, so a stale frontend save must
     /// never move it away from the URL the installed hooks point at.
@@ -1086,6 +1291,9 @@ mod tests {
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1103,6 +1311,9 @@ mod tests {
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -1171,6 +1382,9 @@ mod tests {
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -1208,6 +1422,9 @@ mod tests {
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -1348,6 +1565,9 @@ shell = "PowerShell 7"
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1382,6 +1602,9 @@ shell = "PowerShell 7"
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.shells.len(), 2);
@@ -1452,6 +1675,9 @@ shell = "PowerShell 7"
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1832,6 +2058,9 @@ shell = "PowerShell 7"
             agent_hook_port: 0,
             agent_hook_dirs: Vec::new(),
             accounts: Vec::new(),
+            activity: ActivityConfig::default(),
+            summarizer: SummarizerConfig::default(),
+            webhooks: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

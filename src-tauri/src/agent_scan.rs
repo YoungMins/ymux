@@ -537,6 +537,9 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                         tracing::warn!(error = %e, %pane, "deleting a resumed pane's scrollback failed");
                     }
                 }
+                // Codex has no hooks: its bound sessions' rollouts are tailed
+                // here for the activity log. Outside every lock.
+                crate::activity::runtime::codex_tick(&app, &live);
             }
         })
         .expect("spawn agent scan thread");

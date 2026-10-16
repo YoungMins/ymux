@@ -3322,6 +3322,199 @@ body,
 }
 
 /* ---------------------------------------------------------------------------
+   Settings -> Activity & notifications (src/settings/ActivitySection.ts)
+--------------------------------------------------------------------------- */
+.act-block {
+  margin: 0 0 18px;
+}
+.act-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: start;
+  padding: 6px 0;
+}
+.act-row__label {
+  font-size: 13px;
+  color: var(--fg);
+  padding-top: 5px;
+}
+.act-row__control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.act-row__control > .settings-hex-input {
+  max-width: 100%;
+}
+.act-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+.act-note:empty {
+  display: none;
+}
+.act-note--warn {
+  color: var(--status-warn);
+}
+.act-note--ok {
+  color: var(--status-ok);
+}
+.act-note--error {
+  color: var(--status-critical);
+}
+.act-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.act-inline > .settings-hex-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.act-num {
+  width: 90px;
+}
+.act-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.act-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.act-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.act-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.act-card {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 6px;
+}
+.act-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.act-card__head > .settings-hex-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.act-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.act-status__item b {
+  font-weight: 600;
+}
+.act-status__item--warn {
+  color: var(--status-warn);
+}
+.act-status__item--error {
+  color: var(--status-critical);
+}
+.act-turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 6px;
+}
+.act-turns__item {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 0.9fr) 64px minmax(0, 1.6fr);
+  gap: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.act-turns__item:last-child {
+  border-bottom: none;
+}
+.act-turns__item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.act-turns__time,
+.act-turns__agent {
+  color: var(--fg-muted);
+}
+.act-turns__empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.act-pre {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  max-width: 100%;
+  overflow: auto;
+  background: var(--bg-alt);
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.act-pre--tall {
+  max-height: 46vh;
+}
+.act-preview {
+  width: min(680px, 92vw);
+}
+.act-files {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+@media (max-width: 720px) {
+  .act-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .act-row__label {
+    padding-top: 0;
+  }
+  .act-turns__item {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Diff review overlay (src/diff/DiffReview.ts)
 
    Full-window, runtime-only. Sits under the command palette (200), the notes

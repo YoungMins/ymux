@@ -664,21 +664,33 @@ pub fn transcript_exists_within(
         }
         AgentKind::Codex => {
             let suffix = format!("-{file_name}");
-            codex_find(root, 0, &suffix, &mut budget)
+            codex_find(root, 0, &suffix, &mut budget).is_some()
         }
     }
 }
 
+/// The rollout file of a Codex session, found the same way
+/// [`transcript_exists_within`] looks for it (a bounded, newest-first walk
+/// of `YYYY/MM/DD`). `None` for an invalid id or a rollout not on disk.
+pub fn codex_rollout_path(root: &Path, session_id: &str) -> Option<PathBuf> {
+    if !is_valid_session_id(session_id) {
+        return None;
+    }
+    let suffix = format!("-{session_id}.jsonl");
+    let mut budget = MAX_EXISTS_ENTRIES;
+    codex_find(root, 0, &suffix, &mut budget)
+}
+
 /// Depth-first over `YYYY/MM/DD/rollout-*.jsonl`, newest name first at every
 /// level.
-fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> bool {
+fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> Option<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+        return None;
     };
     let mut names: Vec<(String, PathBuf)> = Vec::new();
     for entry in entries.flatten() {
         if *budget == 0 {
-            return false;
+            return None;
         }
         *budget -= 1;
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
@@ -686,7 +698,7 @@ fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> boo
         };
         if depth == 3 {
             if name.ends_with(suffix) {
-                return true;
+                return Some(entry.path());
             }
         } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
             names.push((name, entry.path()));
@@ -695,7 +707,7 @@ fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> boo
     names.sort_by(|a, b| b.0.cmp(&a.0));
     names
         .iter()
-        .any(|(_, path)| codex_find(path, depth + 1, suffix, budget))
+        .find_map(|(_, path)| codex_find(path, depth + 1, suffix, budget))
 }
 
 /// [`transcript_exists_within`] with the default budget.
@@ -1388,6 +1400,23 @@ mod tests {
             })
             .to_string(),
         );
+    }
+
+    #[test]
+    fn codex_rollout_path_names_the_file_and_rejects_bad_ids() {
+        let root = tempdir("rollout-path");
+        let id = "01a00000-0000-0000-0000-00000000000f";
+        codex_rollout(&root, id, "/x");
+        let path = codex_rollout_path(&root, id).expect("found");
+        assert!(path.is_file());
+        assert!(path.to_string_lossy().ends_with(&format!("-{id}.jsonl")));
+        assert_eq!(
+            codex_rollout_path(&root, "01a00000-0000-0000-0000-0000000000ff"),
+            None
+        );
+        assert_eq!(codex_rollout_path(&root, "../../etc"), None);
+        assert_eq!(codex_rollout_path(&root, ""), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
