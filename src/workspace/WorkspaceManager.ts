@@ -659,7 +659,9 @@ export class WorkspaceManager {
       onFocus: () => {
         this.focusedPaneId = spec.id;
       },
-      accountBadge: () => this.accountBadgeFor(spec.id).badge,
+      // Badge only: `accountBadgeFor` also asks the pane `isAccountPending()`,
+      // which calls back into this callback -- infinite recursion.
+      accountBadge: () => this.accountBadgeOnly(spec.id),
       spawnAccounts: () => ({
         account: this.getPaneSpec(spec.id)?.account ?? spec.account ?? "",
         workspaceAccount: this.workspaceAccountOfPane(spec.id),
@@ -760,16 +762,23 @@ export class WorkspaceManager {
     return wsId === null ? "" : this.getWorkspaceAccount(wsId);
   }
 
+  /// The badge for a pane's title row (the effective account), nothing else.
+  /// Must not touch the pane: `TerminalPane.isAccountPending()` calls this.
+  private accountBadgeOnly(paneId: Uuid): AccountBadge | null {
+    return toBadge(
+      effectiveAccount(
+        this.accounts,
+        this.getPaneSpec(paneId)?.account,
+        this.workspaceAccountOfPane(paneId),
+      ),
+    );
+  }
+
   /// The badge for a pane's title row and whether the running PTY predates it.
   private accountBadgeFor(paneId: Uuid): { badge: AccountBadge | null; pending: boolean } {
-    const profile = effectiveAccount(
-      this.accounts,
-      this.getPaneSpec(paneId)?.account,
-      this.workspaceAccountOfPane(paneId),
-    );
     const pane = this.findPaneById(paneId);
     return {
-      badge: toBadge(profile),
+      badge: this.accountBadgeOnly(paneId),
       pending: pane instanceof TerminalPane && pane.isAccountPending(),
     };
   }
