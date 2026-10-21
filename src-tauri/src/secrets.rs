@@ -201,18 +201,6 @@ impl SecretStore {
         }
         self.save(&map, corrupt)
     }
-
-    /// Drop every destination not in `keep_ids`.
-    pub fn prune(&self, keep_ids: &[String]) -> YmuxResult<()> {
-        let _g = self.guard();
-        let (mut map, corrupt) = self.load_strict()?;
-        let before = map.len();
-        map.retain(|k, _| keep_ids.iter().any(|i| i == k));
-        if map.len() == before {
-            return Ok(());
-        }
-        self.save(&map, corrupt)
-    }
 }
 
 #[cfg(windows)]
@@ -361,13 +349,13 @@ mod tests {
     }
 
     #[test]
-    fn persists_across_instances_and_prunes() {
+    fn persists_across_instances() {
         let (d, s) = store();
         s.set("a", "url", "u").unwrap();
         s.set("b", "url", "v").unwrap();
         let s2 = SecretStore::new(d.path());
         assert_eq!(s2.get("a", "url").as_deref(), Some("u"));
-        s2.prune(&["b".to_string()]).unwrap();
+        s2.remove_dest("a").unwrap();
         assert_eq!(s2.get("a", "url"), None);
         assert_eq!(s2.get("b", "url").as_deref(), Some("v"));
     }
@@ -429,7 +417,6 @@ mod tests {
         std::fs::create_dir(&p).unwrap();
         assert!(s.set("a", "url", "u").is_err());
         assert!(s.remove_dest("a").is_err());
-        assert!(s.prune(&[]).is_err());
         assert!(p.is_dir(), "left alone");
         assert!(!d.path().join("secrets.json.tmp").exists());
         assert_eq!(s.get("a", "url"), None);

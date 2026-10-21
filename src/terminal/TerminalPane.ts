@@ -146,6 +146,11 @@ export class TerminalPane implements Pane {
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
+  /// `dispose()` ran. `spawn()` awaits several round trips before the PTY
+  /// exists, and the pane can be closed during any of them; it re-checks
+  /// this after each await so a closed pane neither orphans a PTY nor
+  /// writes into a disposed terminal.
+  private disposed = false;
   /// Last time PTY output arrived (ms), for the fan-out ready gate.
   private lastOutputAt = 0;
   /// Count of OSC 7 cwd reports (a fresh shell's first one means its prompt is up).
@@ -552,7 +557,7 @@ export class TerminalPane implements Pane {
   }
 
   async spawn(): Promise<void> {
-    if (this.spawned) return;
+    if (this.spawned || this.disposed) return;
     // Fit *synchronously* before reading dims so the PTY is spawned with the
     // actual rendered size instead of xterm.js's default 80×24. `scheduleFit`
     // (which queues a RAF) would race against `currentDims()` below and
@@ -581,6 +586,7 @@ export class TerminalPane implements Pane {
     // First, so the account profiles the backend resolves ids against are
     // saved before it decides which config directory this pane will use.
     await this.opts.beforeSpawn?.();
+    if (this.disposed) return;
     try {
       const accounts = this.opts.spawnAccounts?.();
       outcome =
@@ -595,6 +601,7 @@ export class TerminalPane implements Pane {
     } catch {
       outcome = null;
     }
+    if (this.disposed) return;
     const action = spawnAction({
       outcome,
       persistEnabled: this.opts.persistScrollback?.() ?? false,
@@ -613,6 +620,7 @@ export class TerminalPane implements Pane {
     if (action.kind === "restore") {
       try {
         const prior = await api.loadScrollback(this.id);
+        if (this.disposed) return;
         if (prior) {
           this.term.write(prior);
           this.term.write(`\r\n\x1b[2m${t("terminal.sessionRestored")}\x1b[0m\r\n`);
@@ -676,6 +684,12 @@ export class TerminalPane implements Pane {
       this.lastCwdAt = Date.now();
       if (cwd) this.liveCwd = cwd;
     }).catch(() => noop);
+    if (this.disposed) {
+      dataUnlisten();
+      exitUnlisten();
+      cwdUnlisten();
+      return;
+    }
     this.unlisteners.push(dataUnlisten, exitUnlisten, cwdUnlisten);
 
     try {
@@ -695,6 +709,13 @@ export class TerminalPane implements Pane {
         env: this.spec.env,
         ...this.opts.spawnAccounts?.(),
       });
+      if (this.disposed) {
+        // Closed while the spawn was in flight: `dispose()` saw no PTY to
+        // kill (and already dropped the listeners), so kill it here and
+        // start nothing that would outlive the pane.
+        void api.killPane(this.id).catch(() => {});
+        return;
+      }
       this.spawned = true;
       this.ranAccountId = this.opts.accountBadge?.()?.id ?? "";
       this.paintTitle();
@@ -730,6 +751,7 @@ export class TerminalPane implements Pane {
       if (startup) {
         if (this.resumePlan) this.writeResumeBanner(this.resumePlan);
         setTimeout(() => {
+          if (this.disposed) return;
           // Same reason as the HotKeyBar's onSubmit: this write bypasses
           // xterm's onData, so tell the status machine a command started or
           // the pane would sit at `idle` while the command runs.
@@ -743,6 +765,9 @@ export class TerminalPane implements Pane {
       // the data handler).
       for (const u of this.unlisteners) u();
       this.unlisteners = [];
+      // Nobody is looking at a closed pane; don't write into its disposed
+      // terminal or surface the error.
+      if (this.disposed) return;
       // `e` from Tauri can be a string (Rust error serialized as a string),
       // an Error (wrapped by `bridge.ts call()`), an object (capability
       // rejection), or even `undefined` if a permission was denied silently.
@@ -1507,6 +1532,7 @@ export class TerminalPane implements Pane {
   ///    safe-by-default (no accidental scrollback deletion) if a future
   ///    caller is added without reading this comment.
   dispose(permanent = false): void {
+    this.disposed = true;
     this.cleanupLang();
     this.cancelPendingPrompt();
     for (const done of [...this.promptWaiters]) done();
@@ -1530,7 +1556,7 @@ export class TerminalPane implements Pane {
       // when persistence was previously on, and the backend delete is a
       // no-op if there's nothing to remove, so this can't leave an orphaned
       // scrollback file behind after the user permanently closes the pane.
-      void api.deleteScrollback(this.id);
+      void api.deleteScrollback(this.id).catch(() => {});
       // Same reasoning, for the agent session: the pane is gone for good,
       // so nothing should ever resume into it again.
       void api.clearAgentSession(this.id).catch(() => {});

@@ -71,7 +71,9 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
 - **Live cwd inheritance**: splitting a pane opens the new pane in the directory
   the parent shell is in now, not its startup directory (OSC 7 tracking).
 - **Shell auto-detection**: on Windows, `cmd.exe`, Windows PowerShell,
-  PowerShell 7 (`pwsh`), Git Bash and WSL distros. On macOS, your login shell
+  PowerShell 7 (`pwsh`), Git Bash, WSL distros, and the Developer Command
+  Prompt / Developer PowerShell of every Visual Studio install `vswhere` finds.
+  On macOS, your login shell
   plus any zsh / bash / fish it finds (Homebrew included). zsh and bash start
   through a generated shim that sources your own dotfiles first and then adds
   the OSC 7 hook.
@@ -175,7 +177,9 @@ A new account only needs a name; ymux gives it its own login folders under its
 config directory, and the agent asks you to sign in the first time it runs
 there. **Settings → Accounts** lists the accounts for renaming, recoloring and
 deleting (an existing login folder can still be set by hand under
-"advanced"). You can also pick the account per terminal in the pane's ⚙
+"advanced"). Deleting an account also deletes the login folder ymux made for
+it, so re-adding it means signing in again; folders you set by hand are never
+deleted. You can also pick the account per terminal in the pane's ⚙
 dialog, or give a whole workspace a default by right-clicking its row in the
 workspace panel. A terminal with an account shows a colored badge in its title.
 ymux sets the variables when a terminal starts, so a change applies to
@@ -370,7 +374,8 @@ and width persist; drag the left edge to resize.
   button reopens the last view) or open it from the command palette. It shows:
   - local token counts for Claude Code and Codex, read from their session logs,
     for the last 5 hours, last 7 days or all recorded history, grouped by AI
-    provider, model or project;
+    provider, model, project or account, with a total line for the selected
+    period (**All recorded usage** shows the grand total);
   - remaining 5-hour and weekly quota with a reset countdown, shown as
     remaining or used (your choice). Quotas are fetched directly from Anthropic
     and OpenAI using the sign-in token those CLIs already stored on your PC
@@ -386,9 +391,16 @@ and width persist; drag the left edge to resize.
 
 ### Built-in panes
 
-Rendered by ymux itself, next to terminals. Open them from a terminal's
-right-click menu (splits that pane and inherits its working directory), the **+**
-launcher, or the command palette.
+Rendered by ymux itself, next to terminals. Each opens as a split of the
+focused pane in its working directory:
+
+- a terminal's right-click menu: Files, Editor, Git;
+- the top bar's **+** launcher: Files, Git, Browser (the **+ Browser** button
+  also adds a browser);
+- the command palette: **Split: files pane**, **Split: editor pane**,
+  **Split: git pane**.
+
+The editor also opens when you press Enter on a file in the side panel.
 
 | Pane | What it does |
 |------|--------------|
@@ -405,7 +417,9 @@ launcher, or the command palette.
 ### Productivity
 
 - **Command palette**: `Ctrl+Shift+P`, fuzzy-match any built-in action by name
-  or keybinding.
+  or keybinding. Some actions live only there: **Rename tab**, **Close other
+  tabs**, **New workspace**, **Delete workspace**, rename workspace, and the
+  editor / files / git pane splits.
 - **System monitor**: a bottom status bar streams CPU / RAM / GPU / disk /
   network every 2 seconds. Values turn amber at 70% and red at 90%.
 - **Update notifications**: a background check of GitHub releases every 6 hours
@@ -415,9 +429,10 @@ launcher, or the command palette.
 
 ### Customization
 
-- **Settings (⚙)**: General, Syntax Colors, Shortcuts and Config Files sections.
-  Pick the language, edit the editor's syntax palette, browse the shortcut
-  reference, or open `theme.toml` directly.
+- **Settings (⚙)**: General, Accounts, Activity & notifications, Syntax Colors,
+  Shortcuts and Config Files sections. Pick the language, manage accounts, set
+  up the activity log and webhooks, edit the editor's syntax palette, browse
+  the shortcut reference, or open `theme.toml` directly.
 - **13 languages**: English, 한국어, 日本語, 中文, हिन्दी, Español, Français,
   العربية, Português, Русский, Türkçe, Deutsch, Tiếng Việt. Switch from the
   selector in the bottom-right status bar.
@@ -460,7 +475,7 @@ the application switcher, and workspace switching drops the `Alt`.
 | Double-click workspace name | —                  | Rename workspace                     |
 | Drag a workspace row        | —                  | Reorder workspaces                   |
 | Right-click in a terminal   | —                  | Context menu: copy/paste, split, open a files / editor / git pane |
-| `⚙` button (toolbar)        | —                  | Open Settings (language, shortcuts, syntax colors, config files) |
+| `⚙` button (toolbar)        | —                  | Open Settings (general, accounts, activity & notifications, syntax colors, shortcuts, config files) |
 
 The Usage view has no shortcut: use the panel's usage icon
 or the command palette.

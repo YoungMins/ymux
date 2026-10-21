@@ -7,12 +7,13 @@
 //! is set, so facts and the API key never leave the machine by accident.
 //! Error values carry a kind only (no URL, no body).
 
+use std::net::SocketAddr;
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::rule::Summary;
-use super::{is_loopback_resolved, ollama, openai, HttpRequest};
+use super::{loopback_addrs, ollama, openai, system_resolve, HttpRequest};
 use crate::config::model::SummarizerConfig;
 
 /// Response bytes read from a model server.
@@ -34,25 +35,38 @@ pub enum TransportError {
     Parse,
 }
 
-/// Runs one request with a total timeout and returns the 2xx body.
-pub type Executor =
-    Arc<dyn Fn(&HttpRequest, Duration) -> Result<String, TransportError> + Send + Sync>;
+/// Runs one request with a total timeout and returns the 2xx body. The
+/// second argument is the address pin from [`vet`]: when non-empty, the
+/// request's host must be connected to at these addresses only.
+pub type Executor = Arc<
+    dyn Fn(&HttpRequest, &[SocketAddr], Duration) -> Result<String, TransportError> + Send + Sync,
+>;
 
 fn timeout_of(cfg: &SummarizerConfig) -> Duration {
     Duration::from_secs(u64::from(cfg.timeout_secs.clamp(1, 300)))
 }
 
-fn guard(url: &str, allow_remote: bool) -> Result<(), TransportError> {
-    // Loopback is judged on what the host *resolves to*, not how it is spelled.
-    if is_loopback_resolved(url) {
-        return Ok(());
+/// Whether `url` may be sent to, and the address pin it must be sent with.
+///
+/// Loopback is judged on what the host *resolves to*, not how it is spelled,
+/// and a name that passed is pinned to the very addresses that were checked
+/// (`Ok(addrs)`, non-empty): resolving again at send time would let a
+/// rebinding name answer loopback to the check and something else to the
+/// connect. A literal loopback IP needs no pin. A remote host is fine only
+/// when `allow_remote` is set, and only over http(s); it is not pinned, since
+/// any address it resolves to is allowed.
+fn vet<F>(url: &str, allow_remote: bool, resolve: F) -> Result<Vec<SocketAddr>, TransportError>
+where
+    F: Fn(&str, u16) -> std::io::Result<Vec<std::net::IpAddr>>,
+{
+    if let Some(pin) = loopback_addrs(url, resolve) {
+        return Ok(pin);
     }
-    // Remote is fine only when allowed, and only over http(s).
     let ok_scheme = url::Url::parse(url.trim())
         .map(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
         .unwrap_or(false);
     if allow_remote && ok_scheme {
-        Ok(())
+        Ok(Vec::new())
     } else {
         Err(TransportError::Refused)
     }
@@ -64,8 +78,8 @@ fn run(
     allow_remote: bool,
     timeout: Duration,
 ) -> Result<String, TransportError> {
-    guard(&req.url, allow_remote)?;
-    exec(req, timeout)
+    let pin = vet(&req.url, allow_remote, system_resolve)?;
+    exec(req, &pin, timeout)
 }
 
 /// Models offered by `provider` (`ollama` | `openai`) at `endpoint`.
@@ -154,29 +168,43 @@ pub fn summarize(
     }
 }
 
+/// The shared client rules: no redirects, a connect timeout (the total one
+/// is per request), ymux's user agent.
+#[cfg(feature = "desktop")]
+fn builder() -> reqwest::blocking::ClientBuilder {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .user_agent(concat!("ymux/", env!("CARGO_PKG_VERSION")))
+}
+
 #[cfg(feature = "desktop")]
 fn client() -> Option<&'static reqwest::blocking::Client> {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(CONNECT_TIMEOUT)
-                .user_agent(concat!("ymux/", env!("CARGO_PKG_VERSION")))
-                .build()
-                .ok()
-        })
-        .as_ref()
+    CLIENT.get_or_init(|| builder().build().ok()).as_ref()
 }
 
 /// The real executor: 2 s connect, caller's total timeout, no redirects,
 /// response read capped at `MAX_RESPONSE_BYTES`.
 #[cfg(feature = "desktop")]
 pub fn http_executor() -> Executor {
-    Arc::new(|req, timeout| {
+    Arc::new(|req, pin, timeout| {
         use std::io::Read;
-        let Some(client) = client() else {
+        // A pinned request gets a one-off client (same rules) whose resolver
+        // answers the vetted addresses for the URL's host, and nothing else.
+        let pinned;
+        let client = if pin.is_empty() {
+            client()
+        } else {
+            let host = url::Url::parse(req.url.trim())
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .ok_or(TransportError::Refused)?;
+            pinned = builder().resolve_to_addrs(&host, pin).build().ok();
+            pinned.as_ref()
+        };
+        let Some(client) = client else {
             return Err(TransportError::Connect);
         };
         let mut rb = match req.method {
@@ -299,7 +327,7 @@ mod tests {
     ) -> (Executor, Arc<Mutex<Vec<HttpRequest>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let s = seen.clone();
-        let e: Executor = Arc::new(move |req, _| {
+        let e: Executor = Arc::new(move |req, _, _| {
             s.lock().push(req.clone());
             reply.map(str::to_string)
         });
@@ -377,6 +405,59 @@ mod tests {
         c.endpoint = "ftp://example.com".into();
         assert!(!summarize(&e, &c, "", "en", "{}", &fallback()).used_llm);
         assert_eq!(seen.lock().len(), 1);
+    }
+
+    #[test]
+    fn a_name_is_pinned_to_the_loopback_addresses_it_was_checked_against() {
+        use std::net::IpAddr;
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        let lo6: IpAddr = "::1".parse().unwrap();
+        let remote: IpAddr = "93.184.216.34".parse().unwrap();
+        let sa = |ip: IpAddr, port: u16| SocketAddr::new(ip, port);
+        // `localhost` that resolves to loopback: pinned to exactly that, with
+        // the URL's port.
+        assert_eq!(
+            vet("http://localhost:11434/api", false, |_, _| Ok(vec![
+                lo, lo6
+            ])),
+            Ok(vec![sa(lo, 11434), sa(lo6, 11434)])
+        );
+        assert_eq!(
+            vet("https://localhost/x", false, |_, _| Ok(vec![lo])),
+            Ok(vec![sa(lo, 443)])
+        );
+        // A rebinding answer (any non-loopback address) is refused outright.
+        assert_eq!(
+            vet("http://localhost:1/", false, |_, _| Ok(vec![lo, remote])),
+            Err(TransportError::Refused)
+        );
+        assert_eq!(
+            vet("http://localhost:1/", false, |_, _| Ok(vec![])),
+            Err(TransportError::Refused)
+        );
+        // A literal loopback IP is never resolved, so nothing to pin.
+        let boom = |_: &str, _: u16| -> std::io::Result<Vec<IpAddr>> { panic!("resolved") };
+        assert_eq!(vet("http://127.0.0.1:9/", false, boom), Ok(vec![]));
+        assert_eq!(vet("http://[::1]:9/", false, boom), Ok(vec![]));
+        // Remote: refused unless allowed, and then unpinned.
+        assert_eq!(
+            vet("https://api.example.com", false, boom),
+            Err(TransportError::Refused)
+        );
+        assert_eq!(vet("https://api.example.com", true, boom), Ok(vec![]));
+        assert_eq!(
+            vet("ftp://example.com", true, boom),
+            Err(TransportError::Refused)
+        );
+        // The pin reaches the executor.
+        let got = Arc::new(Mutex::new(None));
+        let g = got.clone();
+        let e: Executor = Arc::new(move |_, pin, _| {
+            *g.lock() = Some(pin.to_vec());
+            Ok(r#"{"message":{"content":"ok"}}"#.to_string())
+        });
+        summarize(&e, &cfg("ollama"), "", "en", "{}", &fallback());
+        assert_eq!(*got.lock(), Some(vec![]), "literal 127.0.0.1: no pin");
     }
 
     #[test]
@@ -458,7 +539,7 @@ mod tests {
         assert_eq!(timeout_of(&c), Duration::from_secs(300));
         let got = Arc::new(Mutex::new(Duration::ZERO));
         let g = got.clone();
-        let e: Executor = Arc::new(move |_, t| {
+        let e: Executor = Arc::new(move |_, _, t| {
             *g.lock() = t;
             Ok(r#"{"message":{"content":"ok"}}"#.to_string())
         });
@@ -473,7 +554,7 @@ mod tests {
         let g = gate.clone();
         let started = Arc::new(AtomicBool::new(false));
         let st = started.clone();
-        let e: Executor = Arc::new(move |_, _| {
+        let e: Executor = Arc::new(move |_, _, _| {
             st.store(true, Ordering::SeqCst);
             while !g.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(5));
@@ -572,12 +653,26 @@ mod tests {
         };
         let p = serve("200 OK", r#"{"models":[]}"#);
         assert_eq!(
-            e(&req(p), Duration::from_secs(5)),
+            e(&req(p), &[], Duration::from_secs(5)),
+            Ok(r#"{"models":[]}"#.to_string())
+        );
+        // Pinned: `pinned.invalid` never resolves, so only the pin can have
+        // connected it.
+        let p = serve("200 OK", r#"{"models":[]}"#);
+        let pinned = HttpRequest {
+            method: "GET",
+            url: format!("http://pinned.invalid:{p}/api/tags"),
+            headers: vec![],
+            body: None,
+        };
+        let addr: SocketAddr = format!("127.0.0.1:{p}").parse().unwrap();
+        assert_eq!(
+            e(&pinned, &[addr], Duration::from_secs(5)),
             Ok(r#"{"models":[]}"#.to_string())
         );
         let p = serve("503 Service Unavailable", "no");
         assert_eq!(
-            e(&req(p), Duration::from_secs(5)),
+            e(&req(p), &[], Duration::from_secs(5)),
             Err(TransportError::Status(503))
         );
     }

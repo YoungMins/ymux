@@ -320,25 +320,36 @@ fn write_target(path: &Path) -> YmuxResult<PathBuf> {
     }
 }
 
-/// Atomically replace `target` with `text`: write a sibling temp file, flush
-/// it to disk, rename it over `target`. The temp file never outlives a
-/// failure.
+/// Atomically and durably replace `target` with `text` ([`crate::durable`]:
+/// unique sibling temp file, `sync_all`, rename). The new file keeps
+/// `target`'s permissions — a user's `0600` `settings.json` must not come
+/// back `0644` — and the temp file never outlives a failure.
 fn replace_file(target: &Path, text: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let tmp = sibling(target, "ymux-tmp");
-    let result = (|| {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(text.as_bytes())?;
-        // Durable before the rename, or a crash could leave an empty file
-        // where the user's settings were.
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, target)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
+    let perms = match fs::metadata(target) {
+        Ok(m) => Some(m.permissions()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    crate::durable::write_atomic_with(target, text.as_bytes(), perms.as_ref())
+}
+
+/// `settings.json.ymux-bak`: the user's file as it was before ymux first
+/// wrote to it. Kept while ymux's hooks are installed, removed by a
+/// successful uninstall (it holds whatever the settings held, secrets too).
+fn backup_path(path: &Path) -> PathBuf {
+    sibling(path, "ymux-bak")
+}
+
+/// Copy the original to [`backup_path`] with the original's permissions
+/// (Unix: applied before any byte is written; on Windows the read-only flag
+/// is not copied, so the backup can always be deleted later).
+fn write_backup(path: &Path, backup: &Path) -> std::io::Result<()> {
+    let bytes = fs::read(path)?;
+    #[cfg(unix)]
+    let perms = Some(fs::metadata(path)?.permissions());
+    #[cfg(not(unix))]
+    let perms: Option<fs::Permissions> = None;
+    crate::durable::write_atomic_with(backup, &bytes, perms.as_ref())
 }
 
 /// Atomic write (temp file + rename) through symlinks. Before the first write
@@ -347,9 +358,9 @@ fn write_settings(path: &Path, value: &Value) -> YmuxResult<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    let backup = sibling(path, "ymux-bak");
+    let backup = backup_path(path);
     if path.exists() && !backup.exists() {
-        fs::copy(path, &backup)?;
+        write_backup(path, &backup)?;
     }
     let mut text = serde_json::to_string_pretty(value)?;
     text.push('\n');
@@ -371,14 +382,28 @@ pub fn install_at(path: &Path, port: u16) -> YmuxResult<()> {
 }
 
 /// Remove ymux's hooks from the settings file at `path`. A missing file is fine.
+/// Once ymux's hooks are gone, the backup is deleted too.
 pub fn uninstall_at(path: &Path) -> YmuxResult<()> {
-    let Some(mut value) = read_settings(path)? else {
-        return Ok(());
-    };
-    if uninstall_hooks(&mut value) {
-        write_settings(path, &value)?;
+    if let Some(mut value) = read_settings(path)? {
+        if uninstall_hooks(&mut value) {
+            write_settings(path, &value)?;
+        }
     }
+    remove_backup(path);
     Ok(())
+}
+
+/// Best-effort delete of [`backup_path`]; a missing backup is fine, and a
+/// failure is only logged (the uninstall itself has succeeded).
+fn remove_backup(path: &Path) {
+    let backup = backup_path(path);
+    match fs::remove_file(&backup) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            tracing::warn!(path = %backup.display(), error = %e, "removing the settings backup failed")
+        }
+    }
 }
 
 /// Env var that opts a debug build into the startup hook refresh.
@@ -1007,10 +1032,18 @@ mod tests {
         install_at(&path, PORT).unwrap();
         assert_eq!(keys(&read(&path)), vec!["hooks"]);
         assert!(!sibling(&path, "ymux-bak").exists(), "nothing to back up");
-        assert!(
-            !sibling(&path, "ymux-tmp").exists(),
-            "temp file renamed away"
-        );
+        assert_no_temp_files(path.parent().unwrap());
+    }
+
+    /// No `*.tmp` (durable-write temp file) left in `dir`.
+    fn assert_no_temp_files(dir: &Path) {
+        let left: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(left.is_empty(), "temp files left behind: {left:?}");
     }
 
     #[test]
@@ -1020,13 +1053,39 @@ mod tests {
         install_at(&path, PORT).unwrap();
         let bak = sibling(&path, "ymux-bak");
         assert_eq!(std::fs::read_to_string(&bak).unwrap(), FOREIGN);
-        uninstall_at(&path).unwrap();
         install_at(&path, 1111).unwrap();
         assert_eq!(
             std::fs::read_to_string(&bak).unwrap(),
             FOREIGN,
             "backup never overwritten"
         );
+        uninstall_at(&path).unwrap();
+        assert!(!bak.exists(), "a successful uninstall deletes the backup");
+    }
+
+    #[test]
+    fn uninstall_deletes_the_backup_even_when_nothing_changed() {
+        let path = tempdir().join("settings.json");
+        std::fs::write(&path, FOREIGN).unwrap();
+        std::fs::write(sibling(&path, "ymux-bak"), FOREIGN).unwrap();
+        uninstall_at(&path).unwrap();
+        assert!(!sibling(&path, "ymux-bak").exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), FOREIGN);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_and_backup_keep_the_original_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = tempdir().join("settings.json");
+        std::fs::write(&path, FOREIGN).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        install_at(&path, PORT).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600, "settings.json");
+        assert_eq!(mode(&sibling(&path, "ymux-bak")), 0o600, "backup");
+        uninstall_at(&path).unwrap();
+        assert_eq!(mode(&path), 0o600, "settings.json after uninstall");
     }
 
     #[test]
@@ -1071,10 +1130,7 @@ mod tests {
         let target = tempdir().join("settings.json");
         std::fs::create_dir_all(&target).unwrap();
         assert!(replace_file(&target, "{}\n").is_err());
-        assert!(
-            !sibling(&target, "ymux-tmp").exists(),
-            "temp file left behind"
-        );
+        assert_no_temp_files(target.parent().unwrap());
         assert!(target.is_dir(), "target untouched");
     }
 
@@ -1084,7 +1140,7 @@ mod tests {
         std::fs::write(&target, "old").unwrap();
         replace_file(&target, "new\n").unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "new\n");
-        assert!(!sibling(&target, "ymux-tmp").exists());
+        assert_no_temp_files(target.parent().unwrap());
     }
 
     /// A dotfiles-managed `settings.json` symlink must stay a symlink; the
@@ -1262,10 +1318,9 @@ mod tests {
         for d in &dirs {
             let file = settings_file(d);
             assert_eq!(compact(&read(&file)), compact(&foreign()), "{d}");
-            assert_eq!(
-                std::fs::read_to_string(sibling(&file, "ymux-bak")).unwrap(),
-                FOREIGN,
-                "the untouched original is still the backup"
+            assert!(
+                !sibling(&file, "ymux-bak").exists(),
+                "a successful uninstall deletes the backup"
             );
         }
         assert!(next_installed(&installed, &out).is_empty());

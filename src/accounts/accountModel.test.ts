@@ -11,6 +11,7 @@ import {
   nextAccountName,
   normalizeColor,
   agentUsesAccounts,
+  isManagedAccount,
   ACCOUNT_COLORS,
 } from "./accountModel";
 
@@ -118,5 +119,54 @@ describe("adding an account", () => {
     expect(agentUsesAccounts("claude")).toBe(true);
     expect(agentUsesAccounts("codex")).toBe(true);
     expect(agentUsesAccounts("gemini")).toBe(false);
+  });
+});
+
+describe("isManagedAccount", () => {
+  const prof = (id: string, claude: string, codex: string): AccountProfile => ({
+    id,
+    name: "x",
+    claude_config_dir: claude,
+    codex_home: codex,
+    color: "",
+  });
+  it("accepts the folders ymux made for this id (POSIX)", () => {
+    expect(
+      isManagedAccount(
+        prof("ab12cd34", "/home/u/.config/ymux/accounts/ab12cd34/claude", "/home/u/.config/ymux/accounts/ab12cd34/codex"),
+      ),
+    ).toBe(true);
+  });
+  it("accepts Windows backslash paths", () => {
+    expect(
+      isManagedAccount(
+        prof(
+          "ab12cd34",
+          "C:\\Users\\u\\AppData\\Roaming\\ymux\\accounts\\ab12cd34\\claude",
+          "C:\\Users\\u\\AppData\\Roaming\\ymux\\accounts\\ab12cd34\\codex",
+        ),
+      ),
+    ).toBe(true);
+  });
+  it("tolerates a trailing separator", () => {
+    expect(isManagedAccount(prof("ab12cd34", "/c/accounts/ab12cd34/claude/", "/c/accounts/ab12cd34/codex\\"))).toBe(true);
+  });
+  it("rejects when either folder is hand-entered or empty", () => {
+    expect(isManagedAccount(prof("ab12cd34", "/home/u/.claude", "/c/accounts/ab12cd34/codex"))).toBe(false);
+    expect(isManagedAccount(prof("ab12cd34", "/c/accounts/ab12cd34/claude", ""))).toBe(false);
+    expect(isManagedAccount(prof("ab12cd34", "", ""))).toBe(false);
+  });
+  it("rejects folders belonging to another id", () => {
+    expect(isManagedAccount(prof("ab12cd34", "/c/accounts/ffff0000/claude", "/c/accounts/ffff0000/codex"))).toBe(false);
+  });
+  it("rejects swapped leaves", () => {
+    expect(isManagedAccount(prof("ab12cd34", "/c/accounts/ab12cd34/codex", "/c/accounts/ab12cd34/claude"))).toBe(false);
+  });
+  it("rejects an id that is not a plain token", () => {
+    expect(isManagedAccount(prof("", "/c/accounts//claude", "/c/accounts//codex"))).toBe(false);
+    expect(isManagedAccount(prof("../x", "/c/accounts/../x/claude", "/c/accounts/../x/codex"))).toBe(false);
+  });
+  it("requires a whole path segment before accounts/", () => {
+    expect(isManagedAccount(prof("ab12cd34", "/c/myaccounts/ab12cd34/claude", "/c/myaccounts/ab12cd34/codex"))).toBe(false);
   });
 });

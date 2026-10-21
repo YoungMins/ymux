@@ -565,6 +565,10 @@ export const api = {
   ): Promise<{ claude_config_dir: string; codex_home: string }> =>
     call("prepare_account_dirs", { id }),
 
+  /// Delete ymux's managed `<config>/accounts/<id>` folder (the login a
+  /// deleted account was signed in with). The backend refuses invalid ids.
+  removeAccountDirs: (id: string): Promise<void> => call("remove_account_dirs", { id }),
+
   /// Persist `blob` (serialized terminal scrollback) for a pane to disk.
   saveScrollback: (id: Uuid, blob: string): Promise<void> =>
     call("save_scrollback", { paneId: id, blob }),

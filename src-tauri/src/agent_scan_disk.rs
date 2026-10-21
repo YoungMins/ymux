@@ -588,35 +588,35 @@ pub fn read_claude_pid_file(dir: &Path, pid: u32) -> Option<crate::agent_binding
     crate::agent_binding::parse_claude_pid_file(&text).filter(|f| f.pid == pid)
 }
 
-/// Pids of `proc`'s subtree probed for a pid file, the agent itself first.
-/// Each probe is one `stat` by name, so a subtree full of tool shells and MCP
-/// servers is cut off here.
+/// Most pids probed for a pid file per agent. Each probe is one `stat` by
+/// name; `agent_scan::ProcTree::claude_probes` already yields only the agent
+/// and the Claude processes it launched, so this is a backstop.
 pub const MAX_PID_FILE_PROBES: usize = 32;
 
-/// The session id Claude's own pid file names for `proc`, when it is
+/// The session id Claude's own pid file names for an agent, when it is
 /// believable (`agent_binding::registry_session_id`). The first of
 /// `claude_dirs` that holds a believable file answers: a pid is unique on the
 /// machine, so at most one directory has a file for this very process.
 ///
-/// The scan binds the agent process closest to the shell, which on Windows is
-/// often a launcher (npm's `node … claude-code` starting the native
-/// `claude.exe`, or a package manager's `claude.exe` shim) while Claude
-/// writes `sessions/<pid>.json` under its *own* pid, a child. So the agent's
-/// pid is tried first, then the rest of its subtree; `registry_session_id`
-/// still rejects a file whose start time or entrypoint does not fit.
+/// `probes` comes from `agent_scan::ProcTree::claude_probes`, in order: the
+/// agent process the scan bound first, then the Claude processes it launched
+/// directly. On Windows the bound process is often a launcher (npm's
+/// `node … claude-code` starting the native `claude.exe`, or a package
+/// manager's `claude.exe` shim) while Claude writes `sessions/<pid>.json`
+/// under its *own* pid, a child. A tool child (`bash`, an MCP server) or a
+/// nested `claude -p` the agent ran is never probed, and each file's start
+/// time is checked against its own pid's start, so a stale file whose pid
+/// was reused cannot pass on the agent's start time.
 pub fn claude_pid_file_id_in(
     claude_dirs: &[&str],
-    proc: &crate::agent_binding::PaneProcess,
+    probes: &[crate::agent_binding::ProcessKey],
 ) -> Option<String> {
-    let pids = std::iter::once(proc.pid)
-        .chain(proc.subtree.iter().copied().filter(|&p| p != proc.pid))
-        .take(MAX_PID_FILE_PROBES);
-    for pid in pids {
+    for probe in probes.iter().take(MAX_PID_FILE_PROBES) {
         let found = claude_dirs
             .iter()
             .filter(|d| !d.is_empty())
-            .filter_map(|d| read_claude_pid_file(&claude_pid_dir(d), pid))
-            .find_map(|file| crate::agent_binding::registry_session_id(proc, &file));
+            .filter_map(|d| read_claude_pid_file(&claude_pid_dir(d), probe.pid))
+            .find_map(|file| crate::agent_binding::registry_session_id(probe, &file));
         if found.is_some() {
             return found;
         }
@@ -1514,12 +1514,10 @@ mod tests {
             "bbbbbbbb-0000-0000-0000-00000000000b",
         );
         let started = 1_790_212_418_u64;
-        let proc = crate::agent_binding::PaneProcess {
+        let proc = [crate::agent_binding::ProcessKey {
             pid: 4242,
             start_secs: started,
-            argv: vec!["claude".into()],
-            subtree: [4242].into_iter().collect(),
-        };
+        }];
         let pid_file = |dir: &Path, id: &str, entrypoint: &str| {
             write(
                 &dir.join("sessions/4242.json"),
@@ -1571,27 +1569,117 @@ mod tests {
             );
         };
         file(13, id);
-        // A file for a process outside the agent's subtree is never read.
+        // A file for a process that is not probed is never read.
         file(99, "dddddddd-0000-0000-0000-00000000000d");
         let dir = base.display().to_string();
-        let proc = |subtree: &[u32]| crate::agent_binding::PaneProcess {
-            pid: 12,
+        let key = |pid: u32| crate::agent_binding::ProcessKey {
+            pid,
             start_secs: started,
-            argv: vec!["node".into(), "cli.js".into()],
-            subtree: subtree.iter().copied().collect(),
         };
         assert_eq!(
-            claude_pid_file_id_in(&[&dir], &proc(&[12, 13])),
+            claude_pid_file_id_in(&[&dir], &[key(12), key(13)]),
             Some(id.to_string())
         );
-        assert_eq!(claude_pid_file_id_in(&[&dir], &proc(&[12])), None);
+        assert_eq!(claude_pid_file_id_in(&[&dir], &[key(12)]), None);
         // The agent's own file wins over a child's.
         let own = "eeeeeeee-0000-0000-0000-00000000000e";
         file(12, own);
         assert_eq!(
-            claude_pid_file_id_in(&[&dir], &proc(&[12, 13])),
+            claude_pid_file_id_in(&[&dir], &[key(12), key(13)]),
             Some(own.to_string())
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The probe list the scan builds, run against real pid files: the
+    /// launcher's Claude child is found; a nested `claude -p` and a tool child
+    /// that reused a stale file's pid are not.
+    #[test]
+    fn pid_file_probes_follow_the_launcher_but_not_tools_or_nested_agents() {
+        use crate::agent_scan::{ProcEntry, ProcTree};
+        let base = tempdir("pid-probes");
+        let dir = base.display().to_string();
+        let t0 = 1_790_212_418_u64;
+        let file = |pid: u32, id: &str, started_secs: u64| {
+            write(
+                &base.join(format!("sessions/{pid}.json")),
+                &serde_json::json!({
+                    "pid": pid, "sessionId": id,
+                    "startedAt": (started_secs + 1) * 1000, "entrypoint": "cli",
+                })
+                .to_string(),
+            );
+        };
+        let p = |pid: u32, parent: u32, stem: &str, argv: &[&str], start: u64| ProcEntry {
+            pid,
+            parent: Some(parent),
+            exe_stem: stem.into(),
+            argv: argv.iter().map(|a| a.to_string()).collect(),
+            start_secs: start,
+            cwd: None,
+        };
+        let real = "aaaaaaaa-0000-0000-0000-00000000000a";
+        let nested = "bbbbbbbb-0000-0000-0000-00000000000b";
+        let stale = "cccccccc-0000-0000-0000-00000000000c";
+        // shell 10 → launcher 12 (node … claude-code) → real claude 50
+        //   → bash 51 → nested `claude -p` 52; 50 → nested claude 53 directly.
+        let procs = vec![
+            p(10, 1, "bash", &["bash"], t0 - 100),
+            p(
+                12,
+                10,
+                "node",
+                &["node", "/n/@anthropic-ai/claude-code/cli.js"],
+                t0,
+            ),
+            p(50, 12, "claude", &["claude"], t0 + 1),
+            p(51, 50, "bash", &["bash", "-c", "claude -p hi"], t0 + 30),
+            p(52, 51, "claude", &["claude", "-p", "hi"], t0 + 30),
+            p(53, 50, "claude", &["claude", "-p", "x"], t0 + 40),
+        ];
+        let tree = ProcTree::new(&procs);
+        let lead = tree.agent_proc_under(10).expect("agent").1;
+        let probes = tree.claude_probes(lead);
+        // Nested agents write believable files too; none of them is probed.
+        file(52, nested, t0 + 30);
+        file(53, nested, t0 + 40);
+        assert_eq!(claude_pid_file_id_in(&[&dir], &probes), None);
+        file(50, real, t0 + 1);
+        assert_eq!(
+            claude_pid_file_id_in(&[&dir], &probes),
+            Some(real.to_string())
+        );
+
+        // The real Claude is the lead and has no file yet; its bash tool child
+        // 61 reused the pid of a dead Claude whose stale file is still there,
+        // and the file's start even fits the lead's. Not believed.
+        let _ = std::fs::remove_dir_all(base.join("sessions"));
+        let procs = vec![
+            p(10, 1, "bash", &["bash"], t0 - 100),
+            p(60, 10, "claude", &["claude"], t0),
+            p(61, 60, "bash", &["bash"], t0 + 5),
+        ];
+        file(61, stale, t0);
+        let tree = ProcTree::new(&procs);
+        let lead = tree.agent_proc_under(10).expect("agent").1;
+        let probes = tree.claude_probes(lead);
+        assert_eq!(claude_pid_file_id_in(&[&dir], &probes), None);
+        // A Claude child whose pid reused a stale file's: checked against its
+        // own start, not the lead's, so it is rejected too.
+        let procs = vec![
+            p(10, 1, "bash", &["bash"], t0 - 100),
+            p(
+                12,
+                10,
+                "node",
+                &["node", "/n/@anthropic-ai/claude-code/cli.js"],
+                t0,
+            ),
+            p(61, 12, "claude", &["claude"], t0 + 300),
+        ];
+        let tree = ProcTree::new(&procs);
+        let probes = tree.claude_probes(tree.agent_proc_under(10).expect("agent").1);
+        assert_eq!(claude_pid_file_id_in(&[&dir], &probes), None);
         let _ = std::fs::remove_dir_all(&base);
     }
 

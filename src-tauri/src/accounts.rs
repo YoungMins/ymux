@@ -306,17 +306,78 @@ pub const MANAGED_SUBDIR: &str = "accounts";
 /// lower-case alphanumeric slug (so it can never climb out with `..` or a
 /// separator) or is the reserved `ACCOUNT_NONE`.
 pub fn managed_dirs(base: &Path, id: &str) -> Option<(PathBuf, PathBuf)> {
+    let root = managed_root(base, id)?;
+    Some((root.join("claude"), root.join("codex")))
+}
+
+/// `<base>/accounts/<id>`: the folder holding a managed account's login
+/// folders ([`managed_dirs`]), and the one thing removing the account
+/// deletes. `None` for an id [`managed_dirs`] refuses.
+pub fn managed_root(base: &Path, id: &str) -> Option<PathBuf> {
     let valid = !id.is_empty()
         && id.len() <= 32
         && id != ACCOUNT_NONE
         && id
             .bytes()
             .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase());
-    if !valid {
-        return None;
+    valid.then(|| base.join(MANAGED_SUBDIR).join(id))
+}
+
+/// The `CLAUDE_CONFIG_DIR` value a pane of managed account `id` was given:
+/// the Claude folder `settings::prepare_account_dirs` handed the
+/// frontend, run through [`injected_value`] exactly as [`account_env`] does,
+/// so the keychain service derived from it matches the one Claude used.
+pub fn managed_claude_env(base: &Path, id: &str, home: Option<&Path>) -> Option<String> {
+    let (claude, _) = managed_dirs(base, id)?;
+    injected_value(&claude.display().to_string(), home)
+}
+
+/// Delete a managed account's folder (`<base>/accounts/<id>`, see
+/// [`managed_root`]). A folder that is already gone is fine. Never leaves
+/// `base`: refused when the id is invalid, or when `<base>/accounts` or the
+/// account folder is a symlink (or Windows junction) or not a directory;
+/// `remove_dir_all` itself does not follow links inside the tree.
+pub fn remove_managed_root(base: &Path, id: &str) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    let root = managed_root(base, id)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid account id"))?;
+    for dir in [base.join(MANAGED_SUBDIR), root.clone()] {
+        match std::fs::symlink_metadata(&dir) {
+            Ok(m) if m.file_type().is_symlink() || is_reparse_point(&m) => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("{} is a link; refusing to delete through it", dir.display()),
+                ))
+            }
+            Ok(m) if !m.is_dir() => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("{} is not a directory", dir.display()),
+                ))
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        }
     }
-    let root = base.join(MANAGED_SUBDIR).join(id);
-    Some((root.join("claude"), root.join("codex")))
+    match std::fs::remove_dir_all(&root) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// A Windows junction (or other reparse point) is not `is_symlink` but is
+/// followed like one.
+#[cfg(windows)]
+fn is_reparse_point(m: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// The macOS keychain service Claude Code 2.1.300 keeps its credentials
@@ -385,6 +446,91 @@ mod tests {
             base.join("accounts").join("a1b2c3d4").join("claude")
         );
         assert_eq!(codex, base.join("accounts").join("a1b2c3d4").join("codex"));
+    }
+
+    #[test]
+    fn managed_root_is_the_parent_of_both_login_dirs() {
+        let base = h().join("cfg");
+        let root = managed_root(&base, "a1b2").unwrap();
+        assert_eq!(root, base.join("accounts").join("a1b2"));
+        let (claude, codex) = managed_dirs(&base, "a1b2").unwrap();
+        assert_eq!(claude.parent(), Some(root.as_path()));
+        assert_eq!(codex.parent(), Some(root.as_path()));
+        for bad in ["", "none", "..", "a/b", "a\\b", "A1", "x y"] {
+            assert!(managed_root(&base, bad).is_none(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn managed_claude_env_matches_what_a_pane_was_given() {
+        let base = h().join("cfg");
+        let (claude, _) = managed_dirs(&base, "a1b2").unwrap();
+        let accts = [profile("a1b2", &claude.display().to_string(), "")];
+        let injected = account_env(&accts, "a1b2", "", Some(&h()), &[]);
+        assert_eq!(
+            managed_claude_env(&base, "a1b2", Some(&h())),
+            injected
+                .iter()
+                .find(|(k, _)| k == CLAUDE_ENV)
+                .map(|(_, v)| v.clone())
+        );
+        assert!(managed_claude_env(&base, "..", Some(&h())).is_none());
+    }
+
+    fn scratch() -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "ymux-accounts-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn remove_managed_root_deletes_only_that_account() {
+        let base = scratch();
+        for id in ["a1", "b2"] {
+            let (claude, codex) = managed_dirs(&base, id).unwrap();
+            std::fs::create_dir_all(&claude).unwrap();
+            std::fs::create_dir_all(&codex).unwrap();
+            std::fs::write(claude.join(".credentials.json"), b"{}").unwrap();
+        }
+        remove_managed_root(&base, "a1").unwrap();
+        assert!(!managed_root(&base, "a1").unwrap().exists());
+        assert!(managed_root(&base, "b2").unwrap().is_dir());
+        // Already gone, or never created: fine.
+        remove_managed_root(&base, "a1").unwrap();
+        remove_managed_root(&base, "zz9").unwrap();
+        assert_eq!(
+            remove_managed_root(&base, "../b2").unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_managed_root_never_follows_a_symlink_out_of_base() {
+        let base = scratch();
+        let outside = scratch();
+        std::fs::write(outside.join("precious"), b"x").unwrap();
+        std::fs::create_dir_all(base.join("accounts")).unwrap();
+        // The account folder itself is a link.
+        std::os::unix::fs::symlink(&outside, base.join("accounts").join("a1")).unwrap();
+        assert!(remove_managed_root(&base, "a1").is_err());
+        assert!(outside.join("precious").is_file());
+        // `accounts` is a link.
+        let base2 = scratch();
+        let fake = scratch();
+        std::fs::create_dir_all(fake.join("a1")).unwrap();
+        std::fs::write(fake.join("a1").join("precious"), b"x").unwrap();
+        std::os::unix::fs::symlink(&fake, base2.join("accounts")).unwrap();
+        assert!(remove_managed_root(&base2, "a1").is_err());
+        assert!(fake.join("a1").join("precious").is_file());
+        for d in [base, outside, base2, fake] {
+            let _ = std::fs::remove_dir_all(d);
+        }
     }
 
     #[test]

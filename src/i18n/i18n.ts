@@ -31,6 +31,20 @@ export function initLang(): void {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored && VALID.has(stored)) current = stored as Lang;
   } catch { /* localStorage unavailable */ }
+  applyDocumentLang(current);
+}
+
+/// Text direction for a language: Arabic is the only RTL one of the 13.
+export function langDir(lang: Lang): "rtl" | "ltr" {
+  return lang === "ar" ? "rtl" : "ltr";
+}
+
+/// Mirror the UI language onto `<html lang dir>`. Terminals and code
+/// surfaces are pinned back to LTR in style.css. No-op without a DOM.
+function applyDocumentLang(lang: Lang): void {
+  if (typeof document === "undefined" || !document.documentElement) return;
+  document.documentElement.lang = lang;
+  document.documentElement.dir = langDir(lang);
 }
 
 export function getLang(): Lang { return current; }
@@ -39,6 +53,7 @@ export function setLang(lang: Lang): void {
   if (current === lang) return;
   current = lang;
   try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* */ }
+  applyDocumentLang(lang);
   for (const cb of listeners) cb();
 }
 
@@ -71,17 +86,87 @@ const strings: Translations = {
   ...tokenStrings,
   ...activityStrings,
   // ── Settings panel (gear icon) ─────────────────────────────────
-  "settings.title": { en: "Settings", ko: "설정", ja: "設定" },
-  "settings.close": { en: "Close", ko: "닫기", ja: "閉じる" },
-  "settings.buttonTitle": { en: "Settings", ko: "설정", ja: "設定" },
-  "settings.section.general": { en: "General", ko: "일반", ja: "一般" },
-  "settings.section.syntax": { en: "Syntax Colors", ko: "구문 색상", ja: "シンタックスカラー" },
-  "settings.section.shortcuts": { en: "Shortcuts", ko: "단축키", ja: "ショートカット" },
-  "settings.section.config": { en: "Config Files", ko: "설정 파일", ja: "設定ファイル" },
-  "settings.general.heading": { en: "General", ko: "일반", ja: "一般" },
-  "settings.general.language": { en: "Language", ko: "언어", ja: "言語" },
-  "settings.general.about": { en: "About", ko: "정보", ja: "情報" },
-  "settings.general.version": { en: "Version", ko: "버전", ja: "バージョン" },
+  "settings.title": {
+    en: "Settings", ko: "설정", ja: "設定",
+    zh: "设置", hi: "सेटिंग्स", es: "Configuración",
+    fr: "Paramètres", ar: "الإعدادات", pt: "Configurações",
+    ru: "Настройки", tr: "Ayarlar", de: "Einstellungen", vi: "Cài đặt",
+  },
+  "settings.close": {
+    en: "Close", ko: "닫기", ja: "閉じる",
+    zh: "关闭", hi: "बंद करें", es: "Cerrar",
+    fr: "Fermer", ar: "إغلاق", pt: "Fechar",
+    ru: "Закрыть", tr: "Kapat", de: "Schließen", vi: "Đóng",
+  },
+  "settings.buttonTitle": {
+    en: "Settings", ko: "설정", ja: "設定",
+    zh: "设置", hi: "सेटिंग्स", es: "Configuración",
+    fr: "Paramètres", ar: "الإعدادات", pt: "Configurações",
+    ru: "Настройки", tr: "Ayarlar", de: "Einstellungen", vi: "Cài đặt",
+  },
+  "settings.section.general": {
+    en: "General", ko: "일반", ja: "一般",
+    zh: "常规", hi: "सामान्य", es: "General",
+    fr: "Général", ar: "عام", pt: "Geral",
+    ru: "Общие", tr: "Genel", de: "Allgemein", vi: "Chung",
+  },
+  "settings.section.syntax": {
+    en: "Syntax Colors", ko: "구문 색상", ja: "シンタックスカラー",
+    zh: "语法颜色", hi: "सिंटैक्स रंग", es: "Colores de sintaxis",
+    fr: "Couleurs syntaxiques", ar: "ألوان الصياغة", pt: "Cores de sintaxe",
+    ru: "Цвета синтаксиса", tr: "Sözdizimi renkleri", de: "Syntaxfarben", vi: "Màu cú pháp",
+  },
+  "settings.section.shortcuts": {
+    en: "Shortcuts", ko: "단축키", ja: "ショートカット",
+    zh: "快捷键", hi: "शॉर्टकट", es: "Atajos",
+    fr: "Raccourcis", ar: "الاختصارات", pt: "Atalhos",
+    ru: "Сочетания клавиш", tr: "Kısayollar", de: "Tastenkürzel", vi: "Phím tắt",
+  },
+  "settings.section.config": {
+    en: "Config Files", ko: "설정 파일", ja: "設定ファイル",
+    zh: "配置文件", hi: "कॉन्फ़िग फ़ाइलें", es: "Archivos de configuración",
+    fr: "Fichiers de configuration", ar: "ملفات الإعداد", pt: "Arquivos de configuração",
+    ru: "Файлы конфигурации", tr: "Yapılandırma dosyaları", de: "Konfigurationsdateien", vi: "Tệp cấu hình",
+  },
+  "settings.general.heading": {
+    en: "General", ko: "일반", ja: "一般",
+    zh: "常规", hi: "सामान्य", es: "General",
+    fr: "Général", ar: "عام", pt: "Geral",
+    ru: "Общие", tr: "Genel", de: "Allgemein", vi: "Chung",
+  },
+  "settings.general.language": {
+    en: "Language", ko: "언어", ja: "言語",
+    zh: "语言", hi: "भाषा", es: "Idioma",
+    fr: "Langue", ar: "اللغة", pt: "Idioma",
+    ru: "Язык", tr: "Dil", de: "Sprache", vi: "Ngôn ngữ",
+  },
+  "settings.general.about": {
+    en: "About", ko: "정보", ja: "情報",
+    zh: "关于", hi: "परिचय", es: "Acerca de",
+    fr: "À propos", ar: "حول", pt: "Sobre",
+    ru: "О программе", tr: "Hakkında", de: "Über", vi: "Giới thiệu",
+  },
+  "settings.general.version": {
+    en: "Version", ko: "버전", ja: "バージョン",
+    zh: "版本", hi: "संस्करण", es: "Versión",
+    fr: "Version", ar: "الإصدار", pt: "Versão",
+    ru: "Версия", tr: "Sürüm", de: "Version", vi: "Phiên bản",
+  },
+  "app.saveFailed": {
+    en: "Couldn't save settings: {error}. Changes may be lost on restart.",
+    ko: "설정을 저장하지 못했습니다: {error}. 다시 시작하면 변경 사항이 사라질 수 있습니다.",
+    ja: "設定を保存できませんでした: {error}。再起動すると変更が失われる可能性があります。",
+    zh: "无法保存设置：{error}。重启后更改可能会丢失。",
+    hi: "सेटिंग्स सहेजी नहीं जा सकीं: {error}। पुनः आरंभ करने पर बदलाव खो सकते हैं।",
+    es: "No se pudo guardar la configuración: {error}. Los cambios podrían perderse al reiniciar.",
+    fr: "Impossible d’enregistrer les paramètres : {error}. Les modifications risquent d’être perdues au redémarrage.",
+    ar: "تعذّر حفظ الإعدادات: {error}. قد تُفقد التغييرات عند إعادة التشغيل.",
+    pt: "Não foi possível salvar as configurações: {error}. As alterações podem ser perdidas ao reiniciar.",
+    ru: "Не удалось сохранить настройки: {error}. Изменения могут быть потеряны после перезапуска.",
+    tr: "Ayarlar kaydedilemedi: {error}. Yeniden başlatınca değişiklikler kaybolabilir.",
+    de: "Einstellungen konnten nicht gespeichert werden: {error}. Änderungen gehen beim Neustart möglicherweise verloren.",
+    vi: "Không lưu được cài đặt: {error}. Các thay đổi có thể bị mất khi khởi động lại.",
+  },
   "settings.general.notifyOnBell": {
     en: "Notify when a CLI finishes (bell)", ko: "CLI 작업 완료 시 알림 (벨)", ja: "CLI の完了時に通知 (ベル)",
     zh: "CLI 完成时通知（响铃）", hi: "CLI समाप्त होने पर सूचना (घंटी)", es: "Notificar cuando una CLI termina (campana)",
@@ -133,34 +218,150 @@ const strings: Translations = {
     tr: "Kaydedildi, ancak bazı hesap klasörleri güncellenemedi:", de: "Gespeichert, aber einige Kontoordner konnten nicht aktualisiert werden:",
     vi: "Đã lưu, nhưng một số thư mục tài khoản chưa được cập nhật:",
   },
-  "settings.syntax.heading": { en: "Editor Syntax Colors", ko: "편집기 구문 색상", ja: "エディター シンタックスカラー" },
+  "settings.syntax.heading": {
+    en: "Editor Syntax Colors", ko: "편집기 구문 색상", ja: "エディター シンタックスカラー",
+    zh: "编辑器语法颜色", hi: "एडिटर सिंटैक्स रंग", es: "Colores de sintaxis del editor",
+    fr: "Couleurs syntaxiques de l’éditeur", ar: "ألوان الصياغة في المحرّر", pt: "Cores de sintaxe do editor",
+    ru: "Цвета синтаксиса редактора", tr: "Düzenleyici sözdizimi renkleri", de: "Syntaxfarben des Editors", vi: "Màu cú pháp của trình soạn thảo",
+  },
   "settings.syntax.hint": {
     en: "Colors used by the editor pane's syntax highlighting. Saved to theme.toml — restart ymux to see changes.",
     ko: "편집기 창의 구문 강조에 쓰이는 색상. theme.toml에 저장되며 ymux를 다시 시작하면 반영됩니다.",
     ja: "エディターペインのシンタックスハイライトで使う色。theme.toml に保存され、ymux の再起動後に反映されます。",
+    zh: "编辑器窗格语法高亮所用的颜色。保存到 theme.toml — 重启 ymux 后生效。",
+    hi: "एडिटर पेन के सिंटैक्स हाइलाइटिंग में इस्तेमाल होने वाले रंग। theme.toml में सहेजे जाते हैं — बदलाव देखने के लिए ymux पुनः आरंभ करें।",
+    es: "Colores del resaltado de sintaxis del panel del editor. Se guardan en theme.toml — reinicia ymux para ver los cambios.",
+    fr: "Couleurs de la coloration syntaxique du volet éditeur. Enregistrées dans theme.toml — redémarrez ymux pour voir les changements.",
+    ar: "الألوان المستخدمة في تلوين الصياغة بلوحة المحرّر. تُحفظ في theme.toml — أعد تشغيل ymux لرؤية التغييرات.",
+    pt: "Cores usadas no realce de sintaxe do painel do editor. Salvas em theme.toml — reinicie o ymux para ver as alterações.",
+    ru: "Цвета подсветки синтаксиса в панели редактора. Сохраняются в theme.toml — перезапустите ymux, чтобы увидеть изменения.",
+    tr: "Düzenleyici bölmesinin sözdizimi vurgulamasında kullanılan renkler. theme.toml dosyasına kaydedilir — değişiklikleri görmek için ymux'u yeniden başlatın.",
+    de: "Farben der Syntaxhervorhebung im Editorbereich. Werden in theme.toml gespeichert — starte ymux neu, um die Änderungen zu sehen.",
+    vi: "Màu dùng cho tô sáng cú pháp trong khung soạn thảo. Được lưu vào theme.toml — khởi động lại ymux để thấy thay đổi.",
   },
-  "settings.syntax.loading": { en: "Loading…", ko: "불러오는 중…", ja: "読み込み中…" },
-  "settings.syntax.keyword": { en: "Keyword", ko: "키워드", ja: "キーワード" },
-  "settings.syntax.string": { en: "String", ko: "문자열", ja: "文字列" },
-  "settings.syntax.comment": { en: "Comment", ko: "주석", ja: "コメント" },
-  "settings.syntax.number": { en: "Number", ko: "숫자", ja: "数値" },
-  "settings.syntax.function": { en: "Function", ko: "함수", ja: "関数" },
-  "settings.syntax.type_name": { en: "Type", ko: "타입", ja: "型" },
-  "settings.syntax.variable": { en: "Variable", ko: "변수", ja: "変数" },
-  "settings.syntax.punctuation": { en: "Punctuation", ko: "구두점", ja: "句読点" },
-  "settings.syntax.save": { en: "Save", ko: "저장", ja: "保存" },
-  "settings.syntax.saved": { en: "Saved", ko: "저장됨", ja: "保存済み" },
-  "settings.syntax.reset": { en: "Reset", ko: "되돌리기", ja: "リセット" },
-  "settings.shortcuts.heading": { en: "Keyboard Shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット" },
-  "settings.config.heading": { en: "Config Files", ko: "설정 파일", ja: "設定ファイル" },
+  "settings.syntax.loading": {
+    en: "Loading…", ko: "불러오는 중…", ja: "読み込み中…",
+    zh: "加载中…", hi: "लोड हो रहा है…", es: "Cargando…",
+    fr: "Chargement…", ar: "جارٍ التحميل…", pt: "Carregando…",
+    ru: "Загрузка…", tr: "Yükleniyor…", de: "Wird geladen…", vi: "Đang tải…",
+  },
+  "settings.syntax.keyword": {
+    en: "Keyword", ko: "키워드", ja: "キーワード",
+    zh: "关键字", hi: "कीवर्ड", es: "Palabra clave",
+    fr: "Mot-clé", ar: "كلمة محجوزة", pt: "Palavra-chave",
+    ru: "Ключевое слово", tr: "Anahtar sözcük", de: "Schlüsselwort", vi: "Từ khóa",
+  },
+  "settings.syntax.string": {
+    en: "String", ko: "문자열", ja: "文字列",
+    zh: "字符串", hi: "स्ट्रिंग", es: "Cadena",
+    fr: "Chaîne", ar: "سلسلة نصية", pt: "String",
+    ru: "Строка", tr: "Dize", de: "Zeichenkette", vi: "Chuỗi",
+  },
+  "settings.syntax.comment": {
+    en: "Comment", ko: "주석", ja: "コメント",
+    zh: "注释", hi: "टिप्पणी", es: "Comentario",
+    fr: "Commentaire", ar: "تعليق", pt: "Comentário",
+    ru: "Комментарий", tr: "Yorum", de: "Kommentar", vi: "Chú thích",
+  },
+  "settings.syntax.number": {
+    en: "Number", ko: "숫자", ja: "数値",
+    zh: "数字", hi: "संख्या", es: "Número",
+    fr: "Nombre", ar: "رقم", pt: "Número",
+    ru: "Число", tr: "Sayı", de: "Zahl", vi: "Số",
+  },
+  "settings.syntax.function": {
+    en: "Function", ko: "함수", ja: "関数",
+    zh: "函数", hi: "फ़ंक्शन", es: "Función",
+    fr: "Fonction", ar: "دالة", pt: "Função",
+    ru: "Функция", tr: "Fonksiyon", de: "Funktion", vi: "Hàm",
+  },
+  "settings.syntax.type_name": {
+    en: "Type", ko: "타입", ja: "型",
+    zh: "类型", hi: "टाइप", es: "Tipo",
+    fr: "Type", ar: "نوع", pt: "Tipo",
+    ru: "Тип", tr: "Tür", de: "Typ", vi: "Kiểu",
+  },
+  "settings.syntax.variable": {
+    en: "Variable", ko: "변수", ja: "変数",
+    zh: "变量", hi: "वेरिएबल", es: "Variable",
+    fr: "Variable", ar: "متغيّر", pt: "Variável",
+    ru: "Переменная", tr: "Değişken", de: "Variable", vi: "Biến",
+  },
+  "settings.syntax.punctuation": {
+    en: "Punctuation", ko: "구두점", ja: "句読点",
+    zh: "标点", hi: "विराम चिह्न", es: "Puntuación",
+    fr: "Ponctuation", ar: "علامات الترقيم", pt: "Pontuação",
+    ru: "Пунктуация", tr: "Noktalama", de: "Satzzeichen", vi: "Dấu câu",
+  },
+  "settings.syntax.save": {
+    en: "Save", ko: "저장", ja: "保存",
+    zh: "保存", hi: "सहेजें", es: "Guardar",
+    fr: "Enregistrer", ar: "حفظ", pt: "Salvar",
+    ru: "Сохранить", tr: "Kaydet", de: "Speichern", vi: "Lưu",
+  },
+  "settings.syntax.saved": {
+    en: "Saved", ko: "저장됨", ja: "保存済み",
+    zh: "已保存", hi: "सहेजा गया", es: "Guardado",
+    fr: "Enregistré", ar: "تم الحفظ", pt: "Salvo",
+    ru: "Сохранено", tr: "Kaydedildi", de: "Gespeichert", vi: "Đã lưu",
+  },
+  "settings.syntax.reset": {
+    en: "Reset", ko: "되돌리기", ja: "リセット",
+    zh: "重置", hi: "रीसेट करें", es: "Restablecer",
+    fr: "Réinitialiser", ar: "إعادة تعيين", pt: "Redefinir",
+    ru: "Сбросить", tr: "Sıfırla", de: "Zurücksetzen", vi: "Đặt lại",
+  },
+  "settings.syntax.saveFailed": {
+    en: "Couldn't save syntax colors: {error}", ko: "구문 색상을 저장하지 못했습니다: {error}", ja: "シンタックスカラーを保存できませんでした: {error}",
+    zh: "无法保存语法颜色：{error}", hi: "सिंटैक्स रंग सहेजे नहीं जा सके: {error}", es: "No se pudieron guardar los colores de sintaxis: {error}",
+    fr: "Impossible d’enregistrer les couleurs syntaxiques : {error}", ar: "تعذّر حفظ ألوان الصياغة: {error}", pt: "Não foi possível salvar as cores de sintaxe: {error}",
+    ru: "Не удалось сохранить цвета синтаксиса: {error}", tr: "Sözdizimi renkleri kaydedilemedi: {error}", de: "Syntaxfarben konnten nicht gespeichert werden: {error}", vi: "Không lưu được màu cú pháp: {error}",
+  },
+  "settings.shortcuts.heading": {
+    en: "Keyboard Shortcuts", ko: "키보드 단축키", ja: "キーボードショートカット",
+    zh: "键盘快捷键", hi: "कीबोर्ड शॉर्टकट", es: "Atajos de teclado",
+    fr: "Raccourcis clavier", ar: "اختصارات لوحة المفاتيح", pt: "Atalhos de teclado",
+    ru: "Сочетания клавиш", tr: "Klavye kısayolları", de: "Tastenkürzel", vi: "Phím tắt bàn phím",
+  },
+  "settings.config.heading": {
+    en: "Config Files", ko: "설정 파일", ja: "設定ファイル",
+    zh: "配置文件", hi: "कॉन्फ़िग फ़ाइलें", es: "Archivos de configuración",
+    fr: "Fichiers de configuration", ar: "ملفات الإعداد", pt: "Arquivos de configuração",
+    ru: "Файлы конфигурации", tr: "Yapılandırma dosyaları", de: "Konfigurationsdateien", vi: "Tệp cấu hình",
+  },
   "settings.config.hint": {
     en: "Open the underlying TOML files with your default editor for power editing.",
     ko: "내부 TOML 파일을 기본 편집기로 직접 편집할 수 있습니다.",
     ja: "内部の TOML ファイルをデフォルトエディタで直接編集できます。",
+    zh: "用默认编辑器打开底层 TOML 文件进行高级编辑。",
+    hi: "उन्नत संपादन के लिए मूल TOML फ़ाइलें अपने डिफ़ॉल्ट एडिटर में खोलें।",
+    es: "Abre los archivos TOML subyacentes con tu editor predeterminado para editarlos a fondo.",
+    fr: "Ouvrez les fichiers TOML sous-jacents dans votre éditeur par défaut pour une édition avancée.",
+    ar: "افتح ملفات TOML الأساسية بمحرّرك الافتراضي لتحرير متقدّم.",
+    pt: "Abra os arquivos TOML subjacentes no seu editor padrão para edição avançada.",
+    ru: "Откройте исходные файлы TOML в редакторе по умолчанию для расширенной настройки.",
+    tr: "Gelişmiş düzenleme için temel TOML dosyalarını varsayılan düzenleyicinizde açın.",
+    de: "Öffne die zugrunde liegenden TOML-Dateien zur direkten Bearbeitung im Standardeditor.",
+    vi: "Mở các tệp TOML gốc bằng trình soạn thảo mặc định để chỉnh sửa nâng cao.",
   },
-  "settings.config.open": { en: "Open", ko: "열기", ja: "開く" },
-  "settings.config.openFolder": { en: "Open Folder", ko: "폴더 열기", ja: "フォルダを開く" },
-  "settings.config.folder": { en: "Config folder", ko: "설정 폴더", ja: "設定フォルダ" },
+  "settings.config.open": {
+    en: "Open", ko: "열기", ja: "開く",
+    zh: "打开", hi: "खोलें", es: "Abrir",
+    fr: "Ouvrir", ar: "فتح", pt: "Abrir",
+    ru: "Открыть", tr: "Aç", de: "Öffnen", vi: "Mở",
+  },
+  "settings.config.openFolder": {
+    en: "Open Folder", ko: "폴더 열기", ja: "フォルダを開く",
+    zh: "打开文件夹", hi: "फ़ोल्डर खोलें", es: "Abrir carpeta",
+    fr: "Ouvrir le dossier", ar: "فتح المجلد", pt: "Abrir pasta",
+    ru: "Открыть папку", tr: "Klasörü aç", de: "Ordner öffnen", vi: "Mở thư mục",
+  },
+  "settings.config.folder": {
+    en: "Config folder", ko: "설정 폴더", ja: "設定フォルダ",
+    zh: "配置文件夹", hi: "कॉन्फ़िग फ़ोल्डर", es: "Carpeta de configuración",
+    fr: "Dossier de configuration", ar: "مجلد الإعداد", pt: "Pasta de configuração",
+    ru: "Папка конфигурации", tr: "Yapılandırma klasörü", de: "Konfigurationsordner", vi: "Thư mục cấu hình",
+  },
 
   // ── Pane Settings (⚙ modal) ────────────────────────────────────
   "hotkey.bgColor": {
@@ -3149,6 +3350,66 @@ const strings: Translations = {
     zh: "适用于之后启动的终端", hi: "बाद में शुरू होने वाले टर्मिनलों पर लागू", es: "Se aplica a los terminales que se inicien después",
     fr: "S’applique aux terminaux démarrés ensuite", ar: "ينطبق على الطرفيات التي تبدأ بعد ذلك", pt: "Vale para os terminais iniciados depois",
     ru: "Действует для терминалов, запущенных позже", tr: "Sonradan başlatılan terminallere uygulanır", de: "Gilt für danach gestartete Terminals", vi: "Áp dụng cho các terminal khởi động sau đó",
+  },
+  "account.createFailed": {
+    en: "Couldn't create the account: {error}", ko: "계정을 만들지 못했습니다: {error}", ja: "アカウントを作成できませんでした: {error}",
+    zh: "无法创建账户：{error}", hi: "खाता नहीं बनाया जा सका: {error}", es: "No se pudo crear la cuenta: {error}",
+    fr: "Impossible de créer le compte : {error}", ar: "تعذّر إنشاء الحساب: {error}", pt: "Não foi possível criar a conta: {error}",
+    ru: "Не удалось создать аккаунт: {error}", tr: "Hesap oluşturulamadı: {error}", de: "Das Konto konnte nicht erstellt werden: {error}", vi: "Không tạo được tài khoản: {error}",
+  },
+  "account.deleteConfirm": {
+    en: "Delete account “{name}”? Its login folder made by ymux is deleted too, so you'll need to sign in again if you re-add it.",
+    ko: "“{name}” 계정을 삭제할까요? ymux가 만든 로그인 폴더도 함께 삭제되므로, 다시 추가하면 로그인을 다시 해야 합니다.",
+    ja: "アカウント「{name}」を削除しますか？ymux が作成したログインフォルダーも削除されるため、再追加する場合はもう一度サインインが必要です。",
+    zh: "删除账户“{name}”？由 ymux 创建的登录文件夹也会一并删除，重新添加时需要再次登录。",
+    hi: "खाता “{name}” हटाएँ? ymux द्वारा बनाया गया इसका लॉगिन फ़ोल्डर भी हट जाएगा, इसलिए दोबारा जोड़ने पर आपको फिर से साइन इन करना होगा।",
+    es: "¿Eliminar la cuenta «{name}»? También se elimina su carpeta de inicio de sesión creada por ymux, así que tendrás que volver a iniciar sesión si la añades de nuevo.",
+    fr: "Supprimer le compte « {name} » ? Son dossier de connexion créé par ymux est aussi supprimé : il faudra vous reconnecter si vous le rajoutez.",
+    ar: "حذف الحساب “{name}”؟ سيُحذف أيضًا مجلد تسجيل الدخول الذي أنشأه ymux، لذا ستحتاج إلى تسجيل الدخول مجددًا إذا أعدت إضافته.",
+    pt: "Excluir a conta “{name}”? A pasta de login criada pelo ymux também será excluída, então você precisará entrar novamente se adicioná-la de novo.",
+    ru: "Удалить аккаунт «{name}»? Папка входа, созданная ymux, тоже будет удалена, поэтому при повторном добавлении нужно будет снова войти.",
+    tr: "“{name}” hesabı silinsin mi? ymux'un oluşturduğu oturum açma klasörü de silinir; yeniden eklerseniz tekrar oturum açmanız gerekir.",
+    de: "Konto „{name}“ löschen? Der von ymux angelegte Anmeldeordner wird ebenfalls gelöscht, du musst dich also erneut anmelden, wenn du es wieder hinzufügst.",
+    vi: "Xóa tài khoản “{name}”? Thư mục đăng nhập do ymux tạo cũng sẽ bị xóa, nên bạn sẽ cần đăng nhập lại nếu thêm lại tài khoản này.",
+  },
+  "account.removeDirsFailed": {
+    en: "The account was deleted, but its login folder could not be removed: {error}",
+    ko: "계정은 삭제했지만 로그인 폴더를 제거하지 못했습니다: {error}",
+    ja: "アカウントは削除しましたが、ログインフォルダーを削除できませんでした: {error}",
+    zh: "账户已删除，但无法移除其登录文件夹：{error}",
+    hi: "खाता हटा दिया गया, लेकिन उसका लॉगिन फ़ोल्डर नहीं हटाया जा सका: {error}",
+    es: "Se eliminó la cuenta, pero no se pudo quitar su carpeta de inicio de sesión: {error}",
+    fr: "Le compte a été supprimé, mais son dossier de connexion n’a pas pu être retiré : {error}",
+    ar: "حُذف الحساب، لكن تعذّرت إزالة مجلد تسجيل الدخول الخاص به: {error}",
+    pt: "A conta foi excluída, mas não foi possível remover a pasta de login: {error}",
+    ru: "Аккаунт удалён, но его папку входа удалить не удалось: {error}",
+    tr: "Hesap silindi ancak oturum açma klasörü kaldırılamadı: {error}",
+    de: "Das Konto wurde gelöscht, aber sein Anmeldeordner konnte nicht entfernt werden: {error}",
+    vi: "Đã xóa tài khoản nhưng không gỡ được thư mục đăng nhập của nó: {error}",
+  },
+  "hotkey.reset": {
+    en: "Reset", ko: "되돌리기", ja: "リセット",
+    zh: "重置", hi: "रीसेट करें", es: "Restablecer",
+    fr: "Réinitialiser", ar: "إعادة تعيين", pt: "Redefinir",
+    ru: "Сбросить", tr: "Sıfırla", de: "Zurücksetzen", vi: "Đặt lại",
+  },
+  "pane.missing": {
+    en: "Missing pane {id}", ko: "패널 {id}을(를) 찾을 수 없음", ja: "ペイン {id} が見つかりません",
+    zh: "找不到窗格 {id}", hi: "पेन {id} नहीं मिला", es: "Falta el panel {id}",
+    fr: "Volet {id} introuvable", ar: "اللوحة {id} مفقودة", pt: "Painel {id} ausente",
+    ru: "Панель {id} не найдена", tr: "{id} bölmesi bulunamadı", de: "Bereich {id} fehlt", vi: "Không tìm thấy khung {id}",
+  },
+  "tab.fallbackName": {
+    en: "Tab {n}", ko: "탭 {n}", ja: "タブ {n}",
+    zh: "标签页 {n}", hi: "टैब {n}", es: "Pestaña {n}",
+    fr: "Onglet {n}", ar: "علامة التبويب {n}", pt: "Aba {n}",
+    ru: "Вкладка {n}", tr: "Sekme {n}", de: "Tab {n}", vi: "Tab {n}",
+  },
+  "launcher.detectFailed": {
+    en: "Couldn't detect agents — try Rescan", ko: "에이전트를 감지하지 못했습니다 — 다시 검색해 보세요", ja: "エージェントを検出できませんでした — 再スキャンしてください",
+    zh: "无法检测到智能体 — 请尝试重新扫描", hi: "एजेंट पहचाने नहीं जा सके — फिर से स्कैन करके देखें", es: "No se pudieron detectar agentes — prueba a volver a buscar",
+    fr: "Impossible de détecter les agents — essayez de relancer l’analyse", ar: "تعذّر اكتشاف الوكلاء — جرّب إعادة الفحص", pt: "Não foi possível detectar agentes — tente procurar novamente",
+    ru: "Не удалось обнаружить агентов — попробуйте пересканировать", tr: "Ajanlar algılanamadı — yeniden taramayı deneyin", de: "Agenten konnten nicht erkannt werden — versuche einen erneuten Scan", vi: "Không phát hiện được agent — hãy thử quét lại",
   },
   "fanout.command": {
     en: "Fan out prompt to agents…", ko: "프롬프트를 여러 에이전트에 보내기…", ja: "プロンプトを複数のエージェントに送る…", zh: "将提示分发给多个智能体…",

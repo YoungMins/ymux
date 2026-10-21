@@ -157,6 +157,24 @@ fn round_in<C: Sync>(
         .collect()
 }
 
+/// The one HTTP client both quota fetchers share (built once: a TLS client
+/// loads the root store, which is not worth repeating per fetch). 5 s total
+/// timeout, no redirects. A failed build is remembered as unavailable.
+pub(super) fn http_client() -> Result<&'static reqwest::blocking::Client, Unavailable> {
+    static CLIENT: std::sync::OnceLock<Option<reqwest::blocking::Client>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .ok()
+        })
+        .as_ref()
+        .ok_or(Unavailable)
+}
+
 pub(super) fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Unavailable> {
     let mut bytes = Vec::new();
     reader

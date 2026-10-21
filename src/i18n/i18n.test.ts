@@ -1,7 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { t, translationGaps } from "./i18n";
+import { langDir, t, translationGaps } from "./i18n";
 
 describe("i18n completeness (rule 7)", () => {
+  it("has every key in all 13 languages", () => {
+    expect(translationGaps("")).toEqual([]);
+  });
+
+  it("marks only Arabic as right-to-left", () => {
+    expect(langDir("ar")).toBe("rtl");
+    expect(langDir("en")).toBe("ltr");
+    expect(langDir("ja")).toBe("ltr");
+  });
+
   it("has every files pane string in all 13 languages", () => {
     expect(t("files.title")).toBe("Files");
     expect(translationGaps("files.")).toEqual([]);

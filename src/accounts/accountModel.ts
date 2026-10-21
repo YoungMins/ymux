@@ -49,6 +49,23 @@ export function agentUsesAccounts(agentId: string): boolean {
   return agentId === "claude" || agentId === "codex";
 }
 
+/// Whether both of `profile`'s folders are the ones ymux made for it
+/// (`<config>/accounts/<id>/claude` and `.../codex`, from
+/// `prepare_account_dirs`), so deleting the account may delete them too. A
+/// hand-entered folder is someone's real login and must never qualify, so
+/// both must match, under this profile's own id. Separators are compared
+/// after folding `\` to `/` (Windows paths); the backend re-checks the id.
+export function isManagedAccount(profile: AccountProfile): boolean {
+  // An id with a separator or `..` could make the suffix match a foreign
+  // folder; `newAccountId` only mints hex.
+  if (!/^[A-Za-z0-9_-]+$/.test(profile.id)) return false;
+  const tail = (dir: string, leaf: string): boolean => {
+    const norm = dir.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    return norm.endsWith(`/accounts/${profile.id}/${leaf}`);
+  };
+  return tail(profile.claude_config_dir, "claude") && tail(profile.codex_home, "codex");
+}
+
 /// Same resolution as the backend: the pane's own non-empty choice wins over
 /// the workspace default, `ACCOUNT_NONE` opts out, an unknown id is nothing.
 export function effectiveAccount(

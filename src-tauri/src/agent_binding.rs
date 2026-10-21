@@ -12,8 +12,8 @@
 //!    interactive process, `{"pid", "sessionId", "startedAt", "entrypoint",
 //!    …}`, and rewrites it when the process switches conversation (`/resume`,
 //!    `/clear`). Undocumented — so it is only believed when its pid is the
-//!    pane's agent process and its `startedAt` agrees with that process's
-//!    start time ([`registry_session_id`]); anything else falls through.
+//!    pane's agent process (or the Claude it launched) and its `startedAt`
+//!    agrees with that very process's start time ([`registry_session_id`]); anything else falls through.
 //! 3. **The process's own argv**: `claude --resume <id>`, `claude
 //!    --session-id <id>`, `codex resume <id>` ([`argv_session_id`]). This is
 //!    what binds a pane ymux itself resumed.
@@ -112,16 +112,21 @@ pub fn parse_claude_pid_file(json: &str) -> Option<ClaudePidFile> {
 /// rejecting a stale file whose pid the OS has since reused.
 pub const PID_FILE_START_SLACK_SECS: u64 = 120;
 
-/// The session id `file` names for `proc`, if the file is believable: it is
-/// about a pid inside the pane agent's own subtree, it describes a process
-/// that started when this one did (so not a dead one whose pid was reused),
-/// it comes from the terminal CLI, and the id is safe to type into a shell.
-pub fn registry_session_id(proc: &PaneProcess, file: &ClaudePidFile) -> Option<String> {
-    if !proc.subtree.contains(&file.pid) {
+/// The session id `file` names for the process `probe`, if the file is
+/// believable: it is about that very pid, it describes a process that started
+/// when *that* process did (so not a dead one whose pid was reused — checked
+/// against the probed pid's own start, never the pane agent's), it comes from
+/// the terminal CLI, and the id is safe to type into a shell.
+///
+/// Which pids are probed at all — the pane's agent and the Claude processes
+/// that are part of it, never a tool child or a nested agent — is decided by
+/// the scan (`agent_scan::ProcTree::claude_probes`).
+pub fn registry_session_id(probe: &ProcessKey, file: &ClaudePidFile) -> Option<String> {
+    if file.pid != probe.pid {
         return None;
     }
     let started = file.started_at_ms / 1000;
-    if started < proc.start_secs || started > proc.start_secs + PID_FILE_START_SLACK_SECS {
+    if started < probe.start_secs || started > probe.start_secs + PID_FILE_START_SLACK_SECS {
         return None;
     }
     if file.entrypoint.as_deref() != Some("cli") {
@@ -631,18 +636,21 @@ mod tests {
             started_at_ms: 1_790_212_419_413,
             entrypoint: Some("cli".into()),
         };
-        assert_eq!(registry_session_id(&p, &file), Some(ID_A.to_string()));
+        assert_eq!(registry_session_id(&p.key(), &file), Some(ID_A.to_string()));
         // A stale file whose pid the OS has since reused.
         let reused = proc(53676, 1_790_300_000);
-        assert_eq!(registry_session_id(&reused, &file), None);
+        assert_eq!(registry_session_id(&reused.key(), &file), None);
         // Some other process's file.
-        assert_eq!(registry_session_id(&proc(1, 1_790_212_418), &file), None);
+        assert_eq!(
+            registry_session_id(&proc(1, 1_790_212_418).key(), &file),
+            None
+        );
         // The desktop app, or an unsafe id.
         let mut desk = file.clone();
         desk.entrypoint = Some("claude-desktop".into());
-        assert_eq!(registry_session_id(&p, &desk), None);
+        assert_eq!(registry_session_id(&p.key(), &desk), None);
         let mut evil = file;
         evil.session_id = "$(rm -rf /)".into();
-        assert_eq!(registry_session_id(&p, &evil), None);
+        assert_eq!(registry_session_id(&p.key(), &evil), None);
     }
 }

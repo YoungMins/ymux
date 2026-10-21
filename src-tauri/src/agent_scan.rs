@@ -183,6 +183,37 @@ impl<'a> ProcTree<'a> {
         out
     }
 
+    /// The processes whose own `sessions/<pid>.json` may name the
+    /// conversation of the Claude agent `lead` (the process the scan bound),
+    /// in probe order: `lead` itself, then its *direct* children that are
+    /// themselves Claude (`match_agent`), lowest pid first — the native CLI a
+    /// launcher (`node … claude-code`, a `claude.exe` shim) started.
+    ///
+    /// Nothing deeper is ever probed: a Claude child is not descended into
+    /// (a Claude under the real Claude is a nested agent), and neither is a
+    /// non-agent child (`bash`, an MCP server), because a `claude -p` the
+    /// agent runs as a tool sits under one and writes a believable file of
+    /// its own, and a tool child may have reused a dead Claude's pid. Each
+    /// probe carries its own start time, which its file must agree with.
+    pub fn claude_probes(&self, lead: &ProcEntry) -> Vec<crate::agent_binding::ProcessKey> {
+        let key = |p: &ProcEntry| crate::agent_binding::ProcessKey {
+            pid: p.pid,
+            start_secs: p.start_secs,
+        };
+        std::iter::once(key(lead))
+            .chain(
+                self.children
+                    .get(&lead.pid)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|c| c.pid != lead.pid)
+                    .filter(|c| match_agent(&c.exe_stem, &c.argv) == Some("claude"))
+                    .map(|c| key(c)),
+            )
+            .collect()
+    }
+
     /// Every running agent on the machine, once: an agent process whose
     /// *direct* parent is itself an agent (a node wrapper's native child, a
     /// daemon's pty host) is the same agent, not a second one.
@@ -285,6 +316,10 @@ pub fn scan_panes(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashMap<U
 pub struct PaneAgent {
     pub kind: String,
     pub process: crate::agent_binding::PaneProcess,
+    /// Pids whose Claude pid file may name this agent's conversation, with
+    /// each one's own start time ([`ProcTree::claude_probes`]). Empty for
+    /// any other kind.
+    pub claude_probes: Vec<crate::agent_binding::ProcessKey>,
 }
 
 /// `pane id → its agent process` for every pane whose shell has one: the same
@@ -309,6 +344,11 @@ pub fn scan_pane_agents(
                         argv: p.argv.clone(),
                         subtree: tree.subtree(p.pid),
                     },
+                    claude_probes: if kind == "claude" {
+                        tree.claude_probes(p)
+                    } else {
+                        Vec::new()
+                    },
                 },
             ))
         })
@@ -328,10 +368,13 @@ pub fn shells_running(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashS
 
 /// Every running agent ymux knows how to resume, as `agent_binding` weighs a
 /// competing author of a transcript. `known_id` is filled from the process's
-/// own argv and, for Claude, from `pid_file_id` (its per-process file).
+/// own argv and, for Claude, from `pid_file_id` (its per-process file),
+/// probed at [`ProcTree::claude_probes`]: Claude's pid file is written by the
+/// CLI's own process, which on Windows is often a child of the launcher the
+/// tree reports here.
 pub fn other_agents(
     procs: &[ProcEntry],
-    mut pid_file_id: impl FnMut(&crate::agent_binding::PaneProcess) -> Option<String>,
+    mut pid_file_id: impl FnMut(&[crate::agent_binding::ProcessKey]) -> Option<String>,
 ) -> Vec<crate::agent_binding::OtherAgent> {
     use crate::agent_sessions::AgentKind;
     let tree = ProcTree::new(procs);
@@ -339,18 +382,9 @@ pub fn other_agents(
         .into_iter()
         .filter_map(|(kind, p)| {
             let kind = AgentKind::from_kind(kind)?;
-            let as_pane = crate::agent_binding::PaneProcess {
-                pid: p.pid,
-                start_secs: p.start_secs,
-                argv: p.argv.clone(),
-                // The whole subtree: Claude's pid file is written by the
-                // CLI's own process, which on Windows is often a child of
-                // the launcher the tree reports here.
-                subtree: tree.subtree(p.pid),
-            };
             let known_id = crate::agent_binding::argv_session_id(kind, &p.argv).or_else(|| {
                 if kind == AgentKind::Claude {
-                    pid_file_id(&as_pane)
+                    pid_file_id(&tree.claude_probes(p))
                 } else {
                     None
                 }
@@ -512,7 +546,7 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                     .filter(|(_, a)| a.kind == "claude")
                     .filter_map(|(id, a)| {
                         let dir = pane_dirs.get(id)?.claude.as_str();
-                        claude_pid_file_id_in(&[dir], &a.process).map(|s| (*id, s))
+                        claude_pid_file_id_in(&[dir], &a.claude_probes).map(|s| (*id, s))
                     })
                     .collect();
                 // Registry lock first, session lock second — the same order
@@ -634,6 +668,61 @@ mod tests {
             a.process.subtree.iter().copied().collect::<Vec<_>>(),
             vec![12, 13]
         );
+        // `rg` is a tool child, never probed for a pid file.
+        assert_eq!(
+            a.claude_probes,
+            vec![crate::agent_binding::ProcessKey {
+                pid: 12,
+                start_secs: 1_000
+            }]
+        );
+    }
+
+    #[test]
+    fn claude_probes_are_the_lead_then_its_direct_claude_children() {
+        // shell(10) -> launcher node claude-code(12)
+        //   -> native claude(30) -> bash(31) -> claude -p(32)
+        //                        -> claude(33)          (nested, direct)
+        //   -> claude(20)                               (lower pid, 2nd CLI)
+        //   -> bash(14) -> claude -p(15)                (tool's nested agent)
+        //   -> codex(16)                                (some other agent)
+        let mut procs = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(
+                12,
+                Some(10),
+                "node",
+                &["node", "/n/@anthropic-ai/claude-code/cli.js"],
+            ),
+            proc(30, Some(12), "claude", &["claude"]),
+            proc(31, Some(30), "bash", &["bash"]),
+            proc(32, Some(31), "claude", &["claude", "-p", "x"]),
+            proc(33, Some(30), "claude", &["claude"]),
+            proc(20, Some(12), "2.1.30", &["claude"]),
+            proc(14, Some(12), "bash", &["bash"]),
+            proc(15, Some(14), "claude", &["claude", "-p", "y"]),
+            proc(16, Some(12), "codex", &["codex"]),
+        ];
+        for p in &mut procs {
+            p.start_secs = u64::from(p.pid) * 10;
+        }
+        let tree = ProcTree::new(&procs);
+        let (_, lead) = tree.agent_proc_under(10).expect("agent");
+        let got: Vec<(u32, u64)> = tree
+            .claude_probes(lead)
+            .iter()
+            .map(|k| (k.pid, k.start_secs))
+            .collect();
+        assert_eq!(got, vec![(12, 120), (20, 200), (30, 300)]);
+        // Non-Claude panes carry no probes.
+        let id = Uuid::new_v4();
+        let codex = vec![
+            proc(10, Some(1), "pwsh", &[]),
+            proc(11, Some(10), "codex", &["codex"]),
+            proc(12, Some(11), "claude", &["claude"]),
+        ];
+        let found = scan_pane_agents(&HashMap::from([(id, 10)]), &codex);
+        assert!(found[&id].claude_probes.is_empty());
     }
 
     #[test]
@@ -716,7 +805,7 @@ mod tests {
             proc(50, Some(4), "gemini", &["gemini"]),
         ];
         procs[3].cwd = Some("/w".into());
-        let others = other_agents(&procs, |p| (p.pid == 40).then(|| "bbbb-1".to_string()));
+        let others = other_agents(&procs, |p| (p[0].pid == 40).then(|| "bbbb-1".to_string()));
         let pids: Vec<u32> = others.iter().map(|o| o.pid).collect();
         assert_eq!(pids, vec![20, 30, 40]);
         assert_eq!(others[0].known_id, None);

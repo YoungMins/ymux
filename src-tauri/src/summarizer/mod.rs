@@ -81,32 +81,48 @@ pub fn resolves_only_to_loopback<F>(url: &str, resolve: F) -> bool
 where
     F: Fn(&str, u16) -> std::io::Result<Vec<std::net::IpAddr>>,
 {
+    loopback_addrs(url, resolve).is_some()
+}
+
+/// [`resolves_only_to_loopback`], with what the check vetted: `Some(addrs)`
+/// when `url` can only reach this machine, where `addrs` are the resolved
+/// loopback addresses of a host *name* (empty for a literal loopback IP,
+/// which needs no resolving). The request must then connect to exactly
+/// these addresses, so a name that re-resolves elsewhere between the check
+/// and the connect (DNS rebinding) cannot slip past it.
+pub fn loopback_addrs<F>(url: &str, resolve: F) -> Option<Vec<std::net::SocketAddr>>
+where
+    F: Fn(&str, u16) -> std::io::Result<Vec<std::net::IpAddr>>,
+{
     if !is_loopback_endpoint(url) {
-        return false;
+        return None;
     }
-    let Ok(u) = Url::parse(url.trim()) else {
-        return false;
-    };
-    match u.host() {
-        Some(Host::Domain(d)) => {
+    let u = Url::parse(url.trim()).ok()?;
+    match u.host()? {
+        Host::Domain(d) => {
             let port = u.port_or_known_default().unwrap_or(80);
-            match resolve(d, port) {
-                Ok(addrs) => !addrs.is_empty() && addrs.iter().all(std::net::IpAddr::is_loopback),
-                Err(_) => false,
-            }
+            let addrs = resolve(d, port).ok()?;
+            (!addrs.is_empty() && addrs.iter().all(std::net::IpAddr::is_loopback)).then(|| {
+                addrs
+                    .into_iter()
+                    .map(|ip| std::net::SocketAddr::new(ip, port))
+                    .collect()
+            })
         }
-        Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
+        Host::Ipv4(ip) => ip.is_loopback().then(Vec::new),
+        Host::Ipv6(ip) => ip.is_loopback().then(Vec::new),
     }
+}
+
+/// The system resolver, as [`loopback_addrs`] takes it.
+pub fn system_resolve(host: &str, port: u16) -> std::io::Result<Vec<std::net::IpAddr>> {
+    use std::net::ToSocketAddrs;
+    Ok((host, port).to_socket_addrs()?.map(|sa| sa.ip()).collect())
 }
 
 /// [`resolves_only_to_loopback`] with the system resolver.
 pub fn is_loopback_resolved(url: &str) -> bool {
-    use std::net::ToSocketAddrs;
-    resolves_only_to_loopback(url, |host, port| {
-        Ok((host, port).to_socket_addrs()?.map(|sa| sa.ip()).collect())
-    })
+    resolves_only_to_loopback(url, system_resolve)
 }
 
 /// Human language name for the prompt; unknown codes use English.

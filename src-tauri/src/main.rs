@@ -146,16 +146,33 @@ fn main() {
 
     // Whether the layout below was really read from the user's config file,
     // rather than defaulted: only then may it prune agent-session records.
-    let mut layout_from_disk = ymux_lib::config::config_path().exists();
-    let config = ConfigStore::load_default().unwrap_or_else(|e| {
-        tracing::error!(error = %e, "failed to load config, using default");
-        layout_from_disk = false;
-        // Fall back to an in-memory default at a throwaway path if load
-        // somehow fails after the empty-file path — this keeps the app from
-        // refusing to start on permission issues.
-        ConfigStore::load(std::env::temp_dir().join("ymux-fallback.toml"))
-            .expect("default load cannot fail")
-    });
+    // A corrupt config.toml is moved aside (`config.toml.broken-<ts>`) and a
+    // default config takes its place at the real path, so the next save
+    // repairs it; only an unusable config dir (or a file that cannot be read
+    // or moved) sends saves to a throwaway path. See `load_or_recover`.
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (config, outcome) = ConfigStore::load_or_recover(
+        &ymux_lib::config::config_path(),
+        &std::env::temp_dir().join("ymux-fallback.toml"),
+        now_unix,
+    );
+    match &outcome {
+        ymux_lib::config::LoadOutcome::Recovered { broken, error } => tracing::error!(
+            error = %error,
+            moved_to = %broken.display(),
+            "config.toml could not be parsed; it was moved aside and ymux starts with a default config"
+        ),
+        ymux_lib::config::LoadOutcome::Fallback { error } => tracing::error!(
+            error = %error,
+            path = %config.path().display(),
+            "config.toml is unusable; ymux starts with a default config saved to a temporary path"
+        ),
+        _ => {}
+    }
+    let layout_from_disk = outcome.from_disk();
 
     // A defaulted config must never delete webhook secrets.
     ymux_lib::webhooks::runtime::set_prune_allowed(layout_from_disk);
@@ -317,6 +334,7 @@ fn main() {
             ymux_lib::settings::save_syntax_theme,
             ymux_lib::settings::open_config_path,
             ymux_lib::settings::prepare_account_dirs,
+            ymux_lib::settings::remove_account_dirs,
             ymux_lib::commands::get_agents,
             ymux_lib::commands::get_pane_labels,
             ymux_lib::commands::set_agent_tracking,

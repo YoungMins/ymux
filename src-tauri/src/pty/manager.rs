@@ -2,11 +2,11 @@
 //!
 //! The manager keeps a registry keyed by pane [`Uuid`] and centralises the
 //! reader → frontend event channel. Each spawned pane pushes its bytes into a
-//! single `mpsc` channel; the caller (the Tauri layer) drains it on a
-//! dedicated thread and forwards events to the webview.
+//! single bounded `mpsc` channel ([`EVENT_QUEUE`]); the caller (the Tauri
+//! layer) drains it on a dedicated thread and forwards events to the webview.
 
 use std::collections::HashMap;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::accounts::AgentDirs;
 use crate::config::model::{PaneSpec, ShellProfile};
 use crate::error::{YmuxError, YmuxResult};
-use crate::pty::session::{CwdMap, PaneEvent, PtySession};
+use crate::pty::session::{CwdMap, PaneEvent, PtySession, EVENT_QUEUE};
 
 /// Metadata returned to the frontend after a successful spawn.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -26,8 +26,12 @@ pub struct SpawnedPane {
 }
 
 pub struct PtyManager {
-    sessions: Mutex<HashMap<Uuid, PtySession>>,
-    tx: Sender<PaneEvent>,
+    /// `Arc` so `write`/`resize` can run without holding the map lock: a
+    /// write into a child that is not reading its stdin blocks, and it must
+    /// not block every other pane's commands (and the hook receiver's
+    /// `has`) with it.
+    sessions: Mutex<HashMap<Uuid, Arc<PtySession>>>,
+    tx: SyncSender<PaneEvent>,
     // Held so it doesn't drop; consumers take it with `take_event_receiver`.
     rx: Mutex<Option<Receiver<PaneEvent>>>,
     // Shared `pane id → latest cwd` map. Reader threads push updates into it
@@ -45,7 +49,7 @@ pub struct PtyManager {
 
 impl Default for PtyManager {
     fn default() -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(EVENT_QUEUE);
         Self {
             sessions: Mutex::new(HashMap::new()),
             tx,
@@ -99,7 +103,7 @@ impl PtyManager {
         let id = session.id;
         let shell = profile.name.clone();
         self.agent_dirs.lock().insert(id, dirs);
-        self.sessions.lock().insert(id, session);
+        self.sessions.lock().insert(id, Arc::new(session));
         Ok(SpawnedPane { id, shell })
     }
 
@@ -134,16 +138,23 @@ impl PtyManager {
             .collect()
     }
 
+    fn session(&self, id: Uuid) -> YmuxResult<Arc<PtySession>> {
+        self.sessions
+            .lock()
+            .get(&id)
+            .cloned()
+            .ok_or(YmuxError::UnknownPane(id))
+    }
+
+    /// Write to the pane's PTY. May block for as long as the child does not
+    /// read (flow control, a huge paste), so it runs off the main thread and
+    /// without the map lock; only writes to this same pane wait behind it.
     pub fn write(&self, id: Uuid, data: &[u8]) -> YmuxResult<()> {
-        let sessions = self.sessions.lock();
-        let session = sessions.get(&id).ok_or(YmuxError::UnknownPane(id))?;
-        session.write(data)
+        self.session(id)?.write(data)
     }
 
     pub fn resize(&self, id: Uuid, size: PtySize) -> YmuxResult<()> {
-        let sessions = self.sessions.lock();
-        let session = sessions.get(&id).ok_or(YmuxError::UnknownPane(id))?;
-        session.resize(size)
+        self.session(id)?.resize(size)
     }
 
     pub fn kill(&self, id: Uuid) -> YmuxResult<()> {
@@ -174,9 +185,14 @@ impl PtyManager {
 
     /// Drop every session. Used on window close.
     pub fn shutdown_all(&self) {
-        let mut map = self.sessions.lock();
-        map.clear();
+        let drained: Vec<Arc<PtySession>> = self.sessions.lock().drain().map(|(_, s)| s).collect();
         self.agent_dirs.lock().clear();
+        // Kill explicitly: a write blocked on a child that never reads holds
+        // its own `Arc`, so dropping ours alone would not run `Drop` (and so
+        // never kill that child, which is what unblocks the write).
+        for s in drained {
+            let _ = s.kill();
+        }
     }
 }
 

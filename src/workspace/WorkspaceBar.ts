@@ -21,13 +21,26 @@ const launcherSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
 /// Installed agents, detected once per session (the launcher's "Rescan"
 /// forces a fresh look). Started at mount so the first open isn't waiting.
 let agentScan: Promise<DetectedAgent[]> | null = null;
+/// The last detection failed (its `[]` means "unknown", not "none installed"),
+/// so the launcher says so instead of claiming no agents are installed.
+let agentScanFailed = false;
 function scanAgents(force = false): Promise<DetectedAgent[]> {
   if (force || !agentScan) {
-    agentScan = api.detectAgents(force).catch((e) => {
-      console.warn("detect_agents failed:", e);
-      agentScan = null;
-      return [];
-    });
+    const scan: Promise<DetectedAgent[]> = api.detectAgents(force).then(
+      (agents) => {
+        if (agentScan === scan) agentScanFailed = false;
+        return agents;
+      },
+      (e) => {
+        console.warn("detect_agents failed:", e);
+        if (agentScan === scan) {
+          agentScanFailed = true;
+          agentScan = null;
+        }
+        return [];
+      },
+    );
+    agentScan = scan;
   }
   return agentScan;
 }
@@ -38,8 +51,9 @@ function launcherEntries(
   manager: WorkspaceManager,
   shells: ShellProfile[],
   agents: DetectedAgent[],
+  detectFailed: boolean,
   reopen: () => void,
-  pickAccount: (agentName: string, launch: TabLaunch) => void,
+  pickAccount: (agentId: string, agentName: string, launch: TabLaunch) => void,
 ): ContextMenuEntry[] {
   const shell = manager.defaultShell;
   const family = shellFamilyFromExecutable(shells.find((s) => s.name === shell)?.executable);
@@ -55,12 +69,16 @@ function launcherEntries(
       title: tip.filter((x) => x).join("\n"),
       onSelect: () =>
         agentUsesAccounts(agent.id)
-          ? pickAccount(agent.name, { shell, startupCmd: command })
+          ? pickAccount(agent.id, agent.name, { shell, startupCmd: command })
           : void manager.newTabInFocused({ shell, startupCmd: command }),
     });
   }
   if (launchable.length === 0) {
-    entries.push({ label: t("launcher.noAgents"), disabled: true, onSelect: () => {} });
+    entries.push({
+      label: detectFailed ? t("launcher.detectFailed") : t("launcher.noAgents"),
+      disabled: true,
+      onSelect: () => {},
+    });
   }
   entries.push("separator", { header: t("launcher.terminal") });
   const ordered = [shell, ...shells.map((s) => s.name).filter((n) => n !== shell)];
@@ -95,8 +113,12 @@ function launcherEntries(
 /// like a website's account chooser. "Default login" is the tool's own folder
 /// (`~/.claude`, `~/.codex`); "Add account" asks for a name, creates the
 /// account's folders and starts the agent there, where it asks to sign in.
+/// An account without a folder for this agent (a hand-made profile with only
+/// the other tool's folder) is left out: it would silently run under the
+/// default login.
 function accountEntries(
   manager: WorkspaceManager,
+  agentId: string,
   agentName: string,
   launch: TabLaunch,
 ): ContextMenuEntry[] {
@@ -110,6 +132,8 @@ function accountEntries(
     },
   ];
   for (const a of manager.accounts) {
+    const dir = agentId === "codex" ? a.codex_home : a.claude_config_dir;
+    if (dir.trim() === "") continue;
     entries.push({ label: `● ${a.name || a.id}`, onSelect: () => start(a.id) });
   }
   entries.push("separator", {
@@ -173,15 +197,16 @@ export function mountWorkspaceBar(
     const agents = await scanAgents();
     // Measured after the await: the bar may have moved while detecting.
     const r = launchBtn.getBoundingClientRect();
-    const pickAccount = (agentName: string, launch: TabLaunch): void => {
+    const detectFailed = agentScanFailed;
+    const pickAccount = (agentId: string, agentName: string, launch: TabLaunch): void => {
       // The launcher menu is already closed by its select; the chooser
       // opens in its place.
-      showContextMenu(r.left, r.bottom + 2, accountEntries(manager, agentName, launch));
+      showContextMenu(r.left, r.bottom + 2, accountEntries(manager, agentId, agentName, launch));
     };
     showContextMenu(
       r.left,
       r.bottom + 2,
-      launcherEntries(manager, shells, agents, openLauncherSoon, pickAccount),
+      launcherEntries(manager, shells, agents, detectFailed, openLauncherSoon, pickAccount),
     );
   };
   const openLauncherSoon = (): void => void openLauncher();
@@ -234,7 +259,7 @@ export function mountWorkspaceBar(
   kofiBtn.className = "workspace-bar__icon-btn";
   kofiBtn.type = "button";
   kofiBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 8h2a2 2 0 0 1 0 4h-2"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8z"/><line x1="6" y1="2" x2="6" y2="6"/><line x1="10" y1="2" x2="10" y2="6"/><line x1="14" y1="2" x2="14" y2="6"/></svg>`;
-  kofiBtn.title = "Support on Ko-fi";
+  kofiBtn.title = t("workspace.supportTitle");
   kofiBtn.addEventListener("click", () => {
     void api.openUrl("https://ko-fi.com/youngminkim").catch((e) =>
       console.warn("openUrl failed:", e),

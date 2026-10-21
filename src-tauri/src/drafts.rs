@@ -52,11 +52,10 @@ fn save_under(base: &Path, pane_id: &str, blob: &str) -> io::Result<()> {
     }
     let path = draft_file_under(base, pane_id)?;
     std::fs::create_dir_all(base)?;
-    // Temp file + rename: a crash mid-write leaves the previous draft, not a
-    // truncated one.
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, blob.as_bytes())?;
-    std::fs::rename(&tmp, &path)
+    // Temp file + fsync + rename: a crash mid-write leaves the previous
+    // draft, not a truncated one. The temp name ends in `.tmp`, which
+    // `list_under` skips.
+    crate::durable::write_atomic(&path, blob.as_bytes())
 }
 
 fn load_under(base: &Path, pane_id: &str) -> io::Result<String> {
@@ -84,8 +83,8 @@ fn list_under(base: &Path) -> io::Result<Vec<String>> {
     let mut ids = Vec::new();
     for entry in iter.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        // `<id>.json` only: a `<id>.json.tmp` is a write in progress (or an
-        // interrupted one), not a draft.
+        // `<id>.json` only: a `.<id>.json.<uuid>.tmp` (or a legacy
+        // `<id>.json.tmp`) is a write in progress, not a draft.
         let Some(id) = name.strip_suffix(".json") else {
             continue;
         };

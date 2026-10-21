@@ -31,7 +31,19 @@ pub struct QueueItem {
 
 pub struct Queue {
     path: PathBuf,
-    lock: Mutex<()>,
+    /// Serialises file access and holds what the last full read learned
+    /// about due times, so an idle worker's tick does not re-read the file.
+    lock: Mutex<NextDue>,
+}
+
+/// The earliest `not_before_ms` in the file, as of the last full read. Reset
+/// to `Unknown` by every write (push, ack, bump), successful or not, so a
+/// stale answer can never hide a due item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextDue {
+    Unknown,
+    Empty,
+    At(i64),
 }
 
 fn line_of(item: &QueueItem) -> io::Result<String> {
@@ -47,12 +59,19 @@ impl Queue {
     pub fn open(dir: &Path, dest_id: &str) -> Option<Queue> {
         super::is_valid_dest_id(dest_id).then(|| Queue {
             path: dir.join(format!("{dest_id}.jsonl")),
-            lock: Mutex::new(()),
+            lock: Mutex::new(NextDue::Unknown),
         })
     }
 
-    fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
+    fn guard(&self) -> std::sync::MutexGuard<'_, NextDue> {
         self.lock.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// The guard, with the due-time cache invalidated: for every write.
+    fn write_guard(&self) -> std::sync::MutexGuard<'_, NextDue> {
+        let mut g = self.guard();
+        *g = NextDue::Unknown;
+        g
     }
 
     fn read_all(&self) -> Vec<QueueItem> {
@@ -111,7 +130,7 @@ impl Queue {
     /// Adds an item at the back; drops the oldest to stay within bounds.
     /// An item that alone exceeds `MAX_BYTES` is rejected.
     pub fn push(&self, item: &QueueItem) -> io::Result<()> {
-        let _g = self.guard();
+        let _g = self.write_guard();
         let size = line_of(item)?.len();
         if size > MAX_BYTES {
             return Err(io::Error::new(
@@ -161,6 +180,26 @@ impl Queue {
         self.read_all()
     }
 
+    /// The oldest item due at `now` (`not_before_ms <= now`), if any. While
+    /// nothing has been written since the last read and that read found no
+    /// item due before some later time, answers from the cache without
+    /// touching the file.
+    pub fn next_due(&self, now: i64) -> Option<QueueItem> {
+        let mut g = self.guard();
+        match *g {
+            NextDue::Empty => return None,
+            NextDue::At(t) if t > now => return None,
+            _ => {}
+        }
+        let items = self.read_all();
+        *g = items
+            .iter()
+            .map(|i| i.not_before_ms)
+            .min()
+            .map_or(NextDue::Empty, NextDue::At);
+        items.into_iter().find(|i| i.not_before_ms <= now)
+    }
+
     pub fn len(&self) -> usize {
         self.list().len()
     }
@@ -171,7 +210,7 @@ impl Queue {
 
     /// Removes the item (delivered, or dropped for good). Unknown id is ok.
     pub fn ack(&self, id: &str) -> io::Result<()> {
-        let _g = self.guard();
+        let _g = self.write_guard();
         let items = self.read_all();
         if !items.iter().any(|i| i.id == id) {
             return Ok(());
@@ -191,7 +230,7 @@ impl Queue {
     /// Records a failed try: attempts += 1 and the next due time. Returns the
     /// new attempt count, or `None` if the id is gone.
     pub fn bump_attempt(&self, id: &str, not_before_ms: i64) -> io::Result<Option<u32>> {
-        let _g = self.guard();
+        let _g = self.write_guard();
         let mut items = self.read_all();
         let mut out = None;
         for it in items.iter_mut() {
@@ -347,6 +386,53 @@ mod tests {
         a.push(&item("a")).unwrap();
         assert_eq!((a.len(), b.len()), (1, 0));
         assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn next_due_answers_from_cache_until_a_write() {
+        let d = tempfile::tempdir().unwrap();
+        let q = open(d.path());
+        let p = d.path().join(format!("{DEST}.jsonl"));
+        assert!(q.next_due(0).is_none());
+        // Cached as empty: a file written behind the queue's back is not
+        // re-read on the next idle tick.
+        let mut later = item("a");
+        later.not_before_ms = 1_000;
+        fs::write(&p, line_of(&later).unwrap()).unwrap();
+        assert!(q.next_due(5_000).is_none());
+        // Any write invalidates.
+        q.push(&item("b")).unwrap();
+        assert_eq!(q.next_due(0).unwrap().id, "b");
+        q.ack("b").unwrap();
+        // Only "a" (due at 1000) is left: cached, so it is not due at 999
+        // even after the file is removed underneath...
+        assert!(q.next_due(999).is_none());
+        fs::remove_file(&p).unwrap();
+        assert!(q.next_due(999).is_none());
+        // ...and once due the file is read again.
+        assert!(q.next_due(1_000).is_none());
+        fs::write(&p, line_of(&later).unwrap()).unwrap();
+        assert!(
+            q.next_due(1_000).is_none(),
+            "cached empty after the last read"
+        );
+        q.bump_attempt("a", 2_000).unwrap();
+        assert!(q.next_due(1_999).is_none());
+        assert_eq!(q.next_due(2_000).unwrap().attempts, 1);
+    }
+
+    #[test]
+    fn a_failed_write_still_invalidates_the_cache() {
+        let d = tempfile::tempdir().unwrap();
+        let q = open(d.path());
+        assert!(q.next_due(0).is_none());
+        // The queue path is a directory: append fails.
+        let p = d.path().join(format!("{DEST}.jsonl"));
+        fs::create_dir_all(&p).unwrap();
+        assert!(q.push(&item("a")).is_err());
+        fs::remove_dir(&p).unwrap();
+        fs::write(&p, line_of(&item("a")).unwrap()).unwrap();
+        assert_eq!(q.next_due(0).unwrap().id, "a");
     }
 
     #[test]

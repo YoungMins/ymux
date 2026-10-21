@@ -1,4 +1,4 @@
-use std::{path::Path, sync::OnceLock, time::Duration};
+use std::{path::Path, sync::OnceLock};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use super::quota_cache::{Cached, REFRESH};
 use super::{
     model::Quota,
-    quota_cache::{read_bounded, round, Identity, KeyedCache, Unavailable},
+    quota_cache::{http_client, read_bounded, round, Identity, KeyedCache, Unavailable},
     TokenSnapshot,
 };
 
@@ -135,11 +135,7 @@ fn parse_credentials(bytes: &[u8]) -> Option<String> {
 }
 
 fn fetch(token: &str) -> Result<Vec<Quota>, Unavailable> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| Unavailable)?;
+    let client = http_client()?;
     let response = client
         .get("https://api.anthropic.com/api/oauth/usage")
         .bearer_auth(token)

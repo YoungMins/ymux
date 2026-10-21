@@ -17,6 +17,13 @@ use tauri::{AppHandle, Emitter};
 const POLL_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60); // 6h
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(30 * 60); // 30min
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Largest release JSON read. `releases/latest` is a few KiB plus the notes.
+const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
+/// Redirect hops followed, and only within the API host (see
+/// [`redirect_allowed`]).
+const MAX_REDIRECTS: usize = 3;
+const API_HOST: &str = "api.github.com";
 const USER_AGENT: &str = concat!("ymux-update-check/", env!("CARGO_PKG_VERSION"));
 const RELEASES_URL: &str = "https://api.github.com/repos/YoungMins/ymux/releases/latest";
 
@@ -75,8 +82,20 @@ fn check_once() -> Result<Option<UpdateInfo>, String> {
     }
 
     let current = env!("CARGO_PKG_VERSION");
+    // Rule 17's outbound limits: connect + total timeouts, a capped body, and
+    // redirects only within the API host. The releases API answers JSON
+    // directly; the one redirect it can send is a renamed or transferred
+    // repository's 301 to `api.github.com/repositories/<id>/…`.
     let client = reqwest::blocking::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if redirect_allowed(attempt.url(), attempt.previous().len()) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
         .user_agent(USER_AGENT)
         .build()
         .map_err(|e| e.to_string())?;
@@ -85,13 +104,20 @@ fn check_once() -> Result<Option<UpdateInfo>, String> {
         .get(RELEASES_URL)
         .header("Accept", "application/vnd.github+json")
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.without_url().to_string())?;
 
     if !resp.status().is_success() {
         return Err(format!("unexpected status: {}", resp.status()));
     }
 
-    let release: GithubRelease = resp.json().map_err(|e| e.to_string())?;
+    let mut body = Vec::new();
+    {
+        use std::io::Read;
+        resp.take(MAX_RESPONSE_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| e.to_string())?;
+    }
+    let release = parse_release(&body)?;
     let tag = release.tag_name.trim_start_matches('v');
 
     if !is_newer(current, tag) {
@@ -103,6 +129,24 @@ fn check_once() -> Result<Option<UpdateInfo>, String> {
         url: release.html_url,
         notes: release.body.unwrap_or_default(),
     }))
+}
+
+/// Whether the update check follows a redirect to `next` after `hops`
+/// earlier ones: https on the API host only, a few hops at most.
+fn redirect_allowed(next: &reqwest::Url, hops: usize) -> bool {
+    hops < MAX_REDIRECTS
+        && next.scheme() == "https"
+        && next.host_str() == Some(API_HOST)
+        && next.port_or_known_default() == Some(443)
+}
+
+/// The release JSON, refused when larger than [`MAX_RESPONSE_BYTES`] (the
+/// caller reads at most one byte past the cap).
+fn parse_release(body: &[u8]) -> Result<GithubRelease, String> {
+    if body.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err("release response too large".into());
+    }
+    serde_json::from_slice(body).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +241,34 @@ mod tests {
             assert_eq!(info.url, "https://example.com");
             assert_eq!(info.notes, "hello");
         }
+    }
+
+    #[test]
+    fn redirects_stay_on_the_api_host() {
+        let u = |s: &str| reqwest::Url::parse(s).unwrap();
+        let moved = u("https://api.github.com/repositories/1/releases/latest");
+        assert!(redirect_allowed(&moved, 0));
+        assert!(redirect_allowed(&moved, MAX_REDIRECTS - 1));
+        assert!(!redirect_allowed(&moved, MAX_REDIRECTS));
+        for bad in [
+            "http://api.github.com/x",
+            "https://api.github.com:8443/x",
+            "https://evil.example/x",
+            "https://api.github.com.evil.example/x",
+            "https://github.com/x",
+        ] {
+            assert!(!redirect_allowed(&u(bad), 0), "{bad}");
+        }
+    }
+
+    #[test]
+    fn release_body_is_capped_before_parsing() {
+        let ok = br#"{"tag_name":"v9.9.9","html_url":"https://x","body":null}"#;
+        assert_eq!(parse_release(ok).unwrap().tag_name, "v9.9.9");
+        let mut big = br#"{"tag_name":"v1","html_url":"h","body":""#.to_vec();
+        big.resize(MAX_RESPONSE_BYTES as usize + 1, b'a');
+        assert!(parse_release(&big).unwrap_err().contains("too large"));
+        assert!(parse_release(b"not json").is_err());
     }
 
     #[test]

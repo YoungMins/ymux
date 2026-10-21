@@ -20,18 +20,27 @@ pub fn scrollback_dir() -> PathBuf {
 /// directory. `pane_id` is expected to be a UUID string; anything that isn't
 /// a hex digit or `-` is stripped so a malicious or malformed id (e.g.
 /// containing `..` or path separators) cannot escape `base`.
-fn scrollback_file_under(base: &Path, pane_id: &str) -> PathBuf {
+/// An id that sanitises to nothing is refused (`InvalidInput`), as in
+/// `drafts.rs`: it would otherwise name one shared `<base>/.txt` that every
+/// such pane reads and overwrites.
+fn scrollback_file_under(base: &Path, pane_id: &str) -> std::io::Result<PathBuf> {
     let safe: String = pane_id
         .chars()
         .filter(|c| c.is_ascii_hexdigit() || *c == '-')
         .collect();
-    base.join(format!("{safe}.txt"))
+    if safe.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty pane id",
+        ));
+    }
+    Ok(base.join(format!("{safe}.txt")))
 }
 
 /// Path to the scrollback file for a given pane id under the real,
 /// OS-resolved scrollback directory. See `scrollback_file_under` for the
 /// sanitization rules.
-pub fn scrollback_file(pane_id: &str) -> PathBuf {
+pub fn scrollback_file(pane_id: &str) -> std::io::Result<PathBuf> {
     scrollback_file_under(&scrollback_dir(), pane_id)
 }
 
@@ -43,9 +52,10 @@ const SCROLLBACK_CAP_BYTES: usize = 256 * 1024;
 /// arbitrary base directory, creating it if needed and truncating to the
 /// last `SCROLLBACK_CAP_BYTES` bytes (rounded forward to the next UTF-8 char
 /// boundary, so the retained tail is always valid UTF-8) if the blob is
-/// larger. Writes via a temp file + rename so a crash mid-write can't leave
-/// a truncated/corrupt scrollback file, mirroring `config::store::write_atomic`.
+/// larger. Writes durably via [`crate::durable::write_atomic`] so a crash mid-write
+/// can't leave a truncated/corrupt scrollback file.
 fn save_blob_under(base: &Path, pane_id: &str, blob: &str) -> std::io::Result<()> {
+    let path = scrollback_file_under(base, pane_id)?;
     std::fs::create_dir_all(base)?;
     let out = if blob.len() > SCROLLBACK_CAP_BYTES {
         let mut start = blob.len() - SCROLLBACK_CAP_BYTES;
@@ -56,10 +66,7 @@ fn save_blob_under(base: &Path, pane_id: &str, blob: &str) -> std::io::Result<()
     } else {
         blob
     };
-    let path = scrollback_file_under(base, pane_id);
-    let tmp = path.with_extension("txt.tmp");
-    std::fs::write(&tmp, out.as_bytes())?;
-    std::fs::rename(&tmp, &path)
+    crate::durable::write_atomic(&path, out.as_bytes())
 }
 
 /// Save `blob` for `pane_id` under the real, OS-resolved scrollback
@@ -72,7 +79,7 @@ pub fn save_blob(pane_id: &str, blob: &str) -> std::io::Result<()> {
 /// directory. Returns an empty string (not an error) if no scrollback has
 /// been saved for this pane yet.
 fn load_blob_under(base: &Path, pane_id: &str) -> std::io::Result<String> {
-    match std::fs::read_to_string(scrollback_file_under(base, pane_id)) {
+    match std::fs::read_to_string(scrollback_file_under(base, pane_id)?) {
         Ok(s) => Ok(s),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e),
@@ -89,11 +96,11 @@ pub fn load_blob(pane_id: &str) -> std::io::Result<String> {
 /// Delete the persisted scrollback for `pane_id` under an arbitrary base
 /// directory, if any. A missing file is not an error.
 fn delete_blob_under(base: &Path, pane_id: &str) -> std::io::Result<()> {
-    let path = scrollback_file_under(base, pane_id);
-    if path.exists() {
-        std::fs::remove_file(path)?;
+    match std::fs::remove_file(scrollback_file_under(base, pane_id)?) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
-    Ok(())
 }
 
 /// Delete the persisted scrollback for `pane_id` under the real, OS-resolved
@@ -121,14 +128,14 @@ mod tests {
 
     #[test]
     fn scrollback_file_sanitizes_pane_id() {
-        let p = scrollback_file("../../evil");
+        let p = scrollback_file("../../evil").expect("an 'e' survives");
         assert!(!p.to_string_lossy().contains(".."));
     }
 
     #[test]
     fn scrollback_file_keeps_valid_uuid_chars() {
         let id = "0d1e2f3a-4b5c-6d7e-8f90-123456789abc";
-        let p = scrollback_file(id);
+        let p = scrollback_file(id).expect("valid id");
         assert_eq!(
             p.file_name().and_then(|n| n.to_str()),
             Some(format!("{id}.txt").as_str())
@@ -234,6 +241,41 @@ mod tests {
         assert!(blob.ends_with(&loaded));
 
         delete_blob_under(&base, pane_id).expect("cleanup delete should succeed");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An id with nothing left after sanitising must not map to a shared
+    /// `<base>/.txt` that every such pane would read and overwrite.
+    #[test]
+    fn id_that_sanitises_to_empty_is_refused() {
+        let base = tempdir();
+        for bad in ["", "../..", "zz/\\", "ghijk"] {
+            let err = save_blob_under(&base, bad, "x").expect_err(bad);
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{bad:?}");
+            assert_eq!(
+                load_blob_under(&base, bad).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput
+            );
+            assert_eq!(
+                delete_blob_under(&base, bad).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput
+            );
+        }
+        assert!(!base.join(".txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn save_leaves_no_temp_file() {
+        let base = tempdir();
+        save_blob_under(&base, "abc-1", "one").unwrap();
+        save_blob_under(&base, "abc-1", "two").unwrap();
+        let names: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["abc-1.txt".to_string()]);
         let _ = std::fs::remove_dir_all(&base);
     }
 }

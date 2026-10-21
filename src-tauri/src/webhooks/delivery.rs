@@ -493,6 +493,7 @@ impl Inner {
         let mut pending: Vec<DeliveryEvent> = Vec::new();
         let mut first_ms = 0i64;
         let mut wait = Duration::ZERO;
+        let mut queue_stuck = false;
         while let Some(cfg) = self.dest(id).filter(|d| d.enabled) {
             let mut stop = false;
             match rx.recv_timeout(wait) {
@@ -522,8 +523,19 @@ impl Inner {
             if stop {
                 break;
             }
-            let progressed = self.deliver_one(id, &cfg, &queue, &status);
-            wait = if progressed {
+            let step = self.deliver_one(id, &cfg, &queue, &status);
+            // A queue that cannot be written (full disk, read-only dir) is
+            // not progress: the same item would be re-sent at once forever.
+            let stuck = step == Step::QueueWriteFailed;
+            if stuck != queue_stuck {
+                queue_stuck = stuck;
+                if stuck {
+                    tracing::warn!(dest = %id, "webhook queue write failed; retrying on the normal tick");
+                } else {
+                    tracing::info!(dest = %id, "webhook queue writable again");
+                }
+            }
+            wait = if step == Step::Progressed {
                 Duration::ZERO
             } else {
                 self.opts.tick
@@ -544,6 +556,16 @@ impl Inner {
 
     fn set_error(status: &Mutex<DestStatus>, kind: &str) {
         status.lock().last_error = Some(kind.to_string());
+    }
+
+    /// Whether a queue write (ack / bump) took. A failure is surfaced as the
+    /// destination's `queue_write` error, which outranks the send's own.
+    fn wrote<T>(status: &Mutex<DestStatus>, r: std::io::Result<T>) -> bool {
+        let ok = r.is_ok();
+        if !ok {
+            Self::set_error(status, QUEUE_WRITE_ERROR);
+        }
+        ok
     }
 
     /// Chunks `events` into messages and persists each before any send.
@@ -594,29 +616,36 @@ impl Inner {
         }
     }
 
-    /// Sends the oldest due queue item. Returns whether one was handled.
+    /// Sends the oldest due queue item, and says whether one was handled
+    /// and its outcome recorded in the queue.
     fn deliver_one(
         &self,
         id: &str,
         cfg: &WebhookDestination,
         queue: &Queue,
         status: &Mutex<DestStatus>,
-    ) -> bool {
+    ) -> Step {
         let now = self.opts.clock.now_ms();
-        let Some(item) = queue.list().into_iter().find(|i| i.not_before_ms <= now) else {
-            return false;
+        let Some(item) = queue.next_due(now) else {
+            eprintln!(
+                "DBG idle now={now} {:?}",
+                queue
+                    .list()
+                    .iter()
+                    .map(|i| i.not_before_ms)
+                    .collect::<Vec<_>>()
+            );
+            return Step::Idle;
         };
         let stored: Stored = match serde_json::from_value(item.payload.clone()) {
             Ok(s) => s,
             Err(_) => {
-                let _ = queue.ack(&item.id);
                 Self::set_error(status, "bad_item");
-                return true;
+                return Step::of(Self::wrote(status, queue.ack(&item.id)));
             }
         };
         let Some(url) = self.secrets.get(id, "url").filter(|u| !u.trim().is_empty()) else {
-            self.retry_or_drop(queue, status, &item, None, "no_url");
-            return true;
+            return Step::of(self.retry_or_drop(queue, status, &item, None, "no_url"));
         };
         let secret = self.secrets.get(id, "secret").unwrap_or_default();
         let (attached, lst) = load_attachments(&stored, cfg);
@@ -628,8 +657,7 @@ impl Inner {
             boundary: &boundary,
         };
         let Some(built) = payload::build(cfg, &ctx, &stored.events, &attached, &lst) else {
-            let _ = queue.ack(&item.id);
-            return true;
+            return Step::of(Self::wrote(status, queue.ack(&item.id)));
         };
         let out = catch_unwind(AssertUnwindSafe(|| (self.sender)(&url, &built)))
             .unwrap_or_else(|_| SendOutcome::failed(super::client::ErrorKind::Request));
@@ -643,22 +671,24 @@ impl Inner {
             (None, Some(k)) => k.as_str().to_string(),
             (None, None) => "no_response".to_string(),
         };
-        match verdict {
+        Step::of(match verdict {
             Outcome::Ok => {
-                let _ = queue.ack(&item.id);
+                let acked = queue.ack(&item.id).is_ok();
                 let mut s = status.lock();
                 s.last_ok_at = Some(self.opts.clock.now_ms());
-                s.last_error = None;
+                s.last_error = (!acked).then(|| QUEUE_WRITE_ERROR.to_string());
+                acked
             }
             Outcome::Drop => {
-                let _ = queue.ack(&item.id);
                 Self::set_error(status, &label);
+                Self::wrote(status, queue.ack(&item.id))
             }
             Outcome::Retry => self.retry_or_drop(queue, status, &item, out.retry_after, &label),
-        }
-        true
+        })
     }
 
+    /// Records a failed try (or drops the item once out of attempts).
+    /// Returns whether the queue write took.
     fn retry_or_drop(
         &self,
         queue: &Queue,
@@ -666,18 +696,45 @@ impl Inner {
         item: &QueueItem,
         retry_after: Option<Duration>,
         label: &str,
-    ) {
-        Self::set_error(status, label);
+    ) -> bool {
         let jitter = (self.opts.jitter)();
-        match next_delay(item.attempts.saturating_add(1), retry_after, jitter) {
+        let r = match next_delay(item.attempts.saturating_add(1), retry_after, jitter) {
             Some(d) => {
                 let ms = i64::try_from(d.as_millis()).unwrap_or(i64::MAX);
                 let at = self.opts.clock.now_ms().saturating_add(ms);
-                let _ = queue.bump_attempt(&item.id, at);
+                queue.bump_attempt(&item.id, at).map(drop)
             }
-            None => {
-                let _ = queue.ack(&item.id);
-            }
+            None => queue.ack(&item.id),
+        };
+        // Recorded after the queue write, so a status showing this error
+        // means the retry is already scheduled (or the item gone).
+        Self::set_error(status, label);
+        Self::wrote(status, r)
+    }
+}
+
+/// `DestStatus::last_error` while the destination's queue file cannot be
+/// written.
+pub const QUEUE_WRITE_ERROR: &str = "queue_write";
+
+/// What one `deliver_one` call did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Nothing was due.
+    Idle,
+    /// An item was handled and its outcome is on disk: try the next at once.
+    Progressed,
+    /// An item was handled but acking or rescheduling it failed, so it is
+    /// still due: wait the normal tick rather than spin on it.
+    QueueWriteFailed,
+}
+
+impl Step {
+    fn of(wrote: bool) -> Step {
+        if wrote {
+            Step::Progressed
+        } else {
+            Step::QueueWriteFailed
         }
     }
 }
@@ -894,6 +951,34 @@ mod tests {
         wait_until("third try ok", || r.calls_to("a.test").len() == 3);
         wait_until("acked", || d.status(&uid("a")).queued == 0);
         assert_eq!(d.status(&uid("a")).last_error, None);
+        d.shutdown();
+    }
+
+    #[test]
+    fn an_unwritable_queue_waits_the_tick_instead_of_resending_at_once() {
+        let r = rig(&["a"]);
+        // The rewrite's temp path is a directory: every bump_attempt fails,
+        // while the first append still works.
+        let tmp = r.dir.join(format!("{}.jsonl.tmp", uid("a")));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let d = r.start(r.opts(), |_, _| SendOutcome::status(503));
+        d.publish(&ev(1));
+        wait_until("queue_write surfaced", || {
+            d.status(&uid("a")).last_error.as_deref() == Some(QUEUE_WRITE_ERROR)
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        // One send per 5 ms tick at most (~40 here), not a hot loop.
+        let n = r.calls_to("a.test").len();
+        assert!((2..=80).contains(&n), "{n} sends in ~200 ms");
+        // Writable again: the retry is scheduled and the backoff holds.
+        std::fs::remove_dir(&tmp).unwrap();
+        wait_until("backoff recorded", || {
+            d.status(&uid("a")).last_error.as_deref() == Some("http_503")
+        });
+        let n = r.calls_to("a.test").len();
+        settle();
+        assert_eq!(r.calls_to("a.test").len(), n, "waits for the backoff");
+        assert_eq!(d.status(&uid("a")).queued, 1);
         d.shutdown();
     }
 
@@ -1136,8 +1221,19 @@ mod tests {
         });
         d.publish(&ev(1));
         wait_until("tried", || r.calls_to("a.test").len() == 1);
-        wait_until("still queued", || d.status(&uid("a")).queued == 1);
+        // The error is recorded once the retry is scheduled, so the clock is
+        // not moved before the backoff was computed from it.
+        wait_until("retry scheduled", || {
+            d.status(&uid("a")).last_error.as_deref() == Some("request")
+        });
+        assert_eq!(d.status(&uid("a")).queued, 1);
         r.clock.advance(6);
+        std::thread::sleep(Duration::from_millis(300));
+        eprintln!(
+            "DBG calls={} status={:?}",
+            r.calls_to("a.test").len(),
+            d.status(&uid("a"))
+        );
         wait_until("retried ok", || {
             r.calls_to("a.test").len() == 2 && d.status(&uid("a")).queued == 0
         });

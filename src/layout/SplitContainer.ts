@@ -6,6 +6,8 @@
 import type { LayoutNode, SplitDir, Uuid } from "../types";
 import type { Pane } from "./Pane";
 import type { PaneGroup } from "./PaneGroup";
+import { t } from "../i18n/i18n";
+import { fill } from "../git/worktreeFlow";
 
 export interface RenderContext {
   /// Pane instance cache. Key is pane id. Ownership of entries is shared with
@@ -45,7 +47,7 @@ function build(
     if (!pane) {
       const placeholder = document.createElement("div");
       placeholder.className = "pane pane--missing";
-      placeholder.textContent = `Missing pane ${node.id}`;
+      placeholder.textContent = fill(t("pane.missing"), { id: node.id });
       return placeholder;
     }
     // Re-parenting the existing element keeps xterm's DOM subtree intact.
@@ -121,7 +123,7 @@ function buildNestedTabs(
     const tab = document.createElement("button");
     tab.className = "tabs__tab";
     if (idx === node.active) tab.classList.add("tabs__tab--active");
-    tab.textContent = `Tab ${idx + 1}`;
+    tab.textContent = fill(t("tab.fallbackName"), { n: idx + 1 });
     header.appendChild(tab);
     if (idx === node.active) {
       body.appendChild(build(child, [...path, idx], ctx));
@@ -180,11 +182,17 @@ function makeGutter(
     for (const pane of ctx.paneCache.values()) pane.scheduleFit();
   };
 
+  // Every way a drag can end, not just `pointerup`: an Alt+Tab (window
+  // `blur`) or an OS-cancelled pointer never delivers one, and a drag left
+  // open would keep every iframe at `pointer-events: none`.
   const endDrag = () => {
     if (!dragging) return;
     dragging = false;
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", endDrag);
+    window.removeEventListener("pointercancel", endDrag);
+    window.removeEventListener("blur", endDrag);
+    gutter.removeEventListener("lostpointercapture", endDrag);
     setIframePointerEvents("");
     ctx.onRatioCommitted(path, ratio);
   };
@@ -192,9 +200,19 @@ function makeGutter(
   gutter.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
     dragging = true;
+    // Capture, so the up/cancel comes back here even when released over an
+    // iframe or outside the window.
+    try {
+      gutter.setPointerCapture(ev.pointerId);
+    } catch {
+      // Pointer already gone; the window listeners below still end the drag.
+    }
     setIframePointerEvents("none");
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("blur", endDrag);
+    gutter.addEventListener("lostpointercapture", endDrag);
   });
 
   return gutter;

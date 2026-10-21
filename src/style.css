@@ -4051,3 +4051,55 @@ body,
   border-radius: 6px;
   font-size: 12.5px;
 }
+
+/* Non-blocking app notice (WorkspaceManager.notify): failed config save,
+   account create/delete problems. Above the settings modal (100) so a
+   failure raised from Settings is visible; below dialogs (300). */
+.app-notice {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: 250;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 8px 10px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--status-critical);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.app-notice__msg {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.app-notice__close {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.app-notice__close:hover {
+  color: var(--fg);
+}
+
+/* ── RTL (Arabic) ────────────────────────────────────────────────────
+   i18n.ts sets <html dir="rtl"> for Arabic. Terminals, code, diffs and
+   the commit graph are positional/left-to-right content: pin them LTR. */
+.xterm,
+.cm-editor,
+.diff-view,
+.diff-body,
+.git__graph,
+.files__preview-text {
+  direction: ltr;
+}

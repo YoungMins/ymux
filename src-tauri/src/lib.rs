@@ -25,6 +25,8 @@ pub mod auto_continue;
 pub mod hook_http;
 // Local drafts of unsaved editor content (the editor pane's safety net).
 pub mod drafts;
+// Durable atomic file replacement (temp + fsync + rename) for state files (pure).
+pub mod durable;
 pub mod error;
 // Resolving and opening filesystem paths the frontend lifted out of terminal
 // output (the path linkifier). Not behind `desktop`: the validation, UNC

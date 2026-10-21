@@ -21,7 +21,7 @@ import type {
 } from "../types";
 import { defaultActivity, defaultSummarizer } from "../settings/activityModel";
 import { listen as tauriListen } from "@tauri-apps/api/event";
-import { api, fsApi, gitApi } from "../ipc/bridge";
+import { api, describeError, fsApi, gitApi } from "../ipc/bridge";
 import { TerminalPane, type PendingPromptState } from "../terminal/TerminalPane";
 import { clampFontSize, DEFAULT_FONT_SIZE } from "./fontSize";
 import { BrowserPane } from "../browser/BrowserPane";
@@ -69,13 +69,14 @@ import { getLang, t } from "../i18n/i18n";
 import {
   clearAccountRefs,
   effectiveAccount,
+  isManagedAccount,
   setAccountsList,
   toBadge,
   type AccountBadge,
 } from "../accounts/accountModel";
 import { onAutoContinueChange } from "../autocontinue/model";
 import { promptWorktreeBranch, removeWorktreeFlow, type LivePane } from "../git/worktreeFlow";
-import { askChoice, askText } from "../ui/Dialog";
+import { askChoice, askConfirm, askText } from "../ui/Dialog";
 import { askFanout, type FanoutRequest } from "../fanout/FanoutDialog";
 import { showFanoutNotice } from "../fanout/FanoutCompare";
 import { laneBranches, newRunId } from "../fanout/lanes";
@@ -144,6 +145,10 @@ export class WorkspaceManager {
   private _focusedPaneId: Uuid | null = null;
   private saveTimer: number | null = null;
   private inflightSave: Promise<void> | null = null;
+  /// A save failed and the user was told; cleared by the next successful save.
+  private saveFailureShown = false;
+  private noticeEl: HTMLElement | null = null;
+  private noticeTimer: number | null = null;
   /// Cache of workspace containers that have already had their panes spawned
   /// on first visit, so subsequent visits are zero-cost.
   private hydrated = new Set<number>();
@@ -368,18 +373,9 @@ export class WorkspaceManager {
       const ws: Workspace = {
         id,
         name: `workspace-${id}`,
-        root: seedRoot ?? {
-          kind: "pane",
-          id: newPane(defaultShell).id,
-          title: null,
-          shell: defaultShell,
-          cwd: null,
-          startup_cmd: null,
-          env: [],
-          pane_kind: "terminal",
-          url: null,
-          hotkeys: [],
-        },
+        // `paneNode(newPane(...))`, not a hand-written literal, so a new
+        // PaneSpec field can't be missed here (CLAUDE.md rule 2).
+        root: seedRoot ?? paneNode(newPane(defaultShell)),
       };
       this.config.workspaces.push(ws);
       const el = document.createElement("div");
@@ -730,9 +726,34 @@ export class WorkspaceManager {
     this.persistDebounced();
   }
 
-  /// Delete a profile. Panes that used it fall back to "inherit" and
-  /// workspaces to "no default", so nothing keeps pointing at a dead id.
-  deleteAccount(id: string): void {
+  /// Ask, then delete a profile: panes that used it fall back to "inherit"
+  /// and workspaces to "no default", so nothing keeps pointing at a dead id.
+  /// The save is flushed before the login folder goes, and the folder is
+  /// removed only when ymux made it (`isManagedAccount`) — a hand-entered
+  /// directory is the user's own login and is never touched. Resolves to
+  /// whether the account was deleted.
+  async deleteAccount(id: string): Promise<boolean> {
+    const profile = this.accounts.find((a) => a.id === id);
+    if (!profile) return false;
+    const ok = await askConfirm(
+      fill(t("account.deleteConfirm"), { name: profile.name || profile.id }),
+      t("settings.accounts.delete"),
+    );
+    if (!ok) return false;
+    this.removeAccount(id);
+    await this.flushPendingSave();
+    if (isManagedAccount(profile)) {
+      try {
+        await api.removeAccountDirs(id);
+      } catch (e) {
+        console.error("remove_account_dirs failed:", e);
+        this.notify(fill(t("account.removeDirsFailed"), { error: describeError(e) }));
+      }
+    }
+    return true;
+  }
+
+  private removeAccount(id: string): void {
     clearAccountRefs(this.config.workspaces, id);
     for (const cache of this.paneCaches.values()) {
       for (const pane of cache.values()) {
@@ -1768,8 +1789,14 @@ export class WorkspaceManager {
       const replacement = this.createPane(spec);
       cache.set(spec.id, replacement);
       this.renderWorkspace(ws);
-      await replacement.spawn();
-      if (isActive) replacement.focus();
+      // The tree is already mutated: a failed spawn must not skip the save
+      // and the worktree offer below (the pane shows the error itself).
+      try {
+        await replacement.spawn();
+        if (isActive) replacement.focus();
+      } catch (e) {
+        console.error("replacement pane spawn failed", e);
+      }
     } else {
       ws.root = newRoot;
       if (isActive) this.focusedPaneId = null;
@@ -2643,11 +2670,12 @@ export class WorkspaceManager {
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
     }
+    // Through `flush()` so the timer's save is tracked in `inflightSave`
+    // (and serialised behind any save already running) — otherwise
+    // `flushPendingSave()` could not wait for it.
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      void api.saveConfig(this.config).catch((e) => {
-        console.error("saveConfig failed", e);
-      });
+      void this.flush();
     }, 500) as unknown as number;
   }
 
@@ -2704,16 +2732,64 @@ export class WorkspaceManager {
     return this.flush();
   }
 
-  /// Flush pending save immediately. Used on window close.
+  /// Flush pending save immediately. Used on window close. Saves are
+  /// serialised: a new one waits for the one in flight, so two writes can
+  /// never land out of order, and it serialises `this.config` only once it
+  /// runs, so the later write always carries the newer state. Never rejects.
   async flush(): Promise<void> {
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    const p = api.saveConfig(this.config).catch(() => {});
+    const prev = this.inflightSave;
+    const p = (async () => {
+      if (prev) await prev;
+      try {
+        await api.saveConfig(this.config);
+        this.saveFailureShown = false;
+      } catch (e) {
+        console.error("saveConfig failed", e);
+        // Once per failure streak: a save that keeps failing on every
+        // keystroke must not stack notices; a later success re-arms it.
+        if (!this.saveFailureShown) {
+          this.saveFailureShown = true;
+          this.notify(fill(t("app.saveFailed"), { error: describeError(e) }));
+        }
+      }
+    })();
     this.inflightSave = p;
     await p;
     if (this.inflightSave === p) this.inflightSave = null;
+  }
+
+  /// Show a non-blocking, dismissible notice at the bottom right (replacing
+  /// any previous one). For failures the user should know about but that
+  /// need no decision — a failed save, a folder that could not be removed.
+  notify(message: string): void {
+    this.noticeEl?.remove();
+    if (this.noticeTimer !== null) window.clearTimeout(this.noticeTimer);
+    const box = document.createElement("div");
+    box.className = "app-notice";
+    box.setAttribute("role", "alert");
+    const msg = document.createElement("span");
+    msg.className = "app-notice__msg";
+    msg.textContent = message;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "app-notice__close";
+    x.textContent = "×";
+    x.setAttribute("aria-label", t("settings.close"));
+    const dismiss = (): void => {
+      if (this.noticeTimer !== null) window.clearTimeout(this.noticeTimer);
+      this.noticeTimer = null;
+      box.remove();
+      if (this.noticeEl === box) this.noticeEl = null;
+    };
+    x.addEventListener("click", dismiss);
+    box.append(msg, x);
+    document.body.appendChild(box);
+    this.noticeEl = box;
+    this.noticeTimer = window.setTimeout(dismiss, 12_000);
   }
 
   /// Shell profile new panes and workspaces are created with, resolved

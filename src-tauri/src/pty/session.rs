@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write as IoWrite;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -27,6 +27,18 @@ use crate::pty::osc7::{CwdChange, Osc7Parser};
 pub type CwdMap = Arc<Mutex<HashMap<Uuid, String>>>;
 
 type SharedChild = Arc<Mutex<Box<dyn Child + Send + Sync>>>;
+
+/// Capacity, in events, of the reader → frontend channel (one event is at
+/// most one 8 KiB read). Bounded so a child that floods output (`cat` of a
+/// huge file, `yes`) gets backpressure — its reader thread blocks in `send`,
+/// stops draining the PTY, and the child blocks in `write` — instead of the
+/// queue growing without limit while the webview catches up.
+///
+/// The one consumer (`commands::start_pty_event_pump`) only emits Tauri
+/// events and never takes a lock a reader holds, and no reader holds a lock
+/// across `send` (the cwd map is released first), so a full queue can only
+/// slow producers down, never deadlock them.
+pub const EVENT_QUEUE: usize = 256;
 
 /// How often the exit watcher polls the child.
 const EXIT_POLL: Duration = Duration::from_millis(300);
@@ -48,7 +60,7 @@ const EOF_EXIT_GRACE: Duration = Duration::from_secs(1);
 struct ExitOnce {
     id: Uuid,
     done: AtomicBool,
-    tx: Sender<PaneEvent>,
+    tx: SyncSender<PaneEvent>,
 }
 
 impl ExitOnce {
@@ -157,7 +169,8 @@ fn apple_locale() -> Option<String> {
 }
 
 /// Handle to a single running PTY. `stdout` bytes from the child are pushed
-/// into a caller-provided `mpsc::Sender` on a dedicated reader thread — the
+/// into a caller-provided bounded `mpsc::SyncSender` ([`EVENT_QUEUE`]) on a
+/// dedicated reader thread — the
 /// Tauri layer forwards them to the frontend via an event channel.
 ///
 /// The reader thread is intentionally **detached** rather than joined on
@@ -171,7 +184,12 @@ fn apple_locale() -> Option<String> {
 pub struct PtySession {
     pub id: Uuid,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn IoWrite + Send>>,
+    /// Input queue drained, in order, by the pane's writer thread. A write
+    /// into a child that is not reading its stdin (a big paste, a stopped
+    /// program) blocks in the kernel; doing it on the caller's thread froze
+    /// the UI, because `write_pane` must stay a main-thread command to keep
+    /// keystrokes in order (async commands run concurrently and can reorder).
+    input: std::sync::mpsc::Sender<Vec<u8>>,
     /// Owned here. The reader and exit watcher only hold `Weak` references,
     /// so dropping the session still releases the child's handle.
     child: SharedChild,
@@ -202,7 +220,7 @@ impl PtySession {
         spec: &PaneSpec,
         profile: &ShellProfile,
         size: PtySize,
-        events: Sender<PaneEvent>,
+        events: SyncSender<PaneEvent>,
         cwds: CwdMap,
         extra_env: &[(String, String)],
         remove_env: &[&str],
@@ -296,10 +314,11 @@ impl PtySession {
             tx: events.clone(),
         });
 
-        let writer = pair
+        let mut writer = pair
             .master
             .take_writer()
             .map_err(|e| YmuxError::Pty(format!("take_writer: {e}")))?;
+        let (input, input_rx) = std::sync::mpsc::channel::<Vec<u8>>();
 
         let mut reader = pair
             .master
@@ -307,6 +326,23 @@ impl PtySession {
             .map_err(|e| YmuxError::Pty(format!("clone_reader: {e}")))?;
 
         let id = spec.id;
+        // Writer thread: owns the PTY's input side and writes queued chunks
+        // in arrival order. Ends when the session (and with it the `input`
+        // sender) is dropped, or on the first write error — after which
+        // `write` reports the pane's input as closed. Detached like the
+        // reader: a write blocked on a child that never reads is released
+        // when `kill` takes the child down.
+        std::thread::Builder::new()
+            .name(format!("ymux-pty-writer-{id}"))
+            .spawn(move || {
+                while let Ok(chunk) = input_rx.recv() {
+                    if let Err(e) = writer.write_all(&chunk).and_then(|()| writer.flush()) {
+                        tracing::debug!(pane = %id, error = %e, "pty write failed");
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| YmuxError::Pty(format!("spawn writer thread: {e}")))?;
         let tx = events.clone();
         let cwds_for_reader = Arc::clone(&cwds);
         let exit_for_reader = Arc::clone(&exit);
@@ -400,20 +436,23 @@ impl PtySession {
         Ok(Self {
             id,
             master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
+            input,
             child,
             exit,
             pid,
         })
     }
 
+    /// Queue `data` for the child's stdin. Never blocks: the bytes are
+    /// written, in call order, by the session's writer thread. `Err` only
+    /// once that thread has stopped (an earlier write failed).
     pub fn write(&self, data: &[u8]) -> YmuxResult<()> {
-        let mut w = self.writer.lock();
-        w.write_all(data)
-            .map_err(|e| YmuxError::Pty(format!("write: {e}")))?;
-        w.flush()
-            .map_err(|e| YmuxError::Pty(format!("flush: {e}")))?;
-        Ok(())
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.input
+            .send(data.to_vec())
+            .map_err(|_| YmuxError::Pty("write: pane input is closed".into()))
     }
 
     pub fn resize(&self, size: PtySize) -> YmuxResult<()> {
@@ -541,7 +580,7 @@ mod tests {
             return;
         }
         let spec = PaneSpec::new_default();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session = PtySession::spawn(
             &spec,
@@ -608,7 +647,7 @@ mod tests {
         std::env::remove_var("COLORTERM");
 
         let spec = PaneSpec::new_default();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session = PtySession::spawn(
             &spec,
@@ -673,7 +712,7 @@ mod tests {
         for cwd in [None, Some("/definitely/not/a/real/directory".to_string())] {
             let mut spec = PaneSpec::new_default();
             spec.cwd = cwd.clone();
-            let (tx, rx) = mpsc::channel();
+            let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
             let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
             let session = PtySession::spawn(
                 &spec,
@@ -781,7 +820,7 @@ mod tests {
             if is_bash || is_zsh {
                 spec.env.push(("PATH".into(), STRIPPED_PATH.into()));
             }
-            let (tx, rx) = mpsc::channel();
+            let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
             let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
             let session = PtySession::spawn(
                 &spec,
@@ -967,7 +1006,7 @@ mod tests {
             "echo ymux-pane=[%YMUX_PANE_ID%]",
         );
         let spec = PaneSpec::new_default();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
             PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
@@ -1001,7 +1040,7 @@ mod tests {
     fn pty_reports_a_child_that_exits_on_its_own_exactly_once() {
         let profile = one_shot_profile("exit 3", "exit 3");
         let spec = PaneSpec::new_default();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         // Held, not dropped: dropping the session kills the child, which is
         // not what this test is about.
@@ -1030,7 +1069,7 @@ mod tests {
     fn pty_kill_does_not_report_an_exit() {
         let profile = one_shot_profile("sleep 30", "ping -n 30 127.0.0.1 >NUL");
         let spec = PaneSpec::new_default();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
             PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
@@ -1046,7 +1085,7 @@ mod tests {
     fn pty_session_records_child_pid() {
         let profile = one_shot_profile("sleep 1", "ping -n 2 127.0.0.1 >NUL");
         let spec = PaneSpec::new_default();
-        let (tx, _rx) = mpsc::channel();
+        let (tx, _rx) = mpsc::sync_channel(EVENT_QUEUE);
         let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
         let session =
             PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
@@ -1055,5 +1094,45 @@ mod tests {
             "pid: {:?}",
             session.pid()
         );
+    }
+
+    /// A child that never reads its stdin must not block `write`: a big
+    /// paste into it used to freeze the main thread.
+    #[test]
+    fn write_never_blocks_on_a_child_that_does_not_read() {
+        let profile = one_shot_profile("sleep 5", "ping -n 6 127.0.0.1 >NUL");
+        let spec = PaneSpec::new_default();
+        let (tx, _rx) = mpsc::sync_channel(EVENT_QUEUE);
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
+        let start = std::time::Instant::now();
+        let chunk = vec![b'x'; 64 * 1024];
+        for _ in 0..32 {
+            session.write(&chunk).expect("queued");
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "write blocked for {:?}",
+            start.elapsed()
+        );
+        session.kill().expect("kill");
+    }
+
+    /// Queued writes reach the child in call order.
+    #[cfg(unix)]
+    #[test]
+    fn writes_arrive_in_call_order() {
+        let profile = one_shot_profile("stty -echo; read a; read b; echo \"got=$a$b\"", "");
+        let spec = PaneSpec::new_default();
+        let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
+        for part in [&b"a"[..], b"b", b"\n", b"c", b"d", b"\n"] {
+            session.write(part).expect("queued");
+        }
+        let out = capture_until(&rx, "got=abcd");
+        assert!(out.contains("got=abcd"), "output: {out:?}");
     }
 }

@@ -17,7 +17,9 @@ ymux/
 │       ├── lib.rs              # Library crate (all modules)
 │       ├── commands.rs         # Tauri IPC commands (desktop)
 │       ├── activity/           # Opt-in activity log: hook/Codex events -> worker (redact, git stat, per-day JSONL store, hub); ActivityTap fed by hook_http (pure; runtime.rs is desktop)
-│       ├── accounts.rs         # Per-pane AI-CLI accounts: effective account -> CLAUDE_CONFIG_DIR / CODEX_HOME env at PTY spawn (pure)
+│       ├── accounts.rs         # Per-pane AI-CLI accounts: effective account -> CLAUDE_CONFIG_DIR / CODEX_HOME env at PTY spawn, managed_dirs layout (pure; folder create/delete commands in settings.rs)
+│       ├── agent_binding.rs    # Which conversation a pane's agent process runs: hook / sessions pid file / argv / transcript sources, most exact first (pure)
+│       ├── agent_launch.rs     # Top-bar "+" launcher: agent CLI table, permission-bypass flags, login-shell PATH detection (detect_agents)
 │       ├── agents.rs           # Agent tree registry state machine (pure, not desktop-gated)
 │       ├── agent_scan.rs       # 2s process-tree scan for agent CLIs (matcher pure; scan loop desktop)
 │       ├── agent_scan_disk.rs  # Disk-scan fallback for session resume: finds an agent's transcript by cwd match (pure)
@@ -43,39 +45,45 @@ ymux/
 │       ├── shell/              # Shell detection (detect.rs)
 │       ├── summarizer/         # Turn summaries: rule-based, Ollama, OpenAI-compatible request/parse + transport with loopback guard (pure; http executor in transport)
 │       ├── textfile.rs         # EOL/BOM/encoding-safe text read/write (pure)
+│       ├── token_usage/        # Usage view backend: Claude/Codex session-log parse + collect, aggregate (rows, hourly heatmap), disk cache; quota fetch + cache (desktop)
 │       ├── tray.rs             # Tray icon, hide-to-tray, quit handshake commands (desktop)
 │       ├── sysmonitor.rs       # System monitor (desktop)
 │       ├── updater.rs          # Update checker (desktop)
 │       ├── webhooks/           # Webhook destinations: payload builders (json/slack/discord/teams), HMAC, backoff, retry queue, delivery worker (runtime.rs is desktop)
 │       ├── webview.rs          # Native browser (desktop, experimental)
 │       ├── embedded_browser.rs # Child-webview browser panes via Window::add_child (desktop)
-│       └── settings.rs         # Settings panel commands: theme load/save, open config dir (desktop)
+│       └── settings.rs         # Settings panel commands: theme load/save, open config dir, managed account folders <config>/accounts/<id>/{claude,codex} (prepare_account_dirs / remove_account_dirs) (desktop)
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
+│   ├── bootGuard.ts        # Refuse to boot inside a frame; MUST stay main.ts's first import (rule 16)
+│   ├── frameGuard.ts       # isTopLevelWindow(): the top-level-document check bootGuard relies on (security-critical)
 │   ├── platform.ts         # IS_MAC + Cmd/Ctrl modifier abstraction
 │   ├── style.css           # All CSS
 │   ├── types.ts            # TypeScript mirror of Rust models
-│   ├── i18n/i18n.ts        # 13-language translations
+│   ├── i18n/               # 13-language translations: i18n.ts (t()), activityStrings.ts (Activity & notifications), tokenStrings.ts (Usage view) as per-language row tables
 │   ├── ipc/bridge.ts       # Tauri IPC wrappers
 │   ├── sidepanel/          # Right-side panel with a Files/Usage view switcher (SidePanel)
 │   ├── filedock/           # Side-panel state + cwd follow (dockModel, cwdFollow)
-│   ├── tokenmonitor/       # AI token usage view (TokenMonitorPane, model)
-│   ├── files/              # Files pane (FilesPane, fileModel, preview, clipboard)
+│   ├── tokenmonitor/       # AI token usage view (TokenMonitor, model: grouping, totals, heatmap)
+│   ├── files/              # Files pane (FilesPane, fileModel, preview, clipboard: app-wide files clipboard, keys: pure keymap, navState: requested vs listed folder, followGate: holds cwd-follow while typing)
 │   ├── editor/             # Editor pane (EditorPane, CodeMirror 6 setup, eol, theme)
 │   ├── git/                # Git pane (GitPane, graphLanes, worktreeFlow)
 │   ├── diff/               # Diff review overlay (DiffReview, diffModel, reviewPrompt, targetPick): runtime-only, not a pane kind
 │   ├── fanout/             # Fan-out dialog + compare overlay (FanoutDialog, FanoutCompare, lanes, plan, layout, readyGate, blockingScreen)
-│   ├── workspace/          # WorkspaceManager + WorkspaceBar + agentTree (workspace panel tree) + inbox.ts (attention inbox model)
-│   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt), pathLinks (clickable paths)
+│   ├── workspace/          # WorkspaceManager + WorkspaceBar ("+" launcher) + WorkspacePanel + agentTree (workspace panel tree) + inbox.ts (attention inbox model); agentLaunch (launcher command line), activePane, fontSize, reorder, viewerTab (reused viewer tab), workspaceLabel, zoom
+│   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt), pathLinks (clickable paths: pathRow -> pathMatch -> pathProbe -> pathOpen); paste, ime, dropPaths, shellQuote, paneStatus, tabLabel, resumePlan (resume vs replay on spawn), restoreGuard/scrollbackPersist, viewportSync
 │   ├── browser/            # BrowserPane (iframe) + NativeBrowserPane
 │   ├── layout/             # SplitContainer + LayoutTree + PaneGroup/tabs (pane tab groups)
 │   ├── palette/            # Command Palette (Ctrl+Shift+P)
 │   ├── menu/               # Terminal right-click context menu (ContextMenu.ts)
 │   ├── notes/              # Per-workspace notes overlay (NotesOverlay.ts)
-│   ├── settings/           # Settings panel (⚙): general, syntax colors, shortcuts (shortcutList.ts), config files, ActivitySection.ts (activity log / summarizer / webhooks)
+│   ├── settings/           # Settings panel (⚙): general, accounts, activity & notifications (ActivitySection.ts: activity log / summarizer / webhooks), syntax colors, shortcuts (shortcutList.ts), config files
 │   ├── hotkey/             # HotKeyManager modal (⚙)
 │   ├── statusbar/          # System monitor status bar
-│   ├── ui/                 # Small shared UI primitives (Dialog.ts)
+│   ├── accounts/           # Account profiles UI side: accountModel (effective account, pure), badge (title-row account dot), createAccount (name-only managed account)
+│   ├── autocontinue/       # Auto-continue mirror of the backend's per-pane state (model: panes + answer log; control: setAutoContinue)
+│   ├── tray/               # quitGuard: frontend half of a real quit (flush drafts, ask about unsaved editors; any failure answers "go ahead")
+│   ├── ui/                 # Small shared UI primitives (Dialog.ts, fonts.ts: the one monospace font stack, trapTab.ts: modal Tab trap)
 │   ├── util/               # Small shared utilities (beep.ts)
 │   └── update/             # Update banner
 ├── crates/
@@ -635,10 +643,16 @@ Also update the `panespec_all_fields_roundtrip` test to include the new field.
 
 ```sh
 git checkout main && git pull
-git merge claude/windows-tmux-tool-mKhjy
-git tag v0.8.4
-git push origin v0.8.4
+git merge <feature-branch>        # the branch the work landed on
+# bump the version everywhere (rule 5), commit it on main
+git tag vX.Y.Z                    # must match the bumped version
+git push origin main vX.Y.Z
 ```
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It can also be run
+by hand (Actions → release → Run workflow, i.e. `workflow_dispatch`) with a
+`tag` input and a `draft` choice (default `true`) — that is the path for
+ad-hoc test builds.
 
 CI automatically:
 1. Runs tests on Linux (fast fail)

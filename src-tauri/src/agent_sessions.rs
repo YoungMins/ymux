@@ -719,9 +719,9 @@ pub fn save_to(path: &Path, store: &AgentSessionStore) -> std::io::Result<()> {
     }
     let json = serde_json::to_string_pretty(store)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json.as_bytes())?;
-    std::fs::rename(&tmp, path)
+    // Unique temp + fsync + rename: never a truncated store after a crash,
+    // and no shared `*.tmp` two concurrent savers could interleave in.
+    crate::durable::write_atomic(path, json.as_bytes())
 }
 
 /// Load the store from the real, OS-resolved location.

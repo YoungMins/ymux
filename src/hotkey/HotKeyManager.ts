@@ -70,7 +70,7 @@ export function openHotKeyManager(
   const resetBtn = document.createElement("button");
   resetBtn.type = "button";
   resetBtn.className = "hotkey-modal__btn";
-  resetBtn.textContent = "Reset";
+  resetBtn.textContent = t("hotkey.reset");
   resetBtn.addEventListener("click", () => {
     colorPicker.value = "#0b0f14";
     hexInput.value = "#0b0f14";

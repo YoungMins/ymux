@@ -92,7 +92,9 @@ pub struct BootstrapPayload {
     pub config_path: String,
 }
 
-#[tauri::command]
+/// `async`: shell detection runs probe processes and writes the shell
+/// integration files, and the config flush writes to disk.
+#[tauri::command(async)]
 pub fn load_bootstrap(
     webview: Webview,
     request: Request<'_>,
@@ -135,7 +137,8 @@ pub fn load_bootstrap(
     })
 }
 
-#[tauri::command]
+/// `async`: shell detection runs probe processes and stats many paths.
+#[tauri::command(async)]
 pub fn detect_shells_cmd(
     webview: Webview,
     request: Request<'_>,
@@ -232,7 +235,10 @@ fn pane_env(
     )
 }
 
-#[tauri::command]
+/// `async` (runs on a worker thread, not the main one): the spawn stats the
+/// saved cwd with `is_dir`, which on a dead network/UNC path hangs for tens
+/// of seconds, and starting the child itself can be slow.
+#[tauri::command(async)]
 pub fn spawn_pane(
     webview: Webview,
     request: Request<'_>,
@@ -252,11 +258,10 @@ pub fn spawn_pane(
     // inherited variables an opt-out ("none") scrubs.
     let (account_env, remove_env) =
         pane_env(&config, &args.env, &args.account, &args.workspace_account);
-    // Off this thread: a dead UNC path would otherwise stall the UI. Failures
-    // are only logged, and the tool creates its own dir on first use anyway.
-    if !account_env.is_empty() {
-        let dirs = account_env.clone();
-        // The Claude dir the child will use, to hook it once it exists.
+    // The account dirs to create and the Claude dir the child will use (to
+    // hook it once it exists). Acted on only after the spawn succeeded: a
+    // failed spawn must not create directories or rewrite hook files.
+    let account_dirs = (!account_env.is_empty()).then(|| {
         let claude_dir = crate::accounts::agent_dirs(
             &remove_env,
             &[&profile.env, &args.env, &account_env],
@@ -264,11 +269,8 @@ pub fn spawn_pane(
             dirs::home_dir().as_deref(),
         )
         .claude;
-        std::thread::spawn(move || {
-            crate::accounts::ensure_dirs(&dirs);
-            reconcile_hooks_quietly(&app, HookTrigger::SpawnPane, Some(&claude_dir));
-        });
-    }
+        (account_env.clone(), claude_dir)
+    });
     let mut env = args.env;
     env.extend(account_env);
 
@@ -302,9 +304,23 @@ pub fn spawn_pane(
     // Ids always start OFF: a `set_auto_continue(id, true)` that raced past
     // `kill_pane` must not leave a respawned pane auto-answering with no badge.
     state.auto_continue.set(args.id, false);
+    // Off this thread: a dead UNC path would otherwise stall the command.
+    // Failures are only logged, and the tool creates its own dir on first
+    // use anyway.
+    if let Some((dirs, claude_dir)) = account_dirs {
+        std::thread::spawn(move || {
+            crate::accounts::ensure_dirs(&dirs);
+            reconcile_hooks_quietly(&app, HookTrigger::SpawnPane, Some(&claude_dir));
+        });
+    }
     Ok(spawned)
 }
 
+/// Stays a main-thread (sync) command on purpose: commands run in arrival
+/// order there, while `async` ones run concurrently and could reorder two
+/// keystrokes or paste chunks. It cannot block: the bytes are only queued,
+/// and the pane's writer thread does the (possibly blocking) PTY write
+/// (`PtySession::write`).
 #[tauri::command]
 pub fn write_pane(
     webview: Webview,
@@ -316,6 +332,10 @@ pub fn write_pane(
     state.pty.write(args.id, &args.data)
 }
 
+/// Sync for the same ordering reason as [`write_pane`]: two resizes swapped
+/// by concurrent async dispatch would leave the PTY at a stale size. It is a
+/// window-size ioctl (`TIOCSWINSZ` / `ResizePseudoConsole`) that does not
+/// wait on the child, and it no longer holds the session map lock.
 #[tauri::command]
 pub fn resize_pane(
     webview: Webview,
@@ -582,7 +602,9 @@ pub fn get_agent_session(
 
 /// Forget a pane's session entirely. Called when the user closes a pane for
 /// good, mirroring `delete_scrollback`.
-#[tauri::command]
+/// `async`: waits on the session lock the scan thread shares, then writes
+/// the store to disk.
+#[tauri::command(async)]
 pub fn clear_agent_session(
     webview: Webview,
     request: Request<'_>,
@@ -737,7 +759,7 @@ pub enum HookTrigger {
 }
 
 /// Serializes every hook-file write and the config fields that record them.
-static HOOK_WRITES: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+pub(crate) static HOOK_WRITES: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 /// Bring the hooks in line with the account list under one lock, reading the
 /// latest config snapshot only after taking it. `Enable`/`Disable` flip
@@ -985,7 +1007,8 @@ pub fn start_hook_receiver(app: &AppHandle, token: String, may_persist: bool) ->
 /// Open a URL in the system default browser. Only `http://` and `https://`
 /// URLs are accepted; anything else is rejected to prevent accidental
 /// execution of arbitrary shell commands via `start` or `xdg-open`.
-#[tauri::command]
+/// `async`: `opener` may wait for the launcher process (`xdg-open`, `open`).
+#[tauri::command(async)]
 pub fn open_url(webview: Webview, request: Request<'_>, url: String) -> YmuxResult<()> {
     guard_local(&webview, &request, "open_url")?;
     let url = browsable_url(&url)?;
@@ -1173,7 +1196,8 @@ pub fn save_scrollback(
 
 /// Load the persisted scrollback for `pane_id`, or an empty string if none
 /// has been saved yet.
-#[tauri::command]
+/// `async`: reads a file that may be megabytes long.
+#[tauri::command(async)]
 pub fn load_scrollback(
     webview: Webview,
     request: Request<'_>,
@@ -1217,7 +1241,8 @@ pub fn save_editor_draft(
 }
 
 /// An editor pane's draft, or an empty string if it has none.
-#[tauri::command]
+/// `async`: file read off the main thread.
+#[tauri::command(async)]
 pub fn load_editor_draft(
     webview: Webview,
     request: Request<'_>,
@@ -1229,7 +1254,8 @@ pub fn load_editor_draft(
 
 /// The pane ids that have an editor draft on disk, for the startup sweep
 /// that removes drafts whose pane no longer exists anywhere in the config.
-#[tauri::command]
+/// `async`: directory listing off the main thread.
+#[tauri::command(async)]
 pub fn list_editor_drafts(webview: Webview, request: Request<'_>) -> YmuxResult<Vec<String>> {
     guard_local(&webview, &request, "list_editor_drafts")?;
     crate::drafts::list().map_err(YmuxError::Io)
@@ -1353,7 +1379,9 @@ pub fn git_repo_root(webview: Webview, request: Request<'_>, cwd: String) -> Ymu
 
 /// Check whether `cwd` sits inside a git repository (main worktree or a
 /// linked worktree). Thin wrapper over [`crate::git::is_git_repo`].
-#[tauri::command]
+/// `async` like the other git commands: it stats `cwd`, which may be on a
+/// dead network share.
+#[tauri::command(async)]
 pub fn git_is_repo(webview: Webview, request: Request<'_>, cwd: String) -> YmuxResult<bool> {
     guard_local(&webview, &request, "git_is_repo")?;
     Ok(git::is_git_repo(Path::new(&cwd)))

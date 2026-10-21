@@ -73,6 +73,9 @@ pub const LIMITS: Limits = Limits {
 };
 
 /// Optional hook fields forwarded when present (what `y agent-hook` packed).
+/// Pause after a failed `accept` before the next one.
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(50);
+
 const OPTIONAL_FIELDS: &[&str] = &["agent_id", "agent_type", "tool_name"];
 
 /// A fresh per-run secret: two v4 UUIDs from the OS CSPRNG, 244 random bits,
@@ -579,12 +582,24 @@ pub fn serve_with(
         .name("ymux-hook-http".into())
         .spawn(move || {
             for stream in listener.incoming() {
-                let Ok(stream) = stream else { continue };
+                let Ok(stream) = stream else {
+                    // EMFILE/ENFILE, ENOBUFS, a reset before accept: the
+                    // condition usually persists for a moment, and retrying
+                    // at once would spin a core. Back off briefly.
+                    std::thread::sleep(ACCEPT_ERROR_BACKOFF);
+                    continue;
+                };
                 // Over the cap: dropping the stream closes it at once.
                 let Some(slot) = ConnSlot::acquire(&live, limits.max_conns) else {
                     continue;
                 };
-                let deadline = Instant::now() + limits.deadline;
+                // `checked_add`: an absurd configured deadline must not panic
+                // the accept loop (rule 13).
+                let now = Instant::now();
+                let deadline = now
+                    .checked_add(limits.deadline)
+                    .or_else(|| now.checked_add(LIMITS.deadline))
+                    .unwrap_or(now);
                 let (token, known_pane, tx, auto, tap) = (
                     token.clone(),
                     known_pane.clone(),

@@ -1,15 +1,11 @@
-use std::{
-    path::Path,
-    sync::OnceLock,
-    time::{Duration, SystemTime},
-};
+use std::{path::Path, sync::OnceLock, time::SystemTime};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{
     model::Quota,
-    quota_cache::{read_bounded, round, Identity, KeyedCache, Unavailable},
+    quota_cache::{http_client, read_bounded, round, Identity, KeyedCache, Unavailable},
     TokenSnapshot,
 };
 
@@ -111,11 +107,7 @@ fn credentials_in(root: &Path) -> Option<Tokens> {
 }
 
 fn fetch(tokens: &Tokens) -> Result<Vec<Quota>, Unavailable> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| Unavailable)?;
+    let client = http_client()?;
     let response = client
         .get("https://chatgpt.com/backend-api/wham/usage")
         .bearer_auth(&tokens.access_token)

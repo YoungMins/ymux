@@ -103,3 +103,56 @@ pub fn prepare_account_dirs(
         codex_home: codex.display().to_string(),
     })
 }
+
+/// Delete a managed account's login folders (`<config_dir>/accounts/<id>`)
+/// after the user removed the account. The frontend deletes the profile and
+/// saves first; an id still in the saved account list is refused, so a
+/// stale or forged call cannot wipe a live account's logins.
+///
+/// Holds `commands::HOOK_WRITES`, the lock every hook-file write takes: the
+/// save that dropped the profile uninstalls the hooks from this folder on a
+/// worker thread (`HookTrigger::AccountsChanged`), and that rewrite must
+/// not interleave with the delete (its `create_dir_all` would resurrect part
+/// of the tree). Whichever runs second sees a consistent state: the
+/// uninstall finds no file, or the delete removes an unhooked folder.
+///
+/// On macOS it also deletes, best-effort and in the background, the
+/// keychain item Claude Code kept for that folder. `async`: the folder can
+/// hold large transcript histories.
+#[tauri::command(async)]
+pub fn remove_account_dirs(
+    webview: Webview,
+    request: Request<'_>,
+    state: tauri::State<'_, crate::commands::AppState>,
+    id: String,
+) -> Result<(), String> {
+    guard_local(&webview, &request, "remove_account_dirs").map_err(|e| e.to_string())?;
+    let base = ytheme::config_dir().ok_or_else(|| "config directory unavailable".to_string())?;
+    if crate::accounts::managed_root(&base, &id).is_none() {
+        return Err("invalid account id".into());
+    }
+    if state.config.snapshot().accounts.iter().any(|a| a.id == id) {
+        return Err("account is still configured; remove it and save first".into());
+    }
+    // Before the folder goes: what Claude was told its config dir is.
+    #[cfg(target_os = "macos")]
+    let claude_env = crate::accounts::managed_claude_env(&base, &id, dirs::home_dir().as_deref());
+    {
+        let _hooks = crate::commands::HOOK_WRITES.lock();
+        crate::accounts::remove_managed_root(&base, &id)
+            .map_err(|e| format!("remove account folder failed: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(dir) = claude_env {
+        let service = crate::accounts::claude_keychain_service(Some(&dir));
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("/usr/bin/security")
+                .args(["delete-generic-password", "-s", &service])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        });
+    }
+    Ok(())
+}

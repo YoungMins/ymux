@@ -13,6 +13,7 @@ import type { YTheme, SettingsSection } from "./types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
 import { SHORTCUTS, splitShortcutKeys } from "./shortcutList";
+import { fill } from "../git/worktreeFlow";
 import { nextAccountName, normalizeColor } from "../accounts/accountModel";
 import { managedAccount } from "../accounts/createAccount";
 import type { AccountProfile } from "../types";
@@ -257,9 +258,13 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
       del.className = "hotkey-modal__btn";
       del.textContent = t("settings.accounts.delete");
       del.addEventListener("click", () => {
-        list.splice(list.indexOf(acct), 1);
-        manager.deleteAccount(acct.id);
-        rebuild();
+        // Asks first; resolves false when the user said no.
+        void manager.deleteAccount(acct.id).then((deleted) => {
+          if (!deleted) return;
+          const i = list.indexOf(acct);
+          if (i >= 0) list.splice(i, 1);
+          rebuild();
+        });
       });
       head.appendChild(del);
       card.appendChild(head);
@@ -298,7 +303,10 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
           commit();
           rebuild();
         })
-        .catch((e) => console.error("create account failed:", e))
+        .catch((e) => {
+          console.error("create account failed:", e);
+          manager.notify(fill(t("account.createFailed"), { error: describeError(e) }));
+        })
         .finally(() => {
           add.disabled = false;
         });
@@ -550,8 +558,13 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     resetBtn.className = "settings-btn";
     resetBtn.textContent = t("settings.syntax.reset");
     resetBtn.addEventListener("click", async () => {
-      themeDraft = await api.loadSyntaxTheme();
-      themeDirty = false;
+      try {
+        themeDraft = await api.loadSyntaxTheme();
+        themeDirty = false;
+      } catch (e) {
+        // Keep the current draft; re-render so the panel reflects it.
+        console.error("loadSyntaxTheme failed:", e);
+      }
       renderCurrentSection();
     });
     actions.appendChild(resetBtn);
@@ -570,6 +583,7 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
         renderCurrentSection();
       } catch (e) {
         console.error("saveSyntaxTheme failed:", e);
+        manager.notify(fill(t("settings.syntax.saveFailed"), { error: describeError(e) }));
       }
     });
     actions.appendChild(saveBtn);
