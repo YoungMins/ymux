@@ -2913,7 +2913,9 @@ tail\n\
         assert!(!untracked_path_ok(root, "a\\..\\..\\x"));
         assert!(!untracked_path_ok(root, ""));
         assert!(!untracked_path_ok(root, "/etc/passwd"));
-        assert!(!untracked_path_ok(root, "C:\\Windows\\x"));
+        // A drive path leaves a Windows root. On POSIX it is one ordinary
+        // file name inside the repo (`\\` and `:` are legal there, rule 15).
+        assert_eq!(untracked_path_ok(root, "C:\\Windows\\x"), !cfg!(windows));
     }
 
     fn pane(n: u128) -> uuid::Uuid {
