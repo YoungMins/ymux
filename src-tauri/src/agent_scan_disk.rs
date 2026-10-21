@@ -588,19 +588,40 @@ pub fn read_claude_pid_file(dir: &Path, pid: u32) -> Option<crate::agent_binding
     crate::agent_binding::parse_claude_pid_file(&text).filter(|f| f.pid == pid)
 }
 
+/// Pids of `proc`'s subtree probed for a pid file, the agent itself first.
+/// Each probe is one `stat` by name, so a subtree full of tool shells and MCP
+/// servers is cut off here.
+pub const MAX_PID_FILE_PROBES: usize = 32;
+
 /// The session id Claude's own pid file names for `proc`, when it is
 /// believable (`agent_binding::registry_session_id`). The first of
 /// `claude_dirs` that holds a believable file answers: a pid is unique on the
 /// machine, so at most one directory has a file for this very process.
+///
+/// The scan binds the agent process closest to the shell, which on Windows is
+/// often a launcher (npm's `node … claude-code` starting the native
+/// `claude.exe`, or a package manager's `claude.exe` shim) while Claude
+/// writes `sessions/<pid>.json` under its *own* pid, a child. So the agent's
+/// pid is tried first, then the rest of its subtree; `registry_session_id`
+/// still rejects a file whose start time or entrypoint does not fit.
 pub fn claude_pid_file_id_in(
     claude_dirs: &[&str],
     proc: &crate::agent_binding::PaneProcess,
 ) -> Option<String> {
-    claude_dirs
-        .iter()
-        .filter(|d| !d.is_empty())
-        .filter_map(|d| read_claude_pid_file(&claude_pid_dir(d), proc.pid))
-        .find_map(|file| crate::agent_binding::registry_session_id(proc, &file))
+    let pids = std::iter::once(proc.pid)
+        .chain(proc.subtree.iter().copied().filter(|&p| p != proc.pid))
+        .take(MAX_PID_FILE_PROBES);
+    for pid in pids {
+        let found = claude_dirs
+            .iter()
+            .filter(|d| !d.is_empty())
+            .filter_map(|d| read_claude_pid_file(&claude_pid_dir(d), pid))
+            .find_map(|file| crate::agent_binding::registry_session_id(proc, &file));
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
 }
 
 /// Directory entries one existence check may visit. The check runs as a pane
@@ -1529,6 +1550,48 @@ mod tests {
         assert_eq!(probe(&[&a]), None);
         assert_eq!(probe(&[&base.join("missing")]), None);
         assert_eq!(claude_pid_file_id_in(&[], &proc), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pid_file_of_a_child_process_names_the_session() {
+        // Windows: the scan binds the launcher (`node … claude-code`, pid
+        // 12), while Claude itself (pid 13) writes `sessions/13.json`.
+        let base = tempdir("pid-child");
+        let id = "cccccccc-0000-0000-0000-00000000000c";
+        let started = 1_790_212_418_u64;
+        let file = |pid: u32, id: &str| {
+            write(
+                &base.join(format!("sessions/{pid}.json")),
+                &serde_json::json!({
+                    "pid": pid, "sessionId": id,
+                    "startedAt": (started + 2) * 1000, "entrypoint": "cli",
+                })
+                .to_string(),
+            );
+        };
+        file(13, id);
+        // A file for a process outside the agent's subtree is never read.
+        file(99, "dddddddd-0000-0000-0000-00000000000d");
+        let dir = base.display().to_string();
+        let proc = |subtree: &[u32]| crate::agent_binding::PaneProcess {
+            pid: 12,
+            start_secs: started,
+            argv: vec!["node".into(), "cli.js".into()],
+            subtree: subtree.iter().copied().collect(),
+        };
+        assert_eq!(
+            claude_pid_file_id_in(&[&dir], &proc(&[12, 13])),
+            Some(id.to_string())
+        );
+        assert_eq!(claude_pid_file_id_in(&[&dir], &proc(&[12])), None);
+        // The agent's own file wins over a child's.
+        let own = "eeeeeeee-0000-0000-0000-00000000000e";
+        file(12, own);
+        assert_eq!(
+            claude_pid_file_id_in(&[&dir], &proc(&[12, 13])),
+            Some(own.to_string())
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

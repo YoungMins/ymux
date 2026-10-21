@@ -315,6 +315,17 @@ pub fn scan_pane_agents(
         .collect()
 }
 
+/// Panes whose shell process is in this process list. A pane whose shell
+/// has gone too is closing, not one whose agent the user quit.
+pub fn shells_running(shells: &HashMap<Uuid, u32>, procs: &[ProcEntry]) -> HashSet<Uuid> {
+    let pids: HashSet<u32> = procs.iter().map(|p| p.pid).collect();
+    shells
+        .iter()
+        .filter(|(_, pid)| pids.contains(pid))
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 /// Every running agent ymux knows how to resume, as `agent_binding` weighs a
 /// competing author of a transcript. `known_id` is filled from the process's
 /// own argv and, for Claude, from `pid_file_id` (its per-process file).
@@ -332,7 +343,10 @@ pub fn other_agents(
                 pid: p.pid,
                 start_secs: p.start_secs,
                 argv: p.argv.clone(),
-                subtree: BTreeSet::from([p.pid]),
+                // The whole subtree: Claude's pid file is written by the
+                // CLI's own process, which on Windows is often a child of
+                // the launcher the tree reports here.
+                subtree: tree.subtree(p.pid),
             };
             let known_id = crate::agent_binding::argv_session_id(kind, &p.argv).or_else(|| {
                 if kind == AgentKind::Claude {
@@ -393,8 +407,14 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 let sampled_at_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_millis() as u64);
-                let (found, labels, pane_agents, others) = if shells.is_empty() {
-                    (HashMap::new(), HashMap::new(), HashMap::new(), Vec::new())
+                let (found, labels, pane_agents, others, shells_running) = if shells.is_empty() {
+                    (
+                        HashMap::new(),
+                        HashMap::new(),
+                        HashMap::new(),
+                        Vec::new(),
+                        HashSet::new(),
+                    )
                 } else {
                     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
                     let procs: Vec<ProcEntry> = sys
@@ -444,6 +464,7 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                         scan_labels(&shells, &procs),
                         pane_agents,
                         others,
+                        shells_running(&shells, &procs),
                     )
                 };
                 {
@@ -461,7 +482,11 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                 let mut reg = agents.0.lock();
                 // Ask before `apply_scan`, which drops the state of a pane
                 // whose agent has gone.
-                let exited = reg.exited_panes(&live, &found);
+                // Only panes whose shell is still running: an agent that
+                // died together with its shell (ymux quitting, Windows
+                // ending console processes at logoff or shutdown) was not
+                // quit by the user, and its record must stay resumable.
+                let exited = reg.exited_panes(&shells_running, &found);
                 if reg.apply_scan(&live, &found) {
                     // Under the lock, so this can't race a hook-driven emit
                     // out of order (see `commands::apply_agent_hook`).
@@ -562,6 +587,20 @@ mod tests {
             start_secs: 0,
             cwd: None,
         }
+    }
+
+    #[test]
+    fn a_pane_counts_as_running_only_while_its_shell_is() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let shells = HashMap::from([(a, 10), (b, 20)]);
+        // `b`'s shell is gone (ymux quitting, or Windows ending console
+        // processes): its agent's exit is not the user quitting it.
+        let procs = [
+            proc(10, None, "pwsh", &[]),
+            proc(11, Some(10), "claude", &[]),
+        ];
+        assert_eq!(shells_running(&shells, &procs), HashSet::from([a]));
+        assert!(shells_running(&shells, &[]).is_empty());
     }
 
     #[test]
