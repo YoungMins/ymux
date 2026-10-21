@@ -321,15 +321,75 @@ pub fn spawn_pane(
 /// keystrokes or paste chunks. It cannot block: the bytes are only queued,
 /// and the pane's writer thread does the (possibly blocking) PTY write
 /// (`PtySession::write`).
+///
+/// The bytes arrive as the raw request body with the pane id in the
+/// [`crate::pty::routes::PANE_HEADER`] header, so they are not spelled out
+/// as a JSON number array. A JSON body `{ "args": { "id", "data" } }` is
+/// still accepted.
 #[tauri::command]
 pub fn write_pane(
     webview: Webview,
     request: Request<'_>,
     state: State<'_, AppState>,
-    args: WriteArgs,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "write_pane")?;
-    state.pty.write(args.id, &args.data)
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => {
+            let header = request
+                .headers()
+                .get(crate::pty::routes::PANE_HEADER)
+                .and_then(|v| v.to_str().ok());
+            let id = crate::pty::routes::write_target(header)
+                .ok_or_else(|| YmuxError::Pty("write_pane: missing or bad pane header".into()))?;
+            state.pty.write(id, bytes)
+        }
+        tauri::ipc::InvokeBody::Json(value) => {
+            let args =
+                WriteArgs::deserialize(value.get("args").unwrap_or(&serde_json::Value::Null))?;
+            state.pty.write(args.id, &args.data)
+        }
+    }
+}
+
+/// Where each pane's output is sent: the frontend's `Channel`, so the bytes
+/// reach it as an `ArrayBuffer` instead of a JSON number array.
+#[derive(Default)]
+pub struct PaneDataRoutes(
+    pub  parking_lot::Mutex<
+        crate::pty::routes::Routes<tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>>,
+    >,
+);
+
+/// Route a pane's output to `channel`. The frontend calls (and awaits) this
+/// before `spawn_pane`, so not even the shell's first bytes are missed.
+/// A newer channel for the same pane replaces the old one.
+#[tauri::command]
+pub fn subscribe_pane_data(
+    webview: Webview,
+    request: Request<'_>,
+    routes: State<'_, PaneDataRoutes>,
+    id: Uuid,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "subscribe_pane_data")?;
+    let sub = channel.id();
+    routes.0.lock().subscribe(id, sub, channel);
+    Ok(())
+}
+
+/// Stop sending a pane's output to channel `channel_id`; a channel that has
+/// since replaced it keeps receiving.
+#[tauri::command]
+pub fn unsubscribe_pane_data(
+    webview: Webview,
+    request: Request<'_>,
+    routes: State<'_, PaneDataRoutes>,
+    id: Uuid,
+    channel_id: u32,
+) -> YmuxResult<()> {
+    guard_local(&webview, &request, "unsubscribe_pane_data")?;
+    routes.0.lock().unsubscribe(id, channel_id);
+    Ok(())
 }
 
 /// Sync for the same ordering reason as [`write_pane`]: two resizes swapped
@@ -365,6 +425,9 @@ pub fn kill_pane(
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "kill_pane")?;
     state.auto_continue.set(id, false);
+    if let Some(routes) = app.try_state::<PaneDataRoutes>() {
+        routes.0.lock().remove(id);
+    }
     if let Some(rt) = app.try_state::<crate::activity::runtime::ActivityRuntime>() {
         rt.forget_pane(id);
     }
@@ -1586,13 +1649,22 @@ pub fn start_pty_event_pump(app: AppHandle) {
             while let Ok(event) = rx.recv() {
                 match event {
                     crate::pty::session::PaneEvent::Data(id, bytes) => {
-                        // Emit as a named event per pane. Payload is a raw
-                        // `Vec<u8>` — Tauri serialises it as a JSON array of
-                        // numbers, which xterm.js can write via
-                        // `Uint8Array.from(payload)`.
-                        let channel = format!("pty:data:{id}");
-                        if let Err(e) = app_for_thread.emit(&channel, bytes) {
-                            tracing::warn!(error = %e, "emit pty data failed");
+                        // Raw bytes through the pane's channel (an
+                        // `ArrayBuffer` on the other side). The lock only
+                        // covers the lookup; `send` just queues for the
+                        // webview. Output for a pane nobody subscribed to is
+                        // dropped, as an event with no listener was.
+                        let channel = app_for_thread
+                            .state::<PaneDataRoutes>()
+                            .0
+                            .lock()
+                            .get(id)
+                            .cloned();
+                        if let Some(channel) = channel {
+                            if let Err(e) = channel.send(tauri::ipc::InvokeResponseBody::Raw(bytes))
+                            {
+                                tracing::warn!(error = %e, "send pty data failed");
+                            }
                         }
                     }
                     crate::pty::session::PaneEvent::Exit(id, code) => {

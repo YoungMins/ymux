@@ -227,6 +227,7 @@ fn main() {
     let builder = builder
         .manage(state)
         .manage(eb_registry)
+        .manage(ymux_lib::commands::PaneDataRoutes::default())
         .manage(ymux_lib::quit_gate::QuitGate::default())
         .manage(ymux_lib::agents::SharedAgents::default())
         .manage(ymux_lib::agent_scan::SharedLabels::default())
@@ -249,6 +250,8 @@ fn main() {
             ymux_lib::commands::save_config,
             ymux_lib::commands::spawn_pane,
             ymux_lib::commands::write_pane,
+            ymux_lib::commands::subscribe_pane_data,
+            ymux_lib::commands::unsubscribe_pane_data,
             ymux_lib::commands::resize_pane,
             ymux_lib::commands::kill_pane,
             ymux_lib::activity::runtime::activity_read,

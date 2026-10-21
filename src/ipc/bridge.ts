@@ -3,7 +3,7 @@ import type { TokenUsage } from "../tokenmonitor/model";
 // never touches the raw IPC surface. This also makes it trivial to swap in a
 // mock during browser-only development.
 
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke, Channel } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
@@ -393,8 +393,15 @@ export const api = {
       return p;
     }),
 
-  writePane: (id: Uuid, data: Uint8Array): Promise<void> =>
-    call("write_pane", { args: { id, data: Array.from(data) } }),
+  /// The bytes go as the raw request body (pane id in a header), not as a
+  /// JSON number array (`pty::routes::PANE_HEADER` in Rust).
+  writePane: async (id: Uuid, data: Uint8Array): Promise<void> => {
+    try {
+      await tauriInvoke("write_pane", data, { headers: { [PANE_HEADER]: id } });
+    } catch (e) {
+      throw new Error(`write_pane: ${describeError(e)}`);
+    }
+  },
 
   resizePane: (args: ResizeArgs): Promise<void> =>
     call("resize_pane", { args }),
@@ -640,14 +647,37 @@ export const api = {
   showMainWindow: (): Promise<void> => call("show_main_window"),
 };
 
+/// Header naming the pane of a raw-body `write_pane`.
+const PANE_HEADER = "X-Ymux-Pane";
+
+/// A channel message as bytes. Large chunks arrive as an `ArrayBuffer`; a
+/// runtime that falls back to JSON hands over a number array.
+export function channelBytes(msg: ArrayBuffer | Uint8Array | number[]): Uint8Array {
+  if (msg instanceof Uint8Array) return msg;
+  if (msg instanceof ArrayBuffer) return new Uint8Array(msg);
+  return Uint8Array.from(msg);
+}
+
 /// Subscribe to PTY stdout for a single pane. Returns an unlisten handle.
-export function onPaneData(
+///
+/// The backend sends the bytes through a `Channel` (an `ArrayBuffer` here)
+/// rather than an event, whose JSON payload would spell every byte out as a
+/// number. Resolves once the backend routes the pane to this channel, so
+/// awaiting it before `spawnPane` misses none of the shell's first output.
+export async function onPaneData(
   id: Uuid,
   handler: (data: Uint8Array) => void,
 ): Promise<UnlistenFn> {
-  return safeListen<number[]>(`pty:data:${id}`, (payload) => {
-    handler(Uint8Array.from(payload));
-  });
+  const channel = new Channel<ArrayBuffer | number[]>();
+  let live = true;
+  channel.onmessage = (msg) => {
+    if (live) handler(channelBytes(msg));
+  };
+  await call("subscribe_pane_data", { id, channel });
+  return () => {
+    live = false;
+    void call("unsubscribe_pane_data", { id, channelId: channel.id }).catch(() => {});
+  };
 }
 
 /// Subscribe to the child exit event for a single pane.

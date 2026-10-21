@@ -652,9 +652,9 @@ export class TerminalPane implements Pane {
       }
     }
 
-    // Register data + exit listeners *before* spawning the PTY. Tauri's
-    // `emit` is fire-and-forget — events for `pty:data:{id}` that arrive
-    // while no listener is registered are dropped on the floor. TUI apps
+    // Register data + exit listeners *before* spawning the PTY. Output for a
+    // pane with no data channel subscribed (and `pty:exit`/`pty:cwd` events
+    // with no listener) is dropped on the floor. TUI apps
     // like Claude Code / Codex emit their alt-screen entry
     // (`\x1b[?1049h`), mouse-mode setup, and initial cursor positioning
     // immediately on start; missing any of those leaves xterm and the
