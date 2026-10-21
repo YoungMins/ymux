@@ -8,6 +8,10 @@ import { toggleSidePanel } from "../sidepanel/SidePanel";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { shellFamilyFromExecutable } from "../terminal/shellQuote";
 import { launchableAgents } from "./agentLaunch";
+import { ACCOUNT_NONE, agentUsesAccounts } from "../accounts/accountModel";
+import { promptNewAccount } from "../accounts/createAccount";
+import { fill } from "../git/worktreeFlow";
+import type { TabLaunch } from "./WorkspaceManager";
 
 const panelToggleSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>`;
 const fileDockSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`;
@@ -35,6 +39,7 @@ function launcherEntries(
   shells: ShellProfile[],
   agents: DetectedAgent[],
   reopen: () => void,
+  pickAccount: (agentName: string, launch: TabLaunch) => void,
 ): ContextMenuEntry[] {
   const shell = manager.defaultShell;
   const family = shellFamilyFromExecutable(shells.find((s) => s.name === shell)?.executable);
@@ -48,7 +53,10 @@ function launcherEntries(
     entries.push({
       label: bypass ? `⚡ ${agent.name}` : `${agent.name} ${t("launcher.noBypass")}`,
       title: tip.filter((x) => x).join("\n"),
-      onSelect: () => void manager.newTabInFocused({ shell, startupCmd: command }),
+      onSelect: () =>
+        agentUsesAccounts(agent.id)
+          ? pickAccount(agent.name, { shell, startupCmd: command })
+          : void manager.newTabInFocused({ shell, startupCmd: command }),
     });
   }
   if (launchable.length === 0) {
@@ -80,6 +88,39 @@ function launcherEntries(
       },
     },
   );
+  return entries;
+}
+
+/// The second step for Claude Code / Codex: which login to start it under,
+/// like a website's account chooser. "Default login" is the tool's own folder
+/// (`~/.claude`, `~/.codex`); "Add account" asks for a name, creates the
+/// account's folders and starts the agent there, where it asks to sign in.
+function accountEntries(
+  manager: WorkspaceManager,
+  agentName: string,
+  launch: TabLaunch,
+): ContextMenuEntry[] {
+  const start = (account: string): void => void manager.newTabInFocused({ ...launch, account });
+  const entries: ContextMenuEntry[] = [
+    { header: fill(t("launcher.chooseAccount"), { agent: agentName }) },
+    {
+      label: t("launcher.defaultAccount"),
+      title: t("launcher.defaultAccountTip"),
+      onSelect: () => start(ACCOUNT_NONE),
+    },
+  ];
+  for (const a of manager.accounts) {
+    entries.push({ label: `● ${a.name || a.id}`, onSelect: () => start(a.id) });
+  }
+  entries.push("separator", {
+    label: t("launcher.addAccount"),
+    title: t("launcher.addAccountTip"),
+    onSelect: () => {
+      void promptNewAccount(manager).then((profile) => {
+        if (profile) start(profile.id);
+      });
+    },
+  });
   return entries;
 }
 
@@ -132,7 +173,16 @@ export function mountWorkspaceBar(
     const agents = await scanAgents();
     // Measured after the await: the bar may have moved while detecting.
     const r = launchBtn.getBoundingClientRect();
-    showContextMenu(r.left, r.bottom + 2, launcherEntries(manager, shells, agents, openLauncherSoon));
+    const pickAccount = (agentName: string, launch: TabLaunch): void => {
+      // The launcher menu is already closed by its select; the chooser
+      // opens in its place.
+      showContextMenu(r.left, r.bottom + 2, accountEntries(manager, agentName, launch));
+    };
+    showContextMenu(
+      r.left,
+      r.bottom + 2,
+      launcherEntries(manager, shells, agents, openLauncherSoon, pickAccount),
+    );
   };
   const openLauncherSoon = (): void => void openLauncher();
   launchBtn.addEventListener("click", openLauncherSoon);

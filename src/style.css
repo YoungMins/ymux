@@ -3304,6 +3304,16 @@ body,
   border-radius: 6px;
 }
 
+.account-card__advanced {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.account-card__advanced > summary {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
 .account-card__head {
   display: flex;
   align-items: center;

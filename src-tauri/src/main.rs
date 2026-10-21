@@ -316,6 +316,7 @@ fn main() {
             ymux_lib::settings::load_syntax_theme,
             ymux_lib::settings::save_syntax_theme,
             ymux_lib::settings::open_config_path,
+            ymux_lib::settings::prepare_account_dirs,
             ymux_lib::commands::get_agents,
             ymux_lib::commands::get_pane_labels,
             ymux_lib::commands::set_agent_tracking,

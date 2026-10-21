@@ -72,3 +72,34 @@ pub fn open_config_path(
     opener::open(&path).map_err(|e| format!("opener failed for {}: {e}", path.display()))?;
     Ok(())
 }
+
+/// The two login folders of a ymux-managed account.
+#[derive(Debug, serde::Serialize)]
+pub struct ManagedAccountDirs {
+    pub claude_config_dir: String,
+    pub codex_home: String,
+}
+
+/// Pick (and create) the login folders for a new account, so adding one
+/// never asks the user for a path: `<config_dir>/accounts/<id>/{claude,codex}`.
+/// Claude Code / Codex find no credentials there and ask the user to log in
+/// on first start, which is how a new account gets its login.
+#[tauri::command]
+pub fn prepare_account_dirs(
+    webview: Webview,
+    request: Request<'_>,
+    id: String,
+) -> Result<ManagedAccountDirs, String> {
+    guard_local(&webview, &request, "prepare_account_dirs").map_err(|e| e.to_string())?;
+    let base = ytheme::ensure_config_dir().map_err(|e| format!("create config dir failed: {e}"))?;
+    let (claude, codex) = crate::accounts::managed_dirs(&base, &id)
+        .ok_or_else(|| "invalid account id".to_string())?;
+    for dir in [&claude, &codex] {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("create {} failed: {e}", dir.display()))?;
+    }
+    Ok(ManagedAccountDirs {
+        claude_config_dir: claude.display().to_string(),
+        codex_home: codex.display().to_string(),
+    })
+}

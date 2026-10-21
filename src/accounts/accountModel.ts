@@ -23,6 +23,32 @@ export function newAccountId(): string {
   return uuidv4().replace(/-/g, "").slice(0, 8);
 }
 
+/// Badge colours handed out to new accounts in turn.
+export const ACCOUNT_COLORS = ["#e5873b", "#4aa3df", "#5cb85c", "#b07cd8", "#e0587a", "#d9b341"];
+
+/// Colour for the account added after `existing`: the first palette colour
+/// no account uses yet, else cycling by count.
+export function nextAccountColor(existing: readonly AccountProfile[]): string {
+  const used = new Set(existing.map((a) => normalizeColor(a.color)));
+  return ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[existing.length % ACCOUNT_COLORS.length];
+}
+
+/// Name for the account added after `existing` when the user gives none:
+/// `"<base> N"` with the smallest N >= count + 1 that is not taken.
+export function nextAccountName(existing: readonly AccountProfile[], base: string): string {
+  const taken = new Set(existing.map((a) => a.name.trim()));
+  let n = existing.length + 1;
+  while (taken.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+
+/// Agents (`DetectedAgent.id`) whose login an account switches: Claude Code
+/// reads `CLAUDE_CONFIG_DIR`, Codex `CODEX_HOME`. The launcher asks which
+/// account to start these under.
+export function agentUsesAccounts(agentId: string): boolean {
+  return agentId === "claude" || agentId === "codex";
+}
+
 /// Same resolution as the backend: the pane's own non-empty choice wins over
 /// the workspace default, `ACCOUNT_NONE` opts out, an unknown id is nothing.
 export function effectiveAccount(

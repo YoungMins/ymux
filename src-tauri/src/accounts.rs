@@ -296,6 +296,29 @@ pub fn distinct(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<DirGro
     out.into_iter().map(|(_, g)| g).collect()
 }
 
+/// Folder name under ymux's config dir that holds managed accounts.
+pub const MANAGED_SUBDIR: &str = "accounts";
+
+/// The login folders ymux picks for an account the user added from the
+/// launcher or Settings without naming any path:
+/// `<base>/accounts/<id>/claude` and `<base>/accounts/<id>/codex`, where
+/// `base` is ymux's config dir. `None` for an id that is not a short
+/// lower-case alphanumeric slug (so it can never climb out with `..` or a
+/// separator) or is the reserved `ACCOUNT_NONE`.
+pub fn managed_dirs(base: &Path, id: &str) -> Option<(PathBuf, PathBuf)> {
+    let valid = !id.is_empty()
+        && id.len() <= 32
+        && id != ACCOUNT_NONE
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase());
+    if !valid {
+        return None;
+    }
+    let root = base.join(MANAGED_SUBDIR).join(id);
+    Some((root.join("claude"), root.join("codex")))
+}
+
 /// The macOS keychain service Claude Code 2.1.300 keeps its credentials
 /// under: `Claude Code-credentials`, plus `-` and the first 8 hex digits of
 /// the SHA-256 of the NFC-normalised literal `CLAUDE_CONFIG_DIR` when that is
@@ -351,6 +374,34 @@ mod tests {
 
     fn home_join(rest: &str) -> String {
         Path::new(&ab("h")).join(rest).display().to_string()
+    }
+
+    #[test]
+    fn managed_dirs_live_under_the_config_dir() {
+        let base = h().join("cfg");
+        let (claude, codex) = managed_dirs(&base, "a1b2c3d4").unwrap();
+        assert_eq!(
+            claude,
+            base.join("accounts").join("a1b2c3d4").join("claude")
+        );
+        assert_eq!(codex, base.join("accounts").join("a1b2c3d4").join("codex"));
+    }
+
+    #[test]
+    fn managed_dirs_refuse_ids_that_are_not_slugs() {
+        let base = h();
+        for bad in [
+            "",
+            "none",
+            "..",
+            "a/b",
+            "a\\b",
+            "A1",
+            "x y",
+            &"a".repeat(33),
+        ] {
+            assert!(managed_dirs(&base, bad).is_none(), "{bad:?}");
+        }
     }
 
     #[test]

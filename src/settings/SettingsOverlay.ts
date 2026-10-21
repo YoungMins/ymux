@@ -13,7 +13,8 @@ import type { YTheme, SettingsSection } from "./types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../workspace/fontSize";
 import { SHORTCUTS, splitShortcutKeys } from "./shortcutList";
-import { newAccountId, normalizeColor } from "../accounts/accountModel";
+import { nextAccountName, normalizeColor } from "../accounts/accountModel";
+import { managedAccount } from "../accounts/createAccount";
 import type { AccountProfile } from "../types";
 import { renderActivitySection } from "./ActivitySection";
 
@@ -166,10 +167,12 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
 
   // ── Section: Accounts ───────────────────────────────────────────────
   // Profiles pointing Claude Code (CLAUDE_CONFIG_DIR) and Codex (CODEX_HOME)
-  // at separate login folders. Edits commit on `change` (not every keystroke)
+  // at separate login folders. A new account gets folders ymux picks
+  // (`createAccount.ts`), so the user only names it and signs in when the
+  // agent first starts; typing folders by hand is tucked under "advanced"
+  // for existing logins. Edits commit on `change` (not every keystroke)
   // through `manager.setAccounts`, which persists and repaints the badges; the
   // list only re-renders on add/delete so typing never loses focus.
-  const ACCOUNT_COLORS = ["#e5873b", "#4aa3df", "#5cb85c", "#b07cd8", "#e0587a", "#d9b341"];
 
   function renderAccounts(host: HTMLElement): void {
     const h = document.createElement("h3");
@@ -261,18 +264,24 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
       head.appendChild(del);
       card.appendChild(head);
 
-      card.appendChild(
+      const advanced = document.createElement("details");
+      advanced.className = "account-card__advanced";
+      const summary = document.createElement("summary");
+      summary.textContent = t("settings.accounts.advanced");
+      advanced.appendChild(summary);
+      advanced.appendChild(
         textRow(t("settings.accounts.claudeDir"), acct.claude_config_dir, "~/.claude", (v) => {
           acct.claude_config_dir = v;
           commit();
         }),
       );
-      card.appendChild(
+      advanced.appendChild(
         textRow(t("settings.accounts.codexDir"), acct.codex_home, "~/.codex", (v) => {
           acct.codex_home = v;
           commit();
         }),
       );
+      card.appendChild(advanced);
       return card;
     };
 
@@ -281,15 +290,18 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     add.className = "hotkey-modal__btn hotkey-modal__btn--primary";
     add.textContent = t("settings.accounts.add");
     add.addEventListener("click", () => {
-      list.push({
-        id: newAccountId(),
-        name: `${t("settings.accounts.defaultName")} ${list.length + 1}`,
-        claude_config_dir: "",
-        codex_home: "",
-        color: ACCOUNT_COLORS[list.length % ACCOUNT_COLORS.length],
-      });
-      commit();
-      rebuild();
+      add.disabled = true;
+      const name = nextAccountName(list, t("settings.accounts.defaultName"));
+      void managedAccount(list, name)
+        .then((profile) => {
+          list.push(profile);
+          commit();
+          rebuild();
+        })
+        .catch((e) => console.error("create account failed:", e))
+        .finally(() => {
+          add.disabled = false;
+        });
     });
     host.appendChild(add);
     rebuild();

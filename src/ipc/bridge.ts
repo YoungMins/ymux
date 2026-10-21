@@ -557,6 +557,14 @@ export const api = {
   openConfigPath: (kind: ConfigPathKind): Promise<void> =>
     call("open_config_path", { kind }),
 
+  /// Pick and create the login folders of a new account
+  /// (`<config_dir>/accounts/<id>/{claude,codex}`), so adding one never asks
+  /// the user for a path.
+  prepareAccountDirs: (
+    id: string,
+  ): Promise<{ claude_config_dir: string; codex_home: string }> =>
+    call("prepare_account_dirs", { id }),
+
   /// Persist `blob` (serialized terminal scrollback) for a pane to disk.
   saveScrollback: (id: Uuid, blob: string): Promise<void> =>
     call("save_scrollback", { paneId: id, blob }),

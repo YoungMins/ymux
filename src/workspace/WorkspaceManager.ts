@@ -100,6 +100,14 @@ import { zoomAction } from "./zoom";
 import { formatWorkspaceLabel, workspaceIdAtPosition, workspacePosition } from "./workspaceLabel";
 import type { PaneStatus } from "../terminal/paneStatus";
 
+/// What the top bar's "+" launcher starts in a new tab: a shell, an optional
+/// command to type (an agent), and optionally the account to run it under.
+export interface TabLaunch {
+  shell: string;
+  startupCmd: string | null;
+  account?: string;
+}
+
 const MAX_WORKSPACES = 9;
 
 export class WorkspaceManager {
@@ -1041,7 +1049,10 @@ export class WorkspaceManager {
   /// Naming its own shell, it can join any visible terminal's group when
   /// focus is on a non-terminal pane; with no terminal on screen it splits
   /// one in beside the focused pane rather than doing nothing.
-  async newTabInFocused(launch?: { shell: string; startupCmd: string | null }): Promise<void> {
+  /// `launch.account`, when set, is the account the launcher's picker chose
+  /// (`ACCOUNT_NONE` for the default login); otherwise the tab inherits the
+  /// source pane's.
+  async newTabInFocused(launch?: TabLaunch): Promise<void> {
     const ws = this.active;
     // Not `focusedPaneId`: it still points into the previous workspace after
     // a switch, which made this a silent no-op (`activePane.ts`).
@@ -1053,6 +1064,7 @@ export class WorkspaceManager {
       if (!term) {
         const spec = newPane(this.resolveShell(launch.shell), source?.cwd ?? null);
         spec.startup_cmd = launch.startupCmd;
+        if (launch.account !== undefined) spec.account = launch.account;
         await this.insertSplit(ws, sourceId, "horizontal", spec, "launcher split failed");
         return;
       }
@@ -1081,7 +1093,7 @@ export class WorkspaceManager {
   private async addTabFrom(
     ws: Workspace,
     sourceId: Uuid,
-    launch?: { shell: string; startupCmd: string | null },
+    launch?: TabLaunch,
   ): Promise<void> {
     const source = findPane(ws.root, sourceId);
     // Browser panes have no shell to duplicate and no strip — tabs are a
@@ -1101,7 +1113,7 @@ export class WorkspaceManager {
     if (launch) spec.startup_cmd = launch.startupCmd;
     spec.hotkeys = (source.hotkeys ?? []).map((h) => ({ ...h }));
     spec.bg_color = source.bg_color ?? "";
-    spec.account = source.account ?? "";
+    spec.account = launch?.account ?? source.account ?? "";
     ws.root = addTab(ws.root, group.id, spec);
     const cache = this.paneCaches.get(ws.id)!;
     const pane = this.createPane(spec);

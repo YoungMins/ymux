@@ -7,7 +7,11 @@ import {
   effectiveAccount,
   isAccountPending,
   newAccountId,
+  nextAccountColor,
+  nextAccountName,
   normalizeColor,
+  agentUsesAccounts,
+  ACCOUNT_COLORS,
 } from "./accountModel";
 
 const acct = (id: string): AccountProfile => ({
@@ -86,5 +90,33 @@ describe("isAccountPending", () => {
     expect(isAccountPending("a", "a")).toBe(false);
     expect(isAccountPending("b", "a")).toBe(true);
     expect(isAccountPending("a", "")).toBe(true);
+  });
+});
+
+describe("adding an account", () => {
+  const colored = (id: string, color: string): AccountProfile => ({ ...acct(id), color });
+
+  it("hands out the first unused palette colour", () => {
+    expect(nextAccountColor([])).toBe(ACCOUNT_COLORS[0]);
+    expect(nextAccountColor([colored("a", ACCOUNT_COLORS[0].toUpperCase())])).toBe(ACCOUNT_COLORS[1]);
+    expect(nextAccountColor([colored("a", ACCOUNT_COLORS[1])])).toBe(ACCOUNT_COLORS[0]);
+  });
+
+  it("cycles once every colour is taken", () => {
+    const all = ACCOUNT_COLORS.map((c, i) => colored(String(i), c));
+    expect(nextAccountColor(all)).toBe(ACCOUNT_COLORS[all.length % ACCOUNT_COLORS.length]);
+  });
+
+  it("names the next account after the count, skipping names in use", () => {
+    expect(nextAccountName([], "Account")).toBe("Account 1");
+    const a = { ...acct("a"), name: "Account 2" };
+    expect(nextAccountName([a], "Account")).toBe("Account 3");
+    expect(nextAccountName([{ ...acct("b"), name: "Work" }], "Account")).toBe("Account 2");
+  });
+
+  it("asks for an account only for agents that read one", () => {
+    expect(agentUsesAccounts("claude")).toBe(true);
+    expect(agentUsesAccounts("codex")).toBe(true);
+    expect(agentUsesAccounts("gemini")).toBe(false);
   });
 });

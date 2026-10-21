@@ -167,11 +167,16 @@ right one, so use it where an unattended wrong answer is cheap to undo.
 
 #### Multiple accounts
 
-Keep several Claude Code or Codex logins side by side. In **Settings →
-Accounts** add a profile with its own Claude config folder (`CLAUDE_CONFIG_DIR`)
-and/or Codex folder (`CODEX_HOME`); an empty folder leaves that tool on its
-default (`~/.claude`, `~/.codex`). Pick the account per terminal in the pane's
-⚙ dialog, or give a whole workspace a default by right-clicking its row in the
+Keep several Claude Code or Codex logins side by side, the way a website lets
+you sign in to more than one account. Press **+** in the top bar and pick
+Claude Code or Codex: ymux asks which account to start it under — the default
+login (`~/.claude`, `~/.codex`), one of your accounts, or **+ Add account…**.
+A new account only needs a name; ymux gives it its own login folders under its
+config directory, and the agent asks you to sign in the first time it runs
+there. **Settings → Accounts** lists the accounts for renaming, recoloring and
+deleting (an existing login folder can still be set by hand under
+"advanced"). You can also pick the account per terminal in the pane's ⚙
+dialog, or give a whole workspace a default by right-clicking its row in the
 workspace panel. A terminal with an account shows a colored badge in its title.
 ymux sets the variables when a terminal starts, so a change applies to
 terminals started afterwards (a running shell keeps its account, and its badge
