@@ -3,7 +3,7 @@ import { t, getLang, onLangChange } from "../i18n/i18n";
 import type { Pane } from "../layout/Pane";
 import type { Uuid } from "../types";
 import { getAccounts, normalizeColor, ACCOUNT_NONE } from "../accounts/accountModel";
-import { aggregateUsage, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
+import { aggregateUsage, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type UsageGroup, type TokenTotals } from "./model";
 import "./tokenmonitor.css";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""): HTMLElementTagNameMap[K] {
@@ -111,7 +111,7 @@ export class TokenMonitorPane implements Pane {
   private data: TokenUsage | null = null;
   private phase: "loading" | "error" | "ready" = "loading";
   private period: UsageWindow = "five_hour";
-  private group: "provider" | "model" | "project" = "project";
+  private group: UsageGroup = "project";
   private title: string | null;
 
   constructor(private readonly options: TokenMonitorOptions) {
@@ -121,7 +121,7 @@ export class TokenMonitorPane implements Pane {
     this.element.addEventListener("pointerdown", () => options.onFocus?.());
     this.state.setAttribute("role", "status");
     for (const key of ["five_hour", "seven_day", "all_time"] as const) { const option = el("option"); option.value = key; this.periodSelect.append(option); }
-    for (const key of ["provider", "model", "project"] as const) { const option = el("option"); option.value = key; this.groupSelect.append(option); }
+    for (const key of ["provider", "model", "project", "account"] as const) { const option = el("option"); option.value = key; this.groupSelect.append(option); }
     this.groupSelect.value = this.group;
     try { if (localStorage.getItem("ymux.tokenUsage.display") === "used") this.display = "used"; }
     catch (error: unknown) { console.warn("Token display preference unavailable", error); }
@@ -139,7 +139,7 @@ export class TokenMonitorPane implements Pane {
       this.render();
     };
     this.groupSelect.onchange = () => {
-      switch (this.groupSelect.value) { case "provider": case "model": case "project": this.group = this.groupSelect.value; break; }
+      switch (this.groupSelect.value) { case "provider": case "model": case "project": case "account": this.group = this.groupSelect.value; break; }
       this.render();
     };
     this.refreshButton.type = "button"; this.refreshButton.onclick = () => { void this.refresh(true); };
@@ -229,9 +229,13 @@ export class TokenMonitorPane implements Pane {
       local.title = breakdown(provider[this.period]); card.append(local);
     return card;
   }
+  /** Display name of an account id as the usage rows and cards carry it. */
+  private accountLabel(id: string): string {
+    return id === "" ? t("usage.default_account") : id === ACCOUNT_NONE ? t("usage.home_account") : getAccounts().find(p => p.id === id)?.name || id;
+  }
   private accountHeading(account: string, also: readonly string[]): HTMLElement {
     const profiles = getAccounts();
-    const label = (id: string): string => id === "" ? t("usage.default_account") : id === ACCOUNT_NONE ? t("usage.home_account") : profiles.find(p => p.id === id)?.name || id;
+    const label = (id: string): string => this.accountLabel(id);
     const heading = el("h3", "", "usage-account-heading");
     const dot = el("span", "", "account-badge__dot");
     const color = normalizeColor(profiles.find(p => p.id === account)?.color ?? "");
@@ -269,8 +273,14 @@ export class TokenMonitorPane implements Pane {
     const table = el("table"); const head = el("thead"); const heading = el("tr"); heading.append(el("th", t(`usage.${this.group}`)), el("th", t("usage.total"))); head.append(heading); table.append(head);
     const body = el("tbody");
     for (const row of rows) {
-      const tr = el("tr"); const label = this.group === "provider" ? (row.label === "claude" ? "Claude Code" : "Codex") : row.label;
-      const cell = el("td", label === "unknown" ? t("usage.unknown") : label); cell.title = label;
+      const tr = el("tr");
+      const label = this.group === "provider" ? (row.label === "claude" ? "Claude Code" : "Codex") : this.group === "account" ? this.accountLabel(row.label) : row.label;
+      const cell = el("td", label === "unknown" && this.group !== "account" ? t("usage.unknown") : label); cell.title = label;
+      if (this.group === "account") {
+        const dot = el("span", "", "account-badge__dot"); const color = normalizeColor(getAccounts().find(p => p.id === row.label)?.color ?? "");
+        if (color) dot.style.background = color;
+        cell.prepend(dot);
+      }
       const total = el("td", compact(row.tokens.total)); total.title = breakdown(row.tokens); tr.append(cell, total); body.append(tr);
     }
     table.append(body); this.content.append(rows.length ? table : el("p", t("usage.empty"), "usage-empty"));

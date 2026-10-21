@@ -52,3 +52,4 @@
 .usage-sum { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 6px; margin-top:8px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-alt); font-size:11px; color:var(--fg-muted); cursor:help; }
 .usage-sum strong { margin-left:auto; font-size:14px; color:var(--fg); font-variant-numeric:tabular-nums; }
 .usage-sum-compact { font-variant-numeric:tabular-nums; }
+.usage-content td .account-badge__dot { display:inline-block; margin-right:5px; vertical-align:middle; }

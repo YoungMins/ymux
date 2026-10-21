@@ -69,7 +69,9 @@ function addTotals(a: TokenTotals, b: TokenTotals): TokenTotals {
 export function sumTotals(items: readonly { readonly tokens: TokenTotals }[]): TokenTotals {
   return items.reduce((acc, item) => addTotals(acc, item.tokens), ZERO);
 }
-export function aggregateUsage(rows: readonly UsageRow[], group: "provider" | "model" | "project", window: UsageWindow): readonly { readonly label: string; readonly tokens: TokenTotals }[] {
+/** What the usage table groups its rows by. */
+export type UsageGroup = "provider" | "model" | "project" | "account";
+export function aggregateUsage(rows: readonly UsageRow[], group: UsageGroup, window: UsageWindow): readonly { readonly label: string; readonly tokens: TokenTotals }[] {
   const result = new Map<string, TokenTotals>();
   for (const row of rows) {
     const label = group === "model" ? `${row.provider} / ${row.model}` : row[group];

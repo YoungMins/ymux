@@ -31,6 +31,7 @@ const rows: Readonly<Record<string, readonly string[]>> = {
  all_time: ["All recorded usage", "전체 기록 사용량", "全記録の使用量", "全部记录", "सभी रिकॉर्ड", "Todo el uso registrado", "Tout l’usage enregistré", "كل الاستخدام المسجل", "Todo o uso registrado", "Все записи", "Tüm kayıtlar", "Alle Aufzeichnungen", "Toàn bộ dữ liệu"],
  provider: ["AI provider", "AI 제공자", "AIプロバイダー", "AI提供商", "AI प्रदाता", "Proveedor IA", "Fournisseur IA", "مزود الذكاء الاصطناعي", "Provedor IA", "Провайдер ИИ", "AI sağlayıcı", "KI-Anbieter", "Nhà cung cấp AI"],
  model: ["Model", "모델", "モデル", "模型", "मॉडल", "Modelo", "Modèle", "النموذج", "Modelo", "Модель", "Model", "Modell", "Mô hình"],
+ account: ["Account", "계정", "アカウント", "账户", "खाता", "Cuenta", "Compte", "الحساب", "Conta", "Аккаунт", "Hesap", "Konto", "Tài khoản"],
  project: ["Project", "프로젝트", "プロジェクト", "项目", "प्रोजेक्ट", "Proyecto", "Projet", "المشروع", "Projeto", "Проект", "Proje", "Projekt", "Dự án"],
  input: ["Input", "입력", "入力", "输入", "इनपुट", "Entrada", "Entrée", "الإدخال", "Entrada", "Вход", "Girdi", "Eingabe", "Đầu vào"],
  output: ["Output", "출력", "出力", "输出", "आउटपुट", "Salida", "Sortie", "الإخراج", "Saída", "Выход", "Çıktı", "Ausgabe", "Đầu ra"],

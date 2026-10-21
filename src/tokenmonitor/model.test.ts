@@ -46,6 +46,10 @@ describe("token usage aggregation", () => {
     expect(sum.querySelector("strong")!.textContent).toBe("90 tokens");
     expect(sum.textContent).toContain("All recorded usage");
   });
+  it("groups rows by account", () => {
+    const rows = [row("claude", "opus", "/a", 20, "work"), row("codex", "gpt", "/b", 10, "work"), row("claude", "opus", "/a", 5)];
+    expect(aggregateUsage(rows, "account", "five_hour").map(r => [r.label, r.tokens.total])).toEqual([["work", 30], ["", 5]]);
+  });
   it("translates every token panel key into all 13 languages", () => {
     expect(translationGaps("usage.")).toEqual([]);
   });
