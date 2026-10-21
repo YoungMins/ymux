@@ -8,7 +8,7 @@
 .usage-state { padding:0 8px 4px; font-size:11px; color:var(--fg-muted); flex:none; }
 .usage-state[hidden] { display:none; }
 .usage-state--error { color:var(--status-critical); }
-.usage-content { overflow:auto; min-height:0; padding:0 8px 8px; }
+.usage-content { overflow:auto; scrollbar-gutter:stable; min-height:0; padding:0 8px 8px; }
 .usage-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr)); gap:4px; }
 .usage-card { min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-alt); }
 .usage-account-heading { display:flex; align-items:center; gap:6px; margin:8px 0 4px; font-size:12px; font-weight:600; opacity:.85; }
@@ -49,3 +49,6 @@
 .usage-heat-legend { display:flex; align-items:center; justify-content:flex-end; gap:2px; margin-top:4px; font-size:10px; color:var(--fg-muted); }
 .usage-heat-legend span:first-child { margin-right:2px; }
 .usage-heat-legend span:last-child { margin-left:2px; }
+.usage-sum { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 6px; margin-top:8px; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-alt); font-size:11px; color:var(--fg-muted); cursor:help; }
+.usage-sum strong { margin-left:auto; font-size:14px; color:var(--fg); font-variant-numeric:tabular-nums; }
+.usage-sum-compact { font-variant-numeric:tabular-nums; }

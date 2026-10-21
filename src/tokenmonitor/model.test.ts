@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aggregateUsage, dailyTotals, groupProvidersByAccount, heatmapGrid, type ProviderUsage, type TokenUsage, type UsageRow } from "./model";
+import { aggregateUsage, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, type ProviderUsage, type TokenUsage, type UsageRow } from "./model";
 import { TokenMonitorPane } from "./TokenMonitor";
 import { api } from "../ipc/bridge";
 import { setLang, translationGaps } from "../i18n/i18n";
@@ -31,6 +31,20 @@ describe("token usage aggregation", () => {
   it("keeps identically named models separate across providers", () => {
     const result = aggregateUsage([row("claude", "same", "/a", 10), row("codex", "same", "/b", 20)], "model", "five_hour");
     expect(result.map(item => item.label)).toEqual(["codex / same", "claude / same"]);
+  });
+  it("totals every row of the selected window", () => {
+    const rows = aggregateUsage([row("claude", "opus", "/a", 20), row("codex", "gpt", "/b", 10)], "project", "all_time");
+    expect(sumTotals(rows)).toEqual({ input: 86, output: 4, cache_read: 0, cache_write: 0, total: 90 });
+    expect(sumTotals([]).total).toBe(0);
+  });
+  it("shows the window's token total above the table", async () => {
+    vi.spyOn(api, "getTokenUsage").mockResolvedValue({ ...data, rows: [row("claude", "opus", "/a", 20), row("codex", "gpt", "/b", 10)] });
+    mount(); await vi.waitFor(() => expect(active!.element.querySelector(".usage-sum")).not.toBeNull());
+    const select = active!.element.querySelector<HTMLSelectElement>(".usage-controls select")!;
+    select.value = "all_time"; select.dispatchEvent(new Event("change"));
+    const sum = active!.element.querySelector(".usage-sum")!;
+    expect(sum.querySelector("strong")!.textContent).toBe("90 tokens");
+    expect(sum.textContent).toContain("All recorded usage");
   });
   it("translates every token panel key into all 13 languages", () => {
     expect(translationGaps("usage.")).toEqual([]);

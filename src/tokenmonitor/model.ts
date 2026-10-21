@@ -61,13 +61,19 @@ export function groupProvidersByAccount(providers: readonly ProviderUsage[]): Ac
   }
   return [...groups].map(([account, group]) => ({ account, ...group }));
 }
+const ZERO: TokenTotals = { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 };
+function addTotals(a: TokenTotals, b: TokenTotals): TokenTotals {
+  return { input: a.input + b.input, output: a.output + b.output, cache_read: a.cache_read + b.cache_read, cache_write: a.cache_write + b.cache_write, total: a.total + b.total };
+}
+/** Sum of every row's tokens: the total line under the period's table. */
+export function sumTotals(items: readonly { readonly tokens: TokenTotals }[]): TokenTotals {
+  return items.reduce((acc, item) => addTotals(acc, item.tokens), ZERO);
+}
 export function aggregateUsage(rows: readonly UsageRow[], group: "provider" | "model" | "project", window: UsageWindow): readonly { readonly label: string; readonly tokens: TokenTotals }[] {
   const result = new Map<string, TokenTotals>();
   for (const row of rows) {
     const label = group === "model" ? `${row.provider} / ${row.model}` : row[group];
-    const prev = result.get(label) ?? { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 };
-    const next = row[window];
-    result.set(label, { input: prev.input + next.input, output: prev.output + next.output, cache_read: prev.cache_read + next.cache_read, cache_write: prev.cache_write + next.cache_write, total: prev.total + next.total });
+    result.set(label, addTotals(result.get(label) ?? ZERO, row[window]));
   }
   return [...result].map(([label, tokens]) => ({ label, tokens })).sort((a, b) => b.tokens.total - a.tokens.total);
 }

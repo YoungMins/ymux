@@ -3,7 +3,7 @@ import { t, getLang, onLangChange } from "../i18n/i18n";
 import type { Pane } from "../layout/Pane";
 import type { Uuid } from "../types";
 import { getAccounts, normalizeColor, ACCOUNT_NONE } from "../accounts/accountModel";
-import { aggregateUsage, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
+import { aggregateUsage, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type TokenTotals } from "./model";
 import "./tokenmonitor.css";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""): HTMLElementTagNameMap[K] {
@@ -255,8 +255,17 @@ export class TokenMonitorPane implements Pane {
       for (const provider of group.providers) cards.append(this.providerCard(provider, now));
     }
     this.content.append(cards);
-    if (this.data.hourly.length > 0) { this.heatWeeksShown = heatWeeks(this.contentWidth()); this.content.append(heatmap(this.data.hourly, this.heatWeeksShown)); }
+    let heat: HTMLElement | null = null;
+    if (this.data.hourly.length > 0) { this.heatWeeksShown = heatWeeks(this.contentWidth()); heat = heatmap(this.data.hourly, this.heatWeeksShown); this.content.append(heat); }
     const rows = aggregateUsage(this.data.rows, this.group, this.period).filter(row => row.tokens.total > 0);
+    if (rows.length > 0) {
+      const sum = sumTotals(rows);
+      const line = el("div", "", "usage-sum"); line.title = breakdown(sum);
+      const value = el("strong", `${sum.total.toLocaleString(getLang())} ${t("usage.tokens_unit")}`);
+      line.append(el("span", `${t("usage.sum")} · ${t(`usage.${this.period}`)}`), value);
+      if (sum.total >= 10_000) line.append(el("span", `(${compact(sum.total)})`, "usage-sum-compact"));
+      this.content.append(line);
+    }
     const table = el("table"); const head = el("thead"); const heading = el("tr"); heading.append(el("th", t(`usage.${this.group}`)), el("th", t("usage.total"))); head.append(heading); table.append(head);
     const body = el("tbody");
     for (const row of rows) {
@@ -271,6 +280,14 @@ export class TokenMonitorPane implements Pane {
     for (const provider of this.data.providers) for (const warning of provider.warnings) notices.add(`${provider.id}_${warning}`);
     for (const warning of notices) details.append(el("p", t(`usage.${warning}`)));
     this.content.append(details);
+    // Measured again now that everything is in: a scrollbar that appeared
+    // with the rest of the content (macOS with "always show scrollbars")
+    // narrows the pane, and the newest weeks on the right would be clipped.
+    // Only ever shrink, so the next resize check settles on this count.
+    if (heat) {
+      const fit = heatWeeks(this.contentWidth());
+      if (fit < this.heatWeeksShown) { this.heatWeeksShown = fit; const next = heatmap(this.data.hourly, fit); heat.replaceWith(next); }
+    }
   }
   private async refresh(refreshQuota = false): Promise<void> {
     if (this.busy || this.disposed || (refreshQuota && performance.now() - this.lastManualRefresh < 10_000)) return;
