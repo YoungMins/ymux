@@ -70,6 +70,7 @@ ymux/
 │   ├── git/                # Git pane (GitPane, graphLanes, worktreeFlow)
 │   ├── diff/               # Diff review overlay (DiffReview, diffModel, reviewPrompt, targetPick): runtime-only, not a pane kind
 │   ├── fanout/             # Fan-out dialog + compare overlay (FanoutDialog, FanoutCompare, lanes, plan, layout, readyGate, blockingScreen)
+│   ├── office/             # Office view (Ctrl+Shift+O): officeModel (layout tree -> rooms/desks, agents -> characters, pure), OfficeView (DOM overlay, walking/errands), sprites (inline SVG), officeEvents (cross-pane sends from sendToPane)
 │   ├── workspace/          # WorkspaceManager + WorkspaceBar ("+" launcher) + WorkspacePanel + agentTree (workspace panel tree) + inbox.ts (attention inbox model); agentLaunch (launcher command line), activePane, fontSize, reorder, viewerTab (reused viewer tab), workspaceLabel, zoom
 │   ├── terminal/           # TerminalPane + HotKeyBar + bottomAnchor (bottom-anchored prompt), pathLinks (clickable paths: pathRow -> pathMatch -> pathProbe -> pathOpen); paste, ime, dropPaths, shellQuote, paneStatus, tabLabel, resumePlan (resume vs replay on spawn), restoreGuard/scrollbackPersist, viewportSync
 │   ├── browser/            # BrowserPane (iframe) + NativeBrowserPane

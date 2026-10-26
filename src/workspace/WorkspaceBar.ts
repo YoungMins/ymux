@@ -8,6 +8,7 @@ import { toggleSidePanel } from "../sidepanel/SidePanel";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { shellFamilyFromExecutable } from "../terminal/shellQuote";
 import { launchableAgents } from "./agentLaunch";
+import { shortcutLabel } from "../platform";
 import { ACCOUNT_NONE, agentUsesAccounts } from "../accounts/accountModel";
 import { promptNewAccount } from "../accounts/createAccount";
 import { fill } from "../git/worktreeFlow";
@@ -15,6 +16,8 @@ import type { TabLaunch } from "./WorkspaceManager";
 
 const panelToggleSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>`;
 const fileDockSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`;
+
+const officeSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="13"/><line x1="3" y1="13" x2="21" y2="13"/><line x1="7" y1="13" x2="7" y2="21"/></svg>`;
 
 const launcherSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
 
@@ -214,6 +217,22 @@ export function mountWorkspaceBar(
   bar.appendChild(launchBtn);
   void scanAgents();
 
+  // Office view toggle: the workspace as an office floor with its agents.
+  const officeBtn = document.createElement("button");
+  officeBtn.className = "workspace-bar__icon-btn";
+  officeBtn.type = "button";
+  officeBtn.innerHTML = officeSvg;
+  const officeTitle = (): string => `${t("shortcut.office")} (${shortcutLabel("Ctrl+Shift+O")})`;
+  officeBtn.title = officeTitle();
+  officeBtn.setAttribute("aria-label", t("shortcut.office"));
+  officeBtn.setAttribute("aria-pressed", "false");
+  officeBtn.addEventListener("click", () => manager.toggleOffice());
+  const cleanupOffice = manager.onOfficeChange((open) => {
+    officeBtn.classList.toggle("workspace-bar__icon-btn--on", open);
+    officeBtn.setAttribute("aria-pressed", String(open));
+  });
+  bar.appendChild(officeBtn);
+
   const shellPicker = document.createElement("select");
   shellPicker.className = "workspace-bar__shell";
   shellPicker.title = t("workspace.shellTitle");
@@ -286,6 +305,8 @@ export function mountWorkspaceBar(
   const cleanupLang = onLangChange(() => {
     toggleBtn.title = t("workspace.togglePanel");
     toggleBtn.setAttribute("aria-label", t("workspace.togglePanel"));
+    officeBtn.title = officeTitle();
+    officeBtn.setAttribute("aria-label", t("shortcut.office"));
     launchBtn.title = t("launcher.button");
     launchBtn.setAttribute("aria-label", t("launcher.button"));
     shellPicker.title = t("workspace.shellTitle");
@@ -299,6 +320,7 @@ export function mountWorkspaceBar(
   return () => {
     cleanupLang();
     cleanupBadge();
+    cleanupOffice();
     document.removeEventListener(PANEL_TOGGLED_EVENT, refreshToggleBadge);
     cleanupHelp();
     bar.remove();

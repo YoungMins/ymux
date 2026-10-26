@@ -119,6 +119,12 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => manager.toggleZoomFocused(),
     },
     {
+      id: "office.toggle",
+      label: () => t("shortcut.office"),
+      keybinding: "Ctrl+Shift+O",
+      action: () => manager.toggleOffice(),
+    },
+    {
       id: "inbox.next",
       label: () => t("shortcut.inboxNext"),
       keybinding: "Ctrl+Shift+U",

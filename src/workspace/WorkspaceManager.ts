@@ -100,6 +100,9 @@ import { viewerTabAction } from "./viewerTab";
 import { zoomAction } from "./zoom";
 import { formatWorkspaceLabel, workspaceIdAtPosition, workspacePosition } from "./workspaceLabel";
 import type { PaneStatus } from "../terminal/paneStatus";
+import { OfficeView } from "../office/OfficeView";
+import { emitOfficeMessage, type OfficeMessageKind } from "../office/officeEvents";
+import { pushPopup, popPopup } from "../browser/popupBlur";
 
 /// What the top bar's "+" launcher starts in a new tab: a shell, an optional
 /// command to type (an agent), and optionally the account to run it under.
@@ -1566,7 +1569,11 @@ export class WorkspaceManager {
       if (pane instanceof TerminalPane) pane.markWaiting();
       this.notifyTree();
       notify(fill(t("fanout.blocked"), { lane }));
-    } else if (state === "check") notify(fill(t("fanout.check"), { lane }));
+    }
+    if (state === "sent" || state === "pasted") {
+      emitOfficeMessage({ from: null, to: paneId, kind: "prompt" });
+    }
+    if (state === "check") notify(fill(t("fanout.check"), { lane }));
     else if (state === "pasted") notify(fill(t("fanout.pasted"), { lane }));
     else if (state === "failed") notify(fill(t("fanout.sendFailed"), { lane }));
     else if (state === "unsent") {
@@ -1590,7 +1597,7 @@ export class WorkspaceManager {
         if (a?.id === "copy") {
           await navigator.clipboard.writeText(prompt).catch(() => {});
         } else if (a?.id === "send") {
-          const res = await this.sendToPane(paneId, prompt, true);
+          const res = await this.sendToPane(paneId, prompt, true, undefined, { from: null, kind: "prompt" });
           if (res === "pasted") notify(fill(t("fanout.unsent"), { lane }));
           else if (res !== "sent") notify(`${lane}: ${t("fanout.notSent")}`);
         }
@@ -2121,6 +2128,76 @@ export class WorkspaceManager {
     return this.config.worktree_base_dir;
   }
 
+  // ── Office view ───────────────────────────────────────────────────────
+  // The active workspace drawn as an office floor (src/office/). An overlay
+  // over the split view: the panes underneath stay mounted and running.
+
+  private office: OfficeView | null = null;
+  private officeListeners = new Set<(open: boolean) => void>();
+
+  get officeOpen(): boolean {
+    return this.office !== null;
+  }
+
+  /// Subscribe to the office opening/closing (the top bar's toggle).
+  onOfficeChange(cb: (open: boolean) => void): () => void {
+    this.officeListeners.add(cb);
+    return () => {
+      this.officeListeners.delete(cb);
+    };
+  }
+
+  toggleOffice(): void {
+    if (this.office) this.closeOffice();
+    else this.openOffice();
+  }
+
+  openOffice(): void {
+    if (this.office) return;
+    // Embedded browsers are OS-level child webviews that would float over
+    // the overlay; the popup counter hides them until it closes.
+    pushPopup();
+    this.office = new OfficeView({
+      input: () => ({
+        root: this.active.root,
+        agents: this._agents,
+        statusOf: (id) => this.paneStatus.get(id) ?? "idle",
+        // Terminals by their tab label; other panes as the workspace tree
+        // names them ("Browser", "Git", …).
+        labelOf: (id) => {
+          const spec = findPane(this.active.root, id);
+          return spec && (spec.pane_kind ?? "terminal") !== "terminal"
+            ? paneLabel(spec, this.inboxLabels())
+            : this.tabLabelFor(id);
+        },
+        focused: this.activePaneId(),
+      }),
+      workspaceName: () =>
+        formatWorkspaceLabel(this.activeId, this.active.name ?? null, this.workspacePosition(this.activeId)),
+      openPane: (id) => this.closeOffice(id),
+      close: () => this.closeOffice(),
+      subscribe: (cb) => {
+        const offs = [this.onTreeChange(cb), this.onInboxChange(cb), this.onActivePaneChange(cb)];
+        return () => offs.forEach((off) => off());
+      },
+    });
+    this.host.appendChild(this.office.element);
+    this.office.focus();
+    for (const cb of this.officeListeners) cb(true);
+  }
+
+  /// Close the office; focus `paneId` (in whatever workspace it lives), or
+  /// the pane that was active before.
+  closeOffice(paneId?: Uuid): void {
+    if (!this.office) return;
+    this.office.dispose();
+    this.office = null;
+    popPopup();
+    for (const cb of this.officeListeners) cb(false);
+    const target = paneId ?? this.activePaneId();
+    if (target) void this.focusPane(target);
+  }
+
   get agents(): AgentSnapshot {
     return this._agents;
   }
@@ -2306,11 +2383,15 @@ export class WorkspaceManager {
   /// was false, or the Enter was withheld because the agent changed or no
   /// agent snapshot newer than the paste confirmed it). The Enter is
   /// re-checked against the same conditions right before it is written.
+  ///
+  /// `origin`, when given, is shown in the office view as someone carrying
+  /// the work over (`officeEvents`) once it is pasted.
   async sendToPane(
     paneId: Uuid,
     text: string,
     submit: boolean,
     expectKind?: string,
+    origin?: { from: Uuid | null; kind: OfficeMessageKind },
   ): Promise<"sent" | "pasted" | "waiting" | "no-paste" | "gone" | "failed"> {
     const pane = this.findPaneById(paneId);
     if (!(pane instanceof TerminalPane)) return "gone";
@@ -2326,6 +2407,7 @@ export class WorkspaceManager {
     if (pane.screenBlock() !== null) return "waiting";
     if (!pane.pasteText(text)) return "no-paste";
     if (!(await pane.pasteFlushed())) return "failed";
+    if (origin) emitOfficeMessage({ from: origin.from, to: paneId, kind: origin.kind });
     await this.focusPane(paneId);
     if (!submit) return "pasted";
     const entered = await pane.submitAfterPaste(

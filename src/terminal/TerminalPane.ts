@@ -355,7 +355,7 @@ export class TerminalPane implements Pane {
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
-        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t" || k === "u")) return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t" || k === "u" || k === "o")) return false;
         // Ctrl/Cmd+Shift+[ / ] → previous / next tab, handled at window level.
         // On `code`, because Shift+bracket is layout-dependent.
         if (ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight")) return false;

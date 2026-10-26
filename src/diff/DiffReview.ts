@@ -991,7 +991,7 @@ class Review {
     const kind = kinds.get(id);
     let res: Awaited<ReturnType<WorkspaceManager["sendToPane"]>>;
     try {
-      res = kind === undefined ? "gone" : await this.mgr.sendToPane(id, text, this.submitBox.checked, kind);
+      res = kind === undefined ? "gone" : await this.mgr.sendToPane(id, text, this.submitBox.checked, kind, { from: null, kind: "review" });
     } catch (e) {
       console.warn("sendToPane failed:", e);
       res = "failed";

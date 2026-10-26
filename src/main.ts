@@ -238,6 +238,13 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Ctrl+Shift+O toggles the office view (src/office/).
+    if (mod && ev.shiftKey && !ev.altKey && (key === "O" || key === "o")) {
+      ev.preventDefault();
+      manager.toggleOffice();
+      return;
+    }
+
     // Ctrl+Shift+U jumps to the next pane waiting on the user.
     if (mod && ev.shiftKey && !ev.altKey && (key === "U" || key === "u")) {
       ev.preventDefault();

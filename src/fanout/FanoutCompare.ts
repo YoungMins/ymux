@@ -404,7 +404,7 @@ class Overlay {
 
   /// Types a commit request into the lane's agent WITHOUT submitting it.
   private async askCommit(r: Row): Promise<boolean> {
-    const res = r.paneId ? await this.mgr.sendToPane(r.paneId, COMMIT_ASK, false) : "gone";
+    const res = r.paneId ? await this.mgr.sendToPane(r.paneId, COMMIT_ASK, false, undefined, { from: null, kind: "commit" }) : "gone";
     if (res !== "pasted" && res !== "sent") {
       this.say(t("fanoutCmp.commitNotSent"));
       return false;

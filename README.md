@@ -167,6 +167,20 @@ runtime-only: it is off again after a restart or when the terminal closes.
 Risk: the recommended option is only Claude's suggestion and is not always the
 right one, so use it where an unattended wrong answer is cheap to undo.
 
+#### Office view
+
+Press the office button in the top bar (or `Ctrl+Shift+O`) to see the current
+workspace as an office floor. Each pane, or tab group, is a room laid out the
+way you split it, and each tab is a desk. Claude Code, Codex and other agents
+sit at their desks as characters: typing while they work (with the tool they
+are using in a speech bubble), raising a hand when they need you, relaxing
+with a coffee when done and dozing when idle. A subagent walks in as a helper,
+works in the front row, reports to its lead when it finishes and leaves. When
+ymux hands work from one place to another (a fan-out prompt, a diff review
+comment, a commit request) you can watch it being carried over. Click a room,
+desk or character to jump back to that pane; `Esc` or the same button returns
+to the terminals, which keep running underneath.
+
 #### Multiple accounts
 
 Keep several Claude Code or Codex logins side by side, the way a website lets
@@ -457,6 +471,7 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | Previous / next tab in pane         |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+U`              | `Cmd+Shift+U`      | Jump to next pane needing attention  |
+| `Ctrl+Shift+O`              | `Cmd+Shift+O`      | Toggle office view                   |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | Swap pane with previous / next       |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |
