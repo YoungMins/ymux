@@ -35,6 +35,11 @@ export class EmbeddedBrowserPane implements Pane {
   private historyIndex = -1;
   private hiddenForPopup = false;
   private unregisterBlur: (() => void) | null = null;
+  /// Last bounds sent, as "x,y,w,h", so the position check below only
+  /// talks to the backend when something moved.
+  private lastBounds = "";
+  private positionTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly onWindowResize = (): void => this.scheduleFit();
 
   constructor(opts: EmbeddedBrowserPaneOptions) {
     this.id = opts.spec.id;
@@ -147,6 +152,31 @@ export class EmbeddedBrowserPane implements Pane {
     if (isPopupOpen()) {
       this.onPopupBlur(true);
     }
+
+    // The webview is created asynchronously on the main thread, so bounds
+    // sent before it exists are dropped, and the layout may have shifted in
+    // the meantime (fonts, a tab strip, the side panel). Re-send a few times
+    // once it is likely up.
+    for (const ms of [50, 250, 1000]) {
+      setTimeout(() => this.syncBounds(true), ms);
+    }
+    // ResizeObserver only reports size changes; a pane that moves without
+    // resizing (a row above it grows, a strip appears) would leave the
+    // webview behind, over this pane's address bar. A cheap position check
+    // catches that.
+    this.positionTimer = setInterval(() => this.syncBounds(false), 400);
+    window.addEventListener("resize", this.onWindowResize);
+  }
+
+  /// Send the placeholder's current bounds to the webview: always when
+  /// `force`, otherwise only if they changed since the last send.
+  private syncBounds(force: boolean): void {
+    if (!this.spawned || this.hiddenForPopup) return;
+    const b = this.getPhysicalBounds();
+    const key = `${b.x},${b.y},${b.width},${b.height}`;
+    if (!force && key === this.lastBounds) return;
+    this.lastBounds = key;
+    void api.setEmbeddedBrowserBounds(this.id, b.x, b.y, b.width, b.height).catch(() => {});
   }
 
   private onPopupBlur(blurred: boolean): void {
@@ -157,9 +187,8 @@ export class EmbeddedBrowserPane implements Pane {
     } else {
       // Restore the real bounds — Rust's set_embedded_browser_visible(true) is
       // a no-op; the frontend must re-emit them.
-      const b = this.getPhysicalBounds();
       void api.setEmbeddedBrowserVisible(this.id, true).catch(() => {});
-      void api.setEmbeddedBrowserBounds(this.id, b.x, b.y, b.width, b.height).catch(() => {});
+      this.syncBounds(true);
     }
   }
 
@@ -172,11 +201,7 @@ export class EmbeddedBrowserPane implements Pane {
     if (this.fitRaf !== null) return;
     this.fitRaf = requestAnimationFrame(() => {
       this.fitRaf = null;
-      if (!this.spawned || this.hiddenForPopup) return;
-      const b = this.getPhysicalBounds();
-      void api
-        .setEmbeddedBrowserBounds(this.id, b.x, b.y, b.width, b.height)
-        .catch(() => {});
+      this.syncBounds(true);
     });
   }
 
@@ -188,6 +213,11 @@ export class EmbeddedBrowserPane implements Pane {
   dispose(): void {
     this.cleanupLang();
     this.resizeObserver.disconnect();
+    if (this.positionTimer !== null) {
+      clearInterval(this.positionTimer);
+      this.positionTimer = null;
+    }
+    window.removeEventListener("resize", this.onWindowResize);
     if (this.unregisterBlur) {
       this.unregisterBlur();
       this.unregisterBlur = null;

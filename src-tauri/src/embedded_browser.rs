@@ -20,6 +20,25 @@ use tauri::{
 
 use crate::fspath::guard_local;
 
+/// Move and resize a child webview in one step.
+///
+/// Not `set_position` + `set_size`: Tauri applies each by reading the
+/// webview's current bounds back and writing them with one field replaced.
+/// On macOS that read-back converts AppKit's bottom-left origin into a
+/// top-left one using the view's *current* height, so two half-updates in a
+/// row (and the 1x1 hide below, which is 0 points tall on Retina) can leave
+/// the webview at a stale or mirrored y, over the pane's address bar. One
+/// `set_bounds` writes position and size together.
+fn place<R: tauri::Runtime>(wv: &Webview<R>, x: i32, y: i32, width: u32, height: u32) {
+    let rect = tauri::Rect {
+        position: PhysicalPosition::new(x, y).into(),
+        size: PhysicalSize::new(width.max(1), height.max(1)).into(),
+    };
+    if let Err(e) = wv.set_bounds(rect) {
+        tracing::warn!(label = %wv.label(), error = %e, "embedded browser set_bounds failed");
+    }
+}
+
 /// Per-webview JS injected via `initialization_script` so every embedded
 /// child can:
 ///   1. Tell the main webview which `.pane` was clicked/focused (reliable
@@ -253,11 +272,13 @@ pub fn set_embedded_browser_bounds(
 
     app.run_on_main_thread(move || {
         if let Some(wv) = app2.get_webview(&label) {
-            let _ = wv.set_position(PhysicalPosition::new(x as i32, y as i32));
-            let _ = wv.set_size(PhysicalSize::new(
+            place(
+                &wv,
+                x as i32,
+                y as i32,
                 width.max(1.0) as u32,
                 height.max(1.0) as u32,
-            ));
+            );
         }
     })
     .map_err(|e| format!("dispatch failed: {e}"))?;
@@ -382,8 +403,8 @@ pub fn set_embedded_browser_visible(
     let app2 = app.clone();
     app.run_on_main_thread(move || {
         if let Some(wv) = app2.get_webview(&label) {
-            let _ = wv.set_position(PhysicalPosition::new(-32000, -32000));
-            let _ = wv.set_size(PhysicalSize::new(1, 1));
+            // 2x2 physical: still at least one point on a Retina screen.
+            place(&wv, -32000, -32000, 2, 2);
         }
     })
     .map_err(|e| format!("dispatch failed: {e}"))?;
