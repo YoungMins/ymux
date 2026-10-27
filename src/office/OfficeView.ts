@@ -24,7 +24,9 @@ import {
   type Point,
   type RoomModel,
 } from "./officeModel";
-import { characterSvg, deskSvg, iconSvg, lobbyProps, paletteOf, roomProps } from "./sprites";
+import { characterSvg, corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, paletteOf, roomProps } from "./sprites";
+import type { LogEntry } from "./officeLog";
+import { getLang } from "../i18n/i18n";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
 import { segmentsOf } from "./officePaths";
@@ -39,8 +41,11 @@ export interface OfficeSource {
   /// Leave the office and focus `paneId` in the split view.
   openPane(paneId: Uuid): void;
   close(): void;
-  /// Call `cb` whenever the layout, agents or pane statuses may have changed.
+  /// Call `cb` whenever the layout, agents, pane statuses or the office log
+  /// may have changed.
   subscribe(cb: () => void): () => void;
+  /// The lobby board's notes, newest first (`officeLog`).
+  log(): readonly LogEntry[];
 }
 
 interface Actor {
@@ -79,6 +84,10 @@ export class OfficeView {
   private renderQueued = false;
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly cleanups: (() => void)[] = [];
+  private readonly fixturesLayer: HTMLElement;
+  private readonly board: HTMLButtonElement;
+  private readonly boardNotes: HTMLElement;
+  private readonly boardPanel: HTMLElement;
   private readonly reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -121,10 +130,31 @@ export class OfficeView {
     const lobbyFurniture = document.createElement("div");
     lobbyFurniture.className = "office__lobby-props";
     lobbyFurniture.innerHTML = lobbyProps();
-    lobby.append(lobbyFurniture, lobbyLabel);
+    // The board: notes pinned for each agent finishing or work handed over;
+    // a click opens the full list.
+    this.board = document.createElement("button");
+    this.board.type = "button";
+    this.board.className = "office-board";
+    this.board.innerHTML = corkSvg(36, 20);
+    this.boardNotes = document.createElement("span");
+    this.boardNotes.className = "office-board__notes";
+    this.board.appendChild(this.boardNotes);
+    this.board.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.toggleBoardPanel();
+    });
+    this.boardPanel = document.createElement("div");
+    this.boardPanel.className = "office-board__panel";
+    this.boardPanel.hidden = true;
+    lobby.append(lobbyFurniture, this.board, lobbyLabel);
     this.emptyEl = document.createElement("div");
     this.emptyEl.className = "office__empty";
-    this.floor.append(this.roomsLayer, lobby, this.actorsLayer, this.emptyEl);
+    this.fixturesLayer = document.createElement("div");
+    this.fixturesLayer.className = "office__fixtures";
+    this.floor.append(this.roomsLayer, lobby, this.fixturesLayer, this.actorsLayer, this.emptyEl, this.boardPanel);
+    this.floor.addEventListener("click", () => {
+      this.boardPanel.hidden = true;
+    });
     this.element.append(head, this.floor);
 
     this.manager = this.makeActor("manager", null, characterSvg("", "manager"));
@@ -135,7 +165,8 @@ export class OfficeView {
     this.element.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") {
         ev.preventDefault();
-        this.source.close();
+        if (!this.boardPanel.hidden) this.boardPanel.hidden = true;
+        else this.source.close();
       }
     });
 
@@ -163,6 +194,8 @@ export class OfficeView {
       chip.textContent = t(`office.status.${chip.dataset.status}`);
     }
     this.emptyEl.textContent = t("office.empty");
+    this.board.title = t("office.board");
+    this.board.setAttribute("aria-label", t("office.board"));
   }
 
   focus(): void {
@@ -281,6 +314,8 @@ export class OfficeView {
       return r;
     });
     this.roomsLayer.replaceChildren(...runners, ...rooms);
+    this.renderFixtures();
+    this.renderBoard();
   }
 
   private roomEl(room: RoomModel): HTMLElement {
@@ -351,6 +386,10 @@ export class OfficeView {
       }
       this.look(actor);
     }
+    for (const c of changes.cheered) {
+      const actor = this.actors.get(c.key);
+      if (actor && !actor.gone && !this.first) this.cheer(actor);
+    }
     for (const c of changes.finished) {
       const actor = this.actors.get(c.key);
       if (actor && !actor.gone) this.errand(actor, () => this.report(actor, c));
@@ -371,6 +410,144 @@ export class OfficeView {
     }
     this.prev = this.model.chars;
     this.first = false;
+  }
+
+  // ── Flags, mailboxes and the board ────────────────────────────────────
+
+  /// Outside each door: a flag while its agent's finished work is unseen,
+  /// a mailbox while it holds letters.
+  private renderFixtures(): void {
+    const out: HTMLElement[] = [];
+    for (const room of this.model.rooms) {
+      const outside = { x: room.door.x, y: room.rect.y + room.rect.h };
+      if (room.doneDesk) {
+        const flag = document.createElement("button");
+        flag.type = "button";
+        flag.className = "office-flag";
+        flag.innerHTML = flagSvg();
+        flag.title = t("office.flag");
+        this.position(flag, outside, 2);
+        const target = room.doneDesk;
+        flag.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.source.openPane(target);
+        });
+        out.push(flag);
+      }
+      const box = document.createElement("button");
+      box.type = "button";
+      box.className = `office-mailbox${room.mail.length ? " office-mailbox--full" : ""}`;
+      const sealed = room.mail.some((m) => !m.mail.opened);
+      box.innerHTML = mailboxSvg(room.mail.length === 0 ? null : sealed ? "sealed" : "open");
+      if (room.mail.length > 1) {
+        const n = document.createElement("span");
+        n.className = "office-mailbox__count";
+        n.textContent = String(room.mail.length);
+        box.appendChild(n);
+      }
+      box.title = this.mailTitle(room);
+      this.position(box, outside, 2);
+      const target = room.mail[0]?.paneId ?? room.desks.find((d) => d.active)?.paneId;
+      box.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (target) this.source.openPane(target);
+      });
+      out.push(box);
+    }
+    this.fixturesLayer.replaceChildren(...out);
+  }
+
+  private mailTitle(room: RoomModel): string {
+    if (room.mail.length === 0) return t("office.mail.empty");
+    const lines = room.mail.map(({ mail }) => {
+      const who = mail.fromLabel ?? t("office.you");
+      const state = t(mail.opened ? "office.mail.opened" : "office.mail.sealed");
+      return `${t(`office.kind.${mail.kind}`)} · ${who} · ${state}${mail.snippet ? `\n  “${mail.snippet}”` : ""}`;
+    });
+    return `${fill(t("office.mail.title"), { n: room.mail.length })}\n${lines.join("\n")}`;
+  }
+
+  /// The newest notes pinned on the board, and the list behind it.
+  private renderBoard(): void {
+    const log = this.source.log();
+    const notes = log.slice(0, 6).map((e, i) => {
+      const n = document.createElement("i");
+      n.className = `office-note office-note--${e.kind}`;
+      n.style.setProperty("--i", String(i));
+      return n;
+    });
+    this.boardNotes.replaceChildren(...notes);
+    this.board.classList.toggle("office-board--fresh", log.length > 0 && Date.now() - log[0].at < 60_000);
+    if (!this.boardPanel.hidden) this.fillBoardPanel();
+  }
+
+  private toggleBoardPanel(): void {
+    this.boardPanel.hidden = !this.boardPanel.hidden;
+    if (!this.boardPanel.hidden) this.fillBoardPanel();
+  }
+
+  private fillBoardPanel(): void {
+    const log = this.source.log();
+    const head = document.createElement("div");
+    head.className = "office-board__head";
+    head.textContent = t("office.board");
+    const list = document.createElement("ol");
+    list.className = "office-board__list";
+    const rel = new Intl.RelativeTimeFormat(getLang(), { numeric: "auto", style: "short" });
+    for (const e of log) {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `office-board__item office-board__item--${e.kind}`;
+      const icon = document.createElement("span");
+      icon.className = "office-board__icon";
+      icon.innerHTML = iconSvg(e.kind === "done" ? "check" : e.kind === "review" ? "review" : e.kind === "commit" ? "box" : "chat");
+      const text = document.createElement("span");
+      text.className = "office-board__text";
+      text.textContent = noteText(e);
+      const when = document.createElement("time");
+      when.className = "office-board__time";
+      when.dateTime = new Date(e.at).toISOString();
+      when.textContent = ago(rel, e.at);
+      b.append(icon, text, when);
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.source.openPane(e.paneId);
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    }
+    if (log.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "office-board__empty";
+      empty.textContent = t("office.board.empty");
+      this.boardPanel.replaceChildren(head, empty);
+    } else {
+      this.boardPanel.replaceChildren(head, list);
+    }
+  }
+
+  /// A lead just finished: a victory hop and a burst of confetti.
+  private cheer(actor: Actor): void {
+    if (this.reduced) return;
+    actor.el.classList.add("office-char--cheering");
+    const burst = document.createElement("div");
+    burst.className = "office-confetti";
+    this.position(burst, actor.pos, 30);
+    const colours = ["#f5c542", "#e05555", "#5aa0d8", "#6cc06f", "#b48cf2", "#ff9f43"];
+    for (let i = 0; i < 12; i++) {
+      const bit = document.createElement("i");
+      const angle = (Math.PI * 2 * i) / 12;
+      bit.style.setProperty("--dx", `${Math.round(Math.cos(angle) * (26 + (i % 3) * 10))}px`);
+      bit.style.setProperty("--dy", `${Math.round(Math.sin(angle) * 22 - 40)}px`);
+      bit.style.background = colours[i % colours.length];
+      burst.appendChild(bit);
+    }
+    this.actorsLayer.appendChild(burst);
+    void this.sleep(2200).then(() => {
+      actor.el.classList.remove("office-char--cheering");
+      burst.remove();
+    });
   }
 
   private roomOf(c: CharModel): RoomModel | undefined {
@@ -603,6 +780,25 @@ export class OfficeView {
       await told;
     });
   }
+}
+
+/// A board note's line.
+function noteText(e: LogEntry): string {
+  if (e.kind === "done") {
+    return fill(t("office.note.done"), { agent: e.agent ? kindName(e.agent) : t("office.agent"), pane: e.label });
+  }
+  const kind = t(`office.kind.${e.kind}`);
+  return e.fromLabel
+    ? fill(t("office.note.fromTo"), { kind, from: e.fromLabel, pane: e.label })
+    : fill(t("office.note.to"), { kind, pane: e.label });
+}
+
+function ago(rel: Intl.RelativeTimeFormat, at: number): string {
+  const s = Math.round((at - Date.now()) / 1000);
+  if (s > -60) return rel.format(Math.min(0, s), "second");
+  const m = Math.round(s / 60);
+  if (m > -60) return rel.format(m, "minute");
+  return rel.format(Math.round(m / 60), "hour");
 }
 
 function clip(s: string, n: number): string {

@@ -102,6 +102,7 @@ import { formatWorkspaceLabel, workspaceIdAtPosition, workspacePosition } from "
 import type { PaneStatus } from "../terminal/paneStatus";
 import { OfficeView } from "../office/OfficeView";
 import { emitOfficeMessage, type OfficeMessageKind } from "../office/officeEvents";
+import { officeLog } from "../office/officeLog";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 
 /// What the top bar's "+" launcher starts in a new tab: a shell, an optional
@@ -1570,9 +1571,7 @@ export class WorkspaceManager {
       this.notifyTree();
       notify(fill(t("fanout.blocked"), { lane }));
     }
-    if (state === "sent" || state === "pasted") {
-      emitOfficeMessage({ from: null, to: paneId, kind: "prompt" });
-    }
+    if (state === "sent" || state === "pasted") this.deliverToOffice(null, paneId, "prompt", prompt);
     if (state === "check") notify(fill(t("fanout.check"), { lane }));
     else if (state === "pasted") notify(fill(t("fanout.pasted"), { lane }));
     else if (state === "failed") notify(fill(t("fanout.sendFailed"), { lane }));
@@ -2171,19 +2170,52 @@ export class WorkspaceManager {
             : this.tabLabelFor(id);
         },
         focused: this.activePaneId(),
+        mailOf: (id) => officeLog.mailOf(id),
       }),
+      log: () => officeLog.list(),
       workspaceName: () =>
         formatWorkspaceLabel(this.activeId, this.active.name ?? null, this.workspacePosition(this.activeId)),
       openPane: (id) => this.closeOffice(id),
       close: () => this.closeOffice(),
       subscribe: (cb) => {
-        const offs = [this.onTreeChange(cb), this.onInboxChange(cb), this.onActivePaneChange(cb)];
+        const offs = [this.onTreeChange(cb), this.onInboxChange(cb), this.onActivePaneChange(cb), officeLog.onChange(cb)];
         return () => offs.forEach((off) => off());
       },
     });
     this.host.appendChild(this.office.element);
     this.office.focus();
     for (const cb of this.officeListeners) cb(true);
+  }
+
+  /// Work handed to `to`: walked over in the office view, a note on its
+  /// board and a letter in `to`'s mailbox (`officeLog`).
+  private deliverToOffice(from: Uuid | null, to: Uuid, kind: OfficeMessageKind, text: string): void {
+    officeLog.message(
+      {
+        kind,
+        to,
+        label: this.tabLabelFor(to),
+        agent: this._agents[to]?.lead?.kind ?? null,
+        from,
+        fromLabel: from ? this.tabLabelFor(from) : null,
+      },
+      text,
+    );
+    emitOfficeMessage({ from, to, kind });
+  }
+
+  /// The office log follows the agents: a turn starting opens a pane's
+  /// letters, a turn ending files them, and finishing leaves a note.
+  private noteAgentsForOffice(prev: AgentSnapshot, next: AgentSnapshot): void {
+    const ids = new Set([...Object.keys(prev), ...Object.keys(next)]);
+    for (const id of ids) {
+      const before = prev[id]?.lead?.status;
+      const after = next[id]?.lead?.status;
+      if (before === after) continue;
+      if (after === "working") officeLog.agentWorking(id);
+      else if (before === "working") officeLog.agentStopped(id);
+      if (after === "done") officeLog.done(id, this.tabLabelFor(id), next[id]?.lead?.kind ?? null);
+    }
   }
 
   /// Close the office; focus `paneId` (in whatever workspace it lives), or
@@ -2218,6 +2250,7 @@ export class WorkspaceManager {
   // ── Attention inbox ───────────────────────────────────────────────────────
 
   private forgetInbox(paneId: Uuid): void {
+    officeLog.clearMail(paneId);
     this.statusSince.delete(paneId);
     this.readHistoryLog.remove(paneId);
     this.scheduleInboxChange();
@@ -2322,6 +2355,7 @@ export class WorkspaceManager {
       const pane = this.findPaneById(id);
       if (pane instanceof TerminalPane) pane.markWaiting();
     }
+    this.noteAgentsForOffice(this._agents, next);
     // Arrival time says nothing about when the process list was sampled, so
     // only the scan heartbeat (`noteAgentScan`) advances `agentSnapshotAt`.
     this._agents = next;
@@ -2407,7 +2441,7 @@ export class WorkspaceManager {
     if (pane.screenBlock() !== null) return "waiting";
     if (!pane.pasteText(text)) return "no-paste";
     if (!(await pane.pasteFlushed())) return "failed";
-    if (origin) emitOfficeMessage({ from: origin.from, to: paneId, kind: origin.kind });
+    if (origin) this.deliverToOffice(origin.from, paneId, origin.kind, text);
     await this.focusPane(paneId);
     if (!submit) return "pasted";
     const entered = await pane.submitAfterPaste(

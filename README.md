@@ -170,16 +170,27 @@ right one, so use it where an unattended wrong answer is cheap to undo.
 #### Office view
 
 Press the office button in the top bar (or `Ctrl+Shift+O`) to see the current
-workspace as an office floor. Each pane, or tab group, is a room laid out the
-way you split it, with corridors between the rooms, and each tab is a desk. Claude Code, Codex and other agents
-sit at their desks as characters: typing while they work (with the tool they
-are using in a speech bubble), raising a hand when they need you, relaxing
-with a coffee when done and dozing when idle. A subagent walks in as a helper,
-works in the front row, reports to its lead when it finishes and leaves. When
-ymux hands work from one place to another (a fan-out prompt, a diff review
-comment, a commit request) you can watch it being carried over. Click a room,
-desk or character to jump back to that pane; `Esc` or the same button returns
-to the terminals, which keep running underneath.
+workspace as a pixel-art office. Each pane, or tab group, is a room laid out
+the way you split it, with corridors between the rooms, and each tab is a
+desk. Agents are slimes in their CLI's colour (Claude Code orange, Codex dark
+grey, Gemini blue): they jiggle at their desk while working (with the tool in
+a speech bubble), stand tall when they need you, sip a coffee when done and
+melt into a nap when idle. A subagent hops in as a little slime with a sprout,
+works in the front row, reports to its lead when it finishes and leaves.
+
+- **Finished work** — the agent does a victory hop with confetti, and a flag
+  goes up outside its room until you open that pane.
+- **Mail** — work ymux hands from one place to another (a fan-out prompt, diff
+  review comments, a commit request) is carried over through the corridors
+  and left in the room's mailbox: a sealed letter until the agent starts on
+  it, an opened one while it works, gone when that turn ends. Hover a mailbox
+  for what is in it.
+- **Board** — the cork board in the lobby pins a note for every finished turn
+  and hand-over; click it for the list, and click an entry to jump there.
+
+Click a room, desk, flag, mailbox or slime to jump back to that pane; `Esc`
+or the same button returns to the terminals, which keep running underneath.
+The flags, mail and board live for the session only.
 
 #### Multiple accounts
 

@@ -4215,7 +4215,7 @@ body,
 
 .office__lobby-label {
   position: absolute;
-  left: 8px;
+  right: 8px;
   bottom: 6px;
   padding: 1px 6px;
   background: var(--ink);
@@ -4380,15 +4380,165 @@ body,
 .office-prop--plant { left: calc(var(--px) * 2); bottom: calc(var(--px) * 2); }
 .office-prop--sofa { right: 8%; bottom: 16%; }
 .office-prop--side { right: 8%; bottom: 22%; }
-.office-prop--reception { left: 30%; bottom: 22%; }
+.office-prop--reception { left: 38%; bottom: 22%; }
 .office-prop--cooler { right: 18%; bottom: 22%; }
-.office-prop--lobby-plant-l { left: 12%; bottom: 14%; }
+.office-prop--lobby-plant-l { left: 26%; bottom: 14%; }
 .office-prop--lobby-plant-r { right: 6%; bottom: 14%; }
 
 .office-prop .px-led { fill: #5be37a; animation: office-blink 0.9s steps(1) infinite; }
 .office-prop .px-led-warn { fill: #f5c542; animation: office-blink 1.7s steps(1) infinite; }
 
 @keyframes office-blink { 50% { fill: #1f5a2e; } }
+
+/* Outside each door: a flag (finished, unseen) and a mailbox. */
+.office__fixtures { position: absolute; inset: 0; pointer-events: none; }
+
+.office-flag,
+.office-mailbox {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.office-flag { transform: translate(calc(var(--px) * 8), calc(-100% + var(--px) * 9)); }
+.office-flag__svg { animation: office-wave 0.8s steps(1) infinite; transform-origin: 0 100%; }
+@keyframes office-wave { 50% { transform: skewY(-4deg); } }
+
+.office-mailbox { transform: translate(calc(-100% - var(--px) * 7), calc(-100% + var(--px) * 9)); }
+.office-mailbox:not(.office-mailbox--full) { filter: saturate(0.6) brightness(0.85); }
+.office-mailbox--full .office-mailbox__svg { animation: office-hop 1s steps(1) infinite; }
+
+.office-mailbox__count {
+  position: absolute;
+  right: -6px;
+  top: -2px;
+  min-width: 14px;
+  padding: 0 3px;
+  background: #e05555;
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* The lobby's cork board, its notes, and the list behind it. */
+.office-board {
+  position: absolute;
+  left: 3%;
+  bottom: 16%;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.office-board:hover .office-board__svg { filter: brightness(1.08); }
+.office-board__notes { position: absolute; inset: calc(var(--px) * 4); }
+
+.office-note {
+  position: absolute;
+  width: calc(var(--px) * 7);
+  height: calc(var(--px) * 5);
+  background: var(--note, #fff3a8);
+  box-shadow: 0 var(--px) 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Three notes per row, then colour by kind. */
+.office-note:nth-child(1) { left: 0; top: 0; }
+.office-note:nth-child(2) { left: 34%; top: 0; }
+.office-note:nth-child(3) { left: 68%; top: 0; }
+.office-note:nth-child(4) { left: 0; top: 52%; }
+.office-note:nth-child(5) { left: 34%; top: 52%; }
+.office-note:nth-child(6) { left: 68%; top: 52%; }
+
+.office-note::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: calc(var(--px) * -1);
+  width: var(--px);
+  height: var(--px);
+  background: #d64545;
+}
+
+.office-note--done { --note: #b6efb0; }
+.office-note--prompt { --note: #fff3a8; }
+.office-note--review { --note: #ffd0dc; }
+.office-note--commit { --note: #c6dcff; }
+.office-board--fresh .office-note:first-child { animation: office-hop 0.8s steps(1) 6; }
+
+.office-board__panel {
+  position: absolute;
+  left: 10px;
+  bottom: calc(14% + 10px);
+  z-index: 3000;
+  width: min(380px, calc(100% - 20px));
+  max-height: 55%;
+  overflow: auto;
+  background: #fffdf5;
+  color: var(--ink);
+  box-shadow: 0 0 0 3px var(--ink), 6px 6px 0 rgba(0, 0, 0, 0.35);
+}
+
+.office-board__panel[hidden] { display: none; }
+
+.office-board__head {
+  position: sticky;
+  top: 0;
+  padding: 6px 10px;
+  background: #c89a6a;
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  border-bottom: 3px solid var(--ink);
+}
+
+.office-board__list { list-style: none; margin: 0; padding: 4px 0; }
+
+.office-board__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.office-board__item:hover { background: #f2ead2; }
+.office-board__icon { flex: 0 0 auto; line-height: 0; }
+.office-board__text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-board__time { flex: 0 0 auto; color: #7a6f5c; font-size: 11px; }
+.office-board__empty { margin: 0; padding: 10px; font-size: 12px; color: #7a6f5c; }
+
+/* A burst of pixel confetti over a lead that just finished. */
+.office-confetti { position: absolute; width: 0; height: 0; pointer-events: none; }
+.office-confetti i {
+  position: absolute;
+  left: 0;
+  top: -30px;
+  width: 6px;
+  height: 6px;
+  animation: office-confetti 1.6s steps(10) forwards;
+}
+
+@keyframes office-confetti {
+  0% { transform: translate(0, 0); opacity: 1; }
+  60% { transform: translate(var(--dx), var(--dy)); opacity: 1; }
+  100% { transform: translate(var(--dx), calc(var(--dy) + 40px)); opacity: 0; }
+}
 
 /* Desks sit in the actors layer, so they overlap characters by height. */
 .office-desk {
@@ -4432,11 +4582,11 @@ body,
   text-overflow: ellipsis;
 }
 
-/* Characters: feet at their point. */
+/* Characters (slimes): bottom centre at their point. */
 .office-char {
   position: absolute;
-  width: 66px;
-  height: 72px;
+  width: 60px;
+  height: 54px;
   transform: translate(-50%, -100%) scale(var(--o-scale, 1));
   transform-origin: 50% 100%;
   pointer-events: auto;
@@ -4444,61 +4594,65 @@ body,
   line-height: 0;
 }
 
+/* A pixel shadow under the jelly. */
+.office-char::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: -3px;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
 .office-char[hidden] { display: none; }
-.office-char--sub { transform: translate(-50%, -100%) scale(calc(var(--o-scale, 1) * 0.8)); }
+.office-char--sub { transform: translate(-50%, -100%) scale(calc(var(--o-scale, 1) * 0.62)); }
 .office-char--manager { cursor: default; }
 .office-char .office-sprite { display: block; }
 .office-char--face-left .office-sprite { transform: scaleX(-1); }
 
 /* Behind its desk, left of the monitor; the desk (drawn above) hides the
-   legs. Offsets in art pixels. */
+   bottom of the jelly. Offsets in art pixels. */
 .office-char--seated {
-  margin-left: calc(var(--px) * -6);
-  margin-top: calc(var(--px) * 5);
+  margin-left: calc(var(--px) * -8);
+  margin-top: calc(var(--px) * -4);
 }
 
-/* Frame groups: one of each set shows. */
-.office-char .px-legs-a,
-.office-char .px-legs-b,
-.office-char .px-arms-type-a,
-.office-char .px-arms-type-b,
-.office-char .px-arms-raise,
-.office-char .px-arms-mug,
-.office-char .px-eyes-shut { display: none; }
+/* Pose groups: exactly one shows. A moving pose is a two-frame strip that
+   one animation slides by a canvas width (20 art px), so its frames can
+   never drift apart; `overflow: hidden` on the sprite crops the strip. */
+.office-char .office-sprite { overflow: hidden; }
+.office-char .px-pose { display: none; }
+.office-char .px-anim { animation: office-strip 0.32s steps(1) infinite; }
+@keyframes office-strip { 0% { transform: translateX(0); } 50% { transform: translateX(-20px); } }
 
-/* Blink now and then. */
-.office-char .px-eyes-open { animation: office-blink-open 4.2s steps(1) infinite; }
-.office-char .px-eyes-shut { animation: office-blink-shut 4.2s steps(1) infinite; display: inline; visibility: hidden; }
-@keyframes office-blink-open { 0% { visibility: visible; } 95% { visibility: hidden; } 100% { visibility: visible; } }
-@keyframes office-blink-shut { 0% { visibility: hidden; } 95% { visibility: visible; } 100% { visibility: hidden; } }
+.office-char .px-still-normal { display: inline; }
+.office-char--typing .px-still-normal,
+.office-char--raising .px-still-normal,
+.office-char--relaxing .px-still-normal,
+.office-char--sleeping .px-still-normal,
+.office-char--walking .px-still-normal,
+.office-char--cheering .px-still-normal { display: none; }
 
-.office-char--walking .px-legs-stand { display: none; }
-.office-char--walking .px-legs-a { display: inline; animation: office-frame-a 0.36s steps(1) infinite; }
-.office-char--walking .px-legs-b { display: inline; animation: office-frame-b 0.36s steps(1) infinite; }
-.office-char--walking .office-sprite { animation: office-bob 0.36s steps(1) infinite; }
-.office-char--face-left.office-char--walking .office-sprite { animation-name: office-bob-left; }
+.office-char--typing .px-anim-type { display: inline; }
+.office-char--raising .px-still-raise { display: inline; }
+.office-char--relaxing .px-anim-relax { display: inline; animation-duration: 1.6s; }
+.office-char--sleeping .px-still-sleep { display: inline; }
 
-@keyframes office-frame-a { 0% { visibility: visible; } 50% { visibility: hidden; } }
-@keyframes office-frame-b { 0% { visibility: hidden; } 50% { visibility: visible; } }
-@keyframes office-bob { 50% { transform: translateY(-3px); } }
-@keyframes office-bob-left { 0% { transform: scaleX(-1); } 50% { transform: scaleX(-1) translateY(-3px); } }
+/* Walking and cheering win over the pose underneath. */
+.office-char--walking .px-pose { display: none; }
+.office-char--walking .px-anim-walk { display: inline; }
+.office-char--cheering:not(.office-char--walking) .px-pose { display: none; }
+.office-char--cheering:not(.office-char--walking) .px-anim-cheer { display: inline; }
 
-.office-char--typing:not(.office-char--walking) .px-arms-down { display: none; }
-.office-char--typing:not(.office-char--walking) .px-arms-type-a { display: inline; animation: office-frame-a 0.3s steps(1) infinite; }
-.office-char--typing:not(.office-char--walking) .px-arms-type-b { display: inline; animation: office-frame-b 0.3s steps(1) infinite; }
+/* Blink now and then (one overlay, one animation). */
+.office-char .px-blink { opacity: 0; animation: office-blink 4.2s steps(1) infinite; }
+@keyframes office-blink { 0% { opacity: 0; } 95% { opacity: 1; } 100% { opacity: 0; } }
 
-.office-char--raising:not(.office-char--walking) .px-arms-down { display: none; }
-.office-char--raising:not(.office-char--walking) .px-arms-raise { display: inline; }
+/* Needs the user: stands tall and bounces. */
 .office-char--raising:not(.office-char--walking) .office-sprite { animation: office-hop 0.6s steps(1) infinite; }
 @keyframes office-hop { 50% { transform: translateY(-6px); } }
-
-.office-char--relaxing:not(.office-char--walking) .px-arms-down { display: none; }
-.office-char--relaxing:not(.office-char--walking) .px-arms-mug { display: inline; }
-
-.office-char--sleeping .px-eyes-open { display: none; }
-.office-char--sleeping .px-eyes-shut { display: inline; visibility: visible; animation: none; }
-.office-char--sleeping:not(.office-char--walking) .office-sprite { animation: office-doze 2.4s steps(1) infinite; }
-@keyframes office-doze { 50% { transform: translateY(3px); } }
+.office-char--face-left.office-char--raising:not(.office-char--walking) .office-sprite { animation: none; }
 
 .office-char--leaving { animation: office-fade 0.4s steps(4) forwards; }
 @keyframes office-fade { to { opacity: 0; } }
@@ -4539,7 +4693,7 @@ body,
   clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 50%, 50% 100%, 0 100%);
 }
 
-.office-char--sub .office-char__bubble { transform: translateX(-50%) scale(calc(1 / (var(--o-scale, 1) * 0.8))); }
+.office-char--sub .office-char__bubble { transform: translateX(-50%) scale(calc(1 / (var(--o-scale, 1) * 0.62))); }
 .office-char--attention .office-char__bubble { animation: office-hop 0.6s steps(1) infinite; background: #ffe9e9; }
 .office-char--sleeping .office-char__bubble { background: #e9ecff; }
 .office-char--speaking .office-char__bubble { background: #fff3b8; padding: 4px 6px; }
@@ -4558,7 +4712,7 @@ body,
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
-  transform: translateX(-50%) scale(calc(1 / (var(--o-scale, 1) * 0.8)));
+  transform: translateX(-50%) scale(calc(1 / (var(--o-scale, 1) * 0.62)));
   transform-origin: 50% 0;
 }
 

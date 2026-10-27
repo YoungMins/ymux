@@ -1,11 +1,12 @@
 // Pixel-art SVG for the office view. The grids live in `pixelArt.ts`; this
 // turns them into inline SVG (no external assets, so the app's CSP is happy)
 // with `shape-rendering="crispEdges"`, one <rect> per run of equal pixels.
-// A character is a stack of named frame groups (`px-legs-a`, `px-arms-raise`,
-// …) that the CSS shows or flips between per pose.
+// A character is a stack of pose groups (`px-still-…`, `px-anim-…`) that the
+// CSS shows one of at a time.
 
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
+import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, sproutGrid, tieGrid, type Body, type Eyes } from "./slimeArt";
 
 type Palette = Readonly<Record<string, string>>;
 
@@ -14,42 +15,38 @@ type Palette = Readonly<Record<string, string>>;
 /// pane's status).
 const BASE: Palette = {
   o: "#2a1f1a",
-  s: "#f7cfa8",
-  S: "#e5aa83",
-  e: "#241c1c",
-  w: "#ffffff",
-  k: "#f4a3a0",
-  m: "#b4553f",
-  p: "#3c4a64",
-  P: "#2b364b",
-  b: "#26262e",
   u: "#f4efe6",
   U: "#cfc6b6",
   r: "#d64545",
+  R: "#9e2b2b",
+  g: "#7ad35a",
+  G: "#3f9a3a",
 };
 
-interface Outfit {
-  h: string;
-  H: string;
+interface Jelly {
+  /// Body, shade, shine, eyes, blush, mouth.
   c: string;
   C: string;
-  t: string;
+  w: string;
+  e: string;
+  k: string;
+  m: string;
 }
 
-const OUTFITS: Record<string, Outfit> = {
-  claude: { h: "#6b4226", H: "#4e2f1a", c: "#d97757", C: "#b85c3f", t: "#fbe3d6" },
-  codex: { h: "#23262b", H: "#15171a", c: "#2d333b", C: "#1c2128", t: "#10a37f" },
-  gemini: { h: "#3a2a20", H: "#24170f", c: "#4285f4", C: "#2f69c9", t: "#fbbc05" },
-  opencode: { h: "#30264f", H: "#1f1835", c: "#6d5dfc", C: "#5144d6", t: "#d6d1ff" },
-  aider: { h: "#3f3f46", H: "#27272a", c: "#14b8a6", C: "#0f8f81", t: "#ccfbf1" },
-  copilot: { h: "#2d2d2d", H: "#1a1a1a", c: "#8957e5", C: "#6e40c9", t: "#e2d5fb" },
-  manager: { h: "#4a3428", H: "#33231a", c: "#3d5a80", C: "#2b4260", t: "#f0f0f0" },
+const JELLIES: Record<string, Jelly> = {
+  claude: { c: "#f0905f", C: "#c9673c", w: "#ffe4d2", e: "#2a1f1a", k: "#ff8c8c", m: "#7a2e1a" },
+  codex: { c: "#3d4450", C: "#262b33", w: "#8f9aa8", e: "#66f0a8", k: "#4d5664", m: "#66f0a8" },
+  gemini: { c: "#6ea0ff", C: "#4775d1", w: "#e2ecff", e: "#1d2440", k: "#ffa3c6", m: "#1d2440" },
+  opencode: { c: "#9a8cff", C: "#6f60d9", w: "#ece8ff", e: "#231a4a", k: "#ffb0d0", m: "#231a4a" },
+  aider: { c: "#4fd1c5", C: "#2a9d92", w: "#e0fffb", e: "#123b37", k: "#ffb0b0", m: "#123b37" },
+  copilot: { c: "#b48cf2", C: "#8a5fd1", w: "#f3eaff", e: "#2a1745", k: "#ffb0d0", m: "#2a1745" },
+  manager: { c: "#7fd3b4", C: "#4fa58a", w: "#e6fff6", e: "#1d2a24", k: "#ff9fb0", m: "#1d2a24" },
 };
-const FALLBACK: Outfit = { h: "#3a3a3a", H: "#262626", c: "#7d8794", C: "#5f6873", t: "#d9dee4" };
+const FALLBACK: Jelly = { c: "#a7b0bb", C: "#7d8794", w: "#f0f3f6", e: "#22262b", k: "#f4a3a0", m: "#22262b" };
 
 /// The colour a kind wears, for the header legend.
 export function paletteOf(kind: string): { shirt: string } {
-  return { shirt: (OUTFITS[kind] ?? FALLBACK).c };
+  return { shirt: (JELLIES[kind] ?? FALLBACK).c };
 }
 
 const PROPS: Palette = {
@@ -83,6 +80,20 @@ const PROPS: Palette = {
   C: "#4a7449",
 };
 const PLANT: Palette = { ...PROPS, g: "#4fa35a", G: "#2f7a3b" };
+const FIXTURES: Palette = {
+  ...PROPS,
+  w: "#e9e2d2",
+  G: "#5bbf5b",
+  B: "#ffffff",
+  r: "#d64545",
+  R: "#a83232",
+  y: "#f5c542",
+  P: "#6b5b4b",
+  k: "#8a94a3",
+  q: "#c89a6a",
+  Q: "#a9774a",
+};
+const LETTER: Palette = { ...FIXTURES, w: "#ffffff" };
 const RACK: Palette = { ...PROPS, g: ".px-led", y: ".px-led-warn", "1": "#7d8794" };
 const ICON: Palette = { ...PROPS, w: "#ffffff", k: "#8a94a3", g: "#3aa55a", r: "#d64545" };
 
@@ -117,30 +128,36 @@ function width(rows: readonly string[]): number {
 /// Art pixels are drawn this many CSS pixels wide (before the view's scale).
 export const PX = 3;
 
-/// A character: every frame group, the CSS picks which ones show.
-/// `role` "sub" wears a cap; "manager" (the user) wears a tie.
+/// A slime, as one group per pose; the CSS shows the group for the pose.
+/// Still poses are one frame (`px-still-…`); moving ones (`px-anim-…`) are
+/// a strip of two frames side by side that a single animation slides
+/// across, so the frames can never drift out of step. `role` "sub" grows a
+/// sprout; "manager" (the user) wears a bow tie.
 export function characterSvg(kind: string, role: "lead" | "sub" | "manager"): string {
-  const outfit = role === "manager" ? OUTFITS.manager : (OUTFITS[kind] ?? FALLBACK);
-  const pal: Palette = { ...BASE, ...outfit };
-  const g = (cls: string, rows: readonly string[]): string => `<g class="${cls}">${rects(rows, pal)}</g>`;
+  const jelly = role === "manager" ? JELLIES.manager : (JELLIES[kind] ?? FALLBACK);
+  const pal: Palette = { ...BASE, ...jelly };
+  const frame = (body: Body, eyes: Eyes, opts: { mug?: boolean; blink?: boolean } = {}): string =>
+    rects(bodyGrid(body), pal) +
+    rects(eyesGrid(body, eyes), pal) +
+    (role === "sub" ? rects(sproutGrid(body), pal) : "") +
+    (role === "manager" ? rects(tieGrid(body), pal) : "") +
+    (opts.mug ? rects(MUG, pal) : "") +
+    (opts.blink ? `<g class="px-blink">${rects(blinkGrid(body), pal)}</g>` : "");
+  // Second frame of a strip, one canvas to the right (`dy` lifts it: the
+  // top of a hop).
+  const strip = (cls: string, a: string, b: string, dy = 0): string =>
+    `<g class="px-pose px-anim ${cls}">${a}<g transform="translate(${SLIME_W} ${-dy})">${b}</g></g>`;
+  const still = (cls: string, f: string): string => `<g class="px-pose ${cls}">${f}</g>`;
   const body = [
-    `<rect class="px-shadow" x="4" y="23" width="14" height="1" fill="rgba(0,0,0,0.3)"/>`,
-    g("px-legs px-legs-stand", art.LEGS_STAND),
-    g("px-legs px-legs-a", art.LEGS_A),
-    g("px-legs px-legs-b", art.LEGS_B),
-    g("px-torso", art.TORSO),
-    role === "manager" ? g("px-tie", art.TIE) : "",
-    g("px-head", art.HEAD),
-    g("px-eyes px-eyes-open", art.EYES_OPEN),
-    g("px-eyes px-eyes-shut", art.EYES_SHUT),
-    role === "sub" ? g("px-cap", art.CAP) : "",
-    g("px-arms px-arms-down", art.ARMS_DOWN),
-    g("px-arms px-arms-type-a", art.ARMS_TYPE_A),
-    g("px-arms px-arms-type-b", art.ARMS_TYPE_B),
-    g("px-arms px-arms-raise", art.ARMS_RAISE),
-    g("px-arms px-arms-mug", art.ARMS_MUG),
+    still("px-still-normal", frame("normal", "open", { blink: true })),
+    still("px-still-raise", frame("stretch", "open", { blink: true })),
+    still("px-still-sleep", frame("melt", "shut")),
+    strip("px-anim-walk", frame("squash", "open"), frame("stretch", "open"), 2),
+    strip("px-anim-type", frame("normal", "open"), frame("squash", "open")),
+    strip("px-anim-relax", frame("normal", "happy", { mug: true }), frame("squash", "happy", { mug: true })),
+    strip("px-anim-cheer", frame("stretch", "happy"), frame("squash", "happy"), 2),
   ].join("");
-  return svg(art.CHAR_W, art.CHAR_H, PX, body, "office-sprite");
+  return svg(SLIME_W, SLIME_H, PX, body, "office-sprite");
 }
 
 /// A desk with a monitor; the screen pixels are coloured by the desk's
@@ -198,4 +215,28 @@ export type IconName = keyof typeof art.ICONS;
 export function iconSvg(name: string): string {
   const rows = art.ICONS[name];
   return rows ? svg(width(rows), rows.length, 2, rects(rows, ICON), "office-icon") : "";
+}
+
+/// Like `prop`, without the furniture class: for sprites inside buttons,
+/// which must stay in flow so the button takes their size.
+function fixture(rows: readonly string[], pal: Palette, cls: string, over = ""): string {
+  const w = width(rows);
+  const h = rows.length;
+  return `<svg class="${cls}" viewBox="0 0 ${w} ${h}" style="width:calc(${w} * var(--px));height:calc(${h} * var(--px))" shape-rendering="crispEdges" aria-hidden="true">${rects(rows, pal)}${over}</svg>`;
+}
+
+/// The done flag outside a room.
+export function flagSvg(): string {
+  return fixture(art.FLAG, FIXTURES, "office-flag__svg");
+}
+
+/// A mailbox; `letter` sticks out of the slot while it holds mail.
+export function mailboxSvg(letter: "sealed" | "open" | null): string {
+  const top = letter === "sealed" ? art.LETTER_SEALED : letter === "open" ? art.LETTER_OPEN : null;
+  return fixture(art.MAILBOX, FIXTURES, "office-mailbox__svg", top ? rects(top, LETTER) : "");
+}
+
+/// The lobby's cork board, `w` x `h` art pixels.
+export function corkSvg(w: number, h: number): string {
+  return fixture(art.corkGrid(w, h), FIXTURES, "office-board__svg");
 }

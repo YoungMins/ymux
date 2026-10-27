@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as art from "./pixelArt";
 import { characterSvg, deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
+import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, sproutGrid, tieGrid } from "./slimeArt";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
 
@@ -15,22 +16,61 @@ describe("pixel art", () => {
     }
   });
 
-  it("draws characters on the shared canvas", () => {
-    for (const name of ["HEAD", "TORSO", "LEGS_STAND", "LEGS_A", "LEGS_B", "ARMS_DOWN", "ARMS_RAISE", "ARMS_MUG", "CAP", "TIE"] as const) {
-      const rows = art[name];
-      expect(rows[0].length, name).toBe(art.CHAR_W);
-      expect(rows.length, name).toBeLessThanOrEqual(art.CHAR_H);
+  it("draws every slime part on the shared canvas", () => {
+    const parts = [MUG, ...BODIES.flatMap((b) => [bodyGrid(b), sproutGrid(b), tieGrid(b), ...EYES.map((e) => eyesGrid(b, e))])];
+    for (const rows of parts) {
+      expect(rows).toHaveLength(SLIME_H);
+      for (const r of rows) expect(r).toHaveLength(SLIME_W);
     }
   });
 
-  it("renders every frame group a pose needs", () => {
+  it("keeps each body outlined, centred and resting on the floor", () => {
+    for (const b of BODIES) {
+      const rows = bodyGrid(b);
+      expect(rows[SLIME_H - 1], b).toMatch(/^\.*o+\.*$/);
+      for (const r of rows) {
+        const filled = r.replace(/\./g, "");
+        if (!filled) continue;
+        expect(r.indexOf(filled[0]), b).toBe(SLIME_W - 1 - r.lastIndexOf(filled[filled.length - 1]));
+        expect(r[r.search(/[^.]/)], b).toBe("o");
+      }
+    }
+  });
+
+  it("puts the eyes inside the body", () => {
+    for (const b of BODIES) {
+      const body = bodyGrid(b);
+      for (const e of EYES) {
+        eyesGrid(b, e).forEach((r, y) => {
+          [...r].forEach((k, x) => {
+            if (k !== ".") expect(body[y][x], `${b}/${e} at ${x},${y}`).not.toBe(".");
+          });
+        });
+      }
+      expect(eyeRow(b)).toBeLessThan(SLIME_H - 1);
+    }
+  });
+
+  it("renders a group for every pose, moving ones as two-frame strips", () => {
     const svg = characterSvg("claude", "lead");
-    for (const g of ["px-legs-stand", "px-legs-a", "px-legs-b", "px-arms-down", "px-arms-type-a", "px-arms-type-b", "px-arms-raise", "px-arms-mug", "px-eyes-open", "px-eyes-shut"]) {
+    for (const g of ["px-still-normal", "px-still-raise", "px-still-sleep", "px-anim-walk", "px-anim-type", "px-anim-relax", "px-anim-cheer", "px-blink"]) {
       expect(svg, g).toContain(g);
     }
-    expect(characterSvg("codex", "sub")).toContain("px-cap");
-    expect(characterSvg("", "manager")).toContain("px-tie");
+    // A strip's second frame sits one canvas to the right.
+    expect(svg).toContain(`translate(${SLIME_W} `);
+    expect(characterSvg("codex", "sub")).not.toBe(characterSvg("codex", "lead"));
+    expect(characterSvg("", "manager")).toContain("#d64545");
     expect(characterSvg("unknown-cli", "lead")).toContain("<rect");
+  });
+
+  it("covers the open eyes when blinking", () => {
+    for (const b of BODIES) {
+      const open = eyesGrid(b, "open");
+      const blink = blinkGrid(b);
+      open.forEach((r, y) => [...r].forEach((k, x) => {
+        if (k === "e") expect(blink[y][x], `${b} ${x},${y}`).not.toBe(".");
+      }));
+    }
   });
 
   it("leaves screen and LED pixels to the stylesheet", () => {

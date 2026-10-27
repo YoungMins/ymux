@@ -7,6 +7,7 @@
 import type { AgentSnapshot, AgentStatus, LayoutNode, PaneKind, PaneSpec, Uuid } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
 import { corridorGraph, nearestNode, route, simplify, type CorridorGraph } from "./officePaths";
+import type { Mail } from "./officeLog";
 
 /// A point or box in floor coordinates: fractions of the office floor,
 /// (0, 0) top-left, (1, 1) bottom-right.
@@ -55,6 +56,11 @@ export interface RoomModel {
   cell: Rect;
   /// Where the doorway meets the corridor's centre line.
   exit: Point;
+  /// Letters in this room's mailbox, newest first, with the desk they are for.
+  mail: { paneId: Uuid; mail: Mail }[];
+  /// A desk whose agent finished and the user has not looked yet: the room
+  /// flies a flag until they do.
+  doneDesk: Uuid | null;
 }
 
 export type Pose = "typing" | "raising" | "relaxing" | "sleeping";
@@ -94,6 +100,8 @@ export interface OfficeInput {
   /// Corridor width as a share of the floor's width (x) and height (y), so it
   /// is the same number of pixels both ways. None by default.
   corridor?: { x: number; y: number };
+  /// A pane's mailbox (`officeLog`). Empty by default.
+  mailOf?: (paneId: Uuid) => readonly Mail[];
 }
 
 const STATUS_RANK: Record<PaneStatus, number> = { idle: 0, running: 1, done: 2, attention: 3 };
@@ -246,6 +254,10 @@ export function buildOffice(input: OfficeInput): OfficeModel {
       door: inRoom(leaf.rect, 0.5, 0.97),
       cell: cell.rect,
       exit: { x: cell.rect.x + cell.rect.w / 2, y: cell.rect.y + cell.rect.h },
+      mail: desks
+        .flatMap((d) => (input.mailOf?.(d.paneId) ?? []).map((mail) => ({ paneId: d.paneId, mail })))
+        .sort((a, b) => b.mail.at - a.mail.at),
+      doneDesk: desks.find((d) => d.status === "done")?.paneId ?? null,
     };
     rooms.push(room);
 
@@ -340,6 +352,8 @@ export interface CharChanges {
   entered: CharModel[];
   /// Subagents that just reached `done`: they report to their lead.
   finished: CharModel[];
+  /// Leads that just reached `done`: they celebrate.
+  cheered: CharModel[];
   left: string[];
 }
 
@@ -348,13 +362,14 @@ export function diffChars(prev: readonly CharModel[], next: readonly CharModel[]
   const after = new Set(next.map((c) => c.key));
   const entered: CharModel[] = [];
   const finished: CharModel[] = [];
+  const cheered: CharModel[] = [];
   for (const c of next) {
     const old = before.get(c.key);
     if (!old) entered.push(c);
-    else if (c.role === "sub" && c.status === "done" && old.status !== "done") finished.push(c);
+    else if (c.status === "done" && old.status !== "done") (c.role === "sub" ? finished : cheered).push(c);
   }
   const left = prev.filter((c) => !after.has(c.key)).map((c) => c.key);
-  return { entered, finished, left };
+  return { entered, finished, cheered, left };
 }
 
 /// Walk time between two floor points: a steady pace, clamped so a short

@@ -162,3 +162,33 @@ describe("geometry helpers", () => {
     expect(poseOf("idle")).toBe("sleeping");
   });
 });
+
+describe("mail, flags and cheers", () => {
+  const root: LayoutNode = { kind: "tabs", id: "g", active: 0, children: [pane("a"), pane("b")] };
+  const letter = (id: number, at: number) => ({ id, at, kind: "prompt" as const, from: null, fromLabel: null, snippet: "x", opened: false });
+
+  it("gathers a room's letters from all its desks, newest first", () => {
+    const office = buildOffice({
+      ...input(root),
+      mailOf: (id) => (id === "a" ? [letter(1, 10)] : id === "b" ? [letter(2, 20)] : []),
+    });
+    expect(office.rooms[0].mail.map((m) => [m.paneId, m.mail.id])).toEqual([
+      ["b", 2],
+      ["a", 1],
+    ]);
+  });
+
+  it("flies the flag for a desk that finished", () => {
+    const office = buildOffice({ ...input(root), statusOf: (id) => (id === "b" ? "done" : "idle") });
+    expect(office.rooms[0].doneDesk).toBe("b");
+    expect(buildOffice(input(root)).rooms[0].doneDesk).toBeNull();
+  });
+
+  it("cheers for a lead that just finished, not for one already done", () => {
+    const working = buildOffice(input(pane("a"), { a: { lead: { kind: "claude", status: "working", source: "hook", tool: null }, subagents: [] } })).chars;
+    const done = buildOffice(input(pane("a"), { a: { lead: { kind: "claude", status: "done", source: "hook", tool: null }, subagents: [] } })).chars;
+    expect(diffChars(working, done).cheered.map((c) => c.key)).toEqual(["a:lead"]);
+    expect(diffChars(done, done).cheered).toEqual([]);
+    expect(diffChars(working, done).finished).toEqual([]);
+  });
+});
