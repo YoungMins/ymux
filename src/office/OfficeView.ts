@@ -30,11 +30,12 @@ import { getLang } from "../i18n/i18n";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
 import { THEME_IDS, loadTheme, saveTheme, type ThemeId } from "./themes";
+import { OfficePeek, peekBox, type PeekSource, type PeekTab } from "./OfficePeek";
 
 /// Narrowest corridor, in CSS pixels; wider ones follow the sprite scale.
 const CORRIDOR_PX = 24;
 
-export interface OfficeSource {
+export interface OfficeSource extends PeekSource {
   /// The active workspace, as the model wants it.
   input(): OfficeInput;
   workspaceName(): string;
@@ -91,6 +92,7 @@ export class OfficeView {
   private readonly lobbyFurniture: HTMLElement;
   private readonly lobbyLabel: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
+  private readonly peek: OfficePeek;
   private theme: ThemeId = loadTheme();
   private readonly reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -166,9 +168,11 @@ export class OfficeView {
     this.emptyEl.className = "office__empty";
     this.fixturesLayer = document.createElement("div");
     this.fixturesLayer.className = "office__fixtures";
-    this.floor.append(this.roomsLayer, lobby, this.fixturesLayer, this.actorsLayer, this.emptyEl, this.boardPanel);
+    this.peek = new OfficePeek(source);
+    this.floor.append(this.roomsLayer, lobby, this.fixturesLayer, this.actorsLayer, this.emptyEl, this.boardPanel, this.peek.element);
     this.floor.addEventListener("click", () => {
       this.boardPanel.hidden = true;
+      this.peek.close();
     });
     this.element.append(head, this.floor);
 
@@ -180,7 +184,8 @@ export class OfficeView {
     this.element.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") {
         ev.preventDefault();
-        if (!this.boardPanel.hidden) this.boardPanel.hidden = true;
+        if (this.peek.paneId) this.peek.close();
+        else if (!this.boardPanel.hidden) this.boardPanel.hidden = true;
         else this.source.close();
       }
     });
@@ -241,6 +246,7 @@ export class OfficeView {
     for (const c of this.cleanups) c();
     for (const id of this.timers) clearTimeout(id);
     this.timers.clear();
+    this.peek.dispose();
     this.element.remove();
   }
 
@@ -324,7 +330,7 @@ export class OfficeView {
         this.position(d, desk.at, 20);
         d.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this.source.openPane(desk.paneId);
+          this.peekOrOpen(desk.paneId);
         });
         // Tabs at the same desk row get a name card under their desk.
         if (room.desks.length > 1) {
@@ -337,6 +343,7 @@ export class OfficeView {
       }
     }
     this.roomsLayer.replaceChildren(...rooms);
+    this.placePeek();
     this.renderFixtures();
     this.renderBoard();
   }
@@ -364,11 +371,58 @@ export class OfficeView {
     door.className = "office-room__door";
     inner.append(wall, props, plate, door);
     el.appendChild(inner);
-    const target = room.desks.find((d) => d.active)?.paneId ?? room.desks[0]?.paneId;
-    el.addEventListener("click", () => {
+    const active = room.desks.find((d) => d.active) ?? room.desks[0];
+    const target = this.canPeek(active?.paneId) ? active?.paneId : (room.desks.find((d) => this.canPeek(d.paneId))?.paneId ?? active?.paneId);
+    // A click peeks at its terminal; a double click goes to the pane.
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (target) this.peekOrOpen(target);
+    });
+    el.addEventListener("dblclick", (ev) => {
+      ev.stopPropagation();
       if (target) this.source.openPane(target);
     });
     return el;
+  }
+
+  // ── Peek: a room's terminal, read and answered in place ───────────────
+
+  private canPeek(paneId: Uuid | undefined): boolean {
+    return paneId !== undefined && this.source.screen(paneId) !== null;
+  }
+
+  /// Peek at a terminal; any other pane kind is opened as before.
+  private peekOrOpen(paneId: Uuid): void {
+    if (!this.canPeek(paneId)) {
+      this.source.openPane(paneId);
+      return;
+    }
+    const at = this.peekAt(paneId);
+    if (!at) return;
+    this.boardPanel.hidden = true;
+    this.peek.open(paneId, at.tabs, at.box);
+  }
+
+  /// The open peek follows its room (resizes, layout changes) and closes
+  /// when the pane is gone.
+  private placePeek(): void {
+    const id = this.peek.paneId;
+    if (!id) return;
+    const at = this.peekAt(id);
+    if (at) this.peek.update(at.tabs, at.box);
+    else this.peek.close();
+  }
+
+  private peekAt(paneId: Uuid): { tabs: PeekTab[]; box: ReturnType<typeof peekBox> } | null {
+    const room = this.model.rooms.find((r) => r.desks.some((d) => d.paneId === paneId));
+    if (!room) return null;
+    const w = this.floor.clientWidth;
+    const h = this.floor.clientHeight;
+    const tabs = room.desks
+      .filter((d) => this.canPeek(d.paneId))
+      .map((d) => ({ paneId: d.paneId, label: d.label, status: d.status }));
+    const box = peekBox({ x: room.rect.x * w, y: room.rect.y * h, w: room.rect.w * w, h: room.rect.h * h }, w, h);
+    return { tabs, box };
   }
 
   private reconcile(): void {
@@ -594,7 +648,7 @@ export class OfficeView {
       el.appendChild(tag);
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        if (actor.model) this.source.openPane(actor.model.paneId);
+        if (actor.model) this.peekOrOpen(actor.model.paneId);
       });
     }
     this.actorsLayer.appendChild(el);

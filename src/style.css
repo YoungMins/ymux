@@ -4560,6 +4560,114 @@ body,
   --door: #e8cf8f;
 }
 
+/* Peek: a room's terminal, read and answered without leaving the office. */
+.office-peek {
+  position: absolute;
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: #1b1d2b;
+  color: #f4ecd8;
+  border: 3px solid var(--peek-edge, #4a4c66);
+  box-shadow: 0 0 0 3px #12131d, 6px 6px 0 rgba(0, 0, 0, 0.35);
+  font-weight: 400;
+}
+.office-peek[hidden] { display: none; }
+.office-peek[data-status="running"] { --peek-edge: #5aa0d8; }
+.office-peek[data-status="attention"] { --peek-edge: #e05555; }
+.office-peek[data-status="done"] { --peek-edge: #6cc06f; }
+
+.office-peek__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: #2a2c40;
+  border-bottom: 2px solid #12131d;
+  font-size: 12px;
+  font-weight: 700;
+}
+.office-peek__title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-peek__tabs { display: flex; gap: 4px; overflow-x: auto; flex: 0 1 auto; }
+.office-peek__tabs[hidden] { display: none; }
+
+.office-peek__btn,
+.office-peek__tab,
+.office-peek__key,
+.office-peek__send {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 0;
+  background: #f4ecd8;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px #12131d, inset -2px -2px 0 #c9bfa5;
+}
+.office-peek__btn:hover,
+.office-peek__tab:hover,
+.office-peek__key:hover,
+.office-peek__send:hover { background: #fff7e0; }
+.office-peek__btn:active,
+.office-peek__key:active,
+.office-peek__send:active { box-shadow: 0 0 0 2px #12131d, inset 2px 2px 0 #c9bfa5; }
+.office-peek__tab { background: #8a879c; }
+.office-peek__tab--on { background: #f4ecd8; }
+.office-peek__tab--attention { box-shadow: 0 0 0 2px #e05555, inset -2px -2px 0 #c9bfa5; }
+.office-peek__close { padding: 2px 6px; }
+
+.office-peek__screen {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  background: #0f1117;
+  color: #d8dde3;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: pre;
+  user-select: text;
+}
+
+.office-peek__keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-top: 2px solid #12131d;
+}
+.office-peek__key { min-width: 26px; }
+.office-peek__note { flex: 1 1 100%; color: #ffb3a8; font-size: 11px; }
+.office-peek__note:empty { display: none; }
+
+.office-peek__form {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px 6px;
+}
+.office-peek__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  padding: 4px 6px;
+  border: 0;
+  background: #f4ecd8;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  box-shadow: 0 0 0 2px #12131d;
+  user-select: text;
+}
+.office-peek__input:focus { outline: 2px solid #4fc9b0; outline-offset: 2px; }
+.office-peek__send { align-self: stretch; padding: 2px 12px; }
+.office-peek__send:disabled { opacity: 0.6; cursor: default; }
+
 /* Outside each door: a flag (finished, unseen) and a mailbox. */
 .office__fixtures { position: absolute; inset: 0; pointer-events: none; }
 

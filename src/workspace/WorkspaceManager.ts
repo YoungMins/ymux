@@ -103,6 +103,8 @@ import type { PaneStatus } from "../terminal/paneStatus";
 import { OfficeView } from "../office/OfficeView";
 import { emitOfficeMessage, type OfficeMessageKind } from "../office/officeEvents";
 import { officeLog } from "../office/officeLog";
+import type { PeekSendResult } from "../office/OfficePeek";
+import { keyBytes } from "../office/peekKeys";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 
 /// What the top bar's "+" launcher starts in a new tab: a shell, an optional
@@ -2177,6 +2179,15 @@ export class WorkspaceManager {
         formatWorkspaceLabel(this.activeId, this.active.name ?? null, this.workspacePosition(this.activeId)),
       openPane: (id) => this.closeOffice(id),
       close: () => this.closeOffice(),
+      screen: (id) => {
+        const pane = this.findPaneById(id);
+        return pane instanceof TerminalPane ? pane.screenText() : null;
+      },
+      send: (id, text) => this.sendFromOffice(id, text),
+      key: (id, key) => {
+        const pane = this.findPaneById(id);
+        if (pane instanceof TerminalPane) pane.typeText(keyBytes(key, pane.applicationCursorKeys));
+      },
       subscribe: (cb) => {
         const offs = [this.onTreeChange(cb), this.onInboxChange(cb), this.onActivePaneChange(cb), officeLog.onChange(cb)];
         return () => offs.forEach((off) => off());
@@ -2185,6 +2196,29 @@ export class WorkspaceManager {
     this.host.appendChild(this.office.element);
     this.office.focus();
     for (const cb of this.officeListeners) cb(true);
+  }
+
+  /// A prompt typed into the office view's peek: the user is looking at the
+  /// pane's screen, so unlike `sendToPane` there is no readiness gate. Pasted
+  /// (bracketed) and submitted where the app takes pastes; a single line is
+  /// typed into one that doesn't. Refused while a dialog is up, where a paste
+  /// could answer it: the peek's keys are for that.
+  private async sendFromOffice(paneId: Uuid, text: string): Promise<PeekSendResult> {
+    const pane = this.findPaneById(paneId);
+    if (!(pane instanceof TerminalPane)) return "gone";
+    if (pane.screenBlock() !== null) return "blocked";
+    const lead = this._agents[paneId]?.lead;
+    if (pane.pasteText(text)) {
+      if (!(await pane.pasteFlushed())) return "failed";
+      // An agent gets a letter carried over; a plain shell has no turn that
+      // would ever file it.
+      if (lead) this.deliverToOffice(null, paneId, "prompt", text);
+      return (await pane.submitAfterPaste(300)) ? "sent" : "failed";
+    }
+    if (text.includes("\n")) return "multiline";
+    pane.typeText(`${text}\r`);
+    if (lead) this.deliverToOffice(null, paneId, "prompt", text);
+    return "sent";
   }
 
   /// Work handed to `to`: walked over in the office view, a note on its

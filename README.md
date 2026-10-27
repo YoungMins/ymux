@@ -193,8 +193,12 @@ or screen glows with the pane's status. The choice is remembered.
 - **Board** — the cork board in the lobby pins a note for every finished turn
   and hand-over; click it for the list, and click an entry to jump there.
 
-Click a room, desk, flag, mailbox or slime to jump back to that pane; `Esc`
-or the same button returns to the terminals, which keep running underneath.
+Click a room, desk or slime to peek at its terminal in place: a window over
+the room shows the live screen, with key buttons (arrows, Enter, Esc, Tab,
+1–3) for answering a menu and a box for typing a prompt (Enter sends,
+Shift+Enter adds a line). Double-click a room, or use *Open terminal*, to jump
+to the pane; a flag, mailbox or board note jumps there directly. `Esc` closes
+the peek, then the office; the terminals keep running underneath.
 The flags, mail and board live for the session only.
 
 #### Multiple accounts

@@ -810,6 +810,26 @@ export class TerminalPane implements Pane {
     return detectBlockingScreen(lines, echoOf);
   }
 
+  /// The screen as plain text, one string per row, with up to `history`
+  /// rows of scrollback above it and no blank rows at the bottom. What the
+  /// office view's peek shows; colours and styles are dropped.
+  screenText(history = 200): string[] {
+    if (!this.spawned) return [];
+    const buf = this.term.buffer.active;
+    const end = Math.min(buf.length, buf.baseY + this.term.rows);
+    const lines: string[] = [];
+    for (let y = Math.max(0, end - this.term.rows - history); y < end; y++) {
+      lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+    }
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+    return lines;
+  }
+
+  /// The foreground app turned on application cursor keys (DECCKM).
+  get applicationCursorKeys(): boolean {
+    return this.term.modes.applicationCursorKeysMode;
+  }
+
   /// Bracketed paste is on in the foreground app (a shell's line editor or an
   /// agent TUI that takes pastes as one block).
   get bracketedPaste(): boolean {
