@@ -1,0 +1,1013 @@
+﻿Field,ID,Type (Type),default,en-us,ko-kr,ja-jp,zh-cn,hi-in,es-es,fr-fr,ar-sa,pt-br,ru-ru,tr-tr,de-de,vi-vn
+Description,2,Text,,"yMux is a lightweight terminal multiplexer for Windows, inspired by tmux. It lets you split one window into as many terminals as you need, save those layouts, and come back to exactly where you left off.
+
+LAYOUTS THAT PERSIST Split any pane horizontally or vertically, as deep as you like. Every pane remembers its shell, working directory and an optional startup command, and every workspace keeps its own layout across restarts. Terminal scrollback is saved too, so your output is still there after you reopen the app.
+
+ALL YOUR SHELLS yMux detects Command Prompt, Windows PowerShell, PowerShell 7, Git Bash and your WSL distributions automatically. When you split a pane, the new one opens in the directory your shell is in right now, not the one it started in.
+
+NUMBERED WORKSPACES Switch workspaces with Ctrl+Alt+1 to 9 and add as many as you need. Panes keep running while you switch away, so REPLs, servers and log tails never die.
+
+BUILT FOR AI CODING AGENTS
+
+See at a glance which pane's agent is running, finished or waiting for you.
+The agent tree lists every pane and agent in each workspace.
+Resume Claude Code and Codex sessions after restarting yMux.
+Open a pane in a new git worktree to give each agent an isolated checkout.
+Review an agent's changes line by line and send your comments back to it.
+Send one prompt to several agents, each in its own worktree, and compare the results.
+Use a different Claude Code or Codex account in each pane.
+An attention inbox lists the agents waiting for you (Ctrl+Shift+U jumps to the next one).
+The side panel shows your Claude Code and Codex token usage and remaining quota for each account.
+MORE THAN A TERMINAL
+
+Side panel with a file browser and AI usage view
+Built-in text editor and git log / branch / worktree view
+Browser panes next to your terminals
+Command palette (Ctrl+Shift+P), pane tabs, pane zoom and scrollback search
+Clickable links and file paths in terminal output
+Paste text and images straight into the terminal
+Per-workspace notes and a live CPU / RAM status bar
+Close to tray and keep everything running
+Customizable theme, syntax colors and keyboard shortcuts
+Available in 13 languages
+PRIVATE BY DESIGN yMux has no sign-up, no analytics and no telemetry. Your layouts, scrollback and settings stay on your PC. The optional activity log sends data only to the webhooks you add yourself.
+
+yMux is free and open source: https://github.com/YoungMins/ymux","yMux는 tmux에서 영감을 받은 Windows용 경량 터미널 멀티플렉서입니다. 하나의 화면을 필요한 만큼 여러 터미널로 나누고, 그 레이아웃을 저장해 두었다가 중단했던 지점에서 그대로 다시 시작할 수 있습니다.
+
+유지되는 레이아웃 창을 가로 또는 세로로 원하는 만큼 깊게 나눌 수 있습니다. 모든 창은 셸, 작업 디렉터리, 선택적 시작 명령을 기억하며, 각 워크스페이스는 재시작 후에도 자신의 레이아웃을 유지합니다. 터미널 스크롤백도 함께 저장되므로 앱을 다시 열어도 출력 내용이 그대로 남아 있습니다.
+
+모든 셸 지원 yMux는 명령 프롬프트, Windows PowerShell, PowerShell 7, Git Bash, WSL 배포판을 자동으로 감지합니다. 창을 나누면 셸이 처음 시작된 위치가 아니라 지금 있는 디렉터리에서 새 창이 열립니다.
+
+번호별 워크스페이스 Ctrl+Alt+1부터 9까지로 워크스페이스를 전환하고, 필요한 만큼 추가할 수 있습니다. 다른 워크스페이스로 이동해도 창은 계속 실행되므로 REPL, 서버, 로그 모니터링이 중단되지 않습니다.
+
+AI 코딩 에이전트를 위해 만들었습니다
+
+어느 창의 에이전트가 실행 중인지, 끝났는지, 입력을 기다리는지 한눈에 확인합니다.
+에이전트 트리에서 각 워크스페이스의 모든 창과 에이전트를 볼 수 있습니다.
+yMux를 다시 시작한 뒤에도 Claude Code와 Codex 세션을 이어서 진행합니다.
+새 git worktree에서 창을 열어 에이전트마다 독립된 체크아웃을 제공합니다.
+에이전트의 변경 내용을 줄 단위로 검토하고 코멘트를 다시 보냅니다.
+프롬프트 하나를 여러 에이전트에게 보내 각자의 worktree에서 실행하고 결과를 비교합니다.
+창마다 다른 Claude Code 또는 Codex 계정을 사용할 수 있습니다.
+알림함에서 응답을 기다리는 에이전트를 모아 보고, Ctrl+Shift+U로 다음 에이전트로 바로 이동합니다.
+사이드 패널에서 계정별 Claude Code와 Codex의 토큰 사용량과 남은 한도를 확인합니다.
+터미널 그 이상
+
+파일 브라우저와 AI 사용량 보기를 갖춘 사이드 패널
+내장 텍스트 편집기와 git 로그 / 브랜치 / worktree 보기
+터미널 옆에 나란히 두는 브라우저 창
+명령 팔레트(Ctrl+Shift+P), 창 탭, 창 확대, 스크롤백 검색
+터미널 출력의 링크와 파일 경로를 클릭해서 열기
+텍스트와 이미지를 터미널에 바로 붙여넣기
+워크스페이스별 메모와 실시간 CPU / RAM 상태 표시줄
+트레이로 닫아 모든 작업을 계속 실행
+테마, 구문 색상, 키보드 단축키 사용자 지정
+13개 언어 지원
+설계부터 프라이버시를 우선합니다 yMux에는 가입, 분석, 원격 측정이 없습니다. 레이아웃, 스크롤백, 설정은 모두 내 PC에만 저장됩니다. 선택 사항인 작업 기록은 직접 추가한 웹훅으로만 데이터를 보냅니다.
+
+yMux는 무료 오픈 소스입니다: https://github.com/YoungMins/ymux","yMuxは、tmuxにインスパイアされた Windows 向けの軽量ターミナルマルチプレクサです。1つのウィンドウを必要なだけ複数のターミナルに分割し、そのレイアウトを保存して、中断したところからそのまま再開できます。
+
+保持されるレイアウト ペインは水平・垂直を問わず、好きなだけ深く分割できます。各ペインはシェル、作業ディレクトリ、任意のスタートアップ コマンドを記憶し、各ワークスペースは再起動後も独自のレイアウトを保ちます。ターミナルのスクロールバックも保存されるため、アプリを開き直しても出力がそのまま残ります。
+
+あらゆるシェルに対応 yMuxは、コマンド プロンプト、Windows PowerShell、PowerShell 7、Git Bash、WSL ディストリビューションを自動で検出します。ペインを分割すると、シェルを起動した場所ではなく、現在シェルがいるディレクトリで新しいペインが開きます。
+
+番号付きワークスペース Ctrl+Alt+1 から 9 でワークスペースを切り替え、必要なだけ追加できます。切り替えている間もペインは動き続けるので、REPL、サーバー、ログの監視が止まることはありません。
+
+AI コーディング エージェントのために
+
+どのペインのエージェントが実行中か、完了したか、入力待ちかをひと目で確認できます。
+エージェント ツリーで、各ワークスペースのすべてのペインとエージェントを一覧できます。
+yMuxを再起動したあとも、Claude Code と Codex のセッションを再開できます。
+新しい git worktree でペインを開き、エージェントごとに独立したチェックアウトを用意できます。
+エージェントの変更を行単位でレビューし、コメントをエージェントに送り返せます。
+1つのプロンプトを複数のエージェントに送り、それぞれ専用の worktree で実行して結果を比較できます。
+ペインごとに別の Claude Code または Codex アカウントを使えます。
+通知受信トレイに、あなたの対応を待っているエージェントが一覧表示されます(Ctrl+Shift+U で次のエージェントへ移動)。
+サイドパネルで、アカウントごとの Claude Code と Codex のトークン使用量と残りのクォータを確認できます。
+ターミナル以上の存在
+
+ファイル ブラウザーと AI 使用量ビューを備えたサイドパネル
+内蔵テキスト エディターと、git のログ / ブランチ / worktree ビュー
+ターミナルの隣に並べられるブラウザー ペイン
+コマンドパレット(Ctrl+Shift+P)、ペイン タブ、ペインのズーム、スクロールバック検索
+ターミナル出力内のリンクやファイル パスをクリックして開く
+テキストや画像をターミナルに直接貼り付け
+ワークスペースごとのメモと、CPU / RAM をリアルタイム表示するステータス バー
+トレイに格納して、すべてを実行したままにできる
+テーマ、シンタックス カラー、キーボード ショートカットをカスタマイズ可能
+13 言語に対応
+設計段階からプライバシーを重視 yMuxには、サインアップも、分析も、テレメトリもありません。レイアウト、スクロールバック、設定はすべてお使いの PC の中に保存されます。オプションのアクティビティ ログは、ご自身で追加した Webhook にのみデータを送信します。
+
+yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux","yMux 是一款受 tmux 启发、适用于 Windows 的轻量级终端复用器。你可以把一个窗口拆分成任意数量的终端，保存这些布局，下次打开时从上次离开的地方继续。
+
+布局持久保存 窗格可水平或垂直拆分，层数不限。每个窗格都会记住自己的 shell、工作目录和可选的启动命令，每个工作区在重启后也会保留各自的布局。终端滚动缓冲区同样会被保存，重新打开应用后，之前的输出依然都在。
+
+支持所有 Shell yMux 会自动检测命令提示符、Windows PowerShell、PowerShell 7、Git Bash 以及你的 WSL 发行版。拆分窗格时，新窗格会在 shell 当前所在的目录中打开，而不是它最初启动时的目录。
+
+编号工作区 使用 Ctrl+Alt+1 到 9 切换工作区，可按需添加任意多个。切换离开后，窗格仍在继续运行，REPL、服务器和日志监控都不会中断。
+
+为 AI 编程智能体而生
+
+一眼看出哪个窗格的智能体正在运行、已经完成，还是在等待你的操作。
+智能体树会列出每个工作区中的所有窗格和智能体。
+重启 yMux 后可恢复 Claude Code 和 Codex 会话。
+在新的 git worktree 中打开窗格，让每个智能体拥有独立的检出副本。
+逐行审阅智能体的更改，并把你的评论发回给它。
+把一条提示发给多个智能体，每个智能体在各自的 worktree 中运行，然后比较结果。
+每个窗格可使用不同的 Claude Code 或 Codex 账户。
+提醒收件箱会列出正在等你的智能体（按 Ctrl+Shift+U 跳转到下一个）。
+侧边栏按账户显示 Claude Code 和 Codex 的 token 用量与剩余额度。
+不止是终端
+
+侧边栏提供文件浏览器和 AI 用量视图
+内置文本编辑器，以及 git 日志 / 分支 / worktree 视图
+浏览器窗格可与终端并排使用
+命令面板(Ctrl+Shift+P)、窗格标签页、窗格缩放和滚动缓冲区搜索
+可点击终端输出中的链接和文件路径
+可将文本和图像直接粘贴到终端
+每个工作区独立的备忘笔记，以及实时显示 CPU / RAM 的状态栏
+关闭到托盘，所有任务继续运行
+可自定义主题、语法颜色和键盘快捷键
+支持 13 种语言
+隐私优先的设计 yMux 没有注册，没有数据分析，也没有遥测。你的布局、滚动缓冲区和设置都只保存在你自己的电脑上。可选的活动日志只会把数据发送到你自己添加的 webhook。
+
+yMux 免费且开源：https://github.com/YoungMins/ymux","yMux, tmux से प्रेरित Windows के लिए एक हल्का टर्मिनल मल्टीप्लेक्सर है। इससे आप एक विंडो को जितने चाहें उतने टर्मिनलों में बाँट सकते हैं, उन लेआउट को सेव कर सकते हैं, और ठीक वहीं से दोबारा शुरू कर सकते हैं जहाँ आपने छोड़ा था।
+
+हमेशा बने रहने वाले लेआउट किसी भी पेन को क्षैतिज या ऊर्ध्वाधर रूप में जितनी गहराई तक चाहें बाँटें। हर पेन अपना शेल, वर्किंग डायरेक्टरी और वैकल्पिक स्टार्टअप कमांड याद रखता है, और हर वर्कस्पेस रीस्टार्ट के बाद भी अपना लेआउट बनाए रखता है। टर्मिनल स्क्रॉलबैक भी सेव होता है, इसलिए ऐप दोबारा खोलने पर आपका आउटपुट वैसा ही मिलता है।
+
+आपके सभी शेल yMux, कमांड प्रॉम्प्ट, Windows PowerShell, PowerShell 7, Git Bash और आपके WSL डिस्ट्रीब्यूशन को अपने आप पहचान लेता है। पेन बाँटने पर नया पेन उसी डायरेक्टरी में खुलता है जिसमें शेल अभी है, उसमें नहीं जहाँ से वह शुरू हुआ था।
+
+क्रमांकित वर्कस्पेस Ctrl+Alt+1 से 9 तक से वर्कस्पेस बदलें, और ज़रूरत के हिसाब से जितने चाहें जोड़ें। दूसरे वर्कस्पेस में जाने पर भी पेन चलते रहते हैं, इसलिए REPL, सर्वर और लॉग मॉनिटरिंग कभी बंद नहीं होते।
+
+AI कोडिंग एजेंट के लिए बनाया गया
+
+एक नज़र में देखें कि किस पेन का एजेंट चल रहा है, पूरा हो चुका है या आपका इंतज़ार कर रहा है।
+एजेंट ट्री हर वर्कस्पेस के सभी पेन और एजेंट की सूची दिखाता है।
+yMux रीस्टार्ट करने के बाद Claude Code और Codex सेशन फिर से शुरू करें।
+हर एजेंट को अलग चेकआउट देने के लिए पेन को नए git worktree में खोलें।
+एजेंट के बदलावों की पंक्ति-दर-पंक्ति समीक्षा करें और अपनी टिप्पणियाँ उसे वापस भेजें।
+एक ही प्रॉम्प्ट कई एजेंट को भेजें, हर एजेंट अपने अलग worktree में चलेगा, और नतीजों की तुलना करें।
+हर पेन में अलग Claude Code या Codex अकाउंट इस्तेमाल करें।
+अटेंशन इनबॉक्स उन एजेंट की सूची दिखाता है जो आपका इंतज़ार कर रहे हैं (Ctrl+Shift+U अगले एजेंट पर ले जाता है)।
+साइड पैनल में हर अकाउंट के लिए Claude Code और Codex का टोकन उपयोग और बचा हुआ कोटा दिखता है।
+सिर्फ़ टर्मिनल से कहीं ज़्यादा
+
+फ़ाइल ब्राउज़र और AI उपयोग व्यू वाला साइड पैनल
+बिल्ट-इन टेक्स्ट एडिटर और git लॉग / ब्रांच / worktree व्यू
+टर्मिनल के बगल में ब्राउज़र पेन
+कमांड पैलेट (Ctrl+Shift+P), पेन टैब, पेन ज़ूम और स्क्रॉलबैक सर्च
+टर्मिनल आउटपुट में क्लिक करने योग्य लिंक और फ़ाइल पाथ
+टेक्स्ट और इमेज सीधे टर्मिनल में पेस्ट करें
+हर वर्कस्पेस के लिए अलग नोट्स और लाइव CPU / RAM स्टेटस बार
+ट्रे में बंद करें और सब कुछ चलता रहने दें
+थीम, सिंटैक्स रंग और कीबोर्ड शॉर्टकट अपने हिसाब से बदलें
+13 भाषाओं में उपलब्ध
+डिज़ाइन से ही निजी yMux में कोई साइन-अप, एनालिटिक्स या टेलीमेट्री नहीं है। आपके लेआउट, स्क्रॉलबैक और सेटिंग आपके PC पर ही रहती हैं। वैकल्पिक एक्टिविटी लॉग डेटा केवल उन वेबहुक पर भेजता है जिन्हें आप खुद जोड़ते हैं।
+
+yMux मुफ़्त और ओपन सोर्स है: https://github.com/YoungMins/ymux","yMux es un multiplexor de terminal ligero para Windows, inspirado en tmux. Te permite dividir una ventana en tantos terminales como necesites, guardar esas disposiciones y retomar el trabajo exactamente donde lo dejaste.
+
+DISPOSICIONES QUE PERSISTEN Divide cualquier panel en horizontal o en vertical, con tanta profundidad como quieras. Cada panel recuerda su shell, su directorio de trabajo y un comando de inicio opcional, y cada espacio de trabajo conserva su propia disposición entre reinicios. El historial de desplazamiento del terminal también se guarda, así que tu salida sigue ahí al volver a abrir la aplicación.
+
+TODOS TUS SHELLS yMux detecta automáticamente Símbolo del sistema, Windows PowerShell, PowerShell 7, Git Bash y tus distribuciones de WSL. Al dividir un panel, el nuevo se abre en el directorio en el que está tu shell ahora mismo, no en el que empezó.
+
+ESPACIOS DE TRABAJO NUMERADOS Cambia de espacio de trabajo con Ctrl+Alt+1 a 9 y añade todos los que necesites. Los paneles siguen ejecutándose mientras te vas a otro espacio, así que los REPL, los servidores y el seguimiento de registros nunca se detienen.
+
+PENSADO PARA AGENTES DE PROGRAMACIÓN CON IA
+
+Comprueba de un vistazo si el agente de cada panel está en ejecución, ha terminado o está esperando tu respuesta.
+El árbol de agentes muestra todos los paneles y agentes de cada espacio de trabajo.
+Reanuda sesiones de Claude Code y Codex después de reiniciar yMux.
+Abre un panel en un nuevo git worktree para dar a cada agente una copia de trabajo aislada.
+Revisa los cambios de un agente línea a línea y devuélvele tus comentarios.
+Envía un prompt a varios agentes, cada uno en su propio worktree, y compara los resultados.
+Usa una cuenta distinta de Claude Code o Codex en cada panel.
+Una bandeja de atención muestra los agentes que te esperan (Ctrl+Shift+U salta al siguiente).
+El panel lateral muestra el uso de tokens de Claude Code y Codex y la cuota restante de cada cuenta.
+MÁS QUE UN TERMINAL
+
+Panel lateral con explorador de archivos y vista de uso de IA
+Editor de texto integrado y vista de git log / branch / worktree
+Paneles de navegador junto a tus terminales
+Paleta de comandos (Ctrl+Shift+P), pestañas de panel, zoom de panel y búsqueda en el historial de desplazamiento
+Enlaces y rutas de archivo en los que se puede hacer clic en la salida del terminal
+Pega texto e imágenes directamente en el terminal
+Notas por espacio de trabajo y barra de estado con CPU / RAM en tiempo real
+Cierra a la bandeja y mantén todo en ejecución
+Tema, colores de sintaxis y atajos de teclado personalizables
+Disponible en 13 idiomas
+PRIVADO POR DISEÑO yMux no tiene registro, ni analíticas, ni telemetría. Tus disposiciones, historial de desplazamiento y ajustes se quedan en tu PC. El registro de actividad opcional solo envía datos a los webhooks que añadas tú mismo.
+
+yMux es gratuito y de código abierto: https://github.com/YoungMins/ymux","yMux est un multiplexeur de terminal léger pour Windows, inspiré de tmux. Il vous permet de diviser une fenêtre en autant de terminaux que nécessaire, d'enregistrer ces dispositions et de reprendre exactement là où vous vous étiez arrêté.
+
+DES DISPOSITIONS QUI PERSISTENT Divisez n'importe quel volet à l'horizontale ou à la verticale, aussi profondément que vous le souhaitez. Chaque volet mémorise son shell, son répertoire de travail et une commande de démarrage facultative, et chaque espace de travail conserve sa propre disposition d'un redémarrage à l'autre. L'historique de défilement du terminal est lui aussi enregistré : votre sortie est toujours là quand vous rouvrez l'application.
+
+TOUS VOS SHELLS yMux détecte automatiquement Invite de commandes, Windows PowerShell, PowerShell 7, Git Bash et vos distributions WSL. Lorsque vous divisez un volet, le nouveau s'ouvre dans le répertoire où se trouve votre shell à cet instant, et non dans celui de son démarrage.
+
+ESPACES DE TRAVAIL NUMÉROTÉS Passez d'un espace de travail à l'autre avec Ctrl+Alt+1 à 9 et ajoutez-en autant que nécessaire. Les volets continuent de s'exécuter pendant que vous travaillez ailleurs : vos REPL, serveurs et suivis de journaux ne s'arrêtent jamais.
+
+CONÇU POUR LES AGENTS DE CODAGE IA
+
+Voyez d'un coup d'œil si l'agent de chaque volet est en cours d'exécution, terminé ou en attente de votre réponse.
+L'arborescence des agents répertorie chaque volet et chaque agent de chaque espace de travail.
+Reprenez vos sessions Claude Code et Codex après un redémarrage de yMux.
+Ouvrez un volet dans un nouveau git worktree pour donner à chaque agent une copie de travail isolée.
+Examinez les modifications d'un agent ligne par ligne et renvoyez-lui vos commentaires.
+Envoyez un prompt à plusieurs agents, chacun dans son propre worktree, et comparez les résultats.
+Utilisez un compte Claude Code ou Codex différent dans chaque volet.
+Une boîte d'attention liste les agents qui vous attendent (Ctrl+Shift+U passe au suivant).
+Le panneau latéral affiche votre consommation de jetons Claude Code et Codex ainsi que le quota restant, compte par compte.
+PLUS QU'UN TERMINAL
+
+Panneau latéral avec explorateur de fichiers et vue de la consommation IA
+Éditeur de texte intégré et vue git log / branch / worktree
+Volets de navigateur à côté de vos terminaux
+Palette de commandes (Ctrl+Shift+P), onglets de volet, zoom de volet et recherche dans l'historique de défilement
+Liens et chemins de fichiers cliquables dans la sortie du terminal
+Collez du texte et des images directement dans le terminal
+Notes par espace de travail et barre d'état CPU / RAM en direct
+Réduction dans la zone de notification pour tout garder en cours d'exécution
+Thème, couleurs de syntaxe et raccourcis clavier personnalisables
+Disponible en 13 langues
+CONFIDENTIEL PAR CONCEPTION yMux n'a ni inscription, ni outil d'analyse, ni télémétrie. Vos dispositions, votre historique de défilement et vos paramètres restent sur votre PC. Le journal d'activité facultatif n'envoie des données qu'aux webhooks que vous ajoutez vous-même.
+
+yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو مُضاعِف طرفيات خفيف لنظام Windows، مستوحى من tmux. يتيح لك تقسيم نافذة واحدة إلى أي عدد تحتاجه من الطرفيات، وحفظ هذه التخطيطات، والعودة إلى حيث توقفت تمامًا.
+
+تخطيطات تبقى كما هي قسّم أي جزء أفقيًا أو رأسيًا، وبأي عمق تريده. يتذكر كل جزء الـ shell الخاص به ومجلد العمل وأمر بدء اختياريًا، ويحتفظ كل مساحة عمل بتخطيطها الخاص بعد إعادة التشغيل. كما يُحفظ سجل تمرير الطرفية، فيبقى ناتجك موجودًا عند إعادة فتح التطبيق.
+
+كل واجهات الأوامر لديك يكتشف yMux تلقائيًا موجه الأوامر وWindows PowerShell وPowerShell 7 وGit Bash وتوزيعات WSL لديك. عند تقسيم جزء، يُفتح الجزء الجديد في المجلد الذي يوجد فيه الـ shell الآن، لا المجلد الذي بدأ منه.
+
+مساحات عمل مرقّمة بدّل بين مساحات العمل باستخدام Ctrl+Alt+1 إلى 9 وأضف منها ما تشاء. تستمر الأجزاء في العمل أثناء انتقالك إلى مساحة أخرى، فلا تتوقف REPL ولا الخوادم ولا متابعة السجلات أبدًا.
+
+مصمم لوكلاء البرمجة بالذكاء الاصطناعي
+
+اعرف بنظرة واحدة هل وكيل كل جزء قيد التشغيل أو أنهى عمله أو ينتظر ردك.
+تعرض شجرة الوكلاء كل جزء وكل وكيل في كل مساحة عمل.
+استأنف جلسات Claude Code وCodex بعد إعادة تشغيل yMux.
+افتح جزءًا في git worktree جديد لتمنح كل وكيل نسخة عمل معزولة.
+راجع تغييرات الوكيل سطرًا بسطر وأعد تعليقاتك إليه.
+أرسل موجّهًا واحدًا إلى عدة وكلاء، كلٌّ في worktree الخاص به، وقارن النتائج.
+استخدم حساب Claude Code أو Codex مختلفًا في كل جزء.
+يعرض صندوق التنبيهات الوكلاء الذين ينتظرونك (ينقلك Ctrl+Shift+U إلى التالي).
+تعرض اللوحة الجانبية استهلاك رموز Claude Code وCodex والحصة المتبقية لكل حساب.
+أكثر من مجرد طرفية
+
+لوحة جانبية تضم مستعرض الملفات وعرض استهلاك الذكاء الاصطناعي
+محرر نصوص مدمج وعرض لـ git log / branch / worktree
+أجزاء متصفح بجانب طرفياتك
+لوحة الأوامر (Ctrl+Shift+P) وعلامات تبويب الأجزاء وتكبير الجزء والبحث في سجل التمرير
+روابط ومسارات ملفات قابلة للنقر في ناتج الطرفية
+الصق النصوص والصور مباشرة في الطرفية
+ملاحظات لكل مساحة عمل وشريط حالة يعرض CPU / RAM مباشرة
+الإغلاق إلى علبة النظام مع إبقاء كل شيء قيد التشغيل
+سمة وألوان صياغة واختصارات لوحة مفاتيح قابلة للتخصيص
+متاح بـ 13 لغة
+خصوصية بالتصميم لا يتطلب yMux تسجيلًا ولا يجمع تحليلات ولا بيانات قياس عن بُعد. تبقى تخطيطاتك وسجل التمرير وإعداداتك على جهازك. لا يرسل سجل النشاط الاختياري البيانات إلا إلى webhooks التي تضيفها بنفسك.
+
+yMux مجاني ومفتوح المصدر: https://github.com/YoungMins/ymux","O yMux é um multiplexador de terminal leve para Windows, inspirado no tmux. Com ele, você divide uma janela em quantos terminais precisar, salva esses layouts e retoma exatamente de onde parou.
+
+LAYOUTS QUE PERSISTEM Divida qualquer painel na horizontal ou na vertical, com a profundidade que quiser. Cada painel lembra o shell, o diretório de trabalho e um comando de inicialização opcional, e cada espaço de trabalho mantém o próprio layout entre reinicializações. O histórico de rolagem do terminal também é salvo, então sua saída continua lá quando você reabre o app.
+
+TODOS OS SEUS SHELLS O yMux detecta automaticamente o Prompt de Comando, o Windows PowerShell, o PowerShell 7, o Git Bash e suas distribuições do WSL. Ao dividir um painel, o novo abre no diretório em que seu shell está agora, e não no que ele iniciou.
+
+ESPAÇOS DE TRABALHO NUMERADOS Alterne entre espaços de trabalho com Ctrl+Alt+1 a 9 e adicione quantos precisar. Os painéis continuam em execução enquanto você está em outro espaço, então REPLs, servidores e acompanhamento de logs nunca são interrompidos.
+
+FEITO PARA AGENTES DE CODIFICAÇÃO COM IA
+
+Veja rapidamente se o agente de cada painel está em execução, concluído ou aguardando você.
+A árvore de agentes lista todos os painéis e agentes de cada espaço de trabalho.
+Retome sessões do Claude Code e do Codex após reiniciar o yMux.
+Abra um painel em um novo git worktree para dar a cada agente uma cópia de trabalho isolada.
+Revise as alterações de um agente linha por linha e envie seus comentários de volta a ele.
+Envie um prompt para vários agentes, cada um em seu próprio worktree, e compare os resultados.
+Use uma conta diferente do Claude Code ou do Codex em cada painel.
+Uma caixa de atenção lista os agentes que esperam por você (Ctrl+Shift+U pula para o próximo).
+O painel lateral mostra o uso de tokens do Claude Code e do Codex e a cota restante de cada conta.
+MAIS QUE UM TERMINAL
+
+Painel lateral com navegador de arquivos e visão de uso de IA
+Editor de texto integrado e visão de git log / branch / worktree
+Painéis de navegador ao lado dos seus terminais
+Paleta de comandos (Ctrl+Shift+P), abas de painel, zoom de painel e busca no histórico de rolagem
+Links e caminhos de arquivo clicáveis na saída do terminal
+Cole texto e imagens direto no terminal
+Notas por espaço de trabalho e barra de status com CPU / RAM em tempo real
+Feche para a bandeja e mantenha tudo em execução
+Tema, cores de sintaxe e atalhos de teclado personalizáveis
+Disponível em 13 idiomas
+PRIVACIDADE POR PROJETO O yMux não exige cadastro, nem tem análises ou telemetria. Seus layouts, histórico de rolagem e configurações ficam no seu PC. O registro de atividade opcional só envia dados para os webhooks que você mesmo adicionar.
+
+O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux — лёгкий терминальный мультиплексор для Windows, вдохновлённый tmux. Он позволяет разделить одно окно на нужное число терминалов, сохранить такие раскладки и вернуться ровно туда, где вы остановились.
+
+РАСКЛАДКИ, КОТОРЫЕ СОХРАНЯЮТСЯ Делите любую панель по горизонтали или вертикали на любую глубину. Каждая панель помнит свою оболочку, рабочую папку и необязательную команду запуска, а каждое рабочее пространство сохраняет свою раскладку между перезапусками. История прокрутки терминала тоже сохраняется, поэтому вывод остаётся на месте после повторного открытия приложения.
+
+ВСЕ ВАШИ ОБОЛОЧКИ yMux автоматически находит Командную строку, Windows PowerShell, PowerShell 7, Git Bash и ваши дистрибутивы WSL. При разделении панели новая открывается в той папке, где оболочка находится сейчас, а не где она была запущена.
+
+ПРОНУМЕРОВАННЫЕ РАБОЧИЕ ПРОСТРАНСТВА Переключайтесь между рабочими пространствами с помощью Ctrl+Alt+1–9 и добавляйте сколько нужно. Панели продолжают работать, пока вы в другом пространстве, поэтому REPL, серверы и просмотр логов не прерываются.
+
+СОЗДАНО ДЛЯ ИИ-АГЕНТОВ ПРОГРАММИРОВАНИЯ
+
+С первого взгляда видно, агент в какой панели работает, завершил задачу или ждёт вас.
+Дерево агентов показывает все панели и агентов в каждом рабочем пространстве.
+Возобновляйте сеансы Claude Code и Codex после перезапуска yMux.
+Откройте панель в новом git worktree, чтобы у каждого агента была своя изолированная копия.
+Проверяйте изменения агента построчно и отправляйте ему свои комментарии.
+Отправьте один промпт нескольким агентам, каждому в своём worktree, и сравните результаты.
+Используйте разные учётные записи Claude Code или Codex в разных панелях.
+Центр внимания показывает агентов, которые ждут вас (Ctrl+Shift+U переходит к следующему).
+Боковая панель показывает расход токенов Claude Code и Codex и остаток квоты по каждой учётной записи.
+БОЛЬШЕ, ЧЕМ ТЕРМИНАЛ
+
+Боковая панель с файловым браузером и сводкой использования ИИ
+Встроенный текстовый редактор и просмотр журнала git, веток и worktree
+Панели браузера рядом с терминалами
+Палитра команд (Ctrl+Shift+P), вкладки панелей, масштабирование панели и поиск по истории прокрутки
+Кликабельные ссылки и пути к файлам в выводе терминала
+Вставка текста и изображений прямо в терминал
+Заметки для каждого рабочего пространства и строка состояния с загрузкой CPU / RAM
+Сворачивание в трей — всё продолжает работать
+Настраиваемые тема, цвета синтаксиса и сочетания клавиш
+Доступно на 13 языках
+КОНФИДЕНЦИАЛЬНОСТЬ ПО УМОЛЧАНИЮ В yMux нет регистрации, аналитики и телеметрии. Ваши раскладки, история прокрутки и настройки остаются на вашем ПК. Необязательный журнал активности отправляет данные только на те webhook, которые вы добавите сами.
+
+yMux бесплатен и имеет открытый исходный код: https://github.com/YoungMins/ymux","yMux, tmux'tan esinlenen, Windows için hafif bir terminal çoklayıcısıdır. Tek bir pencereyi istediğiniz sayıda terminale bölmenizi, bu düzenleri kaydetmenizi ve kaldığınız yerden aynen devam etmenizi sağlar.
+
+KALICI DÜZENLER Herhangi bir bölmeyi yatay veya dikey olarak istediğiniz kadar derine bölün. Her bölme kendi kabuğunu, çalışma dizinini ve isteğe bağlı başlangıç komutunu hatırlar; her çalışma alanı da düzenini yeniden başlatmalar boyunca korur. Terminal geçmişi de kaydedilir, böylece uygulamayı yeniden açtığınızda çıktılarınız yerinde durur.
+
+TÜM KABUKLARINIZ yMux; Komut İstemi, Windows PowerShell, PowerShell 7, Git Bash ve WSL dağıtımlarınızı otomatik olarak algılar. Bir bölmeyi böldüğünüzde yeni bölme, kabuğun başladığı dizinde değil, şu an bulunduğu dizinde açılır.
+
+NUMARALI ÇALIŞMA ALANLARI Çalışma alanları arasında Ctrl+Alt+1–9 ile geçiş yapın ve istediğiniz kadar yenisini ekleyin. Başka bir çalışma alanına geçtiğinizde bölmeler çalışmaya devam eder; REPL'ler, sunucular ve günlük takipleri asla kapanmaz.
+
+YAPAY ZEKÂ KODLAMA AJANLARI İÇİN TASARLANDI
+
+Hangi bölmedeki ajanın çalıştığını, bitirdiğini veya sizi beklediğini tek bakışta görün.
+Ajan ağacı, her çalışma alanındaki tüm bölmeleri ve ajanları listeler.
+yMux'ı yeniden başlattıktan sonra Claude Code ve Codex oturumlarına devam edin.
+Her ajana yalıtılmış bir çalışma kopyası vermek için bir bölmeyi yeni bir git worktree içinde açın.
+Bir ajanın değişikliklerini satır satır inceleyin ve yorumlarınızı ona geri gönderin.
+Tek bir istemi birkaç ajana, her biri kendi worktree'sinde çalışacak şekilde gönderin ve sonuçları karşılaştırın.
+Her bölmede farklı bir Claude Code veya Codex hesabı kullanın.
+Bir dikkat gelen kutusu sizi bekleyen ajanları listeler (Ctrl+Shift+U sonrakine atlar).
+Yan panel, her hesap için Claude Code ve Codex token kullanımınızı ve kalan kotanızı gösterir.
+BİR TERMİNALDEN FAZLASI
+
+Dosya tarayıcısı ve yapay zekâ kullanım görünümü içeren yan panel
+Yerleşik metin düzenleyici ile git günlüğü / dal / worktree görünümü
+Terminallerinizin yanında tarayıcı bölmeleri
+Komut paleti (Ctrl+Shift+P), bölme sekmeleri, bölme yakınlaştırma ve geçmiş içinde arama
+Terminal çıktısında tıklanabilir bağlantılar ve dosya yolları
+Metin ve görselleri doğrudan terminale yapıştırın
+Çalışma alanı başına notlar ve canlı CPU / RAM durum çubuğu
+Tepsiye küçültüp her şeyi çalışır durumda tutun
+Özelleştirilebilir tema, sözdizimi renkleri ve klavye kısayolları
+13 dilde kullanılabilir
+TASARIMI GEREĞİ GİZLİ yMux'ta kayıt, analiz ve telemetri yoktur. Düzenleriniz, terminal geçmişiniz ve ayarlarınız bilgisayarınızda kalır. İsteğe bağlı etkinlik günlüğü verileri yalnızca sizin eklediğiniz webhook'lara gönderir.
+
+yMux ücretsiz ve açık kaynaklıdır: https://github.com/YoungMins/ymux","yMux ist ein schlanker Terminal-Multiplexer für Windows, inspiriert von tmux. Sie teilen ein Fenster in beliebig viele Terminals, speichern diese Layouts und machen genau dort weiter, wo Sie aufgehört haben.
+
+LAYOUTS, DIE BLEIBEN Teilen Sie jeden Bereich horizontal oder vertikal, so tief Sie möchten. Jeder Bereich merkt sich seine Shell, sein Arbeitsverzeichnis und optional einen Startbefehl, und jeder Arbeitsbereich behält sein Layout über Neustarts hinweg. Auch der Terminalverlauf wird gespeichert, sodass Ihre Ausgaben nach dem erneuten Öffnen der App noch da sind.
+
+ALLE IHRE SHELLS yMux erkennt Eingabeaufforderung, Windows PowerShell, PowerShell 7, Git Bash und Ihre WSL-Distributionen automatisch. Wenn Sie einen Bereich teilen, öffnet sich der neue in dem Verzeichnis, in dem sich Ihre Shell gerade befindet, nicht in dem, in dem sie gestartet wurde.
+
+NUMMERIERTE ARBEITSBEREICHE Wechseln Sie mit Ctrl+Alt+1–9 zwischen Arbeitsbereichen und legen Sie beliebig viele an. Bereiche laufen weiter, während Sie woanders arbeiten, sodass REPLs, Server und Log-Tails nie beendet werden.
+
+GEMACHT FÜR KI-CODING-AGENTEN
+
+Sehen Sie auf einen Blick, ob der Agent eines Bereichs läuft, fertig ist oder auf Sie wartet.
+Der Agentenbaum listet alle Bereiche und Agenten jedes Arbeitsbereichs auf.
+Setzen Sie Claude Code- und Codex-Sitzungen nach einem Neustart von yMux fort.
+Öffnen Sie einen Bereich in einem neuen git worktree, damit jeder Agent seinen eigenen, isolierten Checkout hat.
+Prüfen Sie die Änderungen eines Agenten zeilenweise und senden Sie Ihre Kommentare an ihn zurück.
+Senden Sie einen Prompt an mehrere Agenten, jeder in seinem eigenen worktree, und vergleichen Sie die Ergebnisse.
+Verwenden Sie in jedem Bereich ein anderes Claude Code- oder Codex-Konto.
+Ein Aufmerksamkeits-Posteingang listet die Agenten auf, die auf Sie warten (Ctrl+Shift+U springt zum nächsten).
+Die Seitenleiste zeigt Ihren Token-Verbrauch und das verbleibende Kontingent für Claude Code und Codex pro Konto.
+MEHR ALS EIN TERMINAL
+
+Seitenleiste mit Dateibrowser und KI-Nutzungsansicht
+Integrierter Texteditor sowie git-Log-, Branch- und worktree-Ansicht
+Browser-Bereiche neben Ihren Terminals
+Befehlspalette (Ctrl+Shift+P), Bereichs-Tabs, Bereichs-Zoom und Suche im Verlauf
+Anklickbare Links und Dateipfade in der Terminalausgabe
+Text und Bilder direkt ins Terminal einfügen
+Notizen pro Arbeitsbereich und eine Live-Statusleiste für CPU / RAM
+In den Infobereich minimieren, alles läuft weiter
+Anpassbares Design, Syntaxfarben und Tastenkombinationen
+In 13 Sprachen verfügbar
+PRIVATSPHÄRE AB WERK yMux hat keine Anmeldung, keine Analysen und keine Telemetrie. Ihre Layouts, Ihr Verlauf und Ihre Einstellungen bleiben auf Ihrem PC. Das optionale Aktivitätsprotokoll sendet Daten nur an die Webhooks, die Sie selbst hinzufügen.
+
+yMux ist kostenlos und Open Source: https://github.com/YoungMins/ymux","yMux là trình ghép kênh terminal nhẹ dành cho Windows, lấy cảm hứng từ tmux. Bạn có thể chia một cửa sổ thành bao nhiêu terminal tùy ý, lưu các bố cục đó và quay lại đúng chỗ đã dừng.
+
+BỐ CỤC ĐƯỢC LƯU LẠI Chia bất kỳ ngăn nào theo chiều ngang hoặc dọc, sâu bao nhiêu tùy thích. Mỗi ngăn nhớ shell, thư mục làm việc và lệnh khởi động tùy chọn của nó, còn mỗi không gian làm việc giữ nguyên bố cục qua các lần khởi động lại. Nội dung cuộn của terminal cũng được lưu, nên kết quả vẫn còn đó khi bạn mở lại ứng dụng.
+
+MỌI SHELL CỦA BẠN yMux tự động phát hiện Dấu nhắc Lệnh, Windows PowerShell, PowerShell 7, Git Bash và các bản phân phối WSL của bạn. Khi bạn chia một ngăn, ngăn mới mở trong thư mục mà shell đang ở hiện tại, chứ không phải thư mục nó khởi động.
+
+KHÔNG GIAN LÀM VIỆC ĐÁNH SỐ Chuyển đổi giữa các không gian làm việc bằng Ctrl+Alt+1–9 và thêm bao nhiêu tùy ý. Các ngăn vẫn tiếp tục chạy khi bạn chuyển đi, nên REPL, máy chủ và theo dõi log không bao giờ bị tắt.
+
+DÀNH CHO AGENT LẬP TRÌNH AI
+
+Nhìn thoáng qua là biết agent ở ngăn nào đang chạy, đã xong hay đang chờ bạn.
+Cây agent liệt kê mọi ngăn và agent trong từng không gian làm việc.
+Tiếp tục các phiên Claude Code và Codex sau khi khởi động lại yMux.
+Mở ngăn trong git worktree mới để mỗi agent có bản checkout riêng, tách biệt.
+Xem lại thay đổi của agent theo từng dòng và gửi nhận xét của bạn lại cho nó.
+Gửi một prompt tới nhiều agent, mỗi agent trong worktree riêng, rồi so sánh kết quả.
+Dùng tài khoản Claude Code hoặc Codex khác nhau ở từng ngăn.
+Hộp thư chú ý liệt kê các agent đang chờ bạn (Ctrl+Shift+U nhảy tới agent tiếp theo).
+Bảng bên hiển thị mức dùng token và hạn mức còn lại của Claude Code và Codex cho từng tài khoản.
+HƠN CẢ MỘT TERMINAL
+
+Bảng bên có trình duyệt tệp và chế độ xem mức dùng AI
+Trình soạn thảo văn bản tích hợp và chế độ xem git log / nhánh / worktree
+Các ngăn trình duyệt cạnh terminal của bạn
+Bảng lệnh (Ctrl+Shift+P), thẻ ngăn, phóng to ngăn và tìm kiếm trong nội dung cuộn
+Liên kết và đường dẫn tệp nhấp được trong đầu ra terminal
+Dán văn bản và hình ảnh thẳng vào terminal
+Ghi chú theo từng không gian làm việc và thanh trạng thái CPU / RAM trực tiếp
+Thu nhỏ xuống khay hệ thống và giữ mọi thứ tiếp tục chạy
+Tùy chỉnh giao diện, màu cú pháp và phím tắt
+Có sẵn bằng 13 ngôn ngữ
+RIÊNG TƯ TỪ THIẾT KẾ yMux không cần đăng ký, không phân tích và không thu thập dữ liệu từ xa. Bố cục, nội dung cuộn và cài đặt của bạn luôn nằm trên máy tính của bạn. Nhật ký hoạt động tùy chọn chỉ gửi dữ liệu tới các webhook do chính bạn thêm.
+
+yMux miễn phí và mã nguồn mở: https://github.com/YoungMins/ymux"
+ReleaseNotes,3,Text,,"Review an agent's changes: open ""Review changes"" to see the working-tree diff in unified or split view, comment on lines and send the comments back to the agent.
+
+Fan-out: send one prompt to several Claude Code or Codex agents, each in its own git worktree, then compare the results side by side.
+
+Attention inbox: a bell in the workspace panel lists the panes waiting for you. Ctrl+Shift+U jumps to the next one.
+
+Multiple accounts: pick or add a Claude Code or Codex account from the + launcher and use a different account in each pane. Token usage is grouped by account.
+
+Optional activity log: record what agents did in each turn, summarize it (rule-based or a local model such as Ollama) and send it to Slack, Discord, Teams or your own webhook. Off by default.
+
+Fixes: Claude Code sessions resume reliably on Windows, and terminal output is faster.","에이전트 변경 내용 검토: ""변경 사항 검토""에서 작업 중인 변경 내용을 한 줄 보기나 좌우 보기로 확인하고, 줄마다 코멘트를 달아 에이전트에게 다시 보낼 수 있습니다.
+
+동시 실행(Fan-out): 프롬프트 하나를 여러 Claude Code·Codex 에이전트에게 보내고, 각자 별도 git worktree에서 작업한 결과를 나란히 비교합니다.
+
+알림함: 워크스페이스 패널의 종 아이콘에 확인이 필요한 창이 모입니다. Ctrl+Shift+U로 다음 창으로 바로 이동합니다.
+
+다중 계정: + 메뉴에서 Claude Code·Codex 계정을 고르거나 추가해, 창마다 다른 계정을 쓸 수 있습니다. 토큰 사용량도 계정별로 묶어 보여 줍니다.
+
+작업 기록(선택): 에이전트가 턴마다 한 일을 기록하고 요약(규칙 기반 또는 Ollama 같은 로컬 모델)해 Slack, Discord, Teams나 직접 지정한 웹훅으로 보냅니다. 기본으로 꺼져 있습니다.
+
+수정: Windows에서 Claude Code 세션 이어 하기가 안정적으로 동작하고, 터미널 출력이 더 빨라졌습니다.","エージェントの変更をレビュー: 「変更をレビュー」を開くと、作業ツリーの差分を統合表示または左右分割表示で確認でき、行ごとにコメントを付けてエージェントに送り返せます。
+
+ファンアウト: 1つのプロンプトを複数の Claude Code または Codex エージェントに送り、それぞれ専用の git worktree で作業させて、結果を並べて比較できます。
+
+通知受信トレイ: ワークスペース パネルのベル アイコンに、あなたの対応を待っているペインが一覧表示されます。Ctrl+Shift+U で次のペインにジャンプします。
+
+複数アカウント: + ランチャーから Claude Code または Codex のアカウントを選択または追加し、ペインごとに別のアカウントを使えます。トークン使用量はアカウント別に集計されます。
+
+アクティビティ ログ(オプション): 各ターンでエージェントが行った作業を記録し、要約(ルールベース、または Ollama などのローカル モデル)して、Slack、Discord、Teams、または独自の Webhook に送信します。既定ではオフです。
+
+修正: Windows で Claude Code セッションを確実に再開できるようになり、ターミナルの出力が高速化されました。","审阅智能体的更改：打开“审阅更改”，可在统一视图或并排视图中查看工作树差异，对具体行添加评论，并把评论发回给智能体。
+
+扇出（Fan-out）：把一条提示同时发给多个 Claude Code 或 Codex 智能体，每个智能体在各自的 git worktree 中运行，然后并排比较结果。
+
+提醒收件箱：工作区面板中的铃铛会列出正在等你处理的窗格。按 Ctrl+Shift+U 可跳转到下一个。
+
+多账户：在 + 启动器中选择或添加 Claude Code 或 Codex 账户，每个窗格都可以使用不同的账户。token 用量按账户分组。
+
+可选的活动日志：记录智能体每一轮做了什么，进行摘要（基于规则，或使用 Ollama 等本地模型），并发送到 Slack、Discord、Teams 或你自己的 webhook。默认关闭。
+
+修复：Claude Code 会话在 Windows 上可可靠恢复，终端输出更快。","एजेंट के बदलावों की समीक्षा करें: ""बदलावों की समीक्षा"" खोलकर वर्किंग ट्री का डिफ़ यूनिफ़ाइड या स्प्लिट व्यू में देखें, पंक्तियों पर टिप्पणी करें और टिप्पणियाँ एजेंट को वापस भेजें।
+
+फैन-आउट: एक ही प्रॉम्प्ट कई Claude Code या Codex एजेंट को भेजें, हर एजेंट अपने अलग git worktree में चलेगा, फिर नतीजों की अगल-बगल तुलना करें।
+
+अटेंशन इनबॉक्स: वर्कस्पेस पैनल में घंटी का आइकन उन पेन की सूची दिखाता है जो आपका इंतज़ार कर रहे हैं। Ctrl+Shift+U दबाकर अगले पेन पर जाएँ।
+
+कई अकाउंट: + लॉन्चर से Claude Code या Codex अकाउंट चुनें या जोड़ें, और हर पेन में अलग अकाउंट इस्तेमाल करें। टोकन उपयोग अकाउंट के हिसाब से समूहित होता है।
+
+वैकल्पिक एक्टिविटी लॉग: दर्ज करें कि एजेंट ने हर टर्न में क्या किया, उसका सारांश बनाएँ (नियम-आधारित या Ollama जैसे लोकल मॉडल से) और उसे Slack, Discord, Teams या अपने वेबहुक पर भेजें। यह डिफ़ॉल्ट रूप से बंद रहता है।
+
+सुधार: Windows पर Claude Code सेशन भरोसेमंद ढंग से फिर शुरू होते हैं, और टर्मिनल आउटपुट तेज़ है।","Revisa los cambios de un agente: abre ""Revisar cambios"" para ver las diferencias del árbol de trabajo en vista unificada o dividida, comenta líneas y devuelve los comentarios al agente.
+
+Fan-out: envía un mismo prompt a varios agentes de Claude Code o Codex, cada uno en su propio git worktree, y compara los resultados lado a lado.
+
+Bandeja de atención: una campana en el panel de espacios de trabajo muestra los paneles que te esperan. Ctrl+Shift+U salta al siguiente.
+
+Varias cuentas: elige o añade una cuenta de Claude Code o Codex desde el lanzador + y usa una cuenta distinta en cada panel. El uso de tokens se agrupa por cuenta.
+
+Registro de actividad opcional: registra lo que hicieron los agentes en cada turno, resúmelo (con reglas o con un modelo local como Ollama) y envíalo a Slack, Discord, Teams o a tu propio webhook. Desactivado por defecto.
+
+Correcciones: las sesiones de Claude Code se reanudan de forma fiable en Windows y la salida del terminal es más rápida.","Examinez les modifications d'un agent : ouvrez ""Examiner les modifications"" pour voir le diff de l'arbre de travail en vue unifiée ou côte à côte, commentez des lignes et renvoyez les commentaires à l'agent.
+
+Fan-out : envoyez un même prompt à plusieurs agents Claude Code ou Codex, chacun dans son propre git worktree, puis comparez les résultats côte à côte.
+
+Boîte d'attention : une cloche dans le panneau des espaces de travail liste les volets qui vous attendent. Ctrl+Shift+U passe au suivant.
+
+Plusieurs comptes : choisissez ou ajoutez un compte Claude Code ou Codex depuis le lanceur + et utilisez un compte différent dans chaque volet. La consommation de jetons est regroupée par compte.
+
+Journal d'activité facultatif : enregistrez ce que les agents ont fait à chaque tour, résumez-le (par règles ou avec un modèle local comme Ollama) et envoyez-le à Slack, Discord, Teams ou à votre propre webhook. Désactivé par défaut.
+
+Corrections : les sessions Claude Code reprennent de façon fiable sous Windows et la sortie du terminal est plus rapide.","مراجعة تغييرات الوكيل: افتح ""مراجعة التغييرات"" لعرض فروق شجرة العمل بعرض موحّد أو مقسّم، وعلّق على الأسطر وأعد التعليقات إلى الوكيل.
+
+التوزيع المتوازي (Fan-out): أرسل موجّهًا واحدًا إلى عدة وكلاء Claude Code أو Codex، كلٌّ في git worktree الخاص به، ثم قارن النتائج جنبًا إلى جنب.
+
+صندوق التنبيهات: يعرض رمز الجرس في لوحة مساحات العمل الأجزاء التي تنتظرك. ينقلك Ctrl+Shift+U إلى الجزء التالي.
+
+حسابات متعددة: اختر حساب Claude Code أو Codex أو أضفه من مشغّل + واستخدم حسابًا مختلفًا في كل جزء. يُجمَّع استهلاك الرموز حسب الحساب.
+
+سجل نشاط اختياري: سجّل ما فعله الوكلاء في كل دورة، ولخّصه (بالقواعد أو بنموذج محلي مثل Ollama) وأرسله إلى Slack أو Discord أو Teams أو إلى webhook خاص بك. معطّل افتراضيًا.
+
+إصلاحات: تُستأنف جلسات Claude Code بشكل موثوق على Windows، وأصبح ناتج الطرفية أسرع.","Revise as alterações de um agente: abra ""Revisar alterações"" para ver o diff da árvore de trabalho em visão unificada ou dividida, comente linhas e envie os comentários de volta ao agente.
+
+Fan-out: envie um prompt para vários agentes do Claude Code ou do Codex, cada um em seu próprio git worktree, e compare os resultados lado a lado.
+
+Caixa de atenção: um sino no painel de espaços de trabalho lista os painéis que esperam por você. Ctrl+Shift+U pula para o próximo.
+
+Várias contas: escolha ou adicione uma conta do Claude Code ou do Codex no lançador + e use uma conta diferente em cada painel. O uso de tokens é agrupado por conta.
+
+Registro de atividade opcional: registre o que os agentes fizeram em cada turno, resuma (com regras ou com um modelo local como o Ollama) e envie para Slack, Discord, Teams ou seu próprio webhook. Desativado por padrão.
+
+Correções: as sessões do Claude Code são retomadas de forma confiável no Windows e a saída do terminal está mais rápida.","Проверка изменений агента: откройте «Проверка изменений», чтобы увидеть diff рабочего дерева в едином или разделённом виде, оставляйте комментарии к строкам и отправляйте их обратно агенту.
+
+Fan-out: отправьте один промпт нескольким агентам Claude Code или Codex, каждому в своём git worktree, а затем сравните результаты бок о бок.
+
+Центр внимания: колокольчик на панели рабочих пространств показывает панели, которые ждут вас. Ctrl+Shift+U переходит к следующей.
+
+Несколько учётных записей: выберите или добавьте учётную запись Claude Code или Codex в меню запуска + и используйте разные учётные записи в разных панелях. Расход токенов группируется по учётным записям.
+
+Необязательный журнал активности: записывайте, что агенты делали в каждом ходе, составляйте краткое содержание (по правилам или с локальной моделью, например Ollama) и отправляйте его в Slack, Discord, Teams или на собственный webhook. По умолчанию выключен.
+
+Исправления: сеансы Claude Code надёжно возобновляются в Windows, а вывод терминала стал быстрее.","Bir ajanın değişikliklerini inceleyin: ""Değişiklikleri incele"" ekranını açarak çalışma ağacı farkını birleşik veya bölünmüş görünümde görün, satırlara yorum yapın ve yorumları ajana geri gönderin.
+
+Fan-out: tek bir istemi, her biri kendi git worktree'sinde çalışan birkaç Claude Code veya Codex ajanına gönderin, sonra sonuçları yan yana karşılaştırın.
+
+Dikkat gelen kutusu: çalışma alanı panelindeki bir zil, sizi bekleyen bölmeleri listeler. Ctrl+Shift+U sonrakine atlar.
+
+Birden çok hesap: + başlatıcısından bir Claude Code veya Codex hesabı seçin ya da ekleyin ve her bölmede farklı bir hesap kullanın. Token kullanımı hesaba göre gruplanır.
+
+İsteğe bağlı etkinlik günlüğü: ajanların her turda yaptıklarını kaydedin, özetleyin (kural tabanlı veya Ollama gibi yerel bir modelle) ve Slack, Discord, Teams ya da kendi webhook'unuza gönderin. Varsayılan olarak kapalıdır.
+
+Düzeltmeler: Claude Code oturumları Windows'ta güvenilir biçimde sürdürülür ve terminal çıktısı daha hızlıdır.","Änderungen eines Agenten prüfen: Öffnen Sie ""Änderungen prüfen"", um den Diff des Arbeitsverzeichnisses in der vereinheitlichten oder geteilten Ansicht zu sehen, kommentieren Sie Zeilen und senden Sie die Kommentare an den Agenten zurück.
+
+Fan-out: Senden Sie einen Prompt an mehrere Claude Code- oder Codex-Agenten, jeder in seinem eigenen git worktree, und vergleichen Sie die Ergebnisse nebeneinander.
+
+Aufmerksamkeits-Posteingang: Eine Glocke im Arbeitsbereichs-Panel listet die Bereiche auf, die auf Sie warten. Mit Ctrl+Shift+U springen Sie zum nächsten.
+
+Mehrere Konten: Wählen Sie über den +-Starter ein Claude Code- oder Codex-Konto aus oder fügen Sie eines hinzu, und verwenden Sie in jedem Bereich ein anderes Konto. Der Token-Verbrauch wird nach Konto gruppiert.
+
+Optionales Aktivitätsprotokoll: Halten Sie fest, was Agenten in jeder Runde getan haben, fassen Sie es zusammen (regelbasiert oder mit einem lokalen Modell wie Ollama) und senden Sie es an Slack, Discord, Teams oder Ihren eigenen Webhook. Standardmäßig aus.
+
+Behoben: Claude Code-Sitzungen werden unter Windows zuverlässig fortgesetzt, und die Terminalausgabe ist schneller.","Xem lại thay đổi của agent: mở ""Xem lại thay đổi"" để xem diff của cây làm việc ở dạng hợp nhất hoặc chia đôi, nhận xét theo từng dòng và gửi nhận xét lại cho agent.
+
+Fan-out: gửi một prompt tới nhiều agent Claude Code hoặc Codex, mỗi agent chạy trong git worktree riêng, rồi so sánh kết quả cạnh nhau.
+
+Hộp thư chú ý: biểu tượng chuông trong bảng không gian làm việc liệt kê các ngăn đang chờ bạn. Ctrl+Shift+U nhảy tới ngăn tiếp theo.
+
+Nhiều tài khoản: chọn hoặc thêm tài khoản Claude Code hoặc Codex từ trình khởi chạy + và dùng tài khoản khác nhau ở từng ngăn. Mức dùng token được nhóm theo tài khoản.
+
+Nhật ký hoạt động tùy chọn: ghi lại những gì agent đã làm trong mỗi lượt, tóm tắt (theo quy tắc hoặc bằng mô hình cục bộ như Ollama) và gửi tới Slack, Discord, Teams hoặc webhook của riêng bạn. Mặc định tắt.
+
+Sửa lỗi: các phiên Claude Code được tiếp tục ổn định trên Windows và đầu ra terminal nhanh hơn."
+Title,4,Text,,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux
+ShortTitle,5,Text,,,,,,,,,,,,,,
+SortTitle,6,Text,,,,,,,,,,,,,,
+VoiceTitle,7,Text,,,,,,,,,,,,,,
+ShortDescription,8,Text,,,,,,,,,,,,,,
+DevStudio,9,Text,,,,,,,,,,,,,,
+CopyrightTrademarkInformation,12,Text,,,,,,,,,,,,,,
+AdditionalLicenseTerms,13,Text,,,,,,,,,,,,,,
+DesktopScreenshot1,100,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3064748099200725263
+DesktopScreenshot2,101,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot3,102,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot4,103,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot5,104,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot6,105,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot7,106,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot8,107,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot9,108,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot10,109,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot11,110,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot12,111,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot13,112,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot14,113,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot15,114,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot16,115,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot17,116,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot18,117,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot19,118,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot20,119,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot21,120,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot22,121,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot23,122,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot24,123,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot25,124,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot26,125,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot27,126,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot28,127,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot29,128,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshot30,129,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+DesktopScreenshotCaption1,150,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption2,151,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption3,152,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption4,153,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption5,154,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption6,155,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption7,156,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption8,157,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption9,158,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption10,159,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption11,160,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption12,161,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption13,162,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption14,163,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption15,164,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption16,165,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption17,166,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption18,167,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption19,168,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption20,169,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption21,170,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption22,171,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption23,172,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption24,173,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption25,174,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption26,175,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption27,176,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption28,177,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption29,178,Text,,,,,,,,,,,,,,
+DesktopScreenshotCaption30,179,Text,,,,,,,,,,,,,,
+MobileScreenshot1,200,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot2,201,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot3,202,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot4,203,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot5,204,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot6,205,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot7,206,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot8,207,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot9,208,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot10,209,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot11,210,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot12,211,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot13,212,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot14,213,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot15,214,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot16,215,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot17,216,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot18,217,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot19,218,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot20,219,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot21,220,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot22,221,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot23,222,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot24,223,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot25,224,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot26,225,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot27,226,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot28,227,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot29,228,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshot30,229,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+MobileScreenshotCaption1,250,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption2,251,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption3,252,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption4,253,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption5,254,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption6,255,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption7,256,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption8,257,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption9,258,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption10,259,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption11,260,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption12,261,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption13,262,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption14,263,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption15,264,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption16,265,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption17,266,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption18,267,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption19,268,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption20,269,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption21,270,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption22,271,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption23,272,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption24,273,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption25,274,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption26,275,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption27,276,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption28,277,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption29,278,Text,,,,,,,,,,,,,,
+MobileScreenshotCaption30,279,Text,,,,,,,,,,,,,,
+XboxScreenshot1,300,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot2,301,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot3,302,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot4,303,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot5,304,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot6,305,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot7,306,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot8,307,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot9,308,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot10,309,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot11,310,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot12,311,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot13,312,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot14,313,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot15,314,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot16,315,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot17,316,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot18,317,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot19,318,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot20,319,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot21,320,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot22,321,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot23,322,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot24,323,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot25,324,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot26,325,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot27,326,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot28,327,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot29,328,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshot30,329,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxScreenshotCaption1,350,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption2,351,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption3,352,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption4,353,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption5,354,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption6,355,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption7,356,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption8,357,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption9,358,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption10,359,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption11,360,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption12,361,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption13,362,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption14,363,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption15,364,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption16,365,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption17,366,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption18,367,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption19,368,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption20,369,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption21,370,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption22,371,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption23,372,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption24,373,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption25,374,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption26,375,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption27,376,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption28,377,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption29,378,Text,,,,,,,,,,,,,,
+XboxScreenshotCaption30,379,Text,,,,,,,,,,,,,,
+HolographicScreenshot1,400,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot2,401,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot3,402,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot4,403,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot5,404,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot6,405,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot7,406,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot8,407,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot9,408,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot10,409,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot11,410,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot12,411,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot13,412,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot14,413,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot15,414,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot16,415,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot17,416,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot18,417,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot19,418,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot20,419,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot21,420,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot22,421,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot23,422,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot24,423,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot25,424,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot26,425,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot27,426,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot28,427,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot29,428,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshot30,429,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+HolographicScreenshotCaption1,450,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption2,451,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption3,452,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption4,453,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption5,454,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption6,455,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption7,456,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption8,457,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption9,458,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption10,459,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption11,460,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption12,461,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption13,462,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption14,463,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption15,464,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption16,465,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption17,466,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption18,467,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption19,468,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption20,469,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption21,470,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption22,471,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption23,472,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption24,473,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption25,474,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption26,475,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption27,476,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption28,477,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption29,478,Text,,,,,,,,,,,,,,
+HolographicScreenshotCaption30,479,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshot11,510,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot12,511,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot13,512,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot14,513,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot15,514,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot16,515,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot17,516,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot18,517,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot19,518,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot20,519,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot21,520,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot22,521,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot23,522,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot24,523,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot25,524,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot26,525,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot27,526,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot28,527,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot29,528,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshot30,529,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption11,560,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption12,561,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption13,562,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption14,563,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption15,564,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption16,565,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption17,566,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption18,567,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption19,568,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption20,569,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption21,570,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption22,571,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption23,572,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption24,573,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption25,574,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption26,575,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption27,576,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption28,577,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption29,578,Text,,,,,,,,,,,,,,
+SurfaceHubScreenshotCaption30,579,Text,,,,,,,,,,,,,,
+StoreLogo720x1080,600,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+StoreLogo1080x1080,601,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+StoreLogo300x300,602,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3062026443626032194
+OverrideLogosForWin10,603,True/False,,True,True,True,True,True,True,True,True,True,True,True,True,True
+StoreLogoOverride150x150,604,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3027388455218809346
+StoreLogoOverride71x71,605,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3006669539400404453
+PromoImage1920x1080,606,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576,https://developer.microsoft.com/en-us/dashboard/apps/9N20Z9NKD2Q1/submissions/1152921505702096546/listings/1152922700028209234/listingassets/3008834210901384576
+PromoImage2400x1200,607,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxBrandedKeyArt584x800,608,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxTitledHero1920x1080,609,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+XboxFeaturedPromo1080x1080,610,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+OptionalPromo358x358,611,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+OptionalPromo1000x800,612,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+OptionalPromo414x180,613,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Feature1,700,Text,,Split terminals horizontally and vertically into layouts that are saved automatically,터미널을 가로·세로로 나누고 레이아웃을 자동 저장,ターミナルを水平・垂直に分割し、レイアウトを自動保存,水平、垂直拆分终端，布局自动保存,टर्मिनल को क्षैतिज और ऊर्ध्वाधर बाँटें; लेआउट अपने आप सेव होते हैं,Divide terminales en horizontal y en vertical en disposiciones que se guardan automáticamente,Divisez les terminaux à l'horizontale et à la verticale en dispositions enregistrées automatiquement,قسّم الطرفيات أفقيًا ورأسيًا ضمن تخطيطات تُحفظ تلقائيًا,Divida terminais na horizontal e na vertical em layouts salvos automaticamente,Делите терминалы по горизонтали и вертикали — раскладки сохраняются автоматически,Terminalleri yatay ve dikey bölün; düzenler otomatik olarak kaydedilir,Terminals horizontal und vertikal teilen; Layouts werden automatisch gespeichert,Chia terminal theo chiều ngang và dọc thành các bố cục được lưu tự động
+Feature2,701,Text,,Numbered workspaces (Ctrl+Alt+1–9) that keep their panes running in the background,번호별 워크스페이스(Ctrl+Alt+1–9) — 백그라운드에서도 창이 계속 실행,番号付きワークスペース(Ctrl+Alt+1–9)。バックグラウンドでもペインは実行し続けます,编号工作区(Ctrl+Alt+1–9)，窗格在后台持续运行,क्रमांकित वर्कस्पेस (Ctrl+Alt+1–9) जिनके पेन बैकग्राउंड में चलते रहते हैं,Espacios de trabajo numerados (Ctrl+Alt+1–9) que mantienen sus paneles en ejecución en segundo plano,Espaces de travail numérotés (Ctrl+Alt+1–9) dont les volets restent actifs en arrière-plan,مساحات عمل مرقّمة (Ctrl+Alt+1–9) تُبقي أجزاءها قيد التشغيل في الخلفية,Espaços de trabalho numerados (Ctrl+Alt+1–9) que mantêm os painéis em execução em segundo plano,"Пронумерованные рабочие пространства (Ctrl+Alt+1–9), панели в которых работают в фоне",Bölmeleri arka planda çalışmaya devam eden numaralı çalışma alanları (Ctrl+Alt+1–9),"Nummerierte Arbeitsbereiche (Ctrl+Alt+1–9), deren Bereiche im Hintergrund weiterlaufen",Không gian làm việc đánh số (Ctrl+Alt+1–9) giữ các ngăn chạy nền
+Feature3,702,Text,,"Auto-detects Command Prompt, PowerShell, PowerShell 7, Git Bash and WSL","명령 프롬프트, PowerShell, PowerShell 7, Git Bash, WSL 자동 감지",コマンド プロンプト、PowerShell、PowerShell 7、Git Bash、WSL を自動検出,自动检测命令提示符、PowerShell、PowerShell 7、Git Bash 和 WSL,"कमांड प्रॉम्प्ट, PowerShell, PowerShell 7, Git Bash और WSL अपने आप पहचाने जाते हैं","Detecta automáticamente Símbolo del sistema, PowerShell, PowerShell 7, Git Bash y WSL","Détecte automatiquement Invite de commandes, PowerShell, PowerShell 7, Git Bash et WSL",يكتشف تلقائيًا موجه الأوامر وPowerShell وPowerShell 7 وGit Bash وWSL,"Detecta automaticamente Prompt de Comando, PowerShell, PowerShell 7, Git Bash e WSL","Автоматически находит Командную строку, PowerShell, PowerShell 7, Git Bash и WSL","Komut İstemi, PowerShell, PowerShell 7, Git Bash ve WSL'yi otomatik algılar","Erkennt Eingabeaufforderung, PowerShell, PowerShell 7, Git Bash und WSL automatisch","Tự động phát hiện Dấu nhắc Lệnh, PowerShell, PowerShell 7, Git Bash và WSL"
+Feature4,703,Text,,New panes open in the current working directory of the shell you split,새 창이 나눈 셸의 현재 작업 디렉터리에서 열림,新しいペインは、分割したシェルの現在の作業ディレクトリで開きます,新窗格在被拆分 shell 的当前工作目录中打开,नए पेन उस शेल की मौजूदा वर्किंग डायरेक्टरी में खुलते हैं जिसे आपने बाँटा,Los paneles nuevos se abren en el directorio de trabajo actual del shell que divides,Les nouveaux volets s'ouvrent dans le répertoire de travail actuel du shell que vous divisez,تُفتح الأجزاء الجديدة في مجلد العمل الحالي للـ shell الذي قسّمته,Novos painéis abrem no diretório de trabalho atual do shell que você dividiu,"Новые панели открываются в текущей папке оболочки, которую вы разделяете","Yeni bölmeler, böldüğünüz kabuğun geçerli çalışma dizininde açılır",Neue Bereiche öffnen sich im aktuellen Arbeitsverzeichnis der geteilten Shell,Ngăn mới mở trong thư mục làm việc hiện tại của shell bạn vừa chia
+Feature5,704,Text,,Terminal scrollback is restored after restarting the app,앱을 재시작해도 터미널 스크롤백 복원,アプリの再起動後もターミナルのスクロールバックを復元,重启应用后恢复终端滚动缓冲区,ऐप रीस्टार्ट करने के बाद टर्मिनल स्क्रॉलबैक वापस मिल जाता है,El historial de desplazamiento del terminal se restaura al reiniciar la aplicación,L'historique de défilement du terminal est restauré au redémarrage de l'application,يُستعاد سجل تمرير الطرفية بعد إعادة تشغيل التطبيق,O histórico de rolagem do terminal é restaurado ao reiniciar o app,История прокрутки терминала восстанавливается после перезапуска приложения,Uygulama yeniden başlatıldıktan sonra terminal geçmişi geri yüklenir,Terminalverlauf wird nach dem Neustart der App wiederhergestellt,Nội dung cuộn của terminal được khôi phục sau khi khởi động lại ứng dụng
+Feature6,705,Text,,"Live status of AI coding agents (Claude Code, Codex) in every pane","모든 창에서 AI 코딩 에이전트(Claude Code, Codex)의 실시간 상태 확인",すべてのペインで AI コーディング エージェント(Claude Code、Codex)の状態をリアルタイム表示,在每个窗格中实时显示 AI 编程智能体(Claude Code、Codex)的状态,"हर पेन में AI कोडिंग एजेंट (Claude Code, Codex) की लाइव स्थिति","Estado en vivo de los agentes de programación con IA (Claude Code, Codex) en cada panel","État en direct des agents de codage IA (Claude Code, Codex) dans chaque volet",حالة مباشرة لوكلاء البرمجة بالذكاء الاصطناعي (Claude Code وCodex) في كل جزء,"Status em tempo real dos agentes de codificação com IA (Claude Code, Codex) em cada painel","Статус ИИ-агентов (Claude Code, Codex) в реальном времени в каждой панели","Her bölmede yapay zekâ kodlama ajanlarının (Claude Code, Codex) canlı durumu","Live-Status von KI-Coding-Agenten (Claude Code, Codex) in jedem Bereich","Trạng thái trực tiếp của agent lập trình AI (Claude Code, Codex) trong mọi ngăn"
+Feature7,706,Text,,Resume AI agent sessions after a restart,재시작 후 AI 에이전트 세션 이어서 진행,再起動後に AI エージェントのセッションを再開,重启后恢复 AI 智能体会话,रीस्टार्ट के बाद AI एजेंट सेशन फिर से शुरू करें,Reanuda las sesiones de agentes de IA tras un reinicio,Reprenez les sessions des agents IA après un redémarrage,استئناف جلسات وكلاء الذكاء الاصطناعي بعد إعادة التشغيل,Retome sessões de agentes de IA após reiniciar,Возобновление сеансов ИИ-агентов после перезапуска,Yeniden başlatmanın ardından yapay zekâ ajanı oturumlarına devam edin,KI-Agenten-Sitzungen nach einem Neustart fortsetzen,Tiếp tục các phiên agent AI sau khi khởi động lại
+Feature8,707,Text,,Open a pane in a new git worktree for isolated agent work,새 git worktree에서 창을 열어 에이전트 작업을 격리,新しい git worktree でペインを開き、エージェントの作業を分離,在新的 git worktree 中打开窗格，隔离智能体的工作,एजेंट के अलग काम के लिए पेन को नए git worktree में खोलें,Abre un panel en un nuevo git worktree para trabajar con agentes de forma aislada,Ouvrez un volet dans un nouveau git worktree pour isoler le travail des agents,افتح جزءًا في git worktree جديد لعمل معزول للوكلاء,Abra um painel em um novo git worktree para trabalho isolado dos agentes,Откройте панель в новом git worktree для изолированной работы агента,Yalıtılmış ajan çalışması için bir bölmeyi yeni bir git worktree içinde açın,Bereich in einem neuen git worktree öffnen für isolierte Agentenarbeit,Mở ngăn trong git worktree mới để agent làm việc tách biệt
+Feature9,708,Text,,"AI token usage and remaining quota per account, with a daily activity heatmap","계정별 AI 토큰 사용량과 남은 한도, 일별 활동 히트맵",アカウントごとの AI トークン使用量と残りのクォータ、日別アクティビティ ヒートマップ,按账户查看 AI token 用量和剩余额度，附每日活动热力图,"हर अकाउंट के लिए AI टोकन उपयोग और बचा हुआ कोटा, साथ में दैनिक गतिविधि हीटमैप","Uso de tokens de IA y cuota restante por cuenta, con un mapa de calor de actividad diaria","Consommation de jetons IA et quota restant par compte, avec une carte de chaleur d'activité quotidienne",استهلاك رموز الذكاء الاصطناعي والحصة المتبقية لكل حساب، مع خريطة حرارية للنشاط اليومي,"Uso de tokens de IA e cota restante por conta, com um mapa de calor da atividade diária","Расход токенов ИИ и остаток квоты по учётным записям, а также тепловая карта ежедневной активности","Hesap başına yapay zekâ token kullanımı ve kalan kota, günlük etkinlik ısı haritasıyla","KI-Token-Verbrauch und verbleibendes Kontingent pro Konto, mit täglicher Aktivitäts-Heatmap","Mức dùng token AI và hạn mức còn lại theo từng tài khoản, kèm bản đồ nhiệt hoạt động hằng ngày"
+Feature10,709,Text,,File browser side panel that follows your terminal's directory,터미널의 디렉터리를 따라가는 파일 브라우저 사이드 패널,ターミナルのディレクトリに追従するファイル ブラウザーのサイドパネル,文件浏览器侧边栏，跟随终端所在目录,फ़ाइल ब्राउज़र साइड पैनल जो आपके टर्मिनल की डायरेक्टरी का अनुसरण करता है,Panel lateral con explorador de archivos que sigue el directorio de tu terminal,Panneau latéral d'explorateur de fichiers qui suit le répertoire de votre terminal,لوحة جانبية لمستعرض الملفات تتبع مجلد طرفيتك,Painel lateral com navegador de arquivos que acompanha o diretório do seu terminal,"Боковая панель с файловым браузером, следующим за папкой терминала",Terminalinizin dizinini takip eden dosya tarayıcısı yan paneli,"Dateibrowser-Seitenleiste, die dem Verzeichnis Ihres Terminals folgt",Bảng bên trình duyệt tệp theo dõi thư mục của terminal
+Feature11,710,Text,,Built-in text editor and git view,내장 텍스트 편집기와 git 보기,内蔵テキスト エディターと git ビュー,内置文本编辑器和 git 视图,बिल्ट-इन टेक्स्ट एडिटर और git व्यू,Editor de texto y vista de git integrados,Éditeur de texte et vue git intégrés,محرر نصوص وعرض git مدمجان,Editor de texto e visão de git integrados,Встроенный текстовый редактор и просмотр git,Yerleşik metin düzenleyici ve git görünümü,Integrierter Texteditor und git-Ansicht,Trình soạn thảo văn bản và chế độ xem git tích hợp
+Feature12,711,Text,,Browser panes alongside your terminals,터미널 옆에 나란히 두는 브라우저 창,ターミナルと並べて使えるブラウザー ペイン,浏览器窗格与终端并排使用,टर्मिनल के साथ ब्राउज़र पेन,Paneles de navegador junto a tus terminales,Volets de navigateur à côté de vos terminaux,أجزاء متصفح بجانب طرفياتك,Painéis de navegador ao lado dos seus terminais,Панели браузера рядом с терминалами,Terminallerinizin yanında tarayıcı bölmeleri,Browser-Bereiche neben Ihren Terminals,Các ngăn trình duyệt cạnh terminal của bạn
+Feature13,712,Text,,"Command palette, pane tabs, pane zoom, scrollback search, clickable paths and image paste","명령 팔레트, 창 탭, 창 확대, 스크롤백 검색, 경로 클릭, 이미지 붙여넣기",コマンドパレット、ペイン タブ、ペインのズーム、スクロールバック検索、クリックできるパス、画像の貼り付け,命令面板、窗格标签页、窗格缩放、滚动缓冲区搜索、可点击路径和图像粘贴,"कमांड पैलेट, पेन टैब, पेन ज़ूम, स्क्रॉलबैक सर्च, क्लिक करने योग्य पाथ और इमेज पेस्ट","Paleta de comandos, pestañas de panel, zoom de panel, búsqueda en el historial de desplazamiento, rutas en las que hacer clic y pegado de imágenes","Palette de commandes, onglets de volet, zoom de volet, recherche dans l'historique, chemins cliquables et collage d'images",لوحة الأوامر وعلامات تبويب الأجزاء وتكبير الجزء والبحث في سجل التمرير والمسارات القابلة للنقر ولصق الصور,"Paleta de comandos, abas de painel, zoom de painel, busca no histórico de rolagem, caminhos clicáveis e colagem de imagens","Палитра команд, вкладки панелей, масштабирование панели, поиск по прокрутке, кликабельные пути и вставка изображений","Komut paleti, bölme sekmeleri, bölme yakınlaştırma, geçmişte arama, tıklanabilir yollar ve görsel yapıştırma","Befehlspalette, Bereichs-Tabs, Bereichs-Zoom, Suche im Verlauf, anklickbare Pfade und Bilder einfügen","Bảng lệnh, thẻ ngăn, phóng to ngăn, tìm kiếm trong nội dung cuộn, đường dẫn nhấp được và dán hình ảnh"
+Feature14,713,Text,,Review an agent's changes line by line and send comments back to it,에이전트의 변경 내용을 줄 단위로 검토하고 코멘트를 다시 전달,エージェントの変更を行単位でレビューし、コメントをエージェントに送り返せる,逐行审阅智能体的更改，并把评论发回给它,एजेंट के बदलावों की पंक्ति-दर-पंक्ति समीक्षा करें और टिप्पणियाँ उसे वापस भेजें,Revisa los cambios de un agente línea a línea y devuélvele tus comentarios,Examinez les modifications d'un agent ligne par ligne et renvoyez-lui vos commentaires,راجع تغييرات الوكيل سطرًا بسطر وأعد تعليقاتك إليه,Revise as alterações de um agente linha por linha e envie comentários de volta a ele,Проверяйте изменения агента построчно и отправляйте ему комментарии,Bir ajanın değişikliklerini satır satır inceleyin ve yorumları ona geri gönderin,Änderungen eines Agenten zeilenweise prüfen und Kommentare an ihn zurücksenden,Xem lại thay đổi của agent theo từng dòng và gửi nhận xét lại cho nó
+Feature15,714,Text,,Send one prompt to several agents in separate git worktrees and compare the results,프롬프트 하나를 여러 에이전트에게 보내 각자의 git worktree에서 실행하고 결과 비교,1つのプロンプトを複数のエージェントに送り、別々の git worktree で実行して結果を比較,把一条提示发给多个智能体，各自在独立的 git worktree 中运行，并比较结果,"एक प्रॉम्प्ट कई एजेंट को भेजें, हर एक अलग git worktree में चले, और नतीजों की तुलना करें","Envía un prompt a varios agentes, cada uno en su propio git worktree, y compara los resultados","Envoyez un prompt à plusieurs agents, chacun dans son propre git worktree, et comparez les résultats",أرسل موجّهًا واحدًا إلى عدة وكلاء، كلٌّ في git worktree منفصل، وقارن النتائج,"Envie um prompt para vários agentes, cada um em seu próprio git worktree, e compare os resultados","Отправьте один промпт нескольким агентам, каждому в своём git worktree, и сравните результаты","Tek bir istemi birkaç ajana, ayrı git worktree'lerde çalışacak şekilde gönderin ve sonuçları karşılaştırın","Einen Prompt an mehrere Agenten senden, jeder in einem eigenen git worktree, und die Ergebnisse vergleichen","Gửi một prompt tới nhiều agent, mỗi agent chạy trong git worktree riêng, rồi so sánh kết quả"
+Feature16,715,Text,,Use a different Claude Code or Codex account in each pane,창마다 다른 Claude Code·Codex 계정 사용,ペインごとに別の Claude Code / Codex アカウントを使用,每个窗格可使用不同的 Claude Code 或 Codex 账户,हर पेन में अलग Claude Code या Codex अकाउंट इस्तेमाल करें,Usa una cuenta distinta de Claude Code o Codex en cada panel,Utilisez un compte Claude Code ou Codex différent dans chaque volet,استخدم حساب Claude Code أو Codex مختلفًا في كل جزء,Use uma conta diferente do Claude Code ou do Codex em cada painel,Своя учётная запись Claude Code или Codex в каждой панели,Her bölmede farklı bir Claude Code veya Codex hesabı kullanın,In jedem Bereich ein anderes Claude Code- oder Codex-Konto verwenden,Dùng tài khoản Claude Code hoặc Codex khác nhau ở từng ngăn
+Feature17,716,Text,,Attention inbox: jump to the next agent waiting for you (Ctrl+Shift+U),알림함: 응답을 기다리는 다음 에이전트로 바로 이동(Ctrl+Shift+U),通知受信トレイ: 応答待ちの次のエージェントにジャンプ(Ctrl+Shift+U),提醒收件箱：一键跳转到下一个等待你的智能体（Ctrl+Shift+U）,अटेंशन इनबॉक्स: आपका इंतज़ार कर रहे अगले एजेंट पर जाएँ (Ctrl+Shift+U),Bandeja de atención: salta al siguiente agente que te espera (Ctrl+Shift+U),Boîte d'attention : passez à l'agent suivant qui vous attend (Ctrl+Shift+U),صندوق التنبيهات: انتقل إلى الوكيل التالي الذي ينتظرك (Ctrl+Shift+U),Caixa de atenção: pule para o próximo agente que espera por você (Ctrl+Shift+U),"Центр внимания: переход к следующему агенту, который ждёт вас (Ctrl+Shift+U)",Dikkat gelen kutusu: sizi bekleyen sonraki ajana atlayın (Ctrl+Shift+U),"Aufmerksamkeits-Posteingang: zum nächsten Agenten springen, der auf Sie wartet (Ctrl+Shift+U)",Hộp thư chú ý: nhảy tới agent tiếp theo đang chờ bạn (Ctrl+Shift+U)
+Feature18,717,Text,,"Optional activity log with turn summaries sent to Slack, Discord, Teams or a webhook","턴 요약을 Slack, Discord, Teams나 웹훅으로 보내는 작업 기록(선택)",ターンの要約を Slack、Discord、Teams、Webhook に送信できるアクティビティ ログ(オプション),可选的活动日志，将每轮摘要发送到 Slack、Discord、Teams 或 webhook,"वैकल्पिक एक्टिविटी लॉग, टर्न सारांश Slack, Discord, Teams या वेबहुक पर भेजें","Registro de actividad opcional con resúmenes de turno enviados a Slack, Discord, Teams o un webhook","Journal d'activité facultatif avec résumés de tour envoyés à Slack, Discord, Teams ou un webhook",سجل نشاط اختياري مع ملخصات الدورات المرسلة إلى Slack أو Discord أو Teams أو webhook,"Registro de atividade opcional com resumos de turno enviados ao Slack, Discord, Teams ou a um webhook","Необязательный журнал активности: сводки ходов уходят в Slack, Discord, Teams или webhook","Tur özetlerini Slack, Discord, Teams veya webhook'a gönderen isteğe bağlı etkinlik günlüğü","Optionales Aktivitätsprotokoll mit Rundenzusammenfassungen an Slack, Discord, Teams oder einen Webhook","Nhật ký hoạt động tùy chọn, gửi bản tóm tắt từng lượt tới Slack, Discord, Teams hoặc webhook"
+Feature19,718,Text,,"Per-workspace notes, status bar, custom themes and keyboard shortcuts","워크스페이스별 메모, 상태 표시줄, 테마와 단축키 사용자 지정",ワークスペースごとのメモ、ステータス バー、カスタム テーマ、キーボード ショートカット,每个工作区独立的备忘笔记、状态栏、自定义主题和键盘快捷键,"हर वर्कस्पेस के लिए अलग नोट्स, स्टेटस बार, कस्टम थीम और कीबोर्ड शॉर्टकट","Notas por espacio de trabajo, barra de estado, temas personalizados y atajos de teclado","Notes par espace de travail, barre d'état, thèmes personnalisés et raccourcis clavier",ملاحظات لكل مساحة عمل وشريط حالة وسمات مخصصة واختصارات لوحة مفاتيح,"Notas por espaço de trabalho, barra de status, temas personalizados e atalhos de teclado","Заметки для каждого рабочего пространства, строка состояния, свои темы и сочетания клавиш","Çalışma alanı başına notlar, durum çubuğu, özel temalar ve klavye kısayolları","Notizen pro Arbeitsbereich, Statusleiste, eigene Designs und Tastenkombinationen","Ghi chú theo từng không gian làm việc, thanh trạng thái, giao diện tùy chỉnh và phím tắt"
+Feature20,719,Text,,"No sign-up, no analytics, no telemetry. Available in 13 languages","가입·분석·원격 측정 없음, 13개 언어 지원",サインアップ不要、分析なし、テレメトリなし。13 言語に対応,无需注册，无数据分析，无遥测。支持 13 种语言,"कोई साइन-अप नहीं, कोई एनालिटिक्स नहीं, कोई टेलीमेट्री नहीं। 13 भाषाओं में उपलब्ध","Sin registro, sin analíticas, sin telemetría. Disponible en 13 idiomas","Sans inscription, sans analyse, sans télémétrie. Disponible en 13 langues",بلا تسجيل ولا تحليلات ولا قياس عن بُعد. متاح بـ 13 لغة,"Sem cadastro, sem análises, sem telemetria. Disponível em 13 idiomas","Без регистрации, аналитики и телеметрии. Доступно на 13 языках","Kayıt yok, analiz yok, telemetri yok. 13 dilde kullanılabilir","Keine Anmeldung, keine Analysen, keine Telemetrie. In 13 Sprachen verfügbar","Không cần đăng ký, không phân tích, không thu thập dữ liệu từ xa. Có sẵn bằng 13 ngôn ngữ"
+MinimumHardwareReq1,800,Text,,,,,,,,,,,,,,
+MinimumHardwareReq2,801,Text,,,,,,,,,,,,,,
+MinimumHardwareReq3,802,Text,,,,,,,,,,,,,,
+MinimumHardwareReq4,803,Text,,,,,,,,,,,,,,
+MinimumHardwareReq5,804,Text,,,,,,,,,,,,,,
+MinimumHardwareReq6,805,Text,,,,,,,,,,,,,,
+MinimumHardwareReq7,806,Text,,,,,,,,,,,,,,
+MinimumHardwareReq8,807,Text,,,,,,,,,,,,,,
+MinimumHardwareReq9,808,Text,,,,,,,,,,,,,,
+MinimumHardwareReq10,809,Text,,,,,,,,,,,,,,
+MinimumHardwareReq11,810,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq1,850,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq2,851,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq3,852,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq4,853,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq5,854,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq6,855,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq7,856,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq8,857,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq9,858,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq10,859,Text,,,,,,,,,,,,,,
+RecommendedHardwareReq11,860,Text,,,,,,,,,,,,,,
+SearchTerm1,900,Text,,,,,,,,,,,,,,
+SearchTerm2,901,Text,,,,,,,,,,,,,,
+SearchTerm3,902,Text,,,,,,,,,,,,,,
+SearchTerm4,903,Text,,,,,,,,,,,,,,
+SearchTerm5,904,Text,,,,,,,,,,,,,,
+SearchTerm6,905,Text,,,,,,,,,,,,,,
+SearchTerm7,906,Text,,,,,,,,,,,,,,
+TrailerToPlayAtTopOfListing,999,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer1,1000,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer2,1001,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer3,1002,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer4,1003,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer5,1004,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer6,1005,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer7,1006,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer8,1007,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer9,1008,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer10,1009,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer11,1010,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer12,1011,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer13,1012,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer14,1013,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+Trailer15,1014,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerTitle1,1020,Text,,,,,,,,,,,,,,
+TrailerTitle2,1021,Text,,,,,,,,,,,,,,
+TrailerTitle3,1022,Text,,,,,,,,,,,,,,
+TrailerTitle4,1023,Text,,,,,,,,,,,,,,
+TrailerTitle5,1024,Text,,,,,,,,,,,,,,
+TrailerTitle6,1025,Text,,,,,,,,,,,,,,
+TrailerTitle7,1026,Text,,,,,,,,,,,,,,
+TrailerTitle8,1027,Text,,,,,,,,,,,,,,
+TrailerTitle9,1028,Text,,,,,,,,,,,,,,
+TrailerTitle10,1029,Text,,,,,,,,,,,,,,
+TrailerTitle11,1030,Text,,,,,,,,,,,,,,
+TrailerTitle12,1031,Text,,,,,,,,,,,,,,
+TrailerTitle13,1032,Text,,,,,,,,,,,,,,
+TrailerTitle14,1033,Text,,,,,,,,,,,,,,
+TrailerTitle15,1034,Text,,,,,,,,,,,,,,
+TrailerThumbnail1,1040,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail2,1041,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail3,1042,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail4,1043,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail5,1044,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail6,1045,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail7,1046,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail8,1047,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail9,1048,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail10,1049,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail11,1050,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail12,1051,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail13,1052,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail14,1053,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerThumbnail15,1054,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption1,1055,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption2,1056,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption3,1057,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption4,1058,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption5,1059,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption6,1060,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption7,1061,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption8,1062,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption9,1063,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption10,1064,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption11,1065,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption12,1066,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption13,1067,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption14,1068,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerClosedCaption15,1069,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription1,1070,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription2,1071,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription3,1072,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription4,1073,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription5,1074,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription6,1075,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription7,1076,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription8,1077,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription9,1078,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription10,1079,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription11,1080,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription12,1081,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription13,1082,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription14,1083,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+TrailerAudioDescription15,1084,Relative path (or URL to file in Partner Center),,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,
