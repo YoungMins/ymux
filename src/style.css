@@ -4963,7 +4963,9 @@ body,
 .office-hero__class:hover { filter: brightness(1.08); }
 .office-hero__class[aria-checked="true"] { box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px #f5c542; }
 
-/* On the floor: a level badge by the lead, and an aura at tier 5. */
+/* On the floor: a level badge by the lead, an aura from the aura tier
+   (Lv 75) and, at the legendary tier (Lv 100), a rainbow glow with a star
+   circling the hero. */
 .office-char__lv {
   position: absolute;
   right: -10px;
@@ -4984,6 +4986,43 @@ body,
   0% { filter: drop-shadow(0 0 2px #ffe066) drop-shadow(0 0 4px #f5c542); }
   50% { filter: drop-shadow(0 0 1px #ffe066) drop-shadow(0 0 2px #f5c542); }
 }
+.office-char--legend .office-sprite,
+.office-hero--legend .office-hero__avatar .office-sprite { animation: office-legend 2.4s steps(6) infinite; }
+@keyframes office-legend {
+  0% { filter: drop-shadow(0 0 2px #ff6b6b) drop-shadow(0 0 4px #ffd93d); }
+  33% { filter: drop-shadow(0 0 2px #6bff95) drop-shadow(0 0 4px #4fc3ff); }
+  66% { filter: drop-shadow(0 0 2px #b46bff) drop-shadow(0 0 4px #ff6bd5); }
+  100% { filter: drop-shadow(0 0 2px #ff6b6b) drop-shadow(0 0 4px #ffd93d); }
+}
+/* Sparkles (aura and up) and the orbiting star (legendary). */
+.office-char--aura::after,
+.office-hero--aura .office-hero__avatar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  width: 3px;
+  height: 3px;
+  background: #fff6c0;
+  box-shadow: -20px 6px 0 #ffe066, 18px -4px 0 #fff6c0, -12px -14px 0 #ffe066, 14px 16px 0 #fff6c0;
+  animation: office-sparkle 0.9s steps(2) infinite;
+  pointer-events: none;
+}
+@keyframes office-sparkle { 50% { opacity: 0.2; } }
+.office-char--legend::after,
+.office-hero--legend .office-hero__avatar::after {
+  width: 5px;
+  height: 5px;
+  background: #ffd93d;
+  box-shadow: 0 0 0 1px #2a1f1a;
+  animation: office-orbit 1.6s steps(8) infinite;
+}
+@keyframes office-orbit {
+  0% { transform: translate(-50%, -50%) rotate(0deg) translateX(26px) rotate(0deg); }
+  100% { transform: translate(-50%, -50%) rotate(360deg) translateX(26px) rotate(-360deg); }
+}
+.office-hero__avatar { position: relative; }
+
 /* Without a tall hat the canvas's headroom is empty: the bubble sits lower. */
 .office-char:not(.office-char--hat) .office-char__bubble { bottom: calc(100% - 12px); }
 

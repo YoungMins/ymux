@@ -2,11 +2,13 @@
 // whose hero form is "human" (`heroModel`). Parts are placed as fill
 // pixels and the outline is traced around the whole figure afterwards, so a
 // pose is just where the arms, legs and eyes go. The class outfit and its
-// tiers mirror the slimes' gear (`slimeArt.gearGrid`): starter gear, full
-// outfit, a jewel, gold (a palette swap in `sprites.ts`), wings.
+// tiers mirror the slimes' gear (`slimeArt.gearGrid`, steps in `heroTiers`):
+// starter gear, full outfit, a jewel, the class item in hand, a cape, gold
+// (a palette swap in `sprites.ts`), wings, an aura and a legendary crown.
 
-import { SLIME_H, SLIME_W } from "./slimeArt";
+import { BIG_CROWN, CAPE_KEY, ITEMS, SLIME_H, SLIME_W } from "./slimeArt";
 import type { GearClass } from "./slimeArt";
+import { TIER } from "./heroTiers";
 
 export type Arms = "down" | "raise" | "type" | "typeUp" | "up" | "mug" | "sip" | "swingA" | "swingB";
 export type Legs = "stand" | "stepA" | "stepB";
@@ -54,7 +56,7 @@ const CHIN = 12;
 
 /// Robes reach down over the legs.
 function robed(cls: GearClass, tier: number): boolean {
-  return tier >= 2 && (cls === "mage" || cls === "cleric");
+  return tier >= TIER.OUTFIT && (cls === "mage" || cls === "cleric");
 }
 
 export function humanGrid(pose: HumanPose, cls: GearClass, tier: number): { back: string[]; front: string[] } {
@@ -73,11 +75,12 @@ export function humanGrid(pose: HumanPose, cls: GearClass, tier: number): { back
   if (robed(cls, tier)) for (let y = 16; y <= 20; y++) hline(g, 7, 12, y, y === 20 ? "T" : "t");
 
   // Arms: [x, y] of sleeve pixels and of the hand.
-  const arm = (cells: [number, number][], hand: [number, number]) => {
+  const arm = (cells: [number, number][], hand: [number, number]): [number, number] => {
     for (const [x, y] of cells) put(g, x, y, "T");
     put(g, hand[0], hand[1], "s");
+    return hand;
   };
-  const left = (a: Arms) => {
+  const left = (a: Arms): [number, number] => {
     switch (a) {
       case "up":
         return arm([[6, 13], [5, 12], [5, 11]], [5, 10]);
@@ -93,7 +96,7 @@ export function humanGrid(pose: HumanPose, cls: GearClass, tier: number): { back
         return arm([[6, 13], [6, 14], [6, 15]], [6, 16]);
     }
   };
-  const right = (a: Arms) => {
+  const right = (a: Arms): [number, number] => {
     switch (a) {
       case "up":
       case "raise":
@@ -115,7 +118,7 @@ export function humanGrid(pose: HumanPose, cls: GearClass, tier: number): { back
     }
   };
   left(pose.arms);
-  right(pose.arms);
+  const hand = right(pose.arms);
 
   // The head: skin, rounded corners, hair over the top and down the sides.
   for (let y = HEAD_TOP; y <= 11; y++) {
@@ -152,19 +155,31 @@ export function humanGrid(pose: HumanPose, cls: GearClass, tier: number): { back
     hline(g, mx, mx + 1, my + 1, "U");
   }
 
-  gear(g, back, cls, tier);
+  gear(g, back, cls, tier, pose.arms === "mug" || pose.arms === "sip" ? null : hand);
   outline(g);
   outline(back);
   return { back: rows(back), front: rows(g) };
 }
 
 /// The class outfit by tier, drawn over the figure before it is outlined.
-function gear(g: Grid, back: Grid, cls: GearClass, tier: number): void {
+function gear(g: Grid, back: Grid, cls: GearClass, tier: number, hand: [number, number] | null): void {
   if (tier <= 0) return;
-  const jewel = tier >= 3;
+  const jewel = tier >= TIER.JEWEL;
+  // The class item, held beside the right hand (not while it holds a mug):
+  // gripped two rows from its foot, or hanging from the hand (the fish).
+  if (tier >= TIER.ITEM && hand) {
+    const item = ITEMS[cls];
+    const w = item[0].length;
+    const [hx, hy] = hand;
+    const x0 = cls === "cat" ? hx : hx + 1 - Math.floor(w / 2);
+    const y0 = cls === "cat" ? hy + 1 : hy - (item.length - 2);
+    item.forEach((r, i) => [...r].forEach((k, j) => k !== "." && put(g, x0 + j, y0 + i, k)));
+  }
+  // A cape behind the body, showing at its sides and between the legs.
+  if (tier >= TIER.CAPE) for (let y = 13; y <= 20; y++) hline(back, 5, 14, y, CAPE_KEY);
   switch (cls) {
     case "warrior":
-      if (tier === 1) {
+      if (tier === TIER.STARTER) {
         hline(g, 6, 13, HEAD_TOP + 2, "r");
         put(g, 14, HEAD_TOP + 2, "r");
         put(g, 15, HEAD_TOP + 3, "R");
@@ -188,7 +203,7 @@ function gear(g: Grid, back: Grid, cls: GearClass, tier: number): void {
       break;
     case "mage": {
       // A pointed hat (tall from tier 2, with a star) and, from tier 2, a robe.
-      const tall = tier >= 2;
+      const tall = tier >= TIER.OUTFIT;
       hline(g, 5, 14, HEAD_TOP + 1, "B");
       hline(g, 7, 12, HEAD_TOP, "b");
       hline(g, 8, 11, HEAD_TOP - 1, "b");
@@ -202,7 +217,7 @@ function gear(g: Grid, back: Grid, cls: GearClass, tier: number): void {
       break;
     }
     case "rogue":
-      if (tier === 1) {
+      if (tier === TIER.STARTER) {
         hline(g, 6, 13, HEAD_TOP + 2, "n");
         put(g, 5, HEAD_TOP + 2, "n");
         put(g, 4, HEAD_TOP + 3, "N");
@@ -222,7 +237,7 @@ function gear(g: Grid, back: Grid, cls: GearClass, tier: number): void {
     case "cleric":
       // A flower circlet, then a halo; a white robe from tier 2.
       for (let x = 6; x <= 13; x++) put(g, x, HEAD_TOP + 1, (x - 6) % 3 === 1 ? "l" : "g");
-      if (tier >= 2) {
+      if (tier >= TIER.OUTFIT) {
         // A ring floating over the head.
         hline(g, 8, 11, 0, "y");
         put(g, 7, 1, "y");
@@ -239,12 +254,12 @@ function gear(g: Grid, back: Grid, cls: GearClass, tier: number): void {
       put(back, 15, 15, "h");
       put(back, 16, 14, "h");
       put(back, 16, 13, "h");
-      if (tier >= 2) {
+      if (tier >= TIER.OUTFIT) {
         hline(g, 7, 12, 13, "r");
         put(g, 9, 13, jewel ? "j" : "y");
         put(g, 10, 13, "y");
       }
-      if (tier >= 4) {
+      if (tier >= TIER.GOLD && tier < TIER.LEGEND) {
         hline(g, 8, 11, 1, "y");
         put(g, 8, 0, "y");
         put(g, 10, 0, "y");
@@ -252,11 +267,18 @@ function gear(g: Grid, back: Grid, cls: GearClass, tier: number): void {
       }
       break;
   }
-  if (tier >= 5 || (tier >= 4 && cls === "cleric")) {
+  if (tier >= TIER.WINGS) {
     for (const [x, y] of [[3, 12], [2, 13], [3, 13], [1, 14], [2, 14], [3, 14], [2, 15], [3, 15]] as const) {
       put(back, x, y, "u");
       put(back, SLIME_W - 1 - x, y, "u");
     }
+  }
+  // Legendary: a big crown; a mage's hat is ringed with stars instead, and
+  // a cleric's halo is jewelled.
+  if (tier >= TIER.LEGEND) {
+    if (cls === "mage") for (const [x, y] of [[4, 2], [15, 1], [16, 5]] as const) put(g, x, y, "y");
+    else if (cls === "cleric") hline(g, 9, 10, 0, "j");
+    else BIG_CROWN.forEach((r, i) => [...r].forEach((k, j) => k !== "." && put(g, 6 + j, i, k)));
   }
 }
 

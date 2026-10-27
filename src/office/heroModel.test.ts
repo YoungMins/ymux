@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TOKENS_PER_LEVEL, accountXp, levelOf, levelUps, nextTierLevel, tierOf } from "./heroModel";
+import { TIER, TIER_LEVELS, TOKENS_PER_LEVEL, accountXp, levelOf, levelUps, nextTierLevel, tierOf } from "./heroModel";
 import type { UsageRow } from "../tokenmonitor/model";
 
 describe("levels", () => {
@@ -16,10 +16,19 @@ describe("levels", () => {
   });
 
   it("changes the look at the tier levels", () => {
-    expect([0, 1, 4, 5, 9, 10, 24, 25, 49, 50, 999].map(tierOf)).toEqual([0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]);
+    expect([0, 1, 2, 3, 5, 9, 10, 20, 30, 49, 50, 75, 99, 100, 999].map(tierOf)).toEqual([
+      0, 1, 1, 2, 3, 3, 4, 5, 6, 6, 7, 8, 8, 9, 9,
+    ]);
     expect(nextTierLevel(0)).toBe(1);
     expect(nextTierLevel(7)).toBe(10);
-    expect(nextTierLevel(50)).toBeNull();
+    expect(nextTierLevel(60)).toBe(75);
+    expect(nextTierLevel(100)).toBeNull();
+  });
+
+  it("starts the tiers at increasing levels, one per step", () => {
+    expect(TIER_LEVELS).toHaveLength(Object.keys(TIER).length + 1);
+    for (let i = 1; i < TIER_LEVELS.length; i++) expect(TIER_LEVELS[i]).toBeGreaterThan(TIER_LEVELS[i - 1]);
+    for (const [name, tier] of Object.entries(TIER)) expect(tierOf(TIER_LEVELS[tier]), name).toBe(tier);
   });
 });
 

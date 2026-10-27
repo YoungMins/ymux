@@ -7,6 +7,7 @@
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
 import { humanBlinkGrid, humanGrid, type HumanPose } from "./humanArt";
+import { TIER } from "./heroTiers";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
 import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, gearGrid, sproutGrid, tieGrid, type Body, type Eyes, type GearClass } from "./slimeArt";
 
@@ -47,9 +48,25 @@ const GEAR: Palette = {
   j: "#4fe0e8",
   l: "#ff8fc0",
   i: "#ffb3c6",
+  d: "#8a5a34",
+  D: "#6a4024",
 };
-/// Tier 4 and up: the metal and trim turn gold.
+/// From the gold tier: the metal and trim turn gold.
 const GOLD: Palette = { a: "#f5c542", A: "#c8962a", B: "#c8962a", N: "#c8962a" };
+
+/// The sash (slimes) or cape (humans) colour of each class.
+const CAPES: Record<GearClass, string> = {
+  warrior: "#c4402f",
+  mage: "#7a4fd0",
+  rogue: "#2f2a40",
+  cleric: "#f5e6a8",
+  cat: "#ff8fc0",
+};
+
+/// The gear colours for `hero`: gold from its tier, its class's cape.
+function heroPalette(hero: HeroLook): Palette {
+  return { ...GEAR, ...(hero.tier >= TIER.GOLD ? GOLD : {}), v: CAPES[hero.cls] };
+}
 
 /// What a lead wears for its account (`heroModel`).
 export interface HeroLook {
@@ -75,8 +92,7 @@ function humanSvg(kind: string, hero: HeroLook): string {
   const tunic = TUNICS[hero.tier >= 1 ? hero.cls : "plain"];
   const pal: Palette = {
     ...BASE,
-    ...GEAR,
-    ...(hero.tier >= 4 ? GOLD : {}),
+    ...heroPalette(hero),
     s: "#ffd9b8",
     S: "#e8b48e",
     h: jelly.c,
@@ -179,7 +195,7 @@ export const PX = 3;
 export function characterSvg(kind: string, role: "lead" | "sub" | "manager", hero?: HeroLook): string {
   if (hero && role === "lead" && hero.form === "human") return humanSvg(kind, hero);
   const jelly = role === "manager" ? JELLIES.manager : (JELLIES[kind] ?? FALLBACK);
-  const pal: Palette = { ...BASE, ...GEAR, ...(hero && hero.tier >= 4 ? GOLD : {}), ...jelly };
+  const pal: Palette = { ...BASE, ...(hero ? heroPalette(hero) : GEAR), ...jelly };
   const gear = (body: Body) => (hero && role === "lead" ? gearGrid(body, hero.cls, hero.tier) : null);
   const frame = (body: Body, eyes: Eyes, opts: { mug?: boolean; blink?: boolean } = {}): string => {
     const g = gear(body);

@@ -43,6 +43,7 @@ import {
   saveHeroForm,
   saveSeenLevels,
   tierOf,
+  TIER,
   type HeroClass,
   type HeroForm,
 } from "./heroModel";
@@ -869,9 +870,10 @@ export class OfficeView {
       el.querySelector("svg.office-sprite")?.remove();
       el.insertAdjacentHTML("afterbegin", characterSvg(c.kind, c.role, c.hero));
     }
-    el.classList.toggle("office-char--hat", !!c.hero && (c.hero.tier >= 2 || c.hero.form === "human"));
+    el.classList.toggle("office-char--hat", !!c.hero && (c.hero.tier >= TIER.OUTFIT || c.hero.form === "human"));
     el.classList.toggle("office-char--human", c.hero?.form === "human");
-    el.classList.toggle("office-char--aura", !!c.hero && c.hero.tier >= 5);
+    el.classList.toggle("office-char--aura", !!c.hero && c.hero.tier >= TIER.AURA);
+    el.classList.toggle("office-char--legend", !!c.hero && c.hero.tier >= TIER.LEGEND);
     let badge = el.querySelector<HTMLElement>(".office-char__lv");
     if (c.hero) {
       if (!badge) {

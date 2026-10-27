@@ -189,9 +189,12 @@ Usage view (Claude Code and Codex together) is its experience, one level per
 each account's level, XP bar, class (warrior, mage, rogue, cleric or cat) and
 look: a slime or a human adventurer, whose hair takes the agent's colour.
 Agents on the floor wear their account's class gear and a level badge, and the
-gear grows with the level: starter gear from Lv 1, full gear from Lv 5, a jewel
-from Lv 10, gold from Lv 25, and wings and a glowing aura from Lv 50. A level-up
-is announced with a banner while the office is open.
+gear grows with the level in ten steps: plain clothes at Lv 0, starter gear at
+Lv 1, the full outfit at Lv 3, a jewel at Lv 5, the class item (sword, staff,
+dagger, holy staff, fish) at Lv 10, a cape (a sash on slimes) at Lv 20, gold at
+Lv 30, wings at Lv 50, a glowing aura with sparkles at Lv 75 and, at Lv 100, a
+legendary crown with a rainbow glow and a star in orbit. A level-up is announced
+with a banner while the office is open.
 
 - **Finished work** — the agent does a victory hop with confetti, and a flag
   goes up outside its room until you open that pane.

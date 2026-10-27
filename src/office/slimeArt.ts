@@ -6,6 +6,8 @@
 // landing of a hop, the down-beat of typing), `stretch` (tall: the top of a
 // hop, "pick me!") and `melt` (asleep, flat).
 
+import { TIER } from "./heroTiers";
+
 export const SLIME_W = 20;
 export const SLIME_H = 22;
 
@@ -170,10 +172,11 @@ export const MUG: readonly string[] = [
 ];
 
 // ── Hero gear ─────────────────────────────────────────────────────────────
-// What an account's hero wears (`heroModel`): its class's gear, bigger from
-// tier 2, jewelled from tier 3; tier 4 turns metal and trim gold (a palette
-// swap in `sprites.ts`; cats get a crown, clerics wings) and tier 5 adds
-// wings for everyone (and an aura, in CSS). `back` is drawn behind the body.
+// What an account's hero wears (`heroModel`), step by step (`heroTiers`):
+// the class's starter gear, its full outfit, a jewel, the class item, a sash,
+// gold (a palette swap in `sprites.ts`), wings, then an aura and the
+// legendary crown (the glow and the orbiting star are CSS). `back` is drawn
+// behind the body.
 
 export type GearClass = "warrior" | "mage" | "rogue" | "cleric" | "cat";
 
@@ -189,6 +192,18 @@ function blitOn(g: string[][], rows: readonly string[], y: number, dx = 0): void
       if (k !== "." && xx >= 0 && xx < SLIME_W) g[yy][xx] = k;
     });
   });
+}
+
+/// `rows` grown by a pixel on every side with an outline ("o") traced
+/// around what is drawn (every empty pixel with a drawn neighbour).
+export function traceOutline(rowsIn: readonly string[]): string[] {
+  const w = rowsIn[0].length + 2;
+  const g = [".".repeat(w), ...rowsIn.map((r) => `.${r}.`), ".".repeat(w)].map((r) => [...r]);
+  const drawn = (x: number, y: number) => y >= 0 && y < g.length && x >= 0 && x < w && g[y][x] !== "." && g[y][x] !== "*";
+  for (let y = 0; y < g.length; y++)
+    for (let x = 0; x < w; x++)
+      if (g[y][x] === "." && (drawn(x - 1, y) || drawn(x + 1, y) || drawn(x, y - 1) || drawn(x, y + 1))) g[y][x] = "*";
+  return g.map((r) => r.join("").replace(/\*/g, "o"));
 }
 
 /// Interior columns of `body`'s row `i` (inside the outline).
@@ -211,15 +226,28 @@ const MAGE_HAT_TALL = [
 const HALO = [".yyyyyy.", "y......y", ".yyyyyy."];
 const CAT_EARS = [".o........o.", "oco......oco", "ocio....oico"];
 const CROWN = ["y.yy.y", "yyJyyy", "YYYYYY"];
+export const BIG_CROWN = ["y..y..y", "yy.y.yy", "yyyjyyy", "YYYYYYY"];
 const WING = ["..ooo", ".ouuu", "ouuuo", "ouuo.", ".oo.."];
+
+/// The class items, fill only (outlined when drawn), held upright.
+export const ITEMS: Readonly<Record<GearClass, readonly string[]>> = {
+  warrior: [".a.", ".a.", ".a.", ".a.", ".A.", "yyy", ".d.", ".d."],
+  mage: [".j.", "jjj", ".j.", ".d.", ".d.", ".d.", ".d.", ".d.", ".d."],
+  rogue: [".a.", ".a.", ".A.", "yyy", ".n."],
+  cleric: [".y.", "yyy", ".y.", ".y.", ".d.", ".d.", ".d.", ".d."],
+  cat: ["a.aaa.", "aaaaea", "a.aaa."],
+};
+
+/// The class colour of a sash or cape, as a gear palette key.
+export const CAPE_KEY = "v";
 
 export function gearGrid(body: Body, cls: GearClass, tier: number): { back: string[]; front: string[] } {
   const back = blank();
   const g = blank();
   if (tier <= 0) return { back: rows(back), front: rows(g) };
   const { top, widths } = SHAPES[body];
-  // `J` marks where a jewel goes from tier 3; `plain` fills it before.
-  const gem = (art: readonly string[], plain: string): string[] => art.map((r) => r.replace(/J/g, tier >= 3 ? "j" : plain));
+  // `J` marks where a jewel goes from the jewel tier; `plain` fills it before.
+  const gem = (art: readonly string[], plain: string): string[] => art.map((r) => r.replace(/J/g, tier >= TIER.JEWEL ? "j" : plain));
   const band = (y: number, k: string, tail: 1 | -1) => {
     const i = y - top;
     if (i < 0 || i >= widths.length) return;
@@ -242,9 +270,19 @@ export function gearGrid(body: Body, cls: GearClass, tier: number): { back: stri
       else for (const x of [a, a + 1, b - 1, b]) g[y][x] = fillKey;
     }
   };
+  const bottom = top + widths.length - 1;
+
+  // The class item, behind the body on its right, sticking up past the
+  // shoulder (the cat carries its fish in front).
+  if (tier >= TIER.ITEM) {
+    const item = traceOutline(ITEMS[cls]);
+    if (cls === "cat") blitOn(g, item, bottom - 1, 7);
+    else blitOn(back, item, bottom - 2, 8);
+  }
+
   switch (cls) {
     case "warrior":
-      if (tier === 1) band(top + 2, "r", 1);
+      if (tier === TIER.STARTER) band(top + 2, "r", 1);
       else {
         cap("a", "A", 3);
         // A nose guard and a plume.
@@ -254,21 +292,21 @@ export function gearGrid(body: Body, cls: GearClass, tier: number): { back: stri
         g[top - 2][11] = "r";
         g[top - 3][11] = "R";
         g[top - 3][12] = "r";
-        if (tier >= 3) {
+        if (tier >= TIER.JEWEL) {
           g[top + 1][9] = "j";
           g[top + 1][10] = "j";
         }
       }
       break;
     case "mage":
-      blitOn(g, tier === 1 ? MAGE_HAT : gem(MAGE_HAT_TALL, "B"), top);
+      blitOn(g, tier === TIER.STARTER ? MAGE_HAT : gem(MAGE_HAT_TALL, "B"), top);
       break;
     case "rogue":
-      if (tier === 1) band(top + 2, "n", -1);
+      if (tier === TIER.STARTER) band(top + 2, "n", -1);
       else {
         // A hood: a cap with a trim, and cloth down both sides of the face.
         cap("n", "N", 3, 6);
-        if (tier >= 3) g[top + 2][10] = "j";
+        if (tier >= TIER.JEWEL) g[top + 2][10] = "j";
       }
       break;
     case "cleric":
@@ -277,12 +315,12 @@ export function gearGrid(body: Body, cls: GearClass, tier: number): { back: stri
         const [a, b] = interior(body, 2);
         for (let x = a; x <= b; x++) g[top + 2][x] = (x - a) % 3 === 1 ? "l" : "g";
       }
-      if (tier >= 2) blitOn(g, HALO, top - 2);
-      if (tier >= 3) g[top + 2][10] = "j";
+      if (tier >= TIER.OUTFIT) blitOn(g, HALO, top - 2);
+      if (tier >= TIER.JEWEL) g[top + 2][10] = "j";
       break;
     case "cat": {
       blitOn(g, CAT_EARS, top);
-      // Whiskers, and from tier 2 a collar with a bell.
+      // Whiskers, and from the outfit tier a collar with a bell.
       const wy = eyeRow(body) + 1;
       const i = wy - top;
       if (i >= 0 && i < widths.length) {
@@ -290,21 +328,44 @@ export function gearGrid(body: Body, cls: GearClass, tier: number): { back: stri
         g[wy][a] = "e";
         g[wy][b] = "e";
       }
-      if (tier >= 2) {
-        const cy = top + widths.length - 3;
+      if (tier >= TIER.OUTFIT) {
+        const cy = bottom - 2;
         const [a, b] = interior(body, widths.length - 3);
         for (let x = a + 1; x < b; x++) g[cy][x] = "r";
-        g[cy][9] = tier >= 3 ? "j" : "y";
+        g[cy][9] = tier >= TIER.JEWEL ? "j" : "y";
         g[cy][10] = "y";
       }
-      if (tier >= 4) blitOn(g, gem(CROWN, "y"), top - 2);
+      if (tier >= TIER.GOLD && tier < TIER.LEGEND) blitOn(g, gem(CROWN, "y"), top - 2);
       break;
     }
   }
-  if (tier >= 5 || (tier >= 4 && cls === "cleric")) {
+
+  // A sash across the body's lower half, with a gold buckle; a cat, whose
+  // collar sits there, wears a bow by its ear.
+  if (tier >= TIER.CAPE && cls === "cat") {
+    g[top - 2][5] = CAPE_KEY;
+    g[top - 1][6] = "y";
+    g[top - 2][7] = CAPE_KEY;
+    g[top][5] = CAPE_KEY;
+    g[top][7] = CAPE_KEY;
+  } else if (tier >= TIER.CAPE) {
+    const sy = Math.min(eyeRow(body) + 3, bottom - 2);
+    const [a, b] = interior(body, sy - top);
+    for (let x = a; x <= b; x++) g[sy][x] = CAPE_KEY;
+    g[sy][9] = "y";
+    g[sy][10] = "y";
+  }
+  if (tier >= TIER.WINGS) {
     const wy = top + 4;
     blitOn(back, WING, wy, -7);
     blitOn(back, WING.map((r) => [...r].reverse().join("")), wy, 8);
+  }
+  // Legendary: a big crown (over the helmet, hood or ears); a mage's hat is
+  // ringed with stars instead, and a cleric's halo is jewelled.
+  if (tier >= TIER.LEGEND) {
+    if (cls === "mage") for (const [x, y] of [[4, top - 2], [15, top - 4], [6, top - 6]] as const) g[y][x] = "y";
+    else if (cls === "cleric") g[top - 4][9] = g[top - 4][10] = "j";
+    else blitOn(g, traceOutline(BIG_CROWN), top - 1);
   }
   return { back: rows(back), front: rows(g) };
 }

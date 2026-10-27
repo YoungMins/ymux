@@ -5,7 +5,7 @@
 
 import { getLang, t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
-import { HERO_CLASSES, HERO_FORMS, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass, type HeroForm } from "./heroModel";
+import { HERO_CLASSES, HERO_FORMS, TIER, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass, type HeroForm } from "./heroModel";
 import { characterSvg } from "./sprites";
 
 export interface HeroRow {
@@ -102,7 +102,7 @@ export class HeroPanel {
     const lv = levelOf(r.tokens);
     const tier = tierOf(lv.level);
     const el = document.createElement("div");
-    el.className = `office-hero${tier >= 5 ? " office-hero--aura" : ""}`;
+    el.className = `office-hero${tier >= TIER.AURA ? " office-hero--aura" : ""}${tier >= TIER.LEGEND ? " office-hero--legend" : ""}`;
 
     const avatar = document.createElement("div");
     avatar.className = "office-hero__avatar";
@@ -153,7 +153,7 @@ export class HeroPanel {
       b.setAttribute("role", "radio");
       b.setAttribute("aria-checked", String(cls === r.cls));
       b.title = t(`office.class.${cls}`);
-      b.innerHTML = heroAvatar(cls, Math.max(tier, 2), r.form);
+      b.innerHTML = heroAvatar(cls, Math.max(tier, TIER.OUTFIT), r.form);
       b.addEventListener("click", () => this.onPick(r.account, cls));
       pick.appendChild(b);
     }

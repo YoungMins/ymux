@@ -6,16 +6,14 @@
 // like the office theme).
 
 import type { UsageRow } from "../tokenmonitor/model";
+import { TIER_LEVELS, type Tier } from "./heroTiers";
 
 export const TOKENS_PER_LEVEL = 100_000_000;
 
 export const HERO_CLASSES = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
 export type HeroClass = (typeof HERO_CLASSES)[number];
 
-/// Levels where the hero's look changes: plain, starter gear, full gear,
-/// jewelled gear, golden gear, golden gear with an aura.
-export const TIER_LEVELS = [0, 1, 5, 10, 25, 50] as const;
-export type Tier = 0 | 1 | 2 | 3 | 4 | 5;
+export { TIER, TIER_LEVELS, type Tier } from "./heroTiers";
 
 export interface Level {
   level: number;

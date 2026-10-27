@@ -4,6 +4,7 @@ import * as themeArt from "./themeArt";
 import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
 import { characterSvg, deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
 import { humanGrid } from "./humanArt";
+import { TIER } from "./heroTiers";
 import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, gearGrid, sproutGrid, tieGrid } from "./slimeArt";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
@@ -143,12 +144,12 @@ describe("themes", () => {
 describe("hero gear", () => {
   const classes = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
   // Keys the slime palette (body, face, base colours) and the gear palette define.
-  const KNOWN = new Set("oucCwekmrRgGaAbBnNyYjli");
+  const KNOWN = new Set("oucCwekmrRgGaAbBnNyYjlivdD");
 
   it("stays on the canvas with known colours, and is empty at tier 0", () => {
     for (const body of BODIES) {
       for (const cls of classes) {
-        for (let tier = 0; tier <= 5; tier++) {
+        for (let tier = 0; tier <= TIER.LEGEND; tier++) {
           const { back, front } = gearGrid(body, cls, tier);
           for (const rows of [back, front]) {
             expect(rows).toHaveLength(SLIME_H);
@@ -165,11 +166,24 @@ describe("hero gear", () => {
     }
   });
 
-  it("adds wings at tier 5 and a jewel from tier 3", () => {
-    expect(gearGrid("normal", "warrior", 4).back.join("")).not.toMatch(/u/);
-    expect(gearGrid("normal", "warrior", 5).back.join("")).toMatch(/u/);
-    expect(gearGrid("normal", "mage", 2).front.join("")).not.toMatch(/j/);
-    expect(gearGrid("normal", "mage", 3).front.join("")).toMatch(/j/);
+  it("adds each step's decoration at its tier", () => {
+    const all = (g: { back: string[]; front: string[] }) => g.back.join("") + g.front.join("");
+    // A jewel, the class item (the sword's guard is gold), the sash, wings.
+    expect(gearGrid("normal", "mage", TIER.JEWEL - 1).front.join("")).not.toMatch(/j/);
+    expect(gearGrid("normal", "mage", TIER.JEWEL).front.join("")).toMatch(/j/);
+    expect(gearGrid("normal", "warrior", TIER.ITEM - 1).back.join("")).not.toMatch(/y/);
+    expect(gearGrid("normal", "warrior", TIER.ITEM).back.join("")).toMatch(/y/);
+    expect(all(gearGrid("normal", "warrior", TIER.CAPE - 1))).not.toMatch(/v/);
+    expect(all(gearGrid("normal", "warrior", TIER.CAPE))).toMatch(/v/);
+    expect(gearGrid("normal", "warrior", TIER.WINGS - 1).back.join("")).not.toMatch(/u/);
+    expect(gearGrid("normal", "warrior", TIER.WINGS).back.join("")).toMatch(/u/);
+    // Every step looks different from the one before.
+    for (const cls of classes) {
+      for (let tier = 1; tier <= TIER.LEGEND; tier++) {
+        if (tier === TIER.GOLD || tier === TIER.AURA) continue; // a palette swap / CSS
+        expect(all(gearGrid("normal", cls, tier)), `${cls} ${tier}`).not.toBe(all(gearGrid("normal", cls, tier - 1)));
+      }
+    }
   });
 
   it("dresses only leads", () => {
@@ -183,21 +197,20 @@ describe("human heroes", () => {
   const classes = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
   const arms = ["down", "raise", "type", "typeUp", "up", "mug", "sip", "swingA", "swingB"] as const;
   // Outline, skin, hair, tunic, trousers, boots, face, mug, plus the gear keys.
-  const KNOWN = new Set("osShHtTqdekmuUaAbBnNyYjlirRgG");
+  const KNOWN = new Set("osShHtTqdekmuUaAbBnNyYjlirRgGv");
 
   it("draws every class, tier and pose on the canvas with known colours", () => {
     for (const cls of classes) {
-      for (let tier = 0; tier <= 5; tier++) {
+      for (let tier = 0; tier <= TIER.LEGEND; tier++) {
         for (const a of arms) {
           for (const legs of ["stand", "stepA", "stepB"] as const) {
             const { back, front } = humanGrid({ arms: a, legs, eyes: "open" }, cls, tier);
+            const bad = new Set<string>();
             for (const rows of [back, front]) {
-              expect(rows).toHaveLength(SLIME_H);
-              for (const r of rows) {
-                expect(r).toHaveLength(SLIME_W);
-                for (const k of r) if (k !== ".") expect(KNOWN.has(k), `${cls} ${tier} ${a} "${k}"`).toBe(true);
-              }
+              if (rows.length !== SLIME_H || rows.some((r) => r.length !== SLIME_W)) bad.add("size");
+              for (const r of rows) for (const k of r) if (k !== "." && !KNOWN.has(k)) bad.add(k);
             }
+            expect([...bad], `${cls} ${tier} ${a} ${legs}`).toEqual([]);
           }
         }
       }
