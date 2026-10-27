@@ -4241,10 +4241,27 @@ body,
 
 .office__empty[hidden] { display: none; }
 
+/* Corridors: the gaps between rooms, with a carpet runner down the middle. */
+.office-runner {
+  position: absolute;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(var(--px) * 6), rgba(255, 255, 255, 0.08) 0 calc(var(--px) * 7)),
+    #8e4a4a;
+  box-shadow: 0 0 0 var(--px) #5e2f33;
+}
+.office-runner--h { height: calc(var(--px) * 6); transform: translateY(-50%); }
+.office-runner--v {
+  width: calc(var(--px) * 6);
+  transform: translateX(-50%);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 calc(var(--px) * 6), rgba(255, 255, 255, 0.08) 0 calc(var(--px) * 7)),
+    #8e4a4a;
+}
+
 /* Rooms: chunky walls, a back wall in 3/4 view, a tiled floor. */
 .office-room {
   position: absolute;
-  padding: calc(var(--px) * 2);
+  padding: 0;
   box-sizing: border-box;
   cursor: pointer;
 }
@@ -4342,7 +4359,7 @@ body,
   width: calc(var(--px) * 12);
   height: calc(var(--px) * 2);
   transform: translateX(-50%);
-  background: #585a6e;
+  background: #8e4a4a;
 }
 
 /* Furniture: placed by class, drawn at the room's scale. */

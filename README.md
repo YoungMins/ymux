@@ -171,7 +171,7 @@ right one, so use it where an unattended wrong answer is cheap to undo.
 
 Press the office button in the top bar (or `Ctrl+Shift+O`) to see the current
 workspace as an office floor. Each pane, or tab group, is a room laid out the
-way you split it, and each tab is a desk. Claude Code, Codex and other agents
+way you split it, with corridors between the rooms, and each tab is a desk. Claude Code, Codex and other agents
 sit at their desks as characters: typing while they work (with the tool they
 are using in a speech bubble), raising a hand when they need you, relaxing
 with a coffee when done and dozing when idle. A subagent walks in as a helper,

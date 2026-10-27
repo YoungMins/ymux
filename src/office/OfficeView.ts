@@ -15,6 +15,8 @@ import {
   besideSpot,
   buildOffice,
   diffChars,
+  planPath,
+  type Place,
   walkMs,
   type CharModel,
   type OfficeInput,
@@ -25,6 +27,10 @@ import {
 import { characterSvg, deskSvg, iconSvg, lobbyProps, paletteOf, roomProps } from "./sprites";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
+import { segmentsOf } from "./officePaths";
+
+/// Narrowest corridor, in CSS pixels; wider ones follow the sprite scale.
+const CORRIDOR_PX = 24;
 
 export interface OfficeSource {
   /// The active workspace, as the model wants it.
@@ -50,6 +56,8 @@ interface Actor {
   busy: number;
   /// A helper that finished, reported and went out of the door.
   gone: boolean;
+  /// The room it is in, or null for the lobby.
+  room: string | null;
 }
 
 const BUBBLE_MS = 1600;
@@ -64,7 +72,7 @@ export class OfficeView {
   private readonly emptyEl: HTMLElement;
   private readonly actors = new Map<string, Actor>();
   private readonly manager: Actor;
-  private model: OfficeModel = { rooms: [], chars: [] };
+  private model: OfficeModel = { rooms: [], chars: [], graph: { nodes: [], edges: [] }, lobbyGate: MANAGER_HOME };
   private prev: CharModel[] = [];
   private first = true;
   private disposed = false;
@@ -181,7 +189,17 @@ export class OfficeView {
   // ── Rendering ─────────────────────────────────────────────────────────
 
   private render(): void {
-    this.model = buildOffice(this.source.input());
+    const input = this.source.input();
+    const w = this.floor.clientWidth;
+    const h = this.floor.clientHeight;
+    if (w > 0 && h > 0) {
+      // Corridors wide enough for the characters walking them: size them
+      // from the sprite scale the rooms allow, then lay the rooms out again.
+      const px = Math.round(Math.min(72, Math.max(CORRIDOR_PX, 40 * this.fitScale(buildOffice(input), w, h))));
+      this.model = buildOffice({ ...input, corridor: { x: px / w, y: px / h } });
+    } else {
+      this.model = buildOffice(input);
+    }
     this.titleEl.textContent = fill(t("office.heading"), { ws: this.source.workspaceName() });
     this.applyScale();
     this.renderKinds();
@@ -192,15 +210,19 @@ export class OfficeView {
 
   /// Sprites shrink with the smallest room so a character never outgrows
   /// its room (a character is 44px tall, a desk 34px, at scale 1).
+  private fitScale(model: OfficeModel, w: number, h: number): number {
+    let fit = Number.POSITIVE_INFINITY;
+    for (const r of model.rooms) {
+      fit = Math.min(fit, (r.rect.h * h) / 190, (r.rect.w * w) / 150);
+    }
+    return Number.isFinite(fit) ? fit : 1;
+  }
+
   private applyScale(): void {
     const w = this.floor.clientWidth;
     const h = this.floor.clientHeight;
     if (w <= 0 || h <= 0) return;
-    let fit = Number.POSITIVE_INFINITY;
-    for (const r of this.model.rooms) {
-      fit = Math.min(fit, (r.rect.h * h) / 190, (r.rect.w * w) / 150);
-    }
-    if (!Number.isFinite(fit)) fit = 1;
+    const fit = this.fitScale(this.model, w, h);
     this.floor.style.setProperty("--o-scale", String(Math.max(0.45, Math.min(1.6, fit))));
     // Rooms too small for name cards: tooltips and plates still say who is who.
     this.floor.classList.toggle("office__floor--tiny", fit < 0.6);
@@ -247,7 +269,18 @@ export class OfficeView {
         this.actorsLayer.appendChild(d);
       }
     }
-    this.roomsLayer.replaceChildren(...rooms);
+    // A runner down the middle of every corridor.
+    const runners = segmentsOf(this.model.graph).map((seg) => {
+      const r = document.createElement("div");
+      const horizontal = Math.abs(seg.a.y - seg.b.y) < 1e-9;
+      r.className = `office-runner office-runner--${horizontal ? "h" : "v"}`;
+      r.style.left = `${Math.min(seg.a.x, seg.b.x) * 100}%`;
+      r.style.top = `${Math.min(seg.a.y, seg.b.y) * 100}%`;
+      if (horizontal) r.style.width = `${Math.abs(seg.a.x - seg.b.x) * 100}%`;
+      else r.style.height = `${Math.abs(seg.a.y - seg.b.y) * 100}%`;
+      return r;
+    });
+    this.roomsLayer.replaceChildren(...runners, ...rooms);
   }
 
   private roomEl(room: RoomModel): HTMLElement {
@@ -310,7 +343,11 @@ export class OfficeView {
           const room = this.roomOf(c);
           if (room) this.place(actor, room.door);
         }
-        if (!actor.busy && !actor.gone) this.walk(actor, c.home);
+        if (!actor.busy && !actor.gone) {
+          // Its pane moved to another room: walk there by the corridors.
+          if (actor.room !== c.roomId) this.errand(actor, () => this.travel(actor!, { at: c.home, room: c.roomId }));
+          else void this.walk(actor, c.home);
+        }
       }
       this.look(actor);
     }
@@ -361,7 +398,17 @@ export class OfficeView {
       });
     }
     this.actorsLayer.appendChild(el);
-    const actor: Actor = { key, el, bubble, model, pos: MANAGER_HOME, chain: Promise.resolve(), busy: 0, gone: false };
+    const actor: Actor = {
+      key,
+      el,
+      bubble,
+      model,
+      pos: MANAGER_HOME,
+      chain: Promise.resolve(),
+      busy: 0,
+      gone: false,
+      room: model?.roomId ?? null,
+    };
     return actor;
   }
 
@@ -432,8 +479,9 @@ export class OfficeView {
     this.seat(actor);
   }
 
-  /// Walk to `to` at a steady pace; resolves on arrival.
-  private walk(actor: Actor, to: Point): Promise<void> {
+  /// Walk to `to` at a steady pace; resolves on arrival. `leg` is one piece
+  /// of a longer route: no minimum time, and the walk cycle keeps going.
+  private walk(actor: Actor, to: Point, leg = false): Promise<void> {
     if (Math.abs(actor.pos.x - to.x) < 0.002 && Math.abs(actor.pos.y - to.y) < 0.002) {
       return Promise.resolve();
     }
@@ -441,9 +489,13 @@ export class OfficeView {
       this.place(actor, to);
       return Promise.resolve();
     }
-    const ms = walkMs(actor.pos, to);
+    const ms = leg
+      ? Math.max(90, Math.round(Math.hypot(actor.pos.x - to.x, actor.pos.y - to.y) * 2600))
+      : walkMs(actor.pos, to);
     actor.el.classList.remove("office-char--seated");
-    actor.el.classList.toggle("office-char--face-left", to.x < actor.pos.x);
+    if (Math.abs(to.x - actor.pos.x) > 0.002) {
+      actor.el.classList.toggle("office-char--face-left", to.x < actor.pos.x);
+    }
     actor.el.classList.add("office-char--walking");
     actor.el.style.transition = `left ${ms}ms linear, top ${ms}ms linear`;
     // Force the transition to start from the current spot.
@@ -451,10 +503,22 @@ export class OfficeView {
     actor.pos = to;
     this.position(actor.el, to, 10);
     return this.sleep(ms).then(() => {
+      if (leg) return;
       // Arrived: face the room again.
       actor.el.classList.remove("office-char--walking", "office-char--face-left");
       this.seat(actor);
     });
+  }
+
+  /// Walk to `to` the way people do: out of the door, along the corridors,
+  /// in at the other door (straight across within one room).
+  private async travel(actor: Actor, to: Place): Promise<void> {
+    const path = planPath(this.model, { at: actor.pos, room: actor.room }, to);
+    for (let i = 0; i < path.length; i++) {
+      if (this.disposed) return;
+      await this.walk(actor, path[i], i < path.length - 1);
+    }
+    actor.room = to.room;
   }
 
   private sleep(ms: number): Promise<void> {
@@ -480,8 +544,10 @@ export class OfficeView {
       .then(async () => {
         actor.busy--;
         if (this.disposed || actor.busy > 0 || actor.gone) return;
-        const home = actor.model ? actor.model.home : MANAGER_HOME;
-        await this.walk(actor, home);
+        const home: Place = actor.model
+          ? { at: actor.model.home, room: actor.model.roomId }
+          : { at: MANAGER_HOME, room: null };
+        await this.travel(actor, home);
         this.seat(actor);
       });
   }
@@ -531,7 +597,7 @@ export class OfficeView {
       const spot = targetLead?.model
         ? besideSpot(targetLead.model.home, targetRoom.rect)
         : targetRoom.door;
-      await this.walk(messenger, spot);
+      await this.travel(messenger, { at: spot, room: targetRoom.id });
       const told = targetLead && !targetLead.busy ? this.say(targetLead, "alert", BUBBLE_MS) : null;
       await this.say(messenger, icon);
       await told;

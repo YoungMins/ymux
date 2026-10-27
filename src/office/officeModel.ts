@@ -6,6 +6,7 @@
 
 import type { AgentSnapshot, AgentStatus, LayoutNode, PaneKind, PaneSpec, Uuid } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
+import { corridorGraph, nearestNode, route, simplify, type CorridorGraph } from "./officePaths";
 
 /// A point or box in floor coordinates: fractions of the office floor,
 /// (0, 0) top-left, (1, 1) bottom-right.
@@ -48,8 +49,12 @@ export interface RoomModel {
   status: PaneStatus;
   focused: boolean;
   desks: DeskModel[];
-  /// The doorway, bottom centre of the room.
+  /// The doorway, just inside the room at the bottom centre.
   door: Point;
+  /// The room's split cell: the room plus half a corridor on every side.
+  cell: Rect;
+  /// Where the doorway meets the corridor's centre line.
+  exit: Point;
 }
 
 export type Pose = "typing" | "raising" | "relaxing" | "sleeping";
@@ -74,6 +79,10 @@ export interface CharModel {
 export interface OfficeModel {
   rooms: RoomModel[];
   chars: CharModel[];
+  /// The corridors between and around the rooms.
+  graph: CorridorGraph;
+  /// Where the lobby opens onto the corridors, straight up from the user.
+  lobbyGate: Point;
 }
 
 export interface OfficeInput {
@@ -82,6 +91,9 @@ export interface OfficeInput {
   statusOf: (paneId: Uuid) => PaneStatus;
   labelOf: (paneId: Uuid) => string;
   focused: Uuid | null;
+  /// Corridor width as a share of the floor's width (x) and height (y), so it
+  /// is the same number of pixels both ways. None by default.
+  corridor?: { x: number; y: number };
 }
 
 const STATUS_RANK: Record<PaneStatus, number> = { idle: 0, running: 1, done: 2, attention: 3 };
@@ -205,10 +217,15 @@ export function helperSpot(i: number, n: number): Point {
 
 /// Build the floor plan and its people.
 export function buildOffice(input: OfficeInput): OfficeModel {
-  const area: Rect = { x: 0, y: 0, w: 1, h: 1 - LOBBY_H };
+  const cx = input.corridor?.x ?? 0;
+  const cy = input.corridor?.y ?? 0;
+  // Cells tile this area; each edge of a cell is a corridor's centre line,
+  // including the ring around the outside.
+  const area: Rect = { x: cx / 2, y: cy / 2, w: 1 - cx, h: 1 - LOBBY_H - cy };
   const rooms: RoomModel[] = [];
   const chars: CharModel[] = [];
-  for (const leaf of layoutLeaves(input.root, area)) {
+  for (const cell of layoutLeaves(input.root, area)) {
+    const leaf = { ...cell, rect: inset(cell.rect, cx / 2, cy / 2) };
     const spots = deskSpots(leaf.panes.length);
     const desks: DeskModel[] = leaf.panes.map((p, i) => ({
       paneId: p.id,
@@ -227,6 +244,8 @@ export function buildOffice(input: OfficeInput): OfficeModel {
       focused: leaf.panes.some((p) => p.id === input.focused),
       desks,
       door: inRoom(leaf.rect, 0.5, 0.97),
+      cell: cell.rect,
+      exit: { x: cell.rect.x + cell.rect.w / 2, y: cell.rect.y + cell.rect.h },
     };
     rooms.push(room);
 
@@ -270,7 +289,49 @@ export function buildOffice(input: OfficeInput): OfficeModel {
       });
     });
   }
-  return { rooms, chars };
+  const bottom = area.y + area.h;
+  const lobbyGate = { x: MANAGER_HOME.x, y: bottom };
+  const graph = corridorGraph(
+    rooms.map((r) => r.cell),
+    [...rooms.map((r) => r.exit), lobbyGate],
+  );
+  return { rooms, chars, graph, lobbyGate };
+}
+
+function inset(r: Rect, dx: number, dy: number): Rect {
+  return {
+    x: r.x + Math.min(dx, r.w / 4),
+    y: r.y + Math.min(dy, r.h / 4),
+    w: Math.max(0, r.w - 2 * Math.min(dx, r.w / 4)),
+    h: Math.max(0, r.h - 2 * Math.min(dy, r.h / 4)),
+  };
+}
+
+/// Where someone is: a point, and the room it is in (null: the lobby).
+export interface Place {
+  at: Point;
+  room: string | null;
+}
+
+/// The points to walk through from `from` to `to` (the start excluded): out
+/// of the room by its door, along the corridors, in by the other door. Within
+/// one room it is a straight line.
+export function planPath(model: OfficeModel, from: Place, to: Place): Point[] {
+  if (from.room === to.room) return [to.at];
+  const room = (id: string | null) => model.rooms.find((r) => r.id === id);
+  const src = room(from.room);
+  const dst = room(to.room);
+  const path: Point[] = [];
+  // Leave: to the door, then out to the corridor (or up from the lobby).
+  if (src) path.push(src.door, src.exit);
+  else path.push({ x: from.at.x, y: model.lobbyGate.y + (from.at.y - model.lobbyGate.y) * 0.4 }, model.lobbyGate);
+  const start = nearestNode(model.graph, src ? src.exit : model.lobbyGate);
+  const end = nearestNode(model.graph, dst ? dst.exit : model.lobbyGate);
+  path.push(...route(model.graph, start, end));
+  // Arrive.
+  if (dst) path.push(dst.exit, dst.door, to.at);
+  else path.push(model.lobbyGate, to.at);
+  return simplify([from.at, ...path]).slice(1);
 }
 
 /// What happened to the characters between two models, for the view to
