@@ -1,93 +1,201 @@
-// Inline SVG for the office view: one small front-facing character per agent
-// and a prop per room kind. Plain markup strings with no external assets, so
-// they pass the app's CSP; parts carry classes the CSS animates (legs swing
-// while walking, arms type, one arm goes up when the agent needs the user).
+// Pixel-art SVG for the office view. The grids live in `pixelArt.ts`; this
+// turns them into inline SVG (no external assets, so the app's CSP is happy)
+// with `shape-rendering="crispEdges"`, one <rect> per run of equal pixels.
+// A character is a stack of named frame groups (`px-legs-a`, `px-arms-raise`,
+// …) that the CSS shows or flips between per pose.
 
 import type { PaneKind } from "../types";
+import * as art from "./pixelArt";
 
-interface Palette {
-  shirt: string;
-  trim: string;
-  hair: string;
-}
+type Palette = Readonly<Record<string, string>>;
 
-const PALETTES: Record<string, Palette> = {
-  claude: { shirt: "#d97757", trim: "#f4c7b3", hair: "#5b3a29" },
-  codex: { shirt: "#24292f", trim: "#10a37f", hair: "#1b1f23" },
-  gemini: { shirt: "#4285f4", trim: "#c6dafc", hair: "#2b2b2b" },
-  opencode: { shirt: "#6d5dfc", trim: "#d6d1ff", hair: "#30264f" },
-  aider: { shirt: "#14b8a6", trim: "#ccfbf1", hair: "#3f3f46" },
-  copilot: { shirt: "#8957e5", trim: "#e2d5fb", hair: "#2d2d2d" },
-  manager: { shirt: "#3a6ea5", trim: "#e8eef6", hair: "#3b2f2f" },
+/// Shared colours. A value starting with "." is a CSS class instead of a
+/// fill, for pixels the stylesheet colours (a desk's screen follows its
+/// pane's status).
+const BASE: Palette = {
+  o: "#2a1f1a",
+  s: "#f7cfa8",
+  S: "#e5aa83",
+  e: "#241c1c",
+  w: "#ffffff",
+  k: "#f4a3a0",
+  m: "#b4553f",
+  p: "#3c4a64",
+  P: "#2b364b",
+  b: "#26262e",
+  u: "#f4efe6",
+  U: "#cfc6b6",
+  r: "#d64545",
 };
-const FALLBACK: Palette = { shirt: "#7d8794", trim: "#d9dee4", hair: "#3a3a3a" };
 
-export function paletteOf(kind: string): Palette {
-  return PALETTES[kind] ?? FALLBACK;
+interface Outfit {
+  h: string;
+  H: string;
+  c: string;
+  C: string;
+  t: string;
 }
 
-/// A character, feet at the bottom centre of a 32×44 box.
-/// `role` "sub" draws a cap and a name tag; "manager" draws a tie.
+const OUTFITS: Record<string, Outfit> = {
+  claude: { h: "#6b4226", H: "#4e2f1a", c: "#d97757", C: "#b85c3f", t: "#fbe3d6" },
+  codex: { h: "#23262b", H: "#15171a", c: "#2d333b", C: "#1c2128", t: "#10a37f" },
+  gemini: { h: "#3a2a20", H: "#24170f", c: "#4285f4", C: "#2f69c9", t: "#fbbc05" },
+  opencode: { h: "#30264f", H: "#1f1835", c: "#6d5dfc", C: "#5144d6", t: "#d6d1ff" },
+  aider: { h: "#3f3f46", H: "#27272a", c: "#14b8a6", C: "#0f8f81", t: "#ccfbf1" },
+  copilot: { h: "#2d2d2d", H: "#1a1a1a", c: "#8957e5", C: "#6e40c9", t: "#e2d5fb" },
+  manager: { h: "#4a3428", H: "#33231a", c: "#3d5a80", C: "#2b4260", t: "#f0f0f0" },
+};
+const FALLBACK: Outfit = { h: "#3a3a3a", H: "#262626", c: "#7d8794", C: "#5f6873", t: "#d9dee4" };
+
+/// The colour a kind wears, for the header legend.
+export function paletteOf(kind: string): { shirt: string } {
+  return { shirt: (OUTFITS[kind] ?? FALLBACK).c };
+}
+
+const PROPS: Palette = {
+  o: "#2a1f1a",
+  M: "#2d333b",
+  n: ".px-screen",
+  N: ".px-screen-hi",
+  k: "#d8dde3",
+  K: "#9aa3ad",
+  d: "#c98e57",
+  D: "#a56f40",
+  f: "#9a6236",
+  F: "#7a4a28",
+  g: "#e1c08a",
+  G: "#2f7a3b",
+  a: "#b0623a",
+  A: "#8a4a2a",
+  w: "#f3ece0",
+  "1": "#d64545",
+  "2": "#4a90d9",
+  "3": "#e0b84f",
+  "4": "#5cb85c",
+  "5": "#9b6bd6",
+  "6": "#e07a3a",
+  R: "#4a5260",
+  y: "#f5c542",
+  b: "#8ecbf0",
+  B: "#ffffff",
+  r: "#d64545",
+  c: "#5b8c5a",
+  C: "#4a7449",
+};
+const PLANT: Palette = { ...PROPS, g: "#4fa35a", G: "#2f7a3b" };
+const RACK: Palette = { ...PROPS, g: ".px-led", y: ".px-led-warn", "1": "#7d8794" };
+const ICON: Palette = { ...PROPS, w: "#ffffff", k: "#8a94a3", g: "#3aa55a", r: "#d64545" };
+
+/// The <rect>s of one grid, merging horizontal runs of the same key.
+function rects(rows: readonly string[], pal: Palette): string {
+  let out = "";
+  rows.forEach((row, y) => {
+    let x = 0;
+    while (x < row.length) {
+      const key = row[x];
+      let end = x + 1;
+      while (end < row.length && row[end] === key) end++;
+      const colour = pal[key];
+      if (key !== "." && colour) {
+        const paint = colour.startsWith(".") ? `class="${colour.slice(1)}"` : `fill="${colour}"`;
+        out += `<rect x="${x}" y="${y}" width="${end - x}" height="1" ${paint}/>`;
+      }
+      x = end;
+    }
+  });
+  return out;
+}
+
+function svg(w: number, h: number, scale: number, body: string, cls: string): string {
+  return `<svg class="${cls}" viewBox="0 0 ${w} ${h}" width="${w * scale}" height="${h * scale}" shape-rendering="crispEdges" aria-hidden="true">${body}</svg>`;
+}
+
+function width(rows: readonly string[]): number {
+  return rows.reduce((m, r) => Math.max(m, r.length), 0);
+}
+
+/// Art pixels are drawn this many CSS pixels wide (before the view's scale).
+export const PX = 3;
+
+/// A character: every frame group, the CSS picks which ones show.
+/// `role` "sub" wears a cap; "manager" (the user) wears a tie.
 export function characterSvg(kind: string, role: "lead" | "sub" | "manager"): string {
-  const p = role === "manager" ? PALETTES.manager : paletteOf(kind);
-  const cap =
-    role === "sub"
-      ? `<path d="M8 11 Q16 2 24 11 Z" fill="${p.shirt}"/><rect x="7" y="10" width="18" height="2.4" rx="1" fill="${p.trim}"/>`
-      : `<path d="M8.5 12 Q9 4.5 16 4.5 Q23 4.5 23.5 12 Q20 8.5 16 8.8 Q12 8.5 8.5 12 Z" fill="${p.hair}"/>`;
-  const tie =
-    role === "manager"
-      ? `<path d="M16 22 L14.6 24 L16 31 L17.4 24 Z" fill="#c0392b"/>`
-      : `<rect x="12" y="22.5" width="8" height="2" rx="1" fill="${p.trim}" opacity="0.9"/>`;
-  return `<svg class="office-sprite" viewBox="0 0 32 44" width="32" height="44" aria-hidden="true">
-  <ellipse class="o-shadow" cx="16" cy="42.5" rx="9" ry="2" fill="rgba(0,0,0,0.28)"/>
-  <g class="o-leg o-leg--l"><rect x="11" y="32" width="4" height="10" rx="1.6" fill="#33404f"/><rect x="10" y="40" width="6" height="2.6" rx="1.2" fill="#1d242d"/></g>
-  <g class="o-leg o-leg--r"><rect x="17" y="32" width="4" height="10" rx="1.6" fill="#33404f"/><rect x="16" y="40" width="6" height="2.6" rx="1.2" fill="#1d242d"/></g>
-  <g class="o-body">
-    <rect x="8.5" y="20" width="15" height="14" rx="5" fill="${p.shirt}"/>
-    ${tie}
-    <g class="o-arm o-arm--l"><rect x="5" y="21" width="4" height="10" rx="2" fill="${p.shirt}"/><circle cx="7" cy="31.5" r="2" fill="#f2c9a5"/></g>
-    <g class="o-arm o-arm--r"><rect x="23" y="21" width="4" height="10" rx="2" fill="${p.shirt}"/><circle cx="25" cy="31.5" r="2" fill="#f2c9a5"/></g>
-    <g class="o-mug"><rect x="23.5" y="27" width="5" height="5" rx="1" fill="#f5f0e6"/><path d="M28.5 28.2 q2 1.3 0 2.6" stroke="#f5f0e6" stroke-width="1" fill="none"/></g>
-    <g class="o-head">
-      <circle cx="16" cy="13" r="8" fill="#f2c9a5"/>
-      ${cap}
-      <g class="o-eyes"><rect x="12.4" y="13" width="2" height="2.6" rx="1" fill="#2a2a2a"/><rect x="17.6" y="13" width="2" height="2.6" rx="1" fill="#2a2a2a"/></g>
-      <path class="o-eyes-shut" d="M12 14.5 h3 M17.2 14.5 h3" stroke="#2a2a2a" stroke-width="1.1" stroke-linecap="round"/>
-      <path d="M14.2 17.6 q1.8 1.3 3.6 0" stroke="#9b5b45" stroke-width="1" fill="none" stroke-linecap="round"/>
-    </g>
-  </g>
-</svg>`;
+  const outfit = role === "manager" ? OUTFITS.manager : (OUTFITS[kind] ?? FALLBACK);
+  const pal: Palette = { ...BASE, ...outfit };
+  const g = (cls: string, rows: readonly string[]): string => `<g class="${cls}">${rects(rows, pal)}</g>`;
+  const body = [
+    `<rect class="px-shadow" x="4" y="23" width="14" height="1" fill="rgba(0,0,0,0.3)"/>`,
+    g("px-legs px-legs-stand", art.LEGS_STAND),
+    g("px-legs px-legs-a", art.LEGS_A),
+    g("px-legs px-legs-b", art.LEGS_B),
+    g("px-torso", art.TORSO),
+    role === "manager" ? g("px-tie", art.TIE) : "",
+    g("px-head", art.HEAD),
+    g("px-eyes px-eyes-open", art.EYES_OPEN),
+    g("px-eyes px-eyes-shut", art.EYES_SHUT),
+    role === "sub" ? g("px-cap", art.CAP) : "",
+    g("px-arms px-arms-down", art.ARMS_DOWN),
+    g("px-arms px-arms-type-a", art.ARMS_TYPE_A),
+    g("px-arms px-arms-type-b", art.ARMS_TYPE_B),
+    g("px-arms px-arms-raise", art.ARMS_RAISE),
+    g("px-arms px-arms-mug", art.ARMS_MUG),
+  ].join("");
+  return svg(art.CHAR_W, art.CHAR_H, PX, body, "office-sprite");
 }
 
-/// A desk with a monitor; the screen's class is driven by the desk's status.
+/// A desk with a monitor; the screen pixels are coloured by the desk's
+/// status class.
 export function deskSvg(): string {
-  return `<svg class="office-desk__svg" viewBox="0 0 56 34" width="56" height="34" aria-hidden="true">
-  <rect class="office-desk__screen-frame" x="17" y="1" width="22" height="15" rx="2" fill="#20262e"/>
-  <rect class="office-desk__screen" x="19" y="3" width="18" height="11" rx="1"/>
-  <rect x="26" y="16" width="4" height="4" fill="#20262e"/>
-  <rect class="office-desk__top" x="1" y="19" width="54" height="6" rx="2"/>
-  <rect class="office-desk__front" x="4" y="25" width="48" height="9" rx="1.5"/>
-  <rect x="21" y="20" width="14" height="2" rx="1" fill="#3a4350"/>
-</svg>`;
+  return svg(width(art.DESK), art.DESK.length, PX, rects(art.DESK, PROPS), "office-desk__svg");
 }
 
-/// One decoration per room kind, drawn in the room's top-right corner.
-export function propSvg(kind: PaneKind): string {
+/// Furniture is sized in art pixels (`--px`, which follows the view's
+/// scale) rather than transformed, so it takes up its real size in layout.
+function prop(rows: readonly string[], pal: Palette, cls: string): string {
+  const w = width(rows);
+  const h = rows.length;
+  return `<svg class="office-prop ${cls}" viewBox="0 0 ${w} ${h}" style="width:calc(${w} * var(--px));height:calc(${h} * var(--px))" shape-rendering="crispEdges" aria-hidden="true">${rects(rows, pal)}</svg>`;
+}
+
+const wall = (...items: string[]): string => `<div class="office-wall-row">${items.join("")}</div>`;
+
+/// The furniture of a room, by the kind of pane it is: a row along the back
+/// wall, plus floor pieces placed by their class (`office-prop--…`).
+export function roomProps(kind: PaneKind): string {
+  const plant = prop(art.PLANT, PLANT, "office-prop--plant");
   switch (kind) {
     case "files":
-      return `<svg viewBox="0 0 34 30" width="34" height="30" aria-hidden="true"><rect x="1" y="1" width="32" height="28" rx="2" fill="#6b4f3a"/><rect x="3" y="3" width="28" height="7" fill="#3f2f22"/><rect x="3" y="12" width="28" height="7" fill="#3f2f22"/><rect x="3" y="21" width="28" height="6" fill="#3f2f22"/><rect x="5" y="4" width="3" height="6" fill="#e0b84f"/><rect x="9" y="5" width="3" height="5" fill="#5aa0d8"/><rect x="13" y="4" width="2" height="6" fill="#d9675a"/><rect x="6" y="13" width="4" height="6" fill="#7cc47f"/><rect x="11" y="14" width="3" height="5" fill="#e0b84f"/><rect x="18" y="22" width="5" height="5" fill="#5aa0d8"/></svg>`;
+      return wall(prop(art.SHELF, PROPS, ""), prop(art.SHELF, PROPS, "")) + plant;
     case "git":
-      return `<svg viewBox="0 0 26 34" width="26" height="34" aria-hidden="true"><rect x="1" y="1" width="24" height="32" rx="2" fill="#2b323c"/><rect x="4" y="5" width="18" height="4" fill="#3d4652"/><rect x="4" y="12" width="18" height="4" fill="#3d4652"/><rect x="4" y="19" width="18" height="4" fill="#3d4652"/><circle class="office-blink" cx="19" cy="7" r="1.2" fill="#4cd964"/><circle cx="19" cy="14" r="1.2" fill="#4cd964"/><circle class="office-blink office-blink--slow" cx="19" cy="21" r="1.2" fill="#f5a623"/><path d="M8 27 v4 M8 29 q5 0 5 -3" stroke="#f05133" stroke-width="1.6" fill="none"/></svg>`;
+      return wall(prop(art.RACK, RACK, ""), prop(art.RACK, RACK, ""), prop(art.RACK, RACK, "")) + plant;
     case "browser":
     case "native_browser":
     case "embedded_browser":
-      return `<svg viewBox="0 0 40 28" width="40" height="28" aria-hidden="true"><rect x="1" y="1" width="38" height="26" rx="2" fill="#9cc9ee"/><path d="M1 20 q10 -8 20 0 t18 -2 v9 h-38 z" fill="#79b46a"/><circle cx="31" cy="8" r="3.5" fill="#ffe08a"/><rect x="19" y="1" width="2" height="26" fill="#e9eef3"/><rect x="1" y="13" width="38" height="2" fill="#e9eef3"/><rect x="0" y="0" width="40" height="28" rx="2" fill="none" stroke="#e9eef3" stroke-width="2"/></svg>`;
+      return wall(prop(art.WINDOW, PROPS, "")) + prop(art.SOFA, PROPS, "office-prop--sofa") + plant;
     case "editor":
-      return `<svg viewBox="0 0 30 30" width="30" height="30" aria-hidden="true"><rect x="3" y="2" width="22" height="26" rx="1.5" fill="#f4f1e8" transform="rotate(-6 14 15)"/><rect x="6" y="3" width="22" height="26" rx="1.5" fill="#fffdf6"/><path d="M9 9 h15 M9 13 h12 M9 17 h15 M9 21 h9" stroke="#8a94a3" stroke-width="1.3"/></svg>`;
+      return wall(prop(art.WINDOW, PROPS, "")) + prop(art.PAPERS, PROPS, "office-prop--side") + plant;
     case "token_usage":
-      return `<svg viewBox="0 0 34 28" width="34" height="28" aria-hidden="true"><rect x="1" y="1" width="32" height="26" rx="2" fill="#f7f7f2"/><rect x="6" y="15" width="4" height="8" fill="#5aa0d8"/><rect x="12" y="10" width="4" height="13" fill="#d97757"/><rect x="18" y="6" width="4" height="17" fill="#7cc47f"/><rect x="24" y="12" width="4" height="11" fill="#e0b84f"/><path d="M4 23 h26" stroke="#9aa3ad" stroke-width="1"/></svg>`;
+      return wall(prop(art.BOARD, PROPS, "")) + plant;
     case "terminal":
     default:
-      return `<svg viewBox="0 0 22 30" width="22" height="30" aria-hidden="true"><rect x="5" y="20" width="12" height="9" rx="2" fill="#a0673f"/><path d="M11 21 C3 14 4 6 11 3 C18 6 19 14 11 21 Z" fill="#4f9a5a"/><path d="M11 21 C8 15 9 9 11 5" stroke="#3a7a44" stroke-width="1.2" fill="none"/></svg>`;
+      return wall(prop(art.WINDOW, PROPS, "")) + plant;
   }
+}
+
+/// The lobby's furniture: reception desk, water cooler, plants.
+export function lobbyProps(): string {
+  return (
+    prop(art.RECEPTION, PROPS, "office-prop--reception") +
+    prop(art.COOLER, PROPS, "office-prop--cooler") +
+    prop(art.PLANT, PLANT, "office-prop--lobby-plant-l") +
+    prop(art.PLANT, PLANT, "office-prop--lobby-plant-r")
+  );
+}
+
+export type IconName = keyof typeof art.ICONS;
+
+/// A small pixel icon for a speech bubble.
+export function iconSvg(name: string): string {
+  const rows = art.ICONS[name];
+  return rows ? svg(width(rows), rows.length, 2, rects(rows, ICON), "office-icon") : "";
 }

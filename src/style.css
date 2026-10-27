@@ -4105,19 +4105,24 @@ body,
 }
 
 /* ── Office view (src/office/) ───────────────────────────────────────────
-   The workspace as an office floor: rooms laid out like the split view,
-   desks per tab, agents as characters. An overlay over `.workspace-host`;
-   the terminals underneath keep running. */
+   The workspace as a pixel-art office floor: rooms laid out like the split
+   view, desks per tab, agents as characters. An overlay over
+   `.workspace-host`; the terminals underneath keep running. Sprites are
+   inline SVG in art pixels (`sprites.ts`, 3 CSS px each, times
+   `--o-scale`); animations step between frame groups, never tween. */
 .office {
+  --ink: #2a1f1a;
   position: absolute;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: #1c2027;
-  color: var(--fg);
+  background: #1b1d2b;
+  color: #f4ecd8;
   outline: none;
   user-select: none;
+  font-family: var(--font-mono);
+  font-weight: 700;
 }
 
 .office__head {
@@ -4125,102 +4130,74 @@ body,
   align-items: center;
   gap: 12px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-alt);
+  background: #2a2c40;
+  border-bottom: 3px solid #12131d;
   font-size: 12px;
 }
 
-.office__title {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.office__title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.04em; }
 
-.office__legend {
-  display: flex;
-  gap: 6px;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-}
+.office__legend,
+.office__kinds { display: flex; gap: 8px; flex-wrap: wrap; }
+.office__legend { flex: 1 1 auto; }
 
-.office__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-.office__chip::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--chip, #888);
-}
-
-.office__chip--working { --chip: #5aa0d8; }
-.office__chip--waiting { --chip: var(--status-critical); }
-.office__chip--done { --chip: #7cc47f; }
-.office__chip--idle { --chip: #8892a0; }
-
-.office__kinds {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
+.office__chip,
 .office__kind {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--fg);
 }
 
+.office__chip { color: #b8b3c9; }
+
+.office__chip::before,
 .office__kind::before {
   content: "";
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  background: var(--kind);
+  width: 8px;
+  height: 8px;
+  background: var(--chip, var(--kind, #888));
+  box-shadow: 0 0 0 2px #12131d;
 }
+
+.office__chip--working { --chip: #5aa0d8; }
+.office__chip--waiting { --chip: #e05555; }
+.office__chip--done { --chip: #6cc06f; }
+.office__chip--idle { --chip: #8892a0; }
 
 .office__back {
   flex: 0 0 auto;
   padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-hover);
-  color: var(--fg);
+  border: 0;
+  background: #f4ecd8;
+  color: var(--ink);
   font: inherit;
+  font-size: 12px;
   cursor: pointer;
+  box-shadow: 0 0 0 2px #12131d, inset -2px -2px 0 #c9bfa5;
 }
 
-.office__back:hover { border-color: var(--accent); }
+.office__back:hover { background: #fff7e0; }
+.office__back:active { box-shadow: 0 0 0 2px #12131d, inset 2px 2px 0 #c9bfa5; }
 
 .office__floor {
+  /* One art pixel. Defined here, where the view sets --o-scale. */
+  --px: calc(3px * var(--o-scale, 1));
   position: relative;
   flex: 1 1 auto;
   margin: 10px;
   min-height: 0;
-  border-radius: 6px;
-  /* Tiles under everything; rooms paint their own floor on top. */
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 24px 24px,
-    #2a2f37;
   overflow: hidden;
-  box-shadow: inset 0 0 0 3px #3a414c;
+  /* Corridors: concrete tiles. */
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.18) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8),
+    linear-gradient(rgba(0, 0, 0, 0.18) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8),
+    #585a6e;
+  box-shadow: 0 0 0 4px #12131d;
 }
 
 .office__rooms,
-.office__actors {
-  position: absolute;
-  inset: 0;
-}
-
+.office__actors { position: absolute; inset: 0; }
 .office__actors { pointer-events: none; }
 
 .office__lobby {
@@ -4229,20 +4206,23 @@ body,
   right: 0;
   bottom: 0;
   height: 14%;
-  background:
-    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 8px, transparent 8px 16px),
-    #333a44;
-  border-top: 3px solid #4a525e;
+  /* Checkerboard lobby tiles. */
+  background: repeating-conic-gradient(#c9c1ae 0 25%, #b3aa95 0 50%) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8);
+  border-top: calc(var(--px) * 2) solid #3a3446;
 }
+
+.office__lobby-props { position: absolute; inset: 0; pointer-events: none; }
 
 .office__lobby-label {
   position: absolute;
-  left: 10px;
+  left: 8px;
   bottom: 6px;
+  padding: 1px 6px;
+  background: var(--ink);
+  color: #f4ecd8;
   font-size: 10px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.35);
 }
 
 .office__empty {
@@ -4251,20 +4231,20 @@ body,
   bottom: 18%;
   transform: translateX(-50%);
   padding: 6px 12px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.45);
-  color: #e8edf2;
+  background: #f4ecd8;
+  color: var(--ink);
   font-size: 12px;
   white-space: nowrap;
+  box-shadow: 0 0 0 3px var(--ink);
   pointer-events: none;
 }
 
 .office__empty[hidden] { display: none; }
 
-/* Rooms */
+/* Rooms: chunky walls, a back wall in 3/4 view, a tiled floor. */
 .office-room {
   position: absolute;
-  padding: 4px;
+  padding: calc(var(--px) * 2);
   box-sizing: border-box;
   cursor: pointer;
 }
@@ -4273,66 +4253,127 @@ body,
   position: relative;
   width: 100%;
   height: 100%;
-  border: 4px solid #59616d;
-  border-radius: 4px;
   box-sizing: border-box;
-  background: var(--room-floor, #8a6b4f);
-  box-shadow: inset 0 6px 0 rgba(0, 0, 0, 0.18);
-  transition: border-color 0.2s;
+  overflow: hidden;
+  background: var(--room-floor);
+  border: calc(var(--px) * 2) solid var(--room-edge, #3a3446);
+  box-shadow: 0 0 0 var(--px) #12131d;
 }
 
-.office-room--terminal { --room-floor: repeating-linear-gradient(90deg, #8a6b4f 0 22px, #7f6247 22px 24px); }
-.office-room--files { --room-floor: repeating-linear-gradient(0deg, #6f7f8f 0 18px, #677685 18px 20px); }
-.office-room--git { --room-floor: repeating-conic-gradient(#4d5562 0 25%, #555e6b 0 50%) 0 0 / 20px 20px; }
-.office-room--editor { --room-floor: #7a8a6a; }
-.office-room--token_usage { --room-floor: #6f6a88; }
+.office-room__wall {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--px) * 18);
+  background:
+    linear-gradient(transparent calc(100% - var(--px) * 3), var(--wall-base, #8a6b4f) 0),
+    var(--wall, #e8d9b8);
+  box-shadow: inset 0 calc(var(--px) * 3) 0 var(--wall-top, #cdb994);
+}
+
+/* Floors, in art pixels so they stay on the grid at any scale. */
+.office-room--terminal {
+  --room-floor:
+    linear-gradient(rgba(0, 0, 0, 0.16) var(--px), transparent var(--px)) 0 0 / 100% calc(var(--px) * 6),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.1) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 22) calc(var(--px) * 12),
+    #c08a5a;
+}
+.office-room--files {
+  --room-floor: repeating-conic-gradient(#7d97b5 0 25%, #7590ad 0 50%) 0 0 / calc(var(--px) * 4) calc(var(--px) * 4);
+  --wall: #dfe6ee;
+  --wall-top: #c4cfdc;
+  --wall-base: #6a7f99;
+}
+.office-room--git {
+  --room-floor:
+    linear-gradient(90deg, #2c3140 var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8),
+    linear-gradient(#2c3140 var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8),
+    #4a5164;
+  --wall: #6c7387;
+  --wall-top: #565c6f;
+  --wall-base: #2c3140;
+}
+.office-room--editor {
+  --room-floor: repeating-conic-gradient(#d9c8a0 0 25%, #d1bf95 0 50%) 0 0 / calc(var(--px) * 4) calc(var(--px) * 4);
+}
+.office-room--token_usage {
+  --room-floor: repeating-conic-gradient(#9b8fc4 0 25%, #9286bb 0 50%) 0 0 / calc(var(--px) * 4) calc(var(--px) * 4);
+  --wall: #ece6f7;
+  --wall-top: #d6cdea;
+}
 .office-room--browser,
 .office-room--native_browser,
-.office-room--embedded_browser { --room-floor: repeating-linear-gradient(45deg, #5f7f86 0 10px, #5a7980 10px 20px); }
+.office-room--embedded_browser {
+  --room-floor: repeating-conic-gradient(#7fb28a 0 25%, #77aa82 0 50%) 0 0 / calc(var(--px) * 4) calc(var(--px) * 4);
+  --wall: #f1e4cf;
+}
 
-.office-room:hover .office-room__inner { border-color: #8a94a3; }
-.office-room--focused .office-room__inner { border-color: var(--accent); }
-.office-room--attention .office-room__inner { border-color: var(--status-critical); animation: office-alarm 1.2s ease-in-out infinite; }
-.office-room--done .office-room__inner { border-color: #7cc47f; }
+.office-room:hover .office-room__inner { --room-edge: #6a6380; }
+.office-room--focused .office-room__inner { --room-edge: #4fc9b0; }
+.office-room--done .office-room__inner { --room-edge: #5aa85d; }
+.office-room--attention .office-room__inner { animation: office-alarm 0.8s steps(1) infinite; }
 
 @keyframes office-alarm {
-  50% { box-shadow: inset 0 6px 0 rgba(0, 0, 0, 0.18), 0 0 0 3px rgba(239, 107, 115, 0.45); }
+  0% { border-color: #e05555; }
+  50% { border-color: #8a2f2f; }
 }
 
 .office-room__plate {
   position: absolute;
-  left: 6px;
-  top: 5px;
-  max-width: calc(100% - 60px);
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(20, 24, 30, 0.78);
-  color: #e8edf2;
+  left: calc(var(--px) * 3);
+  top: calc(var(--px) * 4);
+  max-width: 40%;
+  padding: 1px 5px;
+  background: var(--ink);
+  color: #f4ecd8;
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.office-room__prop {
-  position: absolute;
-  right: 6px;
-  top: 4px;
-  line-height: 0;
-  opacity: 0.95;
+  box-shadow: 0 0 0 1px #f4ecd8, 0 0 0 3px var(--ink);
+  z-index: 1;
 }
 
 .office-room__door {
   position: absolute;
   left: 50%;
-  bottom: -4px;
-  width: 34px;
-  height: 4px;
+  bottom: calc(var(--px) * -2);
+  width: calc(var(--px) * 12);
+  height: calc(var(--px) * 2);
   transform: translateX(-50%);
-  background: #2a2f37;
+  background: #585a6e;
 }
 
-/* Desks: positioned in the actors layer so they overlap characters by y. */
+/* Furniture: placed by class, drawn at the room's scale. */
+.office-room__props { position: absolute; inset: 0; pointer-events: none; }
+
+.office-prop { position: absolute; }
+
+/* Wall furniture lines up along the back wall, so pieces never overlap. */
+.office-wall-row {
+  position: absolute;
+  top: calc(var(--px) * 3);
+  right: 6%;
+  display: flex;
+  gap: calc(var(--px) * 3);
+}
+
+.office-wall-row .office-prop { position: static; }
+.office-prop--plant { left: calc(var(--px) * 2); bottom: calc(var(--px) * 2); }
+.office-prop--sofa { right: 8%; bottom: 16%; }
+.office-prop--side { right: 8%; bottom: 22%; }
+.office-prop--reception { left: 30%; bottom: 22%; }
+.office-prop--cooler { right: 18%; bottom: 22%; }
+.office-prop--lobby-plant-l { left: 12%; bottom: 14%; }
+.office-prop--lobby-plant-r { right: 6%; bottom: 14%; }
+
+.office-prop .px-led { fill: #5be37a; animation: office-blink 0.9s steps(1) infinite; }
+.office-prop .px-led-warn { fill: #f5c542; animation: office-blink 1.7s steps(1) infinite; }
+
+@keyframes office-blink { 50% { fill: #1f5a2e; } }
+
+/* Desks sit in the actors layer, so they overlap characters by height. */
 .office-desk {
   position: absolute;
   transform: translate(-50%, -50%) scale(var(--o-scale, 1));
@@ -4344,30 +4385,32 @@ body,
   pointer-events: auto;
 }
 
-.office-desk__top { fill: #b98a5e; }
-.office-desk__front { fill: #9b7049; }
-.office-desk__screen { fill: #2d3743; }
-.office-desk--back { opacity: 0.8; }
-.office-desk--running .office-desk__screen { fill: #3a7bd5; animation: office-screen 1.1s steps(2) infinite; }
-.office-desk--attention .office-desk__screen { fill: var(--status-critical); animation: office-screen 0.6s steps(2) infinite; }
-.office-desk--done .office-desk__screen { fill: #7cc47f; }
+.office-desk .px-screen { fill: #23303f; }
+.office-desk .px-screen-hi { fill: #3d4e63; }
+.office-desk--back { filter: brightness(0.85); }
+.office-desk--running .px-screen { fill: #3a7bd5; animation: office-screen 0.5s steps(1) infinite; }
+.office-desk--running .px-screen-hi { fill: #bfe0ff; }
+.office-desk--attention .px-screen { fill: #e05555; animation: office-screen-alarm 0.5s steps(1) infinite; }
+.office-desk--done .px-screen { fill: #6cc06f; }
+.office-desk--done .px-screen-hi { fill: #d8f5d9; }
 
-@keyframes office-screen { 50% { opacity: 0.55; } }
+@keyframes office-screen { 50% { fill: #2f68b8; } }
+@keyframes office-screen-alarm { 50% { fill: #8a2f2f; } }
 
 .office-desk__name {
   position: absolute;
   left: 50%;
   top: 100%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) scale(calc(1 / var(--o-scale, 1)));
+  transform-origin: 50% 0;
   margin-top: 2px;
   padding: 0 4px;
-  border-radius: 2px;
-  background: rgba(20, 24, 30, 0.7);
-  color: #e8edf2;
-  font-size: 9px;
-  line-height: 13px;
+  background: var(--ink);
+  color: #f4ecd8;
+  font-size: 10px;
+  line-height: 14px;
   white-space: nowrap;
-  max-width: 90px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -4375,132 +4418,140 @@ body,
 /* Characters: feet at their point. */
 .office-char {
   position: absolute;
-  width: 32px;
-  height: 44px;
+  width: 66px;
+  height: 72px;
   transform: translate(-50%, -100%) scale(var(--o-scale, 1));
   transform-origin: 50% 100%;
   pointer-events: auto;
   cursor: pointer;
+  line-height: 0;
 }
 
 .office-char[hidden] { display: none; }
-/* Behind its desk, beside the monitor; the desk (drawn above) hides the legs. */
-.office-char--seated {
-  margin-left: calc(-15px * var(--o-scale, 1));
-  margin-top: calc(10px * var(--o-scale, 1));
-}
-.office-char--sub { transform: translate(-50%, -100%) scale(calc(var(--o-scale, 1) * 0.78)); }
-/* Leads are told apart by colour (legend in the header) and tooltip; a name
-   tag would sit on their desk. */
-.office-char:not(.office-char--sub) .office-char__tag { display: none; }
+.office-char--sub { transform: translate(-50%, -100%) scale(calc(var(--o-scale, 1) * 0.8)); }
 .office-char--manager { cursor: default; }
-.office-char .office-sprite { display: block; overflow: visible; }
+.office-char .office-sprite { display: block; }
 .office-char--face-left .office-sprite { transform: scaleX(-1); }
 
-.office-char .o-leg,
-.office-char .o-arm,
-.office-char .o-body,
-.office-char .o-head { transform-box: fill-box; }
-.office-char .o-leg { transform-origin: 50% 0; }
-.office-char .o-arm { transform-origin: 50% 10%; }
-.office-char .o-mug,
-.office-char .o-eyes-shut { display: none; }
-
-.office-char--walking .o-leg--l { animation: office-step 0.36s ease-in-out infinite; }
-.office-char--walking .o-leg--r { animation: office-step 0.36s ease-in-out infinite reverse; }
-.office-char--walking .o-body { animation: office-bob 0.36s ease-in-out infinite; }
-
-@keyframes office-step {
-  0% { transform: rotate(-16deg); }
-  50% { transform: rotate(16deg); }
-  100% { transform: rotate(-16deg); }
+/* Behind its desk, left of the monitor; the desk (drawn above) hides the
+   legs. Offsets in art pixels. */
+.office-char--seated {
+  margin-left: calc(var(--px) * -6);
+  margin-top: calc(var(--px) * 5);
 }
 
-@keyframes office-bob { 50% { transform: translateY(-1.5px); } }
+/* Frame groups: one of each set shows. */
+.office-char .px-legs-a,
+.office-char .px-legs-b,
+.office-char .px-arms-type-a,
+.office-char .px-arms-type-b,
+.office-char .px-arms-raise,
+.office-char .px-arms-mug,
+.office-char .px-eyes-shut { display: none; }
 
-.office-char--typing:not(.office-char--walking) .o-arm--l { animation: office-type 0.28s ease-in-out infinite; }
-.office-char--typing:not(.office-char--walking) .o-arm--r { animation: office-type 0.28s ease-in-out infinite 0.14s; }
+/* Blink now and then. */
+.office-char .px-eyes-open { animation: office-blink-open 4.2s steps(1) infinite; }
+.office-char .px-eyes-shut { animation: office-blink-shut 4.2s steps(1) infinite; display: inline; visibility: hidden; }
+@keyframes office-blink-open { 0% { visibility: visible; } 95% { visibility: hidden; } 100% { visibility: visible; } }
+@keyframes office-blink-shut { 0% { visibility: hidden; } 95% { visibility: visible; } 100% { visibility: hidden; } }
 
-@keyframes office-type { 50% { transform: rotate(-22deg) translateY(-1px); } }
+.office-char--walking .px-legs-stand { display: none; }
+.office-char--walking .px-legs-a { display: inline; animation: office-frame-a 0.36s steps(1) infinite; }
+.office-char--walking .px-legs-b { display: inline; animation: office-frame-b 0.36s steps(1) infinite; }
+.office-char--walking .office-sprite { animation: office-bob 0.36s steps(1) infinite; }
+.office-char--face-left.office-char--walking .office-sprite { animation-name: office-bob-left; }
 
-.office-char--raising:not(.office-char--walking) .o-arm--r { transform: rotate(-160deg); }
-.office-char--raising:not(.office-char--walking) .o-body { animation: office-hop 0.7s ease-in-out infinite; }
+@keyframes office-frame-a { 0% { visibility: visible; } 50% { visibility: hidden; } }
+@keyframes office-frame-b { 0% { visibility: hidden; } 50% { visibility: visible; } }
+@keyframes office-bob { 50% { transform: translateY(-3px); } }
+@keyframes office-bob-left { 0% { transform: scaleX(-1); } 50% { transform: scaleX(-1) translateY(-3px); } }
 
-@keyframes office-hop { 40% { transform: translateY(-3px); } }
+.office-char--typing:not(.office-char--walking) .px-arms-down { display: none; }
+.office-char--typing:not(.office-char--walking) .px-arms-type-a { display: inline; animation: office-frame-a 0.3s steps(1) infinite; }
+.office-char--typing:not(.office-char--walking) .px-arms-type-b { display: inline; animation: office-frame-b 0.3s steps(1) infinite; }
 
-.office-char--relaxing:not(.office-char--walking) .o-mug { display: inline; }
-.office-char--relaxing:not(.office-char--walking) .o-head { animation: office-sway 3s ease-in-out infinite; }
+.office-char--raising:not(.office-char--walking) .px-arms-down { display: none; }
+.office-char--raising:not(.office-char--walking) .px-arms-raise { display: inline; }
+.office-char--raising:not(.office-char--walking) .office-sprite { animation: office-hop 0.6s steps(1) infinite; }
+@keyframes office-hop { 50% { transform: translateY(-6px); } }
 
-@keyframes office-sway { 50% { transform: rotate(5deg); } }
+.office-char--relaxing:not(.office-char--walking) .px-arms-down { display: none; }
+.office-char--relaxing:not(.office-char--walking) .px-arms-mug { display: inline; }
 
-.office-char--sleeping .o-eyes { display: none; }
-.office-char--sleeping .o-eyes-shut { display: inline; }
-.office-char--sleeping:not(.office-char--walking) .o-head { animation: office-nod 2.4s ease-in-out infinite; }
+.office-char--sleeping .px-eyes-open { display: none; }
+.office-char--sleeping .px-eyes-shut { display: inline; visibility: visible; animation: none; }
+.office-char--sleeping:not(.office-char--walking) .office-sprite { animation: office-doze 2.4s steps(1) infinite; }
+@keyframes office-doze { 50% { transform: translateY(3px); } }
 
-@keyframes office-nod { 50% { transform: translateY(1.5px) rotate(-6deg); } }
+.office-char--leaving { animation: office-fade 0.4s steps(4) forwards; }
+@keyframes office-fade { to { opacity: 0; } }
 
-.office-char--leaving { opacity: 0; transition: opacity 0.4s !important; }
-
+/* Pixel speech bubble. Sized in CSS px (counter-scaled) so text stays
+   readable whatever the room size. */
 .office-char__bubble {
   position: absolute;
   left: 50%;
   bottom: 100%;
-  transform: translateX(-50%);
-  margin-bottom: 2px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: #fdfdfb;
-  color: #1c2027;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 6px;
+  padding: 3px 5px;
+  background: #fffdf5;
+  color: var(--ink);
   font-size: 11px;
-  line-height: 15px;
+  line-height: 14px;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 3px var(--ink);
+  transform: translateX(-50%) scale(calc(1 / var(--o-scale, 1)));
+  transform-origin: 50% 100%;
 }
 
 .office-char__bubble[hidden] { display: none; }
+.office-char__bubble .office-icon { display: block; }
 
 .office-char__bubble::after {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 100%;
-  transform: translateX(-50%);
-  border: 4px solid transparent;
-  border-top-color: #fdfdfb;
+  left: calc(50% - 3px);
+  top: calc(100% + 3px);
+  width: 6px;
+  height: 6px;
+  background: var(--ink);
+  /* A stepped, pixel tail. */
+  clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 50%, 50% 100%, 0 100%);
 }
 
-.office-char--attention .office-char__bubble {
-  background: var(--status-critical);
-  color: #fff;
-  font-weight: 700;
-  animation: office-hop 0.7s ease-in-out infinite;
-}
-
-.office-char--attention .office-char__bubble::after { border-top-color: var(--status-critical); }
-.office-char--sleeping .office-char__bubble { background: transparent; box-shadow: none; color: #cfd6de; font-style: italic; }
-.office-char--sleeping .office-char__bubble::after { display: none; }
-.office-char--speaking .office-char__bubble { background: #fff6c9; color: #1c2027; font-size: 14px; }
-.office-char--speaking .office-char__bubble::after { border-top-color: #fff6c9; }
+.office-char--sub .office-char__bubble { transform: translateX(-50%) scale(calc(1 / (var(--o-scale, 1) * 0.8))); }
+.office-char--attention .office-char__bubble { animation: office-hop 0.6s steps(1) infinite; background: #ffe9e9; }
+.office-char--sleeping .office-char__bubble { background: #e9ecff; }
+.office-char--speaking .office-char__bubble { background: #fff3b8; padding: 4px 6px; }
 
 .office-char__tag {
   position: absolute;
   left: 50%;
   top: 100%;
-  transform: translateX(-50%);
+  margin-top: 2px;
   padding: 0 4px;
-  border-radius: 3px;
-  background: rgba(20, 24, 30, 0.72);
-  color: #e8edf2;
-  font-size: 9px;
-  line-height: 12px;
+  background: var(--ink);
+  color: #f4ecd8;
+  font-size: 10px;
+  line-height: 13px;
   white-space: nowrap;
-  max-width: 96px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
+  transform: translateX(-50%) scale(calc(1 / (var(--o-scale, 1) * 0.8)));
+  transform-origin: 50% 0;
 }
 
-.office-blink { animation: office-screen 0.9s steps(2) infinite; }
-.office-blink--slow { animation-duration: 1.7s; }
+.office__floor--tiny .office-char__tag,
+.office__floor--tiny .office-desk__name { display: none; }
+.office__floor--tiny .office-room__plate { font-size: 9px; padding: 0 3px; }
+
+/* Leads are told apart by colour (legend in the header) and tooltip; a name
+   tag would sit on their desk. */
+.office-char:not(.office-char--sub) .office-char__tag { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .office *,

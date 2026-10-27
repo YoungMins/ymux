@@ -22,7 +22,7 @@ import {
   type Point,
   type RoomModel,
 } from "./officeModel";
-import { characterSvg, deskSvg, paletteOf, propSvg } from "./sprites";
+import { characterSvg, deskSvg, iconSvg, lobbyProps, paletteOf, roomProps } from "./sprites";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
 
@@ -110,7 +110,10 @@ export class OfficeView {
     lobby.className = "office__lobby";
     const lobbyLabel = document.createElement("span");
     lobbyLabel.className = "office__lobby-label";
-    lobby.appendChild(lobbyLabel);
+    const lobbyFurniture = document.createElement("div");
+    lobbyFurniture.className = "office__lobby-props";
+    lobbyFurniture.innerHTML = lobbyProps();
+    lobby.append(lobbyFurniture, lobbyLabel);
     this.emptyEl = document.createElement("div");
     this.emptyEl.className = "office__empty";
     this.floor.append(this.roomsLayer, lobby, this.actorsLayer, this.emptyEl);
@@ -199,6 +202,8 @@ export class OfficeView {
     }
     if (!Number.isFinite(fit)) fit = 1;
     this.floor.style.setProperty("--o-scale", String(Math.max(0.45, Math.min(1.6, fit))));
+    // Rooms too small for name cards: tooltips and plates still say who is who.
+    this.floor.classList.toggle("office__floor--tiny", fit < 0.6);
   }
 
   /// One colour chip per agent kind on the floor (who is who).
@@ -258,12 +263,15 @@ export class OfficeView {
     const plate = document.createElement("div");
     plate.className = "office-room__plate";
     plate.textContent = room.label;
-    const prop = document.createElement("div");
-    prop.className = "office-room__prop";
-    prop.innerHTML = propSvg(room.kind);
+    // The back wall (3/4 view), with the room's furniture against it.
+    const wall = document.createElement("div");
+    wall.className = "office-room__wall";
+    const props = document.createElement("div");
+    props.className = "office-room__props";
+    props.innerHTML = roomProps(room.kind);
     const door = document.createElement("div");
     door.className = "office-room__door";
-    inner.append(plate, prop, door);
+    inner.append(wall, props, plate, door);
     el.appendChild(inner);
     const target = room.desks.find((d) => d.active)?.paneId ?? room.desks[0]?.paneId;
     el.addEventListener("click", () => {
@@ -341,6 +349,7 @@ export class OfficeView {
     el.innerHTML = svg;
     const bubble = document.createElement("span");
     bubble.className = "office-char__bubble";
+    bubble.hidden = true;
     el.appendChild(bubble);
     if (model) {
       const tag = document.createElement("span");
@@ -371,9 +380,20 @@ export class OfficeView {
     const status = t(`office.status.${c.status === "waiting" ? "waiting" : c.status}`);
     el.title = [c.label, status, c.tool].filter(Boolean).join(" · ");
     if (!el.classList.contains("office-char--speaking")) {
-      actor.bubble.textContent = this.bubbleText(c);
-      actor.bubble.hidden = actor.bubble.textContent === "";
+      const b = this.bubbleFor(c);
+      this.setBubble(actor, b.icon, b.text);
     }
+  }
+
+  /// A bubble is a pixel icon, a short text, or both; neither hides it.
+  private setBubble(actor: Actor, icon: string | null, text = ""): void {
+    actor.bubble.innerHTML = icon ? iconSvg(icon) : "";
+    if (text) {
+      const span = document.createElement("span");
+      span.textContent = text;
+      actor.bubble.appendChild(span);
+    }
+    actor.bubble.hidden = !icon && !text;
   }
 
   /// A lead at its desk sits behind it; on an errand it stands and walks.
@@ -386,16 +406,16 @@ export class OfficeView {
     actor.el.classList.toggle("office-char--seated", seated);
   }
 
-  private bubbleText(c: CharModel): string {
+  private bubbleFor(c: CharModel): { icon: string | null; text: string } {
     switch (c.status) {
       case "working":
-        return c.tool ? clip(c.tool, 14) : "…";
+        return c.tool ? { icon: null, text: clip(c.tool, 14) } : { icon: "dots", text: "" };
       case "waiting":
-        return "!";
+        return { icon: "alert", text: "" };
       case "done":
-        return c.role === "lead" ? "✓" : "";
+        return { icon: c.role === "lead" ? "check" : null, text: "" };
       case "idle":
-        return "z";
+        return { icon: "zzz", text: "" };
     }
   }
 
@@ -431,7 +451,8 @@ export class OfficeView {
     actor.pos = to;
     this.position(actor.el, to, 10);
     return this.sleep(ms).then(() => {
-      actor.el.classList.remove("office-char--walking");
+      // Arrived: face the room again.
+      actor.el.classList.remove("office-char--walking", "office-char--face-left");
       this.seat(actor);
     });
   }
@@ -465,10 +486,10 @@ export class OfficeView {
       });
   }
 
-  private async say(actor: Actor, text: string, ms = BUBBLE_MS): Promise<void> {
+  /// Show pixel icon `icon` in a speech bubble for `ms`.
+  private async say(actor: Actor, icon: string, ms = BUBBLE_MS): Promise<void> {
     actor.el.classList.add("office-char--speaking");
-    actor.bubble.textContent = text;
-    actor.bubble.hidden = false;
+    this.setBubble(actor, icon);
     await this.sleep(ms);
     actor.el.classList.remove("office-char--speaking");
     if (actor.model) this.look(actor);
@@ -486,7 +507,7 @@ export class OfficeView {
     const lead = this.actors.get(`${c.paneId}:lead`);
     if (room && lead?.model && !this.reduced) {
       await this.walk(actor, besideSpot(lead.model.home, room.rect));
-      await this.say(actor, "📄", 1200);
+      await this.say(actor, "paper", 1200);
     }
     if (room && !this.reduced) {
       await this.walk(actor, room.door);
@@ -505,13 +526,13 @@ export class OfficeView {
     const fromLead = m.from ? this.actors.get(`${m.from}:lead`) : undefined;
     const messenger = fromLead && !fromLead.gone && m.from !== m.to ? fromLead : this.manager;
     const targetLead = this.actors.get(`${m.to}:lead`);
-    const icon = m.kind === "review" ? "📝" : m.kind === "commit" ? "📦" : "💬";
+    const icon = m.kind === "review" ? "review" : m.kind === "commit" ? "box" : "chat";
     this.errand(messenger, async () => {
       const spot = targetLead?.model
         ? besideSpot(targetLead.model.home, targetRoom.rect)
         : targetRoom.door;
       await this.walk(messenger, spot);
-      const told = targetLead && !targetLead.busy ? this.say(targetLead, "!", BUBBLE_MS) : null;
+      const told = targetLead && !targetLead.busy ? this.say(targetLead, "alert", BUBBLE_MS) : null;
       await this.say(messenger, icon);
       await told;
     });
