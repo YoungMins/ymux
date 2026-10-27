@@ -6,7 +6,7 @@
 
 import type { Point } from "./officeModel";
 import { nearestNode, route, simplify, type CorridorGraph } from "./officePaths";
-import { PET_SPECIES, type PetSpecies } from "./petArt";
+import { PET_SPECIES, type PetSpecies } from "./hiPets";
 
 export interface PetSpot {
   at: Point;

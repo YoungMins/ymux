@@ -6,7 +6,7 @@
 import { getLang, t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
 import { HERO_CLASSES, HERO_FORMS, TIER, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass, type HeroForm } from "./heroModel";
-import { characterSvg } from "./sprites";
+import { characterSprite } from "./sheet";
 
 export interface HeroRow {
   account: string;
@@ -23,8 +23,8 @@ function compact(value: number): string {
 }
 
 /// A still hero (slime or human) in `cls`'s gear for `tier`.
-export function heroAvatar(cls: HeroClass, tier: number, form: HeroForm): string {
-  return characterSvg("claude", "lead", { cls, tier, form });
+export function heroAvatar(cls: HeroClass, tier: number, form: HeroForm): HTMLElement {
+  return characterSprite("claude", "lead", { cls, tier, form });
 }
 
 export class HeroPanel {
@@ -106,7 +106,7 @@ export class HeroPanel {
 
     const avatar = document.createElement("div");
     avatar.className = "office-hero__avatar";
-    avatar.innerHTML = heroAvatar(r.cls, tier, r.form);
+    avatar.appendChild(heroAvatar(r.cls, tier, r.form));
 
     const info = document.createElement("div");
     info.className = "office-hero__info";
@@ -153,7 +153,7 @@ export class HeroPanel {
       b.setAttribute("role", "radio");
       b.setAttribute("aria-checked", String(cls === r.cls));
       b.title = t(`office.class.${cls}`);
-      b.innerHTML = heroAvatar(cls, Math.max(tier, TIER.OUTFIT), r.form);
+      b.appendChild(heroAvatar(cls, Math.max(tier, TIER.OUTFIT), r.form));
       b.addEventListener("click", () => this.onPick(r.account, cls));
       pick.appendChild(b);
     }

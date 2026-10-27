@@ -1,6 +1,6 @@
 // Pixel art for the office view's furniture and bubble icons, as grids of
-// palette keys ("." is clear). The characters are slimes, drawn from shapes
-// in `slimeArt.ts`. Keep every row of a grid the same width
+// palette keys ("." is clear). The characters and pets are hi-res canvas
+// sheets (`sheet.ts`). Keep every row of a grid the same width
 // (officeArt.test.ts).
 
 export const DESK: readonly string[] = [

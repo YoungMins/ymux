@@ -1,6 +1,6 @@
 // The steps of a hero's look, from plain to legendary, and the level each
 // one starts at. Shared by the level logic (`heroModel`) and the two artists
-// (`slimeArt.gearGrid`, `humanArt.humanGrid`), so a new step is added here.
+// (`hiSlime`, `hiHuman`), so a new step is added here.
 
 /// What each tier adds on top of the ones below it.
 export const TIER = {

@@ -24,9 +24,10 @@ import {
   type Point,
   type RoomModel,
 } from "./officeModel";
-import { characterSvg, corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, paletteOf, petSvg, roomProps } from "./sprites";
+import { corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, roomProps } from "./sprites";
+import { characterSprite, paletteOf, petSprite } from "./sheet";
 import { petErrand, petsFor, type PetLobby, type PetSpot } from "./petModel";
-import type { PetSpecies } from "./petArt";
+import type { PetSpecies } from "./hiPets";
 import type { LogEntry } from "./officeLog";
 import { getLang } from "../i18n/i18n";
 import { kindName } from "./officeModel";
@@ -258,7 +259,7 @@ export class OfficeView {
     });
     this.element.append(head, this.floor);
 
-    this.manager = this.makeActor("manager", null, characterSvg("", "manager"));
+    this.manager = this.makeActor("manager", null, characterSprite("", "manager"));
     this.manager.el.classList.add("office-char--manager", "office-char--relaxing");
     this.place(this.manager, MANAGER_HOME);
     this.manager.el.addEventListener("click", (ev) => ev.stopPropagation());
@@ -639,7 +640,7 @@ export class OfficeView {
     for (const species of want.slice(this.pets.length)) {
       const el = document.createElement("div");
       el.className = `office-pet office-pet--${species}`;
-      el.innerHTML = petSvg(species);
+      el.appendChild(petSprite(species));
       const bubble = document.createElement("span");
       bubble.className = "office-pet__bubble";
       bubble.hidden = true;
@@ -706,7 +707,7 @@ export class OfficeView {
     for (const c of this.model.chars) {
       let actor = this.actors.get(c.key);
       if (!actor) {
-        const fresh = this.makeActor(c.key, c, characterSvg(c.kind, c.role));
+        const fresh = this.makeActor(c.key, c, characterSprite(c.kind, c.role));
         actor = fresh;
         this.actors.set(c.key, fresh);
         const room = this.roomOf(c);
@@ -908,11 +909,11 @@ export class OfficeView {
 
   // ── Characters ────────────────────────────────────────────────────────
 
-  private makeActor(key: string, model: CharModel | null, svg: string): Actor {
+  private makeActor(key: string, model: CharModel | null, sprite: HTMLElement): Actor {
     const el = document.createElement("div");
     el.className = "office-char";
     if (model?.role === "sub") el.classList.add("office-char--sub");
-    el.innerHTML = svg;
+    el.appendChild(sprite);
     const bubble = document.createElement("span");
     bubble.className = "office-char__bubble";
     bubble.hidden = true;
@@ -969,8 +970,8 @@ export class OfficeView {
     const look = c.hero ? `${c.hero.form}:${c.hero.cls}:${c.hero.tier}` : "";
     if (el.dataset.look !== look) {
       el.dataset.look = look;
-      el.querySelector("svg.office-sprite")?.remove();
-      el.insertAdjacentHTML("afterbegin", characterSvg(c.kind, c.role, c.hero));
+      el.querySelector(".office-sprite")?.remove();
+      el.prepend(characterSprite(c.kind, c.role, c.hero));
     }
     el.classList.toggle("office-char--hat", !!c.hero && (c.hero.tier >= TIER.OUTFIT || c.hero.form === "human"));
     el.classList.toggle("office-char--human", c.hero?.form === "human");

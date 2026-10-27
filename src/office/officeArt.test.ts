@@ -1,14 +1,44 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import * as art from "./pixelArt";
 import * as themeArt from "./themeArt";
 import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
-import { characterSvg, deskSvg, iconSvg, lobbyProps, petSvg, roomProps } from "./sprites";
-import { PET_H, PET_SPECIES, PET_W, petFrames } from "./petArt";
-import { humanGrid } from "./humanArt";
+import { deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
+import { CHAR_FRAMES, characterFrames, characterSprite, petFrames, petSprite } from "./sheet";
+import { PET_H, PET_POSES, PET_SPECIES, PET_W } from "./hiPets";
+import { FRAME_H, FRAME_W, slimeFrame } from "./hiSlime";
+import { humanFrame } from "./hiHuman";
 import { TIER } from "./heroTiers";
-import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, gearGrid, sproutGrid, tieGrid } from "./slimeArt";
+import { Raster, ellipse, paint, ramp } from "./paint";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
+const same = (a: Raster, b: Raster) => a.px.every((c, i) => c === b.px[i]);
+const sheetKey = (frames: Raster[]) => frames.map((f) => f.px.join(",")).join("|");
+/// Lowest row with anything drawn.
+const lowest = (r: Raster) => {
+  for (let y = r.h - 1; y >= 0; y--) for (let x = 0; x < r.w; x++) if (r.get(x, y)) return y;
+  return -1;
+};
+
+describe("painter", () => {
+  it("shades a part from its ramp and edges it with the outline", () => {
+    const r = ramp("#f0905f");
+    expect(new Set(r.tones).size).toBe(5);
+    const out = paint(new Raster(20, 20), ellipse(10, 10, 6, 6), r);
+    expect(out.get(10, 10)).not.toBeNull();
+    expect(r.tones).toContain(out.get(10, 10));
+    // The leftmost pixel of the middle row is outline.
+    const row = [...Array(20).keys()].map((x) => out.get(x, 10));
+    expect(row[row.findIndex((c) => c !== null)]).toBe(r.outline);
+    expect(out.get(0, 0)).toBeNull();
+  });
+
+  it("mirrors a raster", () => {
+    const r = new Raster(4, 1);
+    r.set(0, 0, "#ffffff");
+    expect(r.flipped().get(3, 0)).toBe("#ffffff");
+  });
+});
 
 describe("pixel art", () => {
   it("keeps every row of a grid the same width", () => {
@@ -21,69 +51,57 @@ describe("pixel art", () => {
     }
   });
 
-  it("draws every slime part on the shared canvas", () => {
-    const parts = [MUG, ...BODIES.flatMap((b) => [bodyGrid(b), sproutGrid(b), tieGrid(b), ...EYES.map((e) => eyesGrid(b, e))])];
-    for (const rows of parts) {
-      expect(rows).toHaveLength(SLIME_H);
-      for (const r of rows) expect(r).toHaveLength(SLIME_W);
-    }
-  });
-
-  it("keeps each body outlined, centred and resting on the floor", () => {
-    for (const b of BODIES) {
-      const rows = bodyGrid(b);
-      expect(rows[SLIME_H - 1], b).toMatch(/^\.*o+\.*$/);
-      for (const r of rows) {
-        const filled = r.replace(/\./g, "");
-        if (!filled) continue;
-        expect(r.indexOf(filled[0]), b).toBe(SLIME_W - 1 - r.lastIndexOf(filled[filled.length - 1]));
-        expect(r[r.search(/[^.]/)], b).toBe("o");
-      }
-    }
-  });
-
-  it("puts the eyes inside the body", () => {
-    for (const b of BODIES) {
-      const body = bodyGrid(b);
-      for (const e of EYES) {
-        eyesGrid(b, e).forEach((r, y) => {
-          [...r].forEach((k, x) => {
-            if (k !== ".") expect(body[y][x], `${b}/${e} at ${x},${y}`).not.toBe(".");
-          });
-        });
-      }
-      expect(eyeRow(b)).toBeLessThan(SLIME_H - 1);
-    }
-  });
-
-  it("renders a group for every pose, moving ones as two-frame strips", () => {
-    const svg = characterSvg("claude", "lead");
-    for (const g of ["px-still-normal", "px-still-raise", "px-still-sleep", "px-anim-walk", "px-anim-type", "px-anim-relax", "px-anim-cheer", "px-blink"]) {
-      expect(svg, g).toContain(g);
-    }
-    // A strip's second frame sits one canvas to the right.
-    expect(svg).toContain(`translate(${SLIME_W} `);
-    expect(characterSvg("codex", "sub")).not.toBe(characterSvg("codex", "lead"));
-    expect(characterSvg("", "manager")).toContain("#d64545");
-    expect(characterSvg("unknown-cli", "lead")).toContain("<rect");
-  });
-
-  it("covers the open eyes when blinking", () => {
-    for (const b of BODIES) {
-      const open = eyesGrid(b, "open");
-      const blink = blinkGrid(b);
-      open.forEach((r, y) => [...r].forEach((k, x) => {
-        if (k === "e") expect(blink[y][x], `${b} ${x},${y}`).not.toBe(".");
-      }));
-    }
-  });
-
   it("leaves screen and LED pixels to the stylesheet", () => {
     expect(deskSvg()).toContain('class="px-screen"');
     expect(roomProps("git")).toContain('class="px-led"');
     expect(lobbyProps()).toContain("office-prop--reception");
     expect(iconSvg("alert")).toContain("<rect");
     expect(iconSvg("nope")).toBe("");
+  });
+});
+
+describe("characters", () => {
+  const at = (frames: Raster[], f: (typeof CHAR_FRAMES)[number]) => frames[CHAR_FRAMES.indexOf(f)];
+
+  it("paints every frame of the sheet at one art pixel per CSS pixel", () => {
+    for (const role of ["lead", "sub", "manager"] as const) {
+      const frames = characterFrames("claude", role);
+      expect(frames).toHaveLength(CHAR_FRAMES.length);
+      for (const f of frames) {
+        expect([f.w, f.h]).toEqual([FRAME_W, FRAME_H]);
+        expect(f.count(), role).toBeGreaterThan(200);
+      }
+    }
+  });
+
+  it("stands on the floor, and lifts off it at the top of a hop", () => {
+    const frames = characterFrames("claude", "lead");
+    expect(lowest(at(frames, "normal"))).toBeGreaterThanOrEqual(FRAME_H - 4);
+    expect(lowest(at(frames, "walkB"))).toBeLessThan(lowest(at(frames, "walkA")));
+  });
+
+  it("blinks, and moves between the frames of a moving pose", () => {
+    const frames = characterFrames("gemini", "lead");
+    expect(same(at(frames, "normal"), at(frames, "normalBlink"))).toBe(false);
+    expect(same(at(frames, "raise"), at(frames, "raiseBlink"))).toBe(false);
+    for (const [a, b] of [["walkA", "walkB"], ["typeA", "typeB"], ["relaxA", "relaxB"], ["cheerA", "cheerB"]] as const) {
+      expect(same(at(frames, a), at(frames, b)), a).toBe(false);
+    }
+  });
+
+  it("draws helpers smaller, the user with a bow tie, and any unknown agent", () => {
+    const lead = at(characterFrames("codex", "lead"), "normal");
+    expect(at(characterFrames("codex", "sub"), "normal").count()).toBeLessThan(lead.count() * 0.7);
+    expect(at(characterFrames("", "manager"), "normal").px.some((c) => c !== null && c.toLowerCase().startsWith("#c8"))).toBe(true);
+    expect(at(characterFrames("unknown-cli", "lead"), "normal").count()).toBeGreaterThan(200);
+  });
+
+  it("puts a sheet in a box the stylesheet crops to one frame", () => {
+    const el = characterSprite("claude", "lead");
+    expect(el.classList.contains("office-sprite")).toBe(true);
+    const canvas = el.querySelector("canvas")!;
+    expect([canvas.width, canvas.height]).toEqual([FRAME_W * CHAR_FRAMES.length, FRAME_H]);
+    expect(petSprite("cat").querySelector("canvas")!.width).toBe(PET_W * PET_POSES.length);
   });
 });
 
@@ -144,111 +162,53 @@ describe("themes", () => {
 
 describe("hero gear", () => {
   const classes = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
-  // Keys the slime palette (body, face, base colours) and the gear palette define.
-  const KNOWN = new Set("oucCwekmrRgGaAbBnNyYjlivdD");
+  const JELLY = { body: "#f0905f", eye: "#2a1f1a", blush: "#ff8c8c" };
+  const look = (cls: (typeof classes)[number], tier: number, form?: "slime" | "human") => characterFrames("claude", "lead", { cls, tier, form });
 
-  it("stays on the canvas with known colours, and is empty at tier 0", () => {
-    for (const body of BODIES) {
+  it("is nothing at tier 0, and only leads wear it", () => {
+    const plain = sheetKey(characterFrames("claude", "lead"));
+    expect(sheetKey(look("warrior", 0))).toBe(plain);
+    expect(sheetKey(look("warrior", 2))).not.toBe(plain);
+    expect(sheetKey(characterFrames("claude", "sub", { cls: "warrior", tier: 2 }))).toBe(sheetKey(characterFrames("claude", "sub")));
+  });
+
+  it("changes the look at every step, for both forms", () => {
+    for (const form of ["slime", "human"] as const) {
       for (const cls of classes) {
-        for (let tier = 0; tier <= TIER.LEGEND; tier++) {
-          const { back, front } = gearGrid(body, cls, tier);
-          for (const rows of [back, front]) {
-            expect(rows).toHaveLength(SLIME_H);
-            for (const r of rows) {
-              expect(r).toHaveLength(SLIME_W);
-              for (const k of r) if (k !== ".") expect(KNOWN.has(k), `${body} ${cls} ${tier} "${k}"`).toBe(true);
-            }
-          }
-          const drawn = front.join("").replace(/\./g, "").length;
-          if (tier === 0) expect(drawn, `${cls} tier 0`).toBe(0);
-          else expect(drawn, `${body} ${cls} ${tier}`).toBeGreaterThan(0);
+        const still = (tier: number) =>
+          form === "human" ? humanFrame(JELLY, cls, tier, { arms: "down", legs: "stand", eyes: "open" }) : slimeFrame({ jelly: JELLY, role: "lead", hero: { cls, tier } }, { body: "normal", eyes: "open" });
+        let prev = still(0);
+        for (let tier = 1; tier <= TIER.LEGEND; tier++) {
+          const now = still(tier);
+          // Gold is a colour swap some classes have no metal for; the aura is CSS.
+          if (tier !== TIER.GOLD && tier !== TIER.AURA) expect(same(now, prev), `${form} ${cls} ${tier}`).toBe(false);
+          prev = now;
         }
       }
     }
   });
 
-  it("adds each step's decoration at its tier", () => {
-    const all = (g: { back: string[]; front: string[] }) => g.back.join("") + g.front.join("");
-    // A jewel, the class item (the sword's guard is gold), the sash, wings.
-    expect(gearGrid("normal", "mage", TIER.JEWEL - 1).front.join("")).not.toMatch(/j/);
-    expect(gearGrid("normal", "mage", TIER.JEWEL).front.join("")).toMatch(/j/);
-    expect(gearGrid("normal", "warrior", TIER.ITEM - 1).back.join("")).not.toMatch(/y/);
-    expect(gearGrid("normal", "warrior", TIER.ITEM).back.join("")).toMatch(/y/);
-    expect(all(gearGrid("normal", "warrior", TIER.CAPE - 1))).not.toMatch(/v/);
-    expect(all(gearGrid("normal", "warrior", TIER.CAPE))).toMatch(/v/);
-    expect(gearGrid("normal", "warrior", TIER.WINGS - 1).back.join("")).not.toMatch(/u/);
-    expect(gearGrid("normal", "warrior", TIER.WINGS).back.join("")).toMatch(/u/);
-    // Every step looks different from the one before.
+  it("draws a human for a lead whose form is human, standing on the floor", () => {
     for (const cls of classes) {
-      for (let tier = 1; tier <= TIER.LEGEND; tier++) {
-        if (tier === TIER.GOLD || tier === TIER.AURA) continue; // a palette swap / CSS
-        expect(all(gearGrid("normal", cls, tier)), `${cls} ${tier}`).not.toBe(all(gearGrid("normal", cls, tier - 1)));
-      }
-    }
-  });
-
-  it("dresses only leads", () => {
-    const plain = characterSvg("claude", "lead");
-    expect(characterSvg("claude", "lead", { cls: "warrior", tier: 2 })).not.toBe(plain);
-    expect(characterSvg("claude", "sub", { cls: "warrior", tier: 2 })).toBe(characterSvg("claude", "sub"));
-  });
-});
-
-describe("human heroes", () => {
-  const classes = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
-  const arms = ["down", "raise", "type", "typeUp", "up", "mug", "sip", "swingA", "swingB"] as const;
-  // Outline, skin, hair, tunic, trousers, boots, face, mug, plus the gear keys.
-  const KNOWN = new Set("osShHtTqdekmuUaAbBnNyYjlirRgGv");
-
-  it("draws every class, tier and pose on the canvas with known colours", () => {
-    for (const cls of classes) {
-      for (let tier = 0; tier <= TIER.LEGEND; tier++) {
-        for (const a of arms) {
-          for (const legs of ["stand", "stepA", "stepB"] as const) {
-            const { back, front } = humanGrid({ arms: a, legs, eyes: "open" }, cls, tier);
-            const bad = new Set<string>();
-            for (const rows of [back, front]) {
-              if (rows.length !== SLIME_H || rows.some((r) => r.length !== SLIME_W)) bad.add("size");
-              for (const r of rows) for (const k of r) if (k !== "." && !KNOWN.has(k)) bad.add(k);
-            }
-            expect([...bad], `${cls} ${tier} ${a} ${legs}`).toEqual([]);
-          }
-        }
-      }
-    }
-  });
-
-  it("stands on the canvas floor and is outlined all round", () => {
-    const { front } = humanGrid({ arms: "down", legs: "stand", eyes: "open" }, "warrior", 0);
-    expect(front[SLIME_H - 1]).toMatch(/o/);
-    for (const r of front) {
-      const first = r.search(/[^.]/);
-      if (first >= 0) expect(r[first]).toBe("o");
-    }
-  });
-
-  it("is drawn for a lead whose hero form is human", () => {
-    const human = characterSvg("claude", "lead", { cls: "mage", tier: 2, form: "human" });
-    expect(human).not.toBe(characterSvg("claude", "lead", { cls: "mage", tier: 2 }));
-    for (const pose of ["px-still-normal", "px-still-raise", "px-still-sleep", "px-anim-walk", "px-anim-type", "px-anim-relax", "px-anim-cheer"]) {
-      expect(human).toContain(pose);
+      const human = look(cls, TIER.ITEM, "human");
+      expect(same(human[0], look(cls, TIER.ITEM)[0]), cls).toBe(false);
+      expect(lowest(human[0]), cls).toBeGreaterThanOrEqual(FRAME_H - 4);
+      for (const f of human) expect(f.count(), cls).toBeGreaterThan(300);
     }
   });
 });
 
 describe("pets", () => {
-  it("draws every species' poses on a 20x14 canvas with known colours", () => {
+  it("paints every species' poses, with a walk of two different frames", () => {
     for (const sp of PET_SPECIES) {
       const f = petFrames(sp);
-      for (const [pose, rows] of Object.entries(f)) {
-        expect(rows, `${sp} ${pose}`).toHaveLength(PET_H);
-        for (const r of rows) {
-          expect(r, `${sp} ${pose}`).toHaveLength(PET_W);
-          expect(r, `${sp} ${pose}`).toMatch(/^[.obBwpen]+$/);
-        }
+      expect(f).toHaveLength(PET_POSES.length);
+      for (const r of f) {
+        expect([r.w, r.h]).toEqual([PET_W, PET_H]);
+        expect(r.count(), sp).toBeGreaterThan(80);
       }
-      expect(f.walkA.join(""), sp).not.toBe(f.walkB.join(""));
-      expect(petSvg(sp)).toContain("px-anim-walk");
+      expect(same(f[0], f[1]), sp).toBe(false);
+      expect(lowest(f[PET_POSES.indexOf("sit")]), sp).toBeGreaterThanOrEqual(PET_H - 4);
     }
   });
 });
