@@ -178,6 +178,11 @@ a speech bubble), stand tall when they need you, sip a coffee when done and
 melt into a nap when idle. A subagent hops in as a little slime with a sprout,
 works in the front row, reports to its lead when it finishes and leaves.
 
+The picker at the top dresses the same floor plan as an office, a cave, a
+castle, a ranch, a space station, the sea floor, a snow village or a desert
+temple: desks become stone slabs, hay bales or consoles whose crystal, lantern
+or screen glows with the pane's status. The choice is remembered.
+
 - **Finished work** — the agent does a victory hop with confetti, and a flag
   goes up outside its room until you open that pane.
 - **Mail** — work ymux hands from one place to another (a fan-out prompt, diff

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as art from "./pixelArt";
+import * as themeArt from "./themeArt";
+import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
 import { characterSvg, deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
 import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, sproutGrid, tieGrid } from "./slimeArt";
 
@@ -79,5 +81,60 @@ describe("pixel art", () => {
     expect(lobbyProps()).toContain("office-prop--reception");
     expect(iconSvg("alert")).toContain("<rect");
     expect(iconSvg("nope")).toBe("");
+  });
+});
+
+describe("themes", () => {
+  const pieces = (t: Theme): Piece[] => [
+    ...t.wall.main,
+    ...t.wall.files,
+    ...t.wall.git,
+    ...t.wall.board,
+    t.corner,
+    t.lounge,
+    t.side,
+    ...Object.values(t.lobby),
+  ];
+  const rowsOf = (p: Piece) => ("rows" in p ? p.rows : p);
+
+  it("keeps every theme grid rectangular", () => {
+    for (const [name, rows] of Object.entries(themeArt)) {
+      expect(new Set((rows as readonly string[]).map((r) => r.length)).size, name).toBe(1);
+    }
+  });
+
+  it("gives every theme a 32x22 desk whose status pixels the stylesheet colours", () => {
+    for (const id of THEME_IDS) {
+      const t = THEMES[id];
+      expect(t.desk, id).toHaveLength(art.DESK.length);
+      for (const r of t.desk) expect(r, id).toHaveLength(art.DESK[0].length);
+      expect(deskSvg(id), id).toContain('class="px-screen"');
+    }
+  });
+
+  it("has a colour for every pixel of every piece", () => {
+    for (const id of THEME_IDS) {
+      const t = THEMES[id];
+      const check = (rows: readonly string[], pal: Readonly<Record<string, string>>, what: string) => {
+        for (const k of new Set(rows.join(""))) if (k !== ".") expect(pal[k], `${id} ${what} "${k}"`).toBeDefined();
+      };
+      check(t.desk, t.pal, "desk");
+      pieces(t).forEach((p, i) => check(rowsOf(p), "rows" in p ? p.pal : t.pal, `piece ${i}`));
+    }
+  });
+
+  it("dresses every room kind and the lobby", () => {
+    for (const id of THEME_IDS) {
+      for (const kind of ["terminal", "files", "git", "editor", "browser", "token_usage"] as const) {
+        expect(roomProps(kind, id), `${id} ${kind}`).toContain("office-wall-row");
+      }
+      expect(lobbyProps(id), id).toContain("office-prop--reception");
+    }
+    expect(roomProps("terminal", "cave")).toContain('class="px-flame"');
+  });
+
+  it("falls back to the office for an unknown saved theme", () => {
+    expect(isThemeId("cave")).toBe(true);
+    expect(isThemeId("moon")).toBe(false);
   });
 });

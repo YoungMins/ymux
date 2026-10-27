@@ -6,9 +6,9 @@
 
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
+import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
 import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, sproutGrid, tieGrid, type Body, type Eyes } from "./slimeArt";
 
-type Palette = Readonly<Record<string, string>>;
 
 /// Shared colours. A value starting with "." is a CSS class instead of a
 /// fill, for pixels the stylesheet colours (a desk's screen follows its
@@ -49,37 +49,6 @@ export function paletteOf(kind: string): { shirt: string } {
   return { shirt: (JELLIES[kind] ?? FALLBACK).c };
 }
 
-const PROPS: Palette = {
-  o: "#2a1f1a",
-  M: "#2d333b",
-  n: ".px-screen",
-  N: ".px-screen-hi",
-  k: "#d8dde3",
-  K: "#9aa3ad",
-  d: "#c98e57",
-  D: "#a56f40",
-  f: "#9a6236",
-  F: "#7a4a28",
-  g: "#e1c08a",
-  G: "#2f7a3b",
-  a: "#b0623a",
-  A: "#8a4a2a",
-  w: "#f3ece0",
-  "1": "#d64545",
-  "2": "#4a90d9",
-  "3": "#e0b84f",
-  "4": "#5cb85c",
-  "5": "#9b6bd6",
-  "6": "#e07a3a",
-  R: "#4a5260",
-  y: "#f5c542",
-  b: "#8ecbf0",
-  B: "#ffffff",
-  r: "#d64545",
-  c: "#5b8c5a",
-  C: "#4a7449",
-};
-const PLANT: Palette = { ...PROPS, g: "#4fa35a", G: "#2f7a3b" };
 const FIXTURES: Palette = {
   ...PROPS,
   w: "#e9e2d2",
@@ -94,7 +63,6 @@ const FIXTURES: Palette = {
   Q: "#a9774a",
 };
 const LETTER: Palette = { ...FIXTURES, w: "#ffffff" };
-const RACK: Palette = { ...PROPS, g: ".px-led", y: ".px-led-warn", "1": "#7d8794" };
 const ICON: Palette = { ...PROPS, w: "#ffffff", k: "#8a94a3", g: "#3aa55a", r: "#d64545" };
 
 /// The <rect>s of one grid, merging horizontal runs of the same key.
@@ -160,10 +128,11 @@ export function characterSvg(kind: string, role: "lead" | "sub" | "manager"): st
   return svg(SLIME_W, SLIME_H, PX, body, "office-sprite");
 }
 
-/// A desk with a monitor; the screen pixels are coloured by the desk's
-/// status class.
-export function deskSvg(): string {
-  return svg(width(art.DESK), art.DESK.length, PX, rects(art.DESK, PROPS), "office-desk__svg");
+/// A desk (a monitor, a crystal, a lantern, … by theme); the `n`/`N` pixels
+/// are coloured by the desk's status class.
+export function deskSvg(theme: ThemeId = "office"): string {
+  const t = THEMES[theme];
+  return svg(width(t.desk), t.desk.length, PX, rects(t.desk, t.pal), "office-desk__svg");
 }
 
 /// Furniture is sized in art pixels (`--px`, which follows the view's
@@ -174,38 +143,47 @@ function prop(rows: readonly string[], pal: Palette, cls: string): string {
   return `<svg class="office-prop ${cls}" viewBox="0 0 ${w} ${h}" style="width:calc(${w} * var(--px));height:calc(${h} * var(--px))" shape-rendering="crispEdges" aria-hidden="true">${rects(rows, pal)}</svg>`;
 }
 
-const wall = (...items: string[]): string => `<div class="office-wall-row">${items.join("")}</div>`;
+function piece(p: Piece, pal: Palette, cls: string): string {
+  return "rows" in p ? prop(p.rows, p.pal, cls) : prop(p, pal, cls);
+}
 
-/// The furniture of a room, by the kind of pane it is: a row along the back
-/// wall, plus floor pieces placed by their class (`office-prop--…`).
-export function roomProps(kind: PaneKind): string {
-  const plant = prop(art.PLANT, PLANT, "office-prop--plant");
+const wall = (items: string[]): string => `<div class="office-wall-row">${items.join("")}</div>`;
+
+/// The furniture of a room, by the kind of pane it is and the theme: a row
+/// along the back wall, plus floor pieces placed by their class
+/// (`office-prop--…`).
+export function roomProps(kind: PaneKind, theme: ThemeId = "office"): string {
+  const t = THEMES[theme];
+  const back = (list: Piece[]): string => wall(list.map((p) => piece(p, t.pal, "")));
+  const corner = piece(t.corner, t.pal, "office-prop--plant");
   switch (kind) {
     case "files":
-      return wall(prop(art.SHELF, PROPS, ""), prop(art.SHELF, PROPS, "")) + plant;
+      return back(t.wall.files) + corner;
     case "git":
-      return wall(prop(art.RACK, RACK, ""), prop(art.RACK, RACK, ""), prop(art.RACK, RACK, "")) + plant;
+      return back(t.wall.git) + corner;
     case "browser":
     case "native_browser":
     case "embedded_browser":
-      return wall(prop(art.WINDOW, PROPS, "")) + prop(art.SOFA, PROPS, "office-prop--sofa") + plant;
+      return back(t.wall.main) + piece(t.lounge, t.pal, "office-prop--sofa") + corner;
     case "editor":
-      return wall(prop(art.WINDOW, PROPS, "")) + prop(art.PAPERS, PROPS, "office-prop--side") + plant;
+      return back(t.wall.main) + piece(t.side, t.pal, "office-prop--side") + corner;
     case "token_usage":
-      return wall(prop(art.BOARD, PROPS, "")) + plant;
+      return back(t.wall.board) + corner;
     case "terminal":
     default:
-      return wall(prop(art.WINDOW, PROPS, "")) + plant;
+      return back(t.wall.main) + corner;
   }
 }
 
-/// The lobby's furniture: reception desk, water cooler, plants.
-export function lobbyProps(): string {
+/// The lobby's furniture: a centrepiece (reception, campfire, throne, …),
+/// a side piece and two small ones.
+export function lobbyProps(theme: ThemeId = "office"): string {
+  const t = THEMES[theme];
   return (
-    prop(art.RECEPTION, PROPS, "office-prop--reception") +
-    prop(art.COOLER, PROPS, "office-prop--cooler") +
-    prop(art.PLANT, PLANT, "office-prop--lobby-plant-l") +
-    prop(art.PLANT, PLANT, "office-prop--lobby-plant-r")
+    piece(t.lobby.centre, t.pal, "office-prop--reception") +
+    piece(t.lobby.side, t.pal, "office-prop--cooler") +
+    piece(t.lobby.left, t.pal, "office-prop--lobby-plant-l") +
+    piece(t.lobby.right, t.pal, "office-prop--lobby-plant-r")
   );
 }
 

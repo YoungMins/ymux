@@ -4178,6 +4178,18 @@ body,
 }
 
 .office__back:hover { background: #fff7e0; }
+
+.office__theme {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: 0;
+  background: #f4ecd8;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px #12131d, inset -2px -2px 0 #c9bfa5;
+}
 .office__back:active { box-shadow: 0 0 0 2px #12131d, inset 2px 2px 0 #c9bfa5; }
 
 .office__floor {
@@ -4240,23 +4252,6 @@ body,
 }
 
 .office__empty[hidden] { display: none; }
-
-/* Corridors: the gaps between rooms, with a carpet runner down the middle. */
-.office-runner {
-  position: absolute;
-  background:
-    repeating-linear-gradient(90deg, transparent 0 calc(var(--px) * 6), rgba(255, 255, 255, 0.08) 0 calc(var(--px) * 7)),
-    #8e4a4a;
-  box-shadow: 0 0 0 var(--px) #5e2f33;
-}
-.office-runner--h { height: calc(var(--px) * 6); transform: translateY(-50%); }
-.office-runner--v {
-  width: calc(var(--px) * 6);
-  transform: translateX(-50%);
-  background:
-    repeating-linear-gradient(0deg, transparent 0 calc(var(--px) * 6), rgba(255, 255, 255, 0.08) 0 calc(var(--px) * 7)),
-    #8e4a4a;
-}
 
 /* Rooms: chunky walls, a back wall in 3/4 view, a tiled floor. */
 .office-room {
@@ -4359,7 +4354,7 @@ body,
   width: calc(var(--px) * 12);
   height: calc(var(--px) * 2);
   transform: translateX(-50%);
-  background: #8e4a4a;
+  background: var(--door, #585a6e);
 }
 
 /* Furniture: placed by class, drawn at the room's scale. */
@@ -4389,6 +4384,181 @@ body,
 .office-prop .px-led-warn { fill: #f5c542; animation: office-blink 1.7s steps(1) infinite; }
 
 @keyframes office-blink { 50% { fill: #1f5a2e; } }
+
+/* Fire in torches, campfires and candles. */
+.office .px-flame { fill: #f5a623; animation: office-flame 0.45s steps(1) infinite; }
+.office .px-flame-hi { fill: #ffe066; animation: office-flame-hi 0.45s steps(1) infinite; }
+@keyframes office-flame { 50% { fill: #e0552a; } }
+@keyframes office-flame-hi { 50% { fill: #f5a623; } }
+
+/* Themes: the corridors (the floor), the lobby, and every room's floor and
+   walls. A theme's rooms share one floor; the furniture tells kinds apart. */
+.office--theme-cave .office__floor {
+  background:
+    radial-gradient(circle at 30% 40%, rgba(255, 255, 255, 0.08) var(--px), transparent calc(var(--px) * 1.5)) 0 0 / calc(var(--px) * 9) calc(var(--px) * 7),
+    radial-gradient(circle at 70% 70%, rgba(0, 0, 0, 0.25) var(--px), transparent calc(var(--px) * 1.5)) 0 0 / calc(var(--px) * 7) calc(var(--px) * 9),
+    #3b322c;
+}
+.office--theme-cave .office__lobby {
+  background: repeating-conic-gradient(#6b5a48 0 25%, #625240 0 50%) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8);
+  border-top-color: #241c17;
+}
+.office--theme-cave .office-room {
+  --room-floor:
+    radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.18) var(--px), transparent calc(var(--px) * 1.4)) 0 0 / calc(var(--px) * 6) calc(var(--px) * 5),
+    #7d6a57;
+  --wall: #5a4c41;
+  --wall-top: #3f342c;
+  --wall-base: #2e2520;
+  --door: #3b322c;
+}
+
+.office--theme-castle .office__floor {
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.25) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 12) calc(var(--px) * 6),
+    linear-gradient(rgba(0, 0, 0, 0.25) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 12) calc(var(--px) * 6),
+    #6b6d7a;
+}
+.office--theme-castle .office__lobby {
+  background:
+    linear-gradient(90deg, transparent 40%, #9e2f2f 40% 60%, transparent 60%),
+    repeating-conic-gradient(#b9bac4 0 25%, #8d8f9c 0 50%) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8);
+  border-top-color: #2b2c36;
+}
+.office--theme-castle .office-room {
+  --room-floor:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.18) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8),
+    linear-gradient(rgba(0, 0, 0, 0.18) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8),
+    #a6a8b4;
+  --wall:
+    linear-gradient(rgba(0, 0, 0, 0.22) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 10) calc(var(--px) * 4),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.22) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 10) calc(var(--px) * 8),
+    #8d8f9c;
+  --wall-top: #6b6d7a;
+  --wall-base: #4a4c58;
+  --door: #6b6d7a;
+}
+
+.office--theme-ranch .office__floor {
+  background:
+    radial-gradient(circle at 25% 30%, #4f9a3a var(--px), transparent calc(var(--px) * 1.2)) 0 0 / calc(var(--px) * 7) calc(var(--px) * 6),
+    radial-gradient(circle at 75% 80%, #8fd46e var(--px), transparent calc(var(--px) * 1.2)) 0 0 / calc(var(--px) * 9) calc(var(--px) * 7),
+    #6cbf4f;
+}
+.office--theme-ranch .office__lobby {
+  background:
+    radial-gradient(circle at 40% 50%, rgba(0, 0, 0, 0.12) var(--px), transparent calc(var(--px) * 1.3)) 0 0 / calc(var(--px) * 6) calc(var(--px) * 5),
+    #c9a46a;
+  border-top-color: #7d5229;
+}
+.office--theme-ranch .office-room {
+  --room-floor:
+    linear-gradient(rgba(0, 0, 0, 0.16) var(--px), transparent var(--px)) 0 0 / 100% calc(var(--px) * 5),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.1) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 18) calc(var(--px) * 10),
+    #c49a62;
+  --wall:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.2) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 5) 100%,
+    #b84a3a;
+  --wall-top: #f4efe6;
+  --wall-base: #7d2f25;
+  --door: #c9a46a;
+}
+
+.office--theme-space .office__floor {
+  background:
+    linear-gradient(90deg, #1b1f2a calc(var(--px) * 2), transparent calc(var(--px) * 2)) 0 0 / calc(var(--px) * 4) calc(var(--px) * 4),
+    #353b4a;
+}
+.office--theme-space .office__lobby {
+  background:
+    repeating-linear-gradient(45deg, #f5c542 0 calc(var(--px) * 3), #1b1f2a 0 calc(var(--px) * 6)) top / 100% calc(var(--px) * 2) no-repeat,
+    repeating-conic-gradient(#4a5160 0 25%, #424857 0 50%) 0 0 / calc(var(--px) * 10) calc(var(--px) * 10);
+  border-top-color: #0e1018;
+}
+.office--theme-space .office-room {
+  --room-floor:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.3) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 10) calc(var(--px) * 10),
+    linear-gradient(rgba(0, 0, 0, 0.3) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 10) calc(var(--px) * 10),
+    #5d6570;
+  --wall:
+    radial-gradient(circle, #ffffff calc(var(--px) * 0.5), transparent calc(var(--px) * 0.6)) 0 0 / calc(var(--px) * 13) calc(var(--px) * 7),
+    radial-gradient(circle, #8ecbf0 calc(var(--px) * 0.5), transparent calc(var(--px) * 0.6)) calc(var(--px) * 6) calc(var(--px) * 3) / calc(var(--px) * 11) calc(var(--px) * 9),
+    #1b1f3a;
+  --wall-top: #6b7486;
+  --wall-base: #5be3e0;
+  --door: #353b4a;
+}
+
+.office--theme-sea { background: #0f2a3d; }
+.office--theme-sea .office__floor {
+  background:
+    radial-gradient(ellipse at 50% 100%, transparent 60%, rgba(0, 0, 0, 0.12) 61% 70%, transparent 71%) 0 0 / calc(var(--px) * 12) calc(var(--px) * 4),
+    #d9c48a;
+}
+.office--theme-sea .office__lobby {
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.3) var(--px), transparent calc(var(--px) * 1.2)) 0 0 / calc(var(--px) * 11) calc(var(--px) * 9),
+    #e6d39a;
+  border-top-color: #b49a5c;
+}
+.office--theme-sea .office-room {
+  --room-floor:
+    radial-gradient(ellipse at 50% 100%, transparent 60%, rgba(0, 0, 0, 0.1) 61% 70%, transparent 71%) 0 0 / calc(var(--px) * 10) calc(var(--px) * 4),
+    #7cc4c8;
+  --wall:
+    radial-gradient(circle, rgba(255, 255, 255, 0.45) calc(var(--px) * 0.8), transparent var(--px)) 0 0 / calc(var(--px) * 9) calc(var(--px) * 6),
+    linear-gradient(#1f6f9a, #2c8fb4);
+  --wall-top: #164f70;
+  --wall-base: #d9c48a;
+  --door: #d9c48a;
+}
+
+.office--theme-snow .office__floor {
+  background:
+    radial-gradient(circle, #c9d6e2 var(--px), transparent calc(var(--px) * 1.2)) 0 0 / calc(var(--px) * 8) calc(var(--px) * 6),
+    #eef4f8;
+}
+.office--theme-snow .office__lobby {
+  background:
+    radial-gradient(circle, #ffffff var(--px), transparent calc(var(--px) * 1.2)) 0 0 / calc(var(--px) * 6) calc(var(--px) * 7),
+    #dbe7f0;
+  border-top-color: #9fb4c6;
+}
+.office--theme-snow .office-room {
+  --room-floor:
+    linear-gradient(rgba(0, 0, 0, 0.14) var(--px), transparent var(--px)) 0 0 / 100% calc(var(--px) * 5),
+    #b98a5a;
+  --wall:
+    linear-gradient(rgba(64, 120, 160, 0.3) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 10) calc(var(--px) * 5),
+    linear-gradient(90deg, rgba(64, 120, 160, 0.3) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 10) calc(var(--px) * 10),
+    #d6effb;
+  --wall-top: #ffffff;
+  --wall-base: #9fd3ef;
+  --room-edge: #6f8aa0;
+  --door: #eef4f8;
+}
+
+.office--theme-desert .office__floor {
+  background:
+    radial-gradient(ellipse at 50% 100%, transparent 60%, rgba(150, 100, 40, 0.18) 61% 70%, transparent 71%) 0 0 / calc(var(--px) * 14) calc(var(--px) * 5),
+    #e8cf8f;
+}
+.office--theme-desert .office__lobby {
+  background: repeating-conic-gradient(#d9b77a 0 25%, #cfab6c 0 50%) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8);
+  border-top-color: #8f6a38;
+}
+.office--theme-desert .office-room {
+  --room-floor:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.12) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 9) calc(var(--px) * 9),
+    linear-gradient(rgba(0, 0, 0, 0.12) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 9) calc(var(--px) * 9),
+    #d9b77a;
+  --wall:
+    linear-gradient(transparent calc(var(--px) * 7), #3a6fb0 calc(var(--px) * 7) calc(var(--px) * 8), #f5c542 calc(var(--px) * 8) calc(var(--px) * 9), transparent calc(var(--px) * 9)),
+    #c49e62;
+  --wall-top: #e2c28a;
+  --wall-base: #8f6a38;
+  --door: #e8cf8f;
+}
 
 /* Outside each door: a flag (finished, unseen) and a mailbox. */
 .office__fixtures { position: absolute; inset: 0; pointer-events: none; }

@@ -29,7 +29,7 @@ import type { LogEntry } from "./officeLog";
 import { getLang } from "../i18n/i18n";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
-import { segmentsOf } from "./officePaths";
+import { THEME_IDS, loadTheme, saveTheme, type ThemeId } from "./themes";
 
 /// Narrowest corridor, in CSS pixels; wider ones follow the sprite scale.
 const CORRIDOR_PX = 24;
@@ -88,6 +88,10 @@ export class OfficeView {
   private readonly board: HTMLButtonElement;
   private readonly boardNotes: HTMLElement;
   private readonly boardPanel: HTMLElement;
+  private readonly lobbyFurniture: HTMLElement;
+  private readonly lobbyLabel: HTMLElement;
+  private readonly themeSelect: HTMLSelectElement;
+  private theme: ThemeId = loadTheme();
   private readonly reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -115,7 +119,19 @@ export class OfficeView {
     back.addEventListener("click", () => this.source.close());
     this.kindsEl = document.createElement("div");
     this.kindsEl.className = "office__kinds";
-    head.append(this.titleEl, legend, this.kindsEl, back);
+    // The theme: the same floor plan as an office, a cave, a castle, …
+    this.themeSelect = document.createElement("select");
+    this.themeSelect.className = "office__theme";
+    for (const id of THEME_IDS) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      this.themeSelect.appendChild(opt);
+    }
+    this.themeSelect.value = this.theme;
+    this.themeSelect.addEventListener("change", () => this.setTheme(this.themeSelect.value as ThemeId));
+    // Arrow keys and Escape belong to the select while it has focus.
+    this.themeSelect.addEventListener("keydown", (ev) => ev.stopPropagation());
+    head.append(this.titleEl, legend, this.kindsEl, this.themeSelect, back);
 
     this.floor = document.createElement("div");
     this.floor.className = "office__floor";
@@ -125,11 +141,10 @@ export class OfficeView {
     this.actorsLayer.className = "office__actors";
     const lobby = document.createElement("div");
     lobby.className = "office__lobby";
-    const lobbyLabel = document.createElement("span");
-    lobbyLabel.className = "office__lobby-label";
-    const lobbyFurniture = document.createElement("div");
-    lobbyFurniture.className = "office__lobby-props";
-    lobbyFurniture.innerHTML = lobbyProps();
+    this.lobbyLabel = document.createElement("span");
+    this.lobbyLabel.className = "office__lobby-label";
+    this.lobbyFurniture = document.createElement("div");
+    this.lobbyFurniture.className = "office__lobby-props";
     // The board: notes pinned for each agent finishing or work handed over;
     // a click opens the full list.
     this.board = document.createElement("button");
@@ -146,7 +161,7 @@ export class OfficeView {
     this.boardPanel = document.createElement("div");
     this.boardPanel.className = "office-board__panel";
     this.boardPanel.hidden = true;
-    lobby.append(lobbyFurniture, this.board, lobbyLabel);
+    lobby.append(this.lobbyFurniture, this.board, this.lobbyLabel);
     this.emptyEl = document.createElement("div");
     this.emptyEl.className = "office__empty";
     this.fixturesLayer = document.createElement("div");
@@ -178,16 +193,19 @@ export class OfficeView {
       this.cleanups.push(() => ro.disconnect());
     }
     this.cleanups.push(onOfficeMessage((m) => this.deliver(m)));
-    this.translate(back, lobbyLabel, legend);
+    this.translate(back, legend);
+    this.applyTheme();
     this.render();
   }
 
   /// Labels follow the language; called once (the overlay is short-lived and
   /// rebuilt on every open).
-  private translate(back: HTMLElement, lobbyLabel: HTMLElement, legend: HTMLElement): void {
+  private translate(back: HTMLElement, legend: HTMLElement): void {
     back.textContent = t("office.back");
     back.title = t("office.backTitle");
-    lobbyLabel.textContent = t("office.lobby");
+    this.themeSelect.title = t("office.theme");
+    this.themeSelect.setAttribute("aria-label", t("office.theme"));
+    for (const opt of this.themeSelect.options) opt.textContent = t(`office.theme.${opt.value}`);
     this.manager.el.title = t("office.you");
     this.element.setAttribute("aria-label", t("office.title"));
     for (const chip of legend.querySelectorAll<HTMLElement>(".office__chip")) {
@@ -196,6 +214,22 @@ export class OfficeView {
     this.emptyEl.textContent = t("office.empty");
     this.board.title = t("office.board");
     this.board.setAttribute("aria-label", t("office.board"));
+  }
+
+  private setTheme(id: ThemeId): void {
+    if (id === this.theme) return;
+    this.theme = id;
+    saveTheme(id);
+    this.applyTheme();
+    this.render();
+  }
+
+  /// The parts drawn once per theme: the floor's class, the lobby's
+  /// furniture and name. Rooms and desks follow on the next render.
+  private applyTheme(): void {
+    for (const id of THEME_IDS) this.element.classList.toggle(`office--theme-${id}`, id === this.theme);
+    this.lobbyFurniture.innerHTML = lobbyProps(this.theme);
+    this.lobbyLabel.textContent = t(this.theme === "office" ? "office.lobby" : `office.lobby.${this.theme}`);
   }
 
   focus(): void {
@@ -233,7 +267,7 @@ export class OfficeView {
     } else {
       this.model = buildOffice(input);
     }
-    this.titleEl.textContent = fill(t("office.heading"), { ws: this.source.workspaceName() });
+    this.titleEl.textContent = `${t(`office.theme.${this.theme}`)} — ${this.source.workspaceName()}`;
     this.applyScale();
     this.renderKinds();
     this.renderRooms();
@@ -284,7 +318,7 @@ export class OfficeView {
         const d = document.createElement("button");
         d.type = "button";
         d.className = `office-desk office-desk--${desk.status}${desk.active ? "" : " office-desk--back"}`;
-        d.innerHTML = deskSvg();
+        d.innerHTML = deskSvg(this.theme);
         d.title = desk.label;
         // Above characters at the same height: a seated lead sits behind it.
         this.position(d, desk.at, 20);
@@ -302,18 +336,7 @@ export class OfficeView {
         this.actorsLayer.appendChild(d);
       }
     }
-    // A runner down the middle of every corridor.
-    const runners = segmentsOf(this.model.graph).map((seg) => {
-      const r = document.createElement("div");
-      const horizontal = Math.abs(seg.a.y - seg.b.y) < 1e-9;
-      r.className = `office-runner office-runner--${horizontal ? "h" : "v"}`;
-      r.style.left = `${Math.min(seg.a.x, seg.b.x) * 100}%`;
-      r.style.top = `${Math.min(seg.a.y, seg.b.y) * 100}%`;
-      if (horizontal) r.style.width = `${Math.abs(seg.a.x - seg.b.x) * 100}%`;
-      else r.style.height = `${Math.abs(seg.a.y - seg.b.y) * 100}%`;
-      return r;
-    });
-    this.roomsLayer.replaceChildren(...runners, ...rooms);
+    this.roomsLayer.replaceChildren(...rooms);
     this.renderFixtures();
     this.renderBoard();
   }
@@ -336,7 +359,7 @@ export class OfficeView {
     wall.className = "office-room__wall";
     const props = document.createElement("div");
     props.className = "office-room__props";
-    props.innerHTML = roomProps(room.kind);
+    props.innerHTML = roomProps(room.kind, this.theme);
     const door = document.createElement("div");
     door.className = "office-room__door";
     inner.append(wall, props, plate, door);
