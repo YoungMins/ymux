@@ -51,7 +51,7 @@ importers:
         specifier: ^1.2.4
         version: 1.2.4
       '@tauri-apps/api':
-        specifier: ^2.0.0
+        specifier: ~2.10.1
         version: 2.10.1
       '@xterm/addon-canvas':
         specifier: ^0.7.0
