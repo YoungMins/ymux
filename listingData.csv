@@ -32,6 +32,8 @@ Customizable theme, syntax colors and keyboard shortcuts
 Available in 13 languages
 PRIVATE BY DESIGN yMux has no sign-up, no analytics and no telemetry. Your layouts, scrollback and settings stay on your PC. The optional activity log sends data only to the webhooks you add yourself.
 
+OFFICE VIEW Press Ctrl+Shift+O to see your workspace as a pixel-art office: each pane is a room and each agent a character that works at its desk, raises a hand when it needs you, celebrates when it finishes and walks over to deliver work to other rooms. Click a room to read and answer its terminal in place, pick one of eight themes, and watch each account level up as an RPG hero with its token usage.
+
 yMux is free and open source: https://github.com/YoungMins/ymux","yMux는 tmux에서 영감을 받은 Windows용 경량 터미널 멀티플렉서입니다. 하나의 화면을 필요한 만큼 여러 터미널로 나누고, 그 레이아웃을 저장해 두었다가 중단했던 지점에서 그대로 다시 시작할 수 있습니다.
 
 유지되는 레이아웃 창을 가로 또는 세로로 원하는 만큼 깊게 나눌 수 있습니다. 모든 창은 셸, 작업 디렉터리, 선택적 시작 명령을 기억하며, 각 워크스페이스는 재시작 후에도 자신의 레이아웃을 유지합니다. 터미널 스크롤백도 함께 저장되므로 앱을 다시 열어도 출력 내용이 그대로 남아 있습니다.
@@ -64,6 +66,8 @@ yMux를 다시 시작한 뒤에도 Claude Code와 Codex 세션을 이어서 진�
 테마, 구문 색상, 키보드 단축키 사용자 지정
 13개 언어 지원
 설계부터 프라이버시를 우선합니다 yMux에는 가입, 분석, 원격 측정이 없습니다. 레이아웃, 스크롤백, 설정은 모두 내 PC에만 저장됩니다. 선택 사항인 작업 기록은 직접 추가한 웹훅으로만 데이터를 보냅니다.
+
+사무실 보기 Ctrl+Shift+O를 누르면 워크스페이스를 픽셀 아트 사무실로 볼 수 있습니다. 창마다 방이 되고, 에이전트는 캐릭터가 되어 책상에서 일하고, 확인이 필요하면 손을 들고, 일을 마치면 기뻐하며, 다른 방으로 작업을 직접 배달합니다. 방을 누르면 그 자리에서 터미널을 보고 답할 수 있고, 테마 8종 중 하나를 고를 수 있으며, 계정마다 토큰 사용량에 따라 RPG 영웅처럼 레벨이 오릅니다.
 
 yMux는 무료 오픈 소스입니다: https://github.com/YoungMins/ymux","yMuxは、tmuxにインスパイアされた Windows 向けの軽量ターミナルマルチプレクサです。1つのウィンドウを必要なだけ複数のターミナルに分割し、そのレイアウトを保存して、中断したところからそのまま再開できます。
 
@@ -98,6 +102,8 @@ yMuxを再起動したあとも、Claude Code と Codex のセッションを再
 13 言語に対応
 設計段階からプライバシーを重視 yMuxには、サインアップも、分析も、テレメトリもありません。レイアウト、スクロールバック、設定はすべてお使いの PC の中に保存されます。オプションのアクティビティ ログは、ご自身で追加した Webhook にのみデータを送信します。
 
+オフィス表示 Ctrl+Shift+O でワークスペースをピクセルアートのオフィスとして表示します。ペインごとに部屋ができ、エージェントはキャラクターになって机で作業し、対応が必要なときは手を挙げ、作業を終えると喜び、ほかの部屋へ作業を届けに歩いていきます。部屋をクリックするとその場でターミナルを見て返答でき、8 種類のテーマから選べ、アカウントごとにトークン使用量に応じて RPG の勇者のようにレベルが上がります。
+
 yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux","yMux 是一款受 tmux 启发、适用于 Windows 的轻量级终端复用器。你可以把一个窗口拆分成任意数量的终端，保存这些布局，下次打开时从上次离开的地方继续。
 
 布局持久保存 窗格可水平或垂直拆分，层数不限。每个窗格都会记住自己的 shell、工作目录和可选的启动命令，每个工作区在重启后也会保留各自的布局。终端滚动缓冲区同样会被保存，重新打开应用后，之前的输出依然都在。
@@ -130,6 +136,8 @@ yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux"
 可自定义主题、语法颜色和键盘快捷键
 支持 13 种语言
 隐私优先的设计 yMux 没有注册，没有数据分析，也没有遥测。你的布局、滚动缓冲区和设置都只保存在你自己的电脑上。可选的活动日志只会把数据发送到你自己添加的 webhook。
+
+办公室视图 按 Ctrl+Shift+O 可将工作区显示为像素风办公室：每个窗格是一个房间，每个智能体都是一个角色，在办公桌前工作，需要你时举手，完成时欢呼，还会走到其他房间递送工作。点击房间即可就地查看并回复其终端；可从 8 种主题中选择；每个账户还会随 token 用量像 RPG 英雄一样升级。
 
 yMux 免费且开源：https://github.com/YoungMins/ymux","yMux, tmux से प्रेरित Windows के लिए एक हल्का टर्मिनल मल्टीप्लेक्सर है। इससे आप एक विंडो को जितने चाहें उतने टर्मिनलों में बाँट सकते हैं, उन लेआउट को सेव कर सकते हैं, और ठीक वहीं से दोबारा शुरू कर सकते हैं जहाँ आपने छोड़ा था।
 
@@ -164,6 +172,8 @@ yMux रीस्टार्ट करने के बाद Claude Code औ�
 13 भाषाओं में उपलब्ध
 डिज़ाइन से ही निजी yMux में कोई साइन-अप, एनालिटिक्स या टेलीमेट्री नहीं है। आपके लेआउट, स्क्रॉलबैक और सेटिंग आपके PC पर ही रहती हैं। वैकल्पिक एक्टिविटी लॉग डेटा केवल उन वेबहुक पर भेजता है जिन्हें आप खुद जोड़ते हैं।
 
+ऑफ़िस व्यू Ctrl+Shift+O दबाकर अपने वर्कस्पेस को पिक्सेल-आर्ट ऑफ़िस के रूप में देखें: हर पेन एक कमरा है और हर एजेंट एक किरदार, जो अपनी मेज़ पर काम करता है, ज़रूरत पड़ने पर हाथ उठाता है, काम पूरा होने पर जश्न मनाता है और दूसरे कमरों तक काम पहुँचाने चलकर जाता है। किसी कमरे पर क्लिक करके वहीं उसका टर्मिनल पढ़ें और जवाब दें, आठ थीम में से चुनें, और देखें कि हर खाता अपने टोकन उपयोग से RPG नायक की तरह लेवल अप करता है।
+
 yMux मुफ़्त और ओपन सोर्स है: https://github.com/YoungMins/ymux","yMux es un multiplexor de terminal ligero para Windows, inspirado en tmux. Te permite dividir una ventana en tantos terminales como necesites, guardar esas disposiciones y retomar el trabajo exactamente donde lo dejaste.
 
 DISPOSICIONES QUE PERSISTEN Divide cualquier panel en horizontal o en vertical, con tanta profundidad como quieras. Cada panel recuerda su shell, su directorio de trabajo y un comando de inicio opcional, y cada espacio de trabajo conserva su propia disposición entre reinicios. El historial de desplazamiento del terminal también se guarda, así que tu salida sigue ahí al volver a abrir la aplicación.
@@ -196,6 +206,8 @@ Cierra a la bandeja y mantén todo en ejecución
 Tema, colores de sintaxis y atajos de teclado personalizables
 Disponible en 13 idiomas
 PRIVADO POR DISEÑO yMux no tiene registro, ni analíticas, ni telemetría. Tus disposiciones, historial de desplazamiento y ajustes se quedan en tu PC. El registro de actividad opcional solo envía datos a los webhooks que añadas tú mismo.
+
+VISTA DE OFICINA Pulsa Ctrl+Shift+O para ver tu espacio de trabajo como una oficina en pixel art: cada panel es una sala y cada agente un personaje que trabaja en su escritorio, levanta la mano cuando te necesita, lo celebra al terminar y lleva el trabajo a otras salas. Haz clic en una sala para leer y responder su terminal ahí mismo, elige uno de ocho temas y mira cómo cada cuenta sube de nivel como un héroe de RPG con su uso de tokens.
 
 yMux es gratuito y de código abierto: https://github.com/YoungMins/ymux","yMux est un multiplexeur de terminal léger pour Windows, inspiré de tmux. Il vous permet de diviser une fenêtre en autant de terminaux que nécessaire, d'enregistrer ces dispositions et de reprendre exactement là où vous vous étiez arrêté.
 
@@ -230,6 +242,8 @@ Thème, couleurs de syntaxe et raccourcis clavier personnalisables
 Disponible en 13 langues
 CONFIDENTIEL PAR CONCEPTION yMux n'a ni inscription, ni outil d'analyse, ni télémétrie. Vos dispositions, votre historique de défilement et vos paramètres restent sur votre PC. Le journal d'activité facultatif n'envoie des données qu'aux webhooks que vous ajoutez vous-même.
 
+VUE BUREAU Appuyez sur Ctrl+Shift+O pour voir votre espace de travail comme un bureau en pixel art : chaque volet est une pièce et chaque agent un personnage qui travaille à son bureau, lève la main quand il a besoin de vous, se réjouit quand il a terminé et va livrer le travail dans d'autres pièces. Cliquez sur une pièce pour lire et répondre à son terminal sur place, choisissez parmi huit thèmes et regardez chaque compte gagner des niveaux comme un héros de RPG grâce à son utilisation de jetons.
+
 yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو مُضاعِف طرفيات خفيف لنظام Windows، مستوحى من tmux. يتيح لك تقسيم نافذة واحدة إلى أي عدد تحتاجه من الطرفيات، وحفظ هذه التخطيطات، والعودة إلى حيث توقفت تمامًا.
 
 تخطيطات تبقى كما هي قسّم أي جزء أفقيًا أو رأسيًا، وبأي عمق تريده. يتذكر كل جزء الـ shell الخاص به ومجلد العمل وأمر بدء اختياريًا، ويحتفظ كل مساحة عمل بتخطيطها الخاص بعد إعادة التشغيل. كما يُحفظ سجل تمرير الطرفية، فيبقى ناتجك موجودًا عند إعادة فتح التطبيق.
@@ -262,6 +276,8 @@ yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو 
 سمة وألوان صياغة واختصارات لوحة مفاتيح قابلة للتخصيص
 متاح بـ 13 لغة
 خصوصية بالتصميم لا يتطلب yMux تسجيلًا ولا يجمع تحليلات ولا بيانات قياس عن بُعد. تبقى تخطيطاتك وسجل التمرير وإعداداتك على جهازك. لا يرسل سجل النشاط الاختياري البيانات إلا إلى webhooks التي تضيفها بنفسك.
+
+عرض المكتب اضغط Ctrl+Shift+O لعرض مساحة عملك كمكتب بفن البكسل: كل جزء غرفة، وكل وكيل شخصية تعمل على مكتبها، وترفع يدها عندما تحتاج إليك، وتحتفل عند الانتهاء، وتسير لتسليم العمل إلى الغرف الأخرى. انقر على غرفة لقراءة طرفيتها والرد عليها في مكانها، واختر واحدة من ثماني سمات، وشاهد كل حساب يرتقي في المستويات كبطل ألعاب تقمص الأدوار مع استخدامه للرموز.
 
 yMux مجاني ومفتوح المصدر: https://github.com/YoungMins/ymux","O yMux é um multiplexador de terminal leve para Windows, inspirado no tmux. Com ele, você divide uma janela em quantos terminais precisar, salva esses layouts e retoma exatamente de onde parou.
 
@@ -296,6 +312,8 @@ Tema, cores de sintaxe e atalhos de teclado personalizáveis
 Disponível em 13 idiomas
 PRIVACIDADE POR PROJETO O yMux não exige cadastro, nem tem análises ou telemetria. Seus layouts, histórico de rolagem e configurações ficam no seu PC. O registro de atividade opcional só envia dados para os webhooks que você mesmo adicionar.
 
+VISÃO DE ESCRITÓRIO Pressione Ctrl+Shift+O para ver seu espaço de trabalho como um escritório em pixel art: cada painel é uma sala e cada agente um personagem que trabalha em sua mesa, levanta a mão quando precisa de você, comemora quando termina e leva o trabalho até outras salas. Clique em uma sala para ler e responder ao terminal ali mesmo, escolha um entre oito temas e veja cada conta subir de nível como um herói de RPG com o uso de tokens.
+
 O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux — лёгкий терминальный мультиплексор для Windows, вдохновлённый tmux. Он позволяет разделить одно окно на нужное число терминалов, сохранить такие раскладки и вернуться ровно туда, где вы остановились.
 
 РАСКЛАДКИ, КОТОРЫЕ СОХРАНЯЮТСЯ Делите любую панель по горизонтали или вертикали на любую глубину. Каждая панель помнит свою оболочку, рабочую папку и необязательную команду запуска, а каждое рабочее пространство сохраняет свою раскладку между перезапусками. История прокрутки терминала тоже сохраняется, поэтому вывод остаётся на месте после повторного открытия приложения.
@@ -328,6 +346,8 @@ O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux
 Настраиваемые тема, цвета синтаксиса и сочетания клавиш
 Доступно на 13 языках
 КОНФИДЕНЦИАЛЬНОСТЬ ПО УМОЛЧАНИЮ В yMux нет регистрации, аналитики и телеметрии. Ваши раскладки, история прокрутки и настройки остаются на вашем ПК. Необязательный журнал активности отправляет данные только на те webhook, которые вы добавите сами.
+
+ВИД «ОФИС» Нажмите Ctrl+Shift+O, чтобы увидеть рабочее пространство как офис в стиле пиксель-арт: каждая панель — комната, каждый агент — персонаж, который работает за столом, поднимает руку, когда нужны вы, радуется, закончив, и сам относит работу в другие комнаты. Щёлкните комнату, чтобы прямо там читать её терминал и отвечать, выберите одну из восьми тем и наблюдайте, как каждый аккаунт растёт в уровнях, словно герой RPG, по мере расхода токенов.
 
 yMux бесплатен и имеет открытый исходный код: https://github.com/YoungMins/ymux","yMux, tmux'tan esinlenen, Windows için hafif bir terminal çoklayıcısıdır. Tek bir pencereyi istediğiniz sayıda terminale bölmenizi, bu düzenleri kaydetmenizi ve kaldığınız yerden aynen devam etmenizi sağlar.
 
@@ -362,6 +382,8 @@ Tepsiye küçültüp her şeyi çalışır durumda tutun
 13 dilde kullanılabilir
 TASARIMI GEREĞİ GİZLİ yMux'ta kayıt, analiz ve telemetri yoktur. Düzenleriniz, terminal geçmişiniz ve ayarlarınız bilgisayarınızda kalır. İsteğe bağlı etkinlik günlüğü verileri yalnızca sizin eklediğiniz webhook'lara gönderir.
 
+OFİS GÖRÜNÜMÜ Çalışma alanınızı piksel sanatı bir ofis olarak görmek için Ctrl+Shift+O tuşlarına basın: her bölme bir oda, her ajan ise masasında çalışan, size ihtiyaç duyduğunda el kaldıran, işini bitirince sevinen ve işi diğer odalara yürüyerek götüren bir karakterdir. Bir odaya tıklayarak terminalini yerinde okuyup yanıtlayın, sekiz temadan birini seçin ve her hesabın token kullanımıyla bir RPG kahramanı gibi seviye atlamasını izleyin.
+
 yMux ücretsiz ve açık kaynaklıdır: https://github.com/YoungMins/ymux","yMux ist ein schlanker Terminal-Multiplexer für Windows, inspiriert von tmux. Sie teilen ein Fenster in beliebig viele Terminals, speichern diese Layouts und machen genau dort weiter, wo Sie aufgehört haben.
 
 LAYOUTS, DIE BLEIBEN Teilen Sie jeden Bereich horizontal oder vertikal, so tief Sie möchten. Jeder Bereich merkt sich seine Shell, sein Arbeitsverzeichnis und optional einen Startbefehl, und jeder Arbeitsbereich behält sein Layout über Neustarts hinweg. Auch der Terminalverlauf wird gespeichert, sodass Ihre Ausgaben nach dem erneuten Öffnen der App noch da sind.
@@ -394,6 +416,8 @@ In den Infobereich minimieren, alles läuft weiter
 Anpassbares Design, Syntaxfarben und Tastenkombinationen
 In 13 Sprachen verfügbar
 PRIVATSPHÄRE AB WERK yMux hat keine Anmeldung, keine Analysen und keine Telemetrie. Ihre Layouts, Ihr Verlauf und Ihre Einstellungen bleiben auf Ihrem PC. Das optionale Aktivitätsprotokoll sendet Daten nur an die Webhooks, die Sie selbst hinzufügen.
+
+BÜROANSICHT Drücken Sie Ctrl+Shift+O, um Ihren Arbeitsbereich als Pixel-Art-Büro zu sehen: Jeder Bereich ist ein Raum und jeder Agent eine Figur, die am Schreibtisch arbeitet, sich meldet, wenn sie Sie braucht, sich über erledigte Arbeit freut und Aufgaben zu anderen Räumen bringt. Klicken Sie auf einen Raum, um sein Terminal direkt dort zu lesen und zu beantworten, wählen Sie eines von acht Designs und sehen Sie zu, wie jedes Konto mit seinem Token-Verbrauch wie ein RPG-Held im Level aufsteigt.
 
 yMux ist kostenlos und Open Source: https://github.com/YoungMins/ymux","yMux là trình ghép kênh terminal nhẹ dành cho Windows, lấy cảm hứng từ tmux. Bạn có thể chia một cửa sổ thành bao nhiêu terminal tùy ý, lưu các bố cục đó và quay lại đúng chỗ đã dừng.
 
@@ -428,138 +452,114 @@ Tùy chỉnh giao diện, màu cú pháp và phím tắt
 Có sẵn bằng 13 ngôn ngữ
 RIÊNG TƯ TỪ THIẾT KẾ yMux không cần đăng ký, không phân tích và không thu thập dữ liệu từ xa. Bố cục, nội dung cuộn và cài đặt của bạn luôn nằm trên máy tính của bạn. Nhật ký hoạt động tùy chọn chỉ gửi dữ liệu tới các webhook do chính bạn thêm.
 
+CHẾ ĐỘ VĂN PHÒNG Nhấn Ctrl+Shift+O để xem không gian làm việc như một văn phòng pixel art: mỗi ngăn là một căn phòng, mỗi agent là một nhân vật làm việc tại bàn, giơ tay khi cần bạn, ăn mừng khi xong việc và tự đi giao việc sang phòng khác. Nhấp vào một phòng để đọc và trả lời terminal ngay tại chỗ, chọn một trong tám chủ đề và xem mỗi tài khoản lên cấp như một anh hùng RPG theo lượng token đã dùng.
+
 yMux miễn phí và mã nguồn mở: https://github.com/YoungMins/ymux"
-ReleaseNotes,3,Text,,"Review an agent's changes: open ""Review changes"" to see the working-tree diff in unified or split view, comment on lines and send the comments back to the agent.
+ReleaseNotes,3,Text,,"Office view (Ctrl+Shift+O): see your workspace as a pixel-art office. Each pane is a room with corridors between them, and agents are characters that work at their desks, raise a hand when they need you and nap when idle. Subagents walk in, help and report back.
 
-Fan-out: send one prompt to several Claude Code or Codex agents, each in its own git worktree, then compare the results side by side.
+Done flags, mail and a lobby board: a flag goes up when an agent finishes, work handed between panes arrives as a letter in the room's mailbox, and the lobby board keeps a note of every finished turn.
 
-Attention inbox: a bell in the workspace panel lists the panes waiting for you. Ctrl+Shift+U jumps to the next one.
+Answer agents without leaving the office: click a room to read its terminal live and type a prompt or press keys to reply.
 
-Multiple accounts: pick or add a Claude Code or Codex account from the + launcher and use a different account in each pane. Token usage is grouped by account.
+Eight themes: office, cave, castle, ranch, space station, undersea, snow village and desert temple.
 
-Optional activity log: record what agents did in each turn, summarize it (rule-based or a local model such as Ollama) and send it to Slack, Discord, Teams or your own webhook. Off by default.
+Heroes: each account levels up with its token usage (one level per 100M tokens). Pick a class and a slime or human look; the gear grows over ten steps up to a legendary crown.","사무실 보기(Ctrl+Shift+O): 워크스페이스를 픽셀 아트 사무실로 볼 수 있습니다. 창마다 방이 되고 방 사이에는 복도가 생기며, 에이전트는 캐릭터가 되어 책상에서 일하고, 확인이 필요하면 손을 들고, 대기 중에는 낮잠을 잡니다. 서브에이전트는 방에 들어와 돕고 리드에게 보고합니다.
 
-Fixes: Claude Code sessions resume reliably on Windows, and terminal output is faster.","에이전트 변경 내용 검토: ""변경 사항 검토""에서 작업 중인 변경 내용을 한 줄 보기나 좌우 보기로 확인하고, 줄마다 코멘트를 달아 에이전트에게 다시 보낼 수 있습니다.
+완료 깃발·우편함·게시판: 에이전트가 일을 마치면 깃발이 올라가고, 창끼리 넘긴 작업은 방 우편함에 편지로 도착하며, 로비 게시판에 완료된 턴이 모두 기록됩니다.
 
-동시 실행(Fan-out): 프롬프트 하나를 여러 Claude Code·Codex 에이전트에게 보내고, 각자 별도 git worktree에서 작업한 결과를 나란히 비교합니다.
+사무실에서 바로 답하기: 방을 누르면 그 터미널 화면을 실시간으로 보면서 프롬프트를 입력하거나 키를 눌러 답할 수 있습니다.
 
-알림함: 워크스페이스 패널의 종 아이콘에 확인이 필요한 창이 모입니다. Ctrl+Shift+U로 다음 창으로 바로 이동합니다.
+테마 8종: 사무실, 동굴, 성, 목장, 우주정거장, 해저, 설원 마을, 사막 신전.
 
-다중 계정: + 메뉴에서 Claude Code·Codex 계정을 고르거나 추가해, 창마다 다른 계정을 쓸 수 있습니다. 토큰 사용량도 계정별로 묶어 보여 줍니다.
+모험가: 계정마다 토큰 사용량에 따라 레벨이 오릅니다(1억 토큰당 1레벨). 직업과 슬라임·인간형 외형을 고르면 장비가 10단계에 걸쳐 전설의 왕관까지 성장합니다.","オフィス表示（Ctrl+Shift+O）：ワークスペースをピクセルアートのオフィスとして表示します。ペインごとに部屋ができ、部屋の間には廊下が通ります。エージェントはキャラクターになって机で作業し、対応が必要なときは手を挙げ、待機中は昼寝します。サブエージェントは部屋に入ってきて手伝い、リードに報告します。
 
-작업 기록(선택): 에이전트가 턴마다 한 일을 기록하고 요약(규칙 기반 또는 Ollama 같은 로컬 모델)해 Slack, Discord, Teams나 직접 지정한 웹훅으로 보냅니다. 기본으로 꺼져 있습니다.
+完了の旗・郵便受け・掲示板：エージェントが作業を終えると旗が立ち、ペイン間で渡した作業は部屋の郵便受けに手紙として届き、ロビーの掲示板には完了したターンがすべて記録されます。
 
-수정: Windows에서 Claude Code 세션 이어 하기가 안정적으로 동작하고, 터미널 출력이 더 빨라졌습니다.","エージェントの変更をレビュー: 「変更をレビュー」を開くと、作業ツリーの差分を統合表示または左右分割表示で確認でき、行ごとにコメントを付けてエージェントに送り返せます。
+オフィスからそのまま返答：部屋をクリックするとターミナル画面をリアルタイムで見ながら、プロンプトを入力したりキーを押したりして返答できます。
 
-ファンアウト: 1つのプロンプトを複数の Claude Code または Codex エージェントに送り、それぞれ専用の git worktree で作業させて、結果を並べて比較できます。
+8 種類のテーマ：オフィス、洞窟、城、牧場、宇宙ステーション、海底、雪の村、砂漠の神殿。
 
-通知受信トレイ: ワークスペース パネルのベル アイコンに、あなたの対応を待っているペインが一覧表示されます。Ctrl+Shift+U で次のペインにジャンプします。
+冒険者：アカウントごとにトークン使用量に応じてレベルが上がります（1 億トークンで 1 レベル）。職業とスライムか人間の外見を選ぶと、装備が 10 段階で伝説の王冠まで成長します。","办公室视图（Ctrl+Shift+O）：把工作区显示为像素风办公室。每个窗格是一个房间，房间之间有走廊；智能体化身角色，在办公桌前工作，需要你时举手，空闲时打盹。子智能体会走进房间帮忙，并向主智能体汇报。
 
-複数アカウント: + ランチャーから Claude Code または Codex のアカウントを選択または追加し、ペインごとに別のアカウントを使えます。トークン使用量はアカウント別に集計されます。
+完成旗帜、信箱和公告板：智能体完成工作时会升起旗帜，窗格之间交接的工作会以信件形式送到房间信箱，大厅公告板会记录每一轮完成的工作。
 
-アクティビティ ログ(オプション): 各ターンでエージェントが行った作業を記録し、要約(ルールベース、または Ollama などのローカル モデル)して、Slack、Discord、Teams、または独自の Webhook に送信します。既定ではオフです。
+在办公室里直接回复：点击房间即可实时查看其终端画面，输入提示或按键进行回复。
 
-修正: Windows で Claude Code セッションを確実に再開できるようになり、ターミナルの出力が高速化されました。","审阅智能体的更改：打开“审阅更改”，可在统一视图或并排视图中查看工作树差异，对具体行添加评论，并把评论发回给智能体。
+8 种主题：办公室、洞穴、城堡、牧场、空间站、海底、雪村和沙漠神殿。
 
-扇出（Fan-out）：把一条提示同时发给多个 Claude Code 或 Codex 智能体，每个智能体在各自的 git worktree 中运行，然后并排比较结果。
+冒险者：每个账户会随 token 用量升级（每 1 亿 token 升 1 级）。选择职业以及史莱姆或人类外形，装备会分 10 个阶段成长，直到传说王冠。","ऑफ़िस व्यू (Ctrl+Shift+O): अपने वर्कस्पेस को पिक्सेल-आर्ट ऑफ़िस के रूप में देखें। हर पेन एक कमरा बनता है और कमरों के बीच गलियारे होते हैं। एजेंट किरदार बनकर अपनी मेज़ पर काम करते हैं, आपकी ज़रूरत होने पर हाथ उठाते हैं और खाली होने पर झपकी लेते हैं। सब-एजेंट कमरे में आकर मदद करते हैं और अपने लीड को रिपोर्ट करते हैं।
 
-提醒收件箱：工作区面板中的铃铛会列出正在等你处理的窗格。按 Ctrl+Shift+U 可跳转到下一个。
+पूरा होने का झंडा, मेलबॉक्स और नोटिस बोर्ड: एजेंट का काम पूरा होने पर झंडा लगता है, पेन के बीच सौंपा गया काम कमरे के मेलबॉक्स में चिट्ठी बनकर पहुँचता है, और लॉबी का बोर्ड हर पूरे हुए टर्न को दर्ज करता है।
 
-多账户：在 + 启动器中选择或添加 Claude Code 或 Codex 账户，每个窗格都可以使用不同的账户。token 用量按账户分组。
+ऑफ़िस से ही जवाब दें: किसी कमरे पर क्लिक करके उसका टर्मिनल लाइव देखें और प्रॉम्प्ट लिखकर या कुंजियाँ दबाकर जवाब दें।
 
-可选的活动日志：记录智能体每一轮做了什么，进行摘要（基于规则，或使用 Ollama 等本地模型），并发送到 Slack、Discord、Teams 或你自己的 webhook。默认关闭。
+आठ थीम: ऑफ़िस, गुफा, महल, फ़ार्म, अंतरिक्ष स्टेशन, समुद्र तल, बर्फ़ीला गाँव और रेगिस्तानी मंदिर।
 
-修复：Claude Code 会话在 Windows 上可可靠恢复，终端输出更快。","एजेंट के बदलावों की समीक्षा करें: ""बदलावों की समीक्षा"" खोलकर वर्किंग ट्री का डिफ़ यूनिफ़ाइड या स्प्लिट व्यू में देखें, पंक्तियों पर टिप्पणी करें और टिप्पणियाँ एजेंट को वापस भेजें।
+नायक: हर खाता अपने टोकन उपयोग से लेवल अप करता है (हर 10 करोड़ टोकन पर 1 लेवल)। वर्ग और स्लाइम या मानव रूप चुनें; उपकरण दस चरणों में बढ़ते हुए पौराणिक मुकुट तक पहुँचते हैं।","Vista de oficina (Ctrl+Shift+O): ve tu espacio de trabajo como una oficina en pixel art. Cada panel es una sala, con pasillos entre ellas, y los agentes son personajes que trabajan en su escritorio, levantan la mano cuando te necesitan y echan una siesta cuando están inactivos. Los subagentes entran, ayudan e informan a su agente principal.
 
-फैन-आउट: एक ही प्रॉम्प्ट कई Claude Code या Codex एजेंट को भेजें, हर एजेंट अपने अलग git worktree में चलेगा, फिर नतीजों की अगल-बगल तुलना करें।
+Banderas, buzones y tablón: se iza una bandera cuando un agente termina, el trabajo enviado entre paneles llega como carta al buzón de la sala y el tablón del vestíbulo anota cada turno terminado.
 
-अटेंशन इनबॉक्स: वर्कस्पेस पैनल में घंटी का आइकन उन पेन की सूची दिखाता है जो आपका इंतज़ार कर रहे हैं। Ctrl+Shift+U दबाकर अगले पेन पर जाएँ।
+Responde sin salir de la oficina: haz clic en una sala para leer su terminal en directo y escribir un prompt o pulsar teclas para responder.
 
-कई अकाउंट: + लॉन्चर से Claude Code या Codex अकाउंट चुनें या जोड़ें, और हर पेन में अलग अकाउंट इस्तेमाल करें। टोकन उपयोग अकाउंट के हिसाब से समूहित होता है।
+Ocho temas: oficina, cueva, castillo, rancho, estación espacial, fondo marino, pueblo nevado y templo del desierto.
 
-वैकल्पिक एक्टिविटी लॉग: दर्ज करें कि एजेंट ने हर टर्न में क्या किया, उसका सारांश बनाएँ (नियम-आधारित या Ollama जैसे लोकल मॉडल से) और उसे Slack, Discord, Teams या अपने वेबहुक पर भेजें। यह डिफ़ॉल्ट रूप से बंद रहता है।
+Héroes: cada cuenta sube de nivel con su uso de tokens (un nivel cada 100 millones). Elige una clase y un aspecto de slime o humano; el equipo crece en diez pasos hasta una corona legendaria.","Vue bureau (Ctrl+Shift+O) : affichez votre espace de travail comme un bureau en pixel art. Chaque volet devient une pièce, reliée aux autres par des couloirs, et les agents sont des personnages qui travaillent à leur bureau, lèvent la main quand ils ont besoin de vous et font la sieste quand ils sont inactifs. Les sous-agents entrent, aident puis font leur rapport à l'agent principal.
 
-सुधार: Windows पर Claude Code सेशन भरोसेमंद ढंग से फिर शुरू होते हैं, और टर्मिनल आउटपुट तेज़ है।","Revisa los cambios de un agente: abre ""Revisar cambios"" para ver las diferencias del árbol de trabajo en vista unificada o dividida, comenta líneas y devuelve los comentarios al agente.
+Drapeaux, boîtes aux lettres et tableau : un drapeau se lève quand un agent termine, le travail transmis entre volets arrive en lettre dans la boîte de la pièce, et le tableau du hall note chaque tour terminé.
 
-Fan-out: envía un mismo prompt a varios agentes de Claude Code o Codex, cada uno en su propio git worktree, y compara los resultados lado a lado.
+Répondez sans quitter le bureau : cliquez sur une pièce pour lire son terminal en direct et saisir un prompt ou appuyer sur des touches pour répondre.
 
-Bandeja de atención: una campana en el panel de espacios de trabajo muestra los paneles que te esperan. Ctrl+Shift+U salta al siguiente.
+Huit thèmes : bureau, grotte, château, ranch, station spatiale, fonds marins, village enneigé et temple du désert.
 
-Varias cuentas: elige o añade una cuenta de Claude Code o Codex desde el lanzador + y usa una cuenta distinta en cada panel. El uso de tokens se agrupa por cuenta.
+Héros : chaque compte gagne des niveaux avec son utilisation de jetons (un niveau tous les 100 millions). Choisissez une classe et une apparence de slime ou d'humain ; l'équipement évolue en dix étapes jusqu'à une couronne légendaire.","عرض المكتب (Ctrl+Shift+O): اعرض مساحة عملك كمكتب بفن البكسل. يصبح كل جزء غرفة تفصل بينها ممرات، ويصبح الوكلاء شخصيات تعمل على مكاتبها، وترفع يدها عندما تحتاج إليك، وتغفو عندما تكون خاملة. يدخل الوكلاء الفرعيون للمساعدة ثم يرفعون تقاريرهم إلى الوكيل الرئيسي.
 
-Registro de actividad opcional: registra lo que hicieron los agentes en cada turno, resúmelo (con reglas o con un modelo local como Ollama) y envíalo a Slack, Discord, Teams o a tu propio webhook. Desactivado por defecto.
+أعلام الإنجاز وصناديق البريد ولوحة الإعلانات: يرتفع علم عندما ينهي الوكيل عمله، ويصل العمل المُسلَّم بين الأجزاء كرسالة إلى صندوق بريد الغرفة، وتسجل لوحة الردهة كل دورة مكتملة.
 
-Correcciones: las sesiones de Claude Code se reanudan de forma fiable en Windows y la salida del terminal es más rápida.","Examinez les modifications d'un agent : ouvrez ""Examiner les modifications"" pour voir le diff de l'arbre de travail en vue unifiée ou côte à côte, commentez des lignes et renvoyez les commentaires à l'agent.
+ردّ دون مغادرة المكتب: انقر على غرفة لقراءة طرفيتها مباشرة، واكتب موجّهًا أو اضغط المفاتيح للرد.
 
-Fan-out : envoyez un même prompt à plusieurs agents Claude Code ou Codex, chacun dans son propre git worktree, puis comparez les résultats côte à côte.
+ثماني سمات: مكتب وكهف وقلعة ومزرعة ومحطة فضائية وقاع البحر وقرية ثلجية ومعبد صحراوي.
 
-Boîte d'attention : une cloche dans le panneau des espaces de travail liste les volets qui vous attendent. Ctrl+Shift+U passe au suivant.
+الأبطال: يرتقي كل حساب في المستويات مع استخدامه للرموز (مستوى واحد لكل 100 مليون رمز). اختر فئة ومظهر سلايم أو إنسان، وتتطور المعدات عبر عشر مراحل حتى التاج الأسطوري.","Visão de escritório (Ctrl+Shift+O): veja seu espaço de trabalho como um escritório em pixel art. Cada painel vira uma sala, com corredores entre elas, e os agentes são personagens que trabalham em suas mesas, levantam a mão quando precisam de você e cochilam quando estão ociosos. Os subagentes entram, ajudam e se reportam ao agente principal.
 
-Plusieurs comptes : choisissez ou ajoutez un compte Claude Code ou Codex depuis le lanceur + et utilisez un compte différent dans chaque volet. La consommation de jetons est regroupée par compte.
+Bandeiras, caixas de correio e mural: uma bandeira sobe quando um agente termina, o trabalho passado entre painéis chega como carta na caixa de correio da sala e o mural do saguão registra cada turno concluído.
 
-Journal d'activité facultatif : enregistrez ce que les agents ont fait à chaque tour, résumez-le (par règles ou avec un modèle local comme Ollama) et envoyez-le à Slack, Discord, Teams ou à votre propre webhook. Désactivé par défaut.
+Responda sem sair do escritório: clique em uma sala para ler o terminal ao vivo e digitar um prompt ou pressionar teclas para responder.
 
-Corrections : les sessions Claude Code reprennent de façon fiable sous Windows et la sortie du terminal est plus rapide.","مراجعة تغييرات الوكيل: افتح ""مراجعة التغييرات"" لعرض فروق شجرة العمل بعرض موحّد أو مقسّم، وعلّق على الأسطر وأعد التعليقات إلى الوكيل.
+Oito temas: escritório, caverna, castelo, fazenda, estação espacial, fundo do mar, vila nevada e templo do deserto.
 
-التوزيع المتوازي (Fan-out): أرسل موجّهًا واحدًا إلى عدة وكلاء Claude Code أو Codex، كلٌّ في git worktree الخاص به، ثم قارن النتائج جنبًا إلى جنب.
+Heróis: cada conta sobe de nível com o uso de tokens (um nível a cada 100 milhões). Escolha uma classe e uma aparência de slime ou humano; o equipamento evolui em dez etapas até uma coroa lendária.","Вид «Офис» (Ctrl+Shift+O): рабочее пространство в виде офиса в стиле пиксель-арт. Каждая панель становится комнатой, между комнатами проходят коридоры, а агенты — персонажи, которые работают за столами, поднимают руку, когда нужны вы, и дремлют без дела. Субагенты заходят помочь и отчитываются перед главным агентом.
 
-صندوق التنبيهات: يعرض رمز الجرس في لوحة مساحات العمل الأجزاء التي تنتظرك. ينقلك Ctrl+Shift+U إلى الجزء التالي.
+Флажки, почтовые ящики и доска: когда агент заканчивает работу, поднимается флажок; работа, переданная между панелями, приходит письмом в почтовый ящик комнаты, а доска в холле отмечает каждый завершённый ход.
 
-حسابات متعددة: اختر حساب Claude Code أو Codex أو أضفه من مشغّل + واستخدم حسابًا مختلفًا في كل جزء. يُجمَّع استهلاك الرموز حسب الحساب.
+Отвечайте прямо из офиса: щёлкните комнату, чтобы видеть её терминал в реальном времени, ввести промпт или нажать клавиши для ответа.
 
-سجل نشاط اختياري: سجّل ما فعله الوكلاء في كل دورة، ولخّصه (بالقواعد أو بنموذج محلي مثل Ollama) وأرسله إلى Slack أو Discord أو Teams أو إلى webhook خاص بك. معطّل افتراضيًا.
+Восемь тем: офис, пещера, замок, ранчо, космическая станция, морское дно, снежная деревня и храм в пустыне.
 
-إصلاحات: تُستأنف جلسات Claude Code بشكل موثوق على Windows، وأصبح ناتج الطرفية أسرع.","Revise as alterações de um agente: abra ""Revisar alterações"" para ver o diff da árvore de trabalho em visão unificada ou dividida, comente linhas e envie os comentários de volta ao agente.
+Герои: каждый аккаунт повышает уровень по мере расхода токенов (один уровень за 100 млн). Выберите класс и облик слайма или человека — снаряжение растёт за десять ступеней вплоть до легендарной короны.","Ofis görünümü (Ctrl+Shift+O): çalışma alanınızı piksel sanatı bir ofis olarak görün. Her bölme bir oda olur ve odaların arasında koridorlar bulunur; ajanlar masalarında çalışan, size ihtiyaç duyduğunda el kaldıran ve boştayken şekerleme yapan karakterlerdir. Alt ajanlar odaya gelip yardım eder ve ana ajana rapor verir.
 
-Fan-out: envie um prompt para vários agentes do Claude Code ou do Codex, cada um em seu próprio git worktree, e compare os resultados lado a lado.
+Bayraklar, posta kutuları ve pano: bir ajan işini bitirince bayrak çekilir, bölmeler arasında devredilen iş odanın posta kutusuna mektup olarak gelir ve lobideki pano biten her turu not eder.
 
-Caixa de atenção: um sino no painel de espaços de trabalho lista os painéis que esperam por você. Ctrl+Shift+U pula para o próximo.
+Ofisten ayrılmadan yanıt verin: bir odaya tıklayarak terminalini canlı okuyun, istem yazın veya tuşlara basarak yanıt verin.
 
-Várias contas: escolha ou adicione uma conta do Claude Code ou do Codex no lançador + e use uma conta diferente em cada painel. O uso de tokens é agrupado por conta.
+Sekiz tema: ofis, mağara, kale, çiftlik, uzay istasyonu, deniz altı, kar köyü ve çöl tapınağı.
 
-Registro de atividade opcional: registre o que os agentes fizeram em cada turno, resuma (com regras ou com um modelo local como o Ollama) e envie para Slack, Discord, Teams ou seu próprio webhook. Desativado por padrão.
+Kahramanlar: her hesap token kullanımıyla seviye atlar (her 100 milyon tokende bir seviye). Bir sınıf ve balçık ya da insan görünümü seçin; ekipman on adımda efsanevi taca kadar gelişir.","Büroansicht (Ctrl+Shift+O): Sehen Sie Ihren Arbeitsbereich als Pixel-Art-Büro. Jeder Bereich wird zu einem Raum mit Fluren dazwischen, und Agenten sind Figuren, die an ihrem Schreibtisch arbeiten, sich melden, wenn sie Sie brauchen, und ein Nickerchen machen, wenn sie untätig sind. Subagenten kommen herein, helfen und erstatten dem Hauptagenten Bericht.
 
-Correções: as sessões do Claude Code são retomadas de forma confiável no Windows e a saída do terminal está mais rápida.","Проверка изменений агента: откройте «Проверка изменений», чтобы увидеть diff рабочего дерева в едином или разделённом виде, оставляйте комментарии к строкам и отправляйте их обратно агенту.
+Fahnen, Briefkästen und Pinnwand: Wenn ein Agent fertig ist, wird eine Fahne gehisst, zwischen Bereichen übergebene Arbeit kommt als Brief im Briefkasten des Raums an, und die Pinnwand in der Lobby notiert jeden abgeschlossenen Durchgang.
 
-Fan-out: отправьте один промпт нескольким агентам Claude Code или Codex, каждому в своём git worktree, а затем сравните результаты бок о бок.
+Antworten, ohne das Büro zu verlassen: Klicken Sie auf einen Raum, um sein Terminal live zu lesen und mit einem Prompt oder Tastendrücken zu antworten.
 
-Центр внимания: колокольчик на панели рабочих пространств показывает панели, которые ждут вас. Ctrl+Shift+U переходит к следующей.
+Acht Designs: Büro, Höhle, Burg, Bauernhof, Raumstation, Meeresgrund, Schneedorf und Wüstentempel.
 
-Несколько учётных записей: выберите или добавьте учётную запись Claude Code или Codex в меню запуска + и используйте разные учётные записи в разных панелях. Расход токенов группируется по учётным записям.
+Helden: Jedes Konto steigt mit seinem Token-Verbrauch im Level auf (ein Level pro 100 Millionen Tokens). Wählen Sie eine Klasse und das Aussehen als Schleim oder Mensch; die Ausrüstung wächst in zehn Stufen bis zur legendären Krone.","Chế độ văn phòng (Ctrl+Shift+O): xem không gian làm việc như một văn phòng pixel art. Mỗi ngăn là một căn phòng, giữa các phòng có hành lang, còn các agent là nhân vật làm việc tại bàn, giơ tay khi cần bạn và ngủ trưa khi rảnh. Các subagent bước vào giúp đỡ rồi báo cáo lại cho agent chính.
 
-Необязательный журнал активности: записывайте, что агенты делали в каждом ходе, составляйте краткое содержание (по правилам или с локальной моделью, например Ollama) и отправляйте его в Slack, Discord, Teams или на собственный webhook. По умолчанию выключен.
+Cờ hoàn thành, hộp thư và bảng tin: khi agent làm xong, một lá cờ được kéo lên; công việc chuyển giữa các ngăn đến hộp thư của phòng dưới dạng thư; bảng tin ở sảnh ghi lại mọi lượt đã xong.
 
-Исправления: сеансы Claude Code надёжно возобновляются в Windows, а вывод терминала стал быстрее.","Bir ajanın değişikliklerini inceleyin: ""Değişiklikleri incele"" ekranını açarak çalışma ağacı farkını birleşik veya bölünmüş görünümde görün, satırlara yorum yapın ve yorumları ajana geri gönderin.
+Trả lời ngay trong văn phòng: nhấp vào một phòng để xem terminal trực tiếp và nhập prompt hoặc nhấn phím để trả lời.
 
-Fan-out: tek bir istemi, her biri kendi git worktree'sinde çalışan birkaç Claude Code veya Codex ajanına gönderin, sonra sonuçları yan yana karşılaştırın.
+Tám chủ đề: văn phòng, hang động, lâu đài, nông trại, trạm vũ trụ, đáy biển, làng tuyết và đền sa mạc.
 
-Dikkat gelen kutusu: çalışma alanı panelindeki bir zil, sizi bekleyen bölmeleri listeler. Ctrl+Shift+U sonrakine atlar.
-
-Birden çok hesap: + başlatıcısından bir Claude Code veya Codex hesabı seçin ya da ekleyin ve her bölmede farklı bir hesap kullanın. Token kullanımı hesaba göre gruplanır.
-
-İsteğe bağlı etkinlik günlüğü: ajanların her turda yaptıklarını kaydedin, özetleyin (kural tabanlı veya Ollama gibi yerel bir modelle) ve Slack, Discord, Teams ya da kendi webhook'unuza gönderin. Varsayılan olarak kapalıdır.
-
-Düzeltmeler: Claude Code oturumları Windows'ta güvenilir biçimde sürdürülür ve terminal çıktısı daha hızlıdır.","Änderungen eines Agenten prüfen: Öffnen Sie ""Änderungen prüfen"", um den Diff des Arbeitsverzeichnisses in der vereinheitlichten oder geteilten Ansicht zu sehen, kommentieren Sie Zeilen und senden Sie die Kommentare an den Agenten zurück.
-
-Fan-out: Senden Sie einen Prompt an mehrere Claude Code- oder Codex-Agenten, jeder in seinem eigenen git worktree, und vergleichen Sie die Ergebnisse nebeneinander.
-
-Aufmerksamkeits-Posteingang: Eine Glocke im Arbeitsbereichs-Panel listet die Bereiche auf, die auf Sie warten. Mit Ctrl+Shift+U springen Sie zum nächsten.
-
-Mehrere Konten: Wählen Sie über den +-Starter ein Claude Code- oder Codex-Konto aus oder fügen Sie eines hinzu, und verwenden Sie in jedem Bereich ein anderes Konto. Der Token-Verbrauch wird nach Konto gruppiert.
-
-Optionales Aktivitätsprotokoll: Halten Sie fest, was Agenten in jeder Runde getan haben, fassen Sie es zusammen (regelbasiert oder mit einem lokalen Modell wie Ollama) und senden Sie es an Slack, Discord, Teams oder Ihren eigenen Webhook. Standardmäßig aus.
-
-Behoben: Claude Code-Sitzungen werden unter Windows zuverlässig fortgesetzt, und die Terminalausgabe ist schneller.","Xem lại thay đổi của agent: mở ""Xem lại thay đổi"" để xem diff của cây làm việc ở dạng hợp nhất hoặc chia đôi, nhận xét theo từng dòng và gửi nhận xét lại cho agent.
-
-Fan-out: gửi một prompt tới nhiều agent Claude Code hoặc Codex, mỗi agent chạy trong git worktree riêng, rồi so sánh kết quả cạnh nhau.
-
-Hộp thư chú ý: biểu tượng chuông trong bảng không gian làm việc liệt kê các ngăn đang chờ bạn. Ctrl+Shift+U nhảy tới ngăn tiếp theo.
-
-Nhiều tài khoản: chọn hoặc thêm tài khoản Claude Code hoặc Codex từ trình khởi chạy + và dùng tài khoản khác nhau ở từng ngăn. Mức dùng token được nhóm theo tài khoản.
-
-Nhật ký hoạt động tùy chọn: ghi lại những gì agent đã làm trong mỗi lượt, tóm tắt (theo quy tắc hoặc bằng mô hình cục bộ như Ollama) và gửi tới Slack, Discord, Teams hoặc webhook của riêng bạn. Mặc định tắt.
-
-Sửa lỗi: các phiên Claude Code được tiếp tục ổn định trên Windows và đầu ra terminal nhanh hơn."
+Anh hùng: mỗi tài khoản lên cấp theo lượng token đã dùng (100 triệu token cho mỗi cấp). Chọn lớp nhân vật và ngoại hình slime hoặc người; trang bị phát triển qua mười bậc đến vương miện huyền thoại."
 Title,4,Text,,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux
 ShortTitle,5,Text,,,,,,,,,,,,,,
 SortTitle,6,Text,,,,,,,,,,,,,,
@@ -872,16 +872,16 @@ Feature7,706,Text,,Resume AI agent sessions after a restart,재시작 후 AI 에
 Feature8,707,Text,,Open a pane in a new git worktree for isolated agent work,새 git worktree에서 창을 열어 에이전트 작업을 격리,新しい git worktree でペインを開き、エージェントの作業を分離,在新的 git worktree 中打开窗格，隔离智能体的工作,एजेंट के अलग काम के लिए पेन को नए git worktree में खोलें,Abre un panel en un nuevo git worktree para trabajar con agentes de forma aislada,Ouvrez un volet dans un nouveau git worktree pour isoler le travail des agents,افتح جزءًا في git worktree جديد لعمل معزول للوكلاء,Abra um painel em um novo git worktree para trabalho isolado dos agentes,Откройте панель в новом git worktree для изолированной работы агента,Yalıtılmış ajan çalışması için bir bölmeyi yeni bir git worktree içinde açın,Bereich in einem neuen git worktree öffnen für isolierte Agentenarbeit,Mở ngăn trong git worktree mới để agent làm việc tách biệt
 Feature9,708,Text,,"AI token usage and remaining quota per account, with a daily activity heatmap","계정별 AI 토큰 사용량과 남은 한도, 일별 활동 히트맵",アカウントごとの AI トークン使用量と残りのクォータ、日別アクティビティ ヒートマップ,按账户查看 AI token 用量和剩余额度，附每日活动热力图,"हर अकाउंट के लिए AI टोकन उपयोग और बचा हुआ कोटा, साथ में दैनिक गतिविधि हीटमैप","Uso de tokens de IA y cuota restante por cuenta, con un mapa de calor de actividad diaria","Consommation de jetons IA et quota restant par compte, avec une carte de chaleur d'activité quotidienne",استهلاك رموز الذكاء الاصطناعي والحصة المتبقية لكل حساب، مع خريطة حرارية للنشاط اليومي,"Uso de tokens de IA e cota restante por conta, com um mapa de calor da atividade diária","Расход токенов ИИ и остаток квоты по учётным записям, а также тепловая карта ежедневной активности","Hesap başına yapay zekâ token kullanımı ve kalan kota, günlük etkinlik ısı haritasıyla","KI-Token-Verbrauch und verbleibendes Kontingent pro Konto, mit täglicher Aktivitäts-Heatmap","Mức dùng token AI và hạn mức còn lại theo từng tài khoản, kèm bản đồ nhiệt hoạt động hằng ngày"
 Feature10,709,Text,,File browser side panel that follows your terminal's directory,터미널의 디렉터리를 따라가는 파일 브라우저 사이드 패널,ターミナルのディレクトリに追従するファイル ブラウザーのサイドパネル,文件浏览器侧边栏，跟随终端所在目录,फ़ाइल ब्राउज़र साइड पैनल जो आपके टर्मिनल की डायरेक्टरी का अनुसरण करता है,Panel lateral con explorador de archivos que sigue el directorio de tu terminal,Panneau latéral d'explorateur de fichiers qui suit le répertoire de votre terminal,لوحة جانبية لمستعرض الملفات تتبع مجلد طرفيتك,Painel lateral com navegador de arquivos que acompanha o diretório do seu terminal,"Боковая панель с файловым браузером, следующим за папкой терминала",Terminalinizin dizinini takip eden dosya tarayıcısı yan paneli,"Dateibrowser-Seitenleiste, die dem Verzeichnis Ihres Terminals folgt",Bảng bên trình duyệt tệp theo dõi thư mục của terminal
-Feature11,710,Text,,Built-in text editor and git view,내장 텍스트 편집기와 git 보기,内蔵テキスト エディターと git ビュー,内置文本编辑器和 git 视图,बिल्ट-इन टेक्स्ट एडिटर और git व्यू,Editor de texto y vista de git integrados,Éditeur de texte et vue git intégrés,محرر نصوص وعرض git مدمجان,Editor de texto e visão de git integrados,Встроенный текстовый редактор и просмотр git,Yerleşik metin düzenleyici ve git görünümü,Integrierter Texteditor und git-Ansicht,Trình soạn thảo văn bản và chế độ xem git tích hợp
-Feature12,711,Text,,Browser panes alongside your terminals,터미널 옆에 나란히 두는 브라우저 창,ターミナルと並べて使えるブラウザー ペイン,浏览器窗格与终端并排使用,टर्मिनल के साथ ब्राउज़र पेन,Paneles de navegador junto a tus terminales,Volets de navigateur à côté de vos terminaux,أجزاء متصفح بجانب طرفياتك,Painéis de navegador ao lado dos seus terminais,Панели браузера рядом с терминалами,Terminallerinizin yanında tarayıcı bölmeleri,Browser-Bereiche neben Ihren Terminals,Các ngăn trình duyệt cạnh terminal của bạn
+Feature11,710,Text,,"Built-in text editor, git view and browser panes alongside your terminals","내장 텍스트 편집기, git 보기, 터미널 옆에 두는 브라우저 창",内蔵テキスト エディター、git ビュー、ターミナルと並べて使えるブラウザー ペイン,内置文本编辑器、git 视图，以及与终端并排的浏览器窗格,"बिल्ट-इन टेक्स्ट एडिटर, git व्यू और टर्मिनल के साथ ब्राउज़र पेन","Editor de texto y vista de git integrados, y paneles de navegador junto a tus terminales","Éditeur de texte et vue git intégrés, et volets de navigateur à côté de vos terminaux",محرر نصوص وعرض git مدمجان وأجزاء متصفح بجانب طرفياتك,"Editor de texto e visão de git integrados, e painéis de navegador ao lado dos seus terminais","Встроенный текстовый редактор, просмотр git и панели браузера рядом с терминалами","Yerleşik metin düzenleyici, git görünümü ve terminallerinizin yanında tarayıcı bölmeleri","Integrierter Texteditor, git-Ansicht und Browser-Bereiche neben Ihren Terminals","Trình soạn thảo văn bản, chế độ xem git và ngăn trình duyệt tích hợp cạnh terminal"
+Feature12,711,Text,,"Office view (Ctrl+Shift+O): your workspace as a pixel-art office where agents work as characters, in eight themes","사무실 보기(Ctrl+Shift+O): 에이전트가 캐릭터로 일하는 픽셀 아트 사무실, 테마 8종",オフィス表示（Ctrl+Shift+O）：エージェントがキャラクターとして働くピクセルアートのオフィス、8 種類のテーマ,办公室视图（Ctrl+Shift+O）：智能体化身角色工作的像素风办公室，提供 8 种主题,"ऑफ़िस व्यू (Ctrl+Shift+O): पिक्सेल-आर्ट ऑफ़िस जहाँ एजेंट किरदार बनकर काम करते हैं, आठ थीम में","Vista de oficina (Ctrl+Shift+O): una oficina en pixel art donde los agentes trabajan como personajes, con ocho temas","Vue bureau (Ctrl+Shift+O) : un bureau en pixel art où les agents travaillent comme des personnages, en huit thèmes",عرض المكتب (Ctrl+Shift+O): مكتب بفن البكسل يعمل فيه الوكلاء كشخصيات، بثماني سمات,"Visão de escritório (Ctrl+Shift+O): um escritório em pixel art onde os agentes trabalham como personagens, em oito temas","Вид «Офис» (Ctrl+Shift+O): офис в стиле пиксель-арт, где агенты работают как персонажи, в восьми темах","Ofis görünümü (Ctrl+Shift+O): ajanların karakter olarak çalıştığı piksel sanatı ofis, sekiz tema","Büroansicht (Ctrl+Shift+O): ein Pixel-Art-Büro, in dem Agenten als Figuren arbeiten, in acht Designs","Chế độ văn phòng (Ctrl+Shift+O): văn phòng pixel art nơi các agent làm việc như nhân vật, với tám chủ đề"
 Feature13,712,Text,,"Command palette, pane tabs, pane zoom, scrollback search, clickable paths and image paste","명령 팔레트, 창 탭, 창 확대, 스크롤백 검색, 경로 클릭, 이미지 붙여넣기",コマンドパレット、ペイン タブ、ペインのズーム、スクロールバック検索、クリックできるパス、画像の貼り付け,命令面板、窗格标签页、窗格缩放、滚动缓冲区搜索、可点击路径和图像粘贴,"कमांड पैलेट, पेन टैब, पेन ज़ूम, स्क्रॉलबैक सर्च, क्लिक करने योग्य पाथ और इमेज पेस्ट","Paleta de comandos, pestañas de panel, zoom de panel, búsqueda en el historial de desplazamiento, rutas en las que hacer clic y pegado de imágenes","Palette de commandes, onglets de volet, zoom de volet, recherche dans l'historique, chemins cliquables et collage d'images",لوحة الأوامر وعلامات تبويب الأجزاء وتكبير الجزء والبحث في سجل التمرير والمسارات القابلة للنقر ولصق الصور,"Paleta de comandos, abas de painel, zoom de painel, busca no histórico de rolagem, caminhos clicáveis e colagem de imagens","Палитра команд, вкладки панелей, масштабирование панели, поиск по прокрутке, кликабельные пути и вставка изображений","Komut paleti, bölme sekmeleri, bölme yakınlaştırma, geçmişte arama, tıklanabilir yollar ve görsel yapıştırma","Befehlspalette, Bereichs-Tabs, Bereichs-Zoom, Suche im Verlauf, anklickbare Pfade und Bilder einfügen","Bảng lệnh, thẻ ngăn, phóng to ngăn, tìm kiếm trong nội dung cuộn, đường dẫn nhấp được và dán hình ảnh"
 Feature14,713,Text,,Review an agent's changes line by line and send comments back to it,에이전트의 변경 내용을 줄 단위로 검토하고 코멘트를 다시 전달,エージェントの変更を行単位でレビューし、コメントをエージェントに送り返せる,逐行审阅智能体的更改，并把评论发回给它,एजेंट के बदलावों की पंक्ति-दर-पंक्ति समीक्षा करें और टिप्पणियाँ उसे वापस भेजें,Revisa los cambios de un agente línea a línea y devuélvele tus comentarios,Examinez les modifications d'un agent ligne par ligne et renvoyez-lui vos commentaires,راجع تغييرات الوكيل سطرًا بسطر وأعد تعليقاتك إليه,Revise as alterações de um agente linha por linha e envie comentários de volta a ele,Проверяйте изменения агента построчно и отправляйте ему комментарии,Bir ajanın değişikliklerini satır satır inceleyin ve yorumları ona geri gönderin,Änderungen eines Agenten zeilenweise prüfen und Kommentare an ihn zurücksenden,Xem lại thay đổi của agent theo từng dòng và gửi nhận xét lại cho nó
 Feature15,714,Text,,Send one prompt to several agents in separate git worktrees and compare the results,프롬프트 하나를 여러 에이전트에게 보내 각자의 git worktree에서 실행하고 결과 비교,1つのプロンプトを複数のエージェントに送り、別々の git worktree で実行して結果を比較,把一条提示发给多个智能体，各自在独立的 git worktree 中运行，并比较结果,"एक प्रॉम्प्ट कई एजेंट को भेजें, हर एक अलग git worktree में चले, और नतीजों की तुलना करें","Envía un prompt a varios agentes, cada uno en su propio git worktree, y compara los resultados","Envoyez un prompt à plusieurs agents, chacun dans son propre git worktree, et comparez les résultats",أرسل موجّهًا واحدًا إلى عدة وكلاء، كلٌّ في git worktree منفصل، وقارن النتائج,"Envie um prompt para vários agentes, cada um em seu próprio git worktree, e compare os resultados","Отправьте один промпт нескольким агентам, каждому в своём git worktree, и сравните результаты","Tek bir istemi birkaç ajana, ayrı git worktree'lerde çalışacak şekilde gönderin ve sonuçları karşılaştırın","Einen Prompt an mehrere Agenten senden, jeder in einem eigenen git worktree, und die Ergebnisse vergleichen","Gửi một prompt tới nhiều agent, mỗi agent chạy trong git worktree riêng, rồi so sánh kết quả"
 Feature16,715,Text,,Use a different Claude Code or Codex account in each pane,창마다 다른 Claude Code·Codex 계정 사용,ペインごとに別の Claude Code / Codex アカウントを使用,每个窗格可使用不同的 Claude Code 或 Codex 账户,हर पेन में अलग Claude Code या Codex अकाउंट इस्तेमाल करें,Usa una cuenta distinta de Claude Code o Codex en cada panel,Utilisez un compte Claude Code ou Codex différent dans chaque volet,استخدم حساب Claude Code أو Codex مختلفًا في كل جزء,Use uma conta diferente do Claude Code ou do Codex em cada painel,Своя учётная запись Claude Code или Codex в каждой панели,Her bölmede farklı bir Claude Code veya Codex hesabı kullanın,In jedem Bereich ein anderes Claude Code- oder Codex-Konto verwenden,Dùng tài khoản Claude Code hoặc Codex khác nhau ở từng ngăn
 Feature17,716,Text,,Attention inbox: jump to the next agent waiting for you (Ctrl+Shift+U),알림함: 응답을 기다리는 다음 에이전트로 바로 이동(Ctrl+Shift+U),通知受信トレイ: 応答待ちの次のエージェントにジャンプ(Ctrl+Shift+U),提醒收件箱：一键跳转到下一个等待你的智能体（Ctrl+Shift+U）,अटेंशन इनबॉक्स: आपका इंतज़ार कर रहे अगले एजेंट पर जाएँ (Ctrl+Shift+U),Bandeja de atención: salta al siguiente agente que te espera (Ctrl+Shift+U),Boîte d'attention : passez à l'agent suivant qui vous attend (Ctrl+Shift+U),صندوق التنبيهات: انتقل إلى الوكيل التالي الذي ينتظرك (Ctrl+Shift+U),Caixa de atenção: pule para o próximo agente que espera por você (Ctrl+Shift+U),"Центр внимания: переход к следующему агенту, который ждёт вас (Ctrl+Shift+U)",Dikkat gelen kutusu: sizi bekleyen sonraki ajana atlayın (Ctrl+Shift+U),"Aufmerksamkeits-Posteingang: zum nächsten Agenten springen, der auf Sie wartet (Ctrl+Shift+U)",Hộp thư chú ý: nhảy tới agent tiếp theo đang chờ bạn (Ctrl+Shift+U)
 Feature18,717,Text,,"Optional activity log with turn summaries sent to Slack, Discord, Teams or a webhook","턴 요약을 Slack, Discord, Teams나 웹훅으로 보내는 작업 기록(선택)",ターンの要約を Slack、Discord、Teams、Webhook に送信できるアクティビティ ログ(オプション),可选的活动日志，将每轮摘要发送到 Slack、Discord、Teams 或 webhook,"वैकल्पिक एक्टिविटी लॉग, टर्न सारांश Slack, Discord, Teams या वेबहुक पर भेजें","Registro de actividad opcional con resúmenes de turno enviados a Slack, Discord, Teams o un webhook","Journal d'activité facultatif avec résumés de tour envoyés à Slack, Discord, Teams ou un webhook",سجل نشاط اختياري مع ملخصات الدورات المرسلة إلى Slack أو Discord أو Teams أو webhook,"Registro de atividade opcional com resumos de turno enviados ao Slack, Discord, Teams ou a um webhook","Необязательный журнал активности: сводки ходов уходят в Slack, Discord, Teams или webhook","Tur özetlerini Slack, Discord, Teams veya webhook'a gönderen isteğe bağlı etkinlik günlüğü","Optionales Aktivitätsprotokoll mit Rundenzusammenfassungen an Slack, Discord, Teams oder einen Webhook","Nhật ký hoạt động tùy chọn, gửi bản tóm tắt từng lượt tới Slack, Discord, Teams hoặc webhook"
-Feature19,718,Text,,"Per-workspace notes, status bar, custom themes and keyboard shortcuts","워크스페이스별 메모, 상태 표시줄, 테마와 단축키 사용자 지정",ワークスペースごとのメモ、ステータス バー、カスタム テーマ、キーボード ショートカット,每个工作区独立的备忘笔记、状态栏、自定义主题和键盘快捷键,"हर वर्कस्पेस के लिए अलग नोट्स, स्टेटस बार, कस्टम थीम और कीबोर्ड शॉर्टकट","Notas por espacio de trabajo, barra de estado, temas personalizados y atajos de teclado","Notes par espace de travail, barre d'état, thèmes personnalisés et raccourcis clavier",ملاحظات لكل مساحة عمل وشريط حالة وسمات مخصصة واختصارات لوحة مفاتيح,"Notas por espaço de trabalho, barra de status, temas personalizados e atalhos de teclado","Заметки для каждого рабочего пространства, строка состояния, свои темы и сочетания клавиш","Çalışma alanı başına notlar, durum çubuğu, özel temalar ve klavye kısayolları","Notizen pro Arbeitsbereich, Statusleiste, eigene Designs und Tastenkombinationen","Ghi chú theo từng không gian làm việc, thanh trạng thái, giao diện tùy chỉnh và phím tắt"
-Feature20,719,Text,,"No sign-up, no analytics, no telemetry. Available in 13 languages","가입·분석·원격 측정 없음, 13개 언어 지원",サインアップ不要、分析なし、テレメトリなし。13 言語に対応,无需注册，无数据分析，无遥测。支持 13 种语言,"कोई साइन-अप नहीं, कोई एनालिटिक्स नहीं, कोई टेलीमेट्री नहीं। 13 भाषाओं में उपलब्ध","Sin registro, sin analíticas, sin telemetría. Disponible en 13 idiomas","Sans inscription, sans analyse, sans télémétrie. Disponible en 13 langues",بلا تسجيل ولا تحليلات ولا قياس عن بُعد. متاح بـ 13 لغة,"Sem cadastro, sem análises, sem telemetria. Disponível em 13 idiomas","Без регистрации, аналитики и телеметрии. Доступно на 13 языках","Kayıt yok, analiz yok, telemetri yok. 13 dilde kullanılabilir","Keine Anmeldung, keine Analysen, keine Telemetrie. In 13 Sprachen verfügbar","Không cần đăng ký, không phân tích, không thu thập dữ liệu từ xa. Có sẵn bằng 13 ngôn ngữ"
+Feature19,718,Text,,"Per-workspace notes, status bar, custom themes and shortcuts. No sign-up or telemetry, 13 languages","워크스페이스별 메모, 상태 표시줄, 테마·단축키 사용자 지정. 가입·원격 측정 없음, 13개 언어",ワークスペースごとのメモ、ステータス バー、テーマとショートカットのカスタマイズ。登録・テレメトリなし、13 言語,每个工作区的备忘笔记、状态栏、自定义主题和快捷键。无需注册，无遥测，支持 13 种语言,"हर वर्कस्पेस के नोट्स, स्टेटस बार, कस्टम थीम और शॉर्टकट। कोई साइन-अप या टेलीमेट्री नहीं, 13 भाषाएँ","Notas por espacio de trabajo, barra de estado, temas y atajos personalizables. Sin registro ni telemetría, 13 idiomas","Notes par espace de travail, barre d'état, thèmes et raccourcis personnalisés. Sans inscription ni télémétrie, 13 langues",ملاحظات لكل مساحة عمل وشريط حالة وسمات واختصارات مخصصة. بلا تسجيل ولا قياس عن بُعد، 13 لغة,"Notas por espaço de trabalho, barra de status, temas e atalhos personalizáveis. Sem cadastro ou telemetria, 13 idiomas","Заметки для рабочих пространств, строка состояния, свои темы и сочетания клавиш. Без регистрации и телеметрии, 13 языков","Çalışma alanı notları, durum çubuğu, özel temalar ve kısayollar. Kayıt ve telemetri yok, 13 dil","Notizen pro Arbeitsbereich, Statusleiste, eigene Designs und Tastenkombinationen. Ohne Anmeldung oder Telemetrie, 13 Sprachen","Ghi chú theo không gian làm việc, thanh trạng thái, giao diện và phím tắt tùy chỉnh. Không đăng ký, không thu thập dữ liệu, 13 ngôn ngữ"
+Feature20,719,Text,,Accounts level up as RPG heroes with their token usage; pick a class and a slime or human look that grows over ten steps,계정이 토큰 사용량에 따라 RPG 영웅처럼 레벨업: 직업과 슬라임·인간형 외형을 고르면 10단계로 성장,アカウントがトークン使用量で RPG の勇者のようにレベルアップ。職業とスライムか人間の外見を選ぶと 10 段階で成長,账户随 token 用量像 RPG 英雄一样升级；选择职业和史莱姆或人类外形，分 10 个阶段成长,"खाते टोकन उपयोग से RPG नायकों की तरह लेवल अप करते हैं; वर्ग और स्लाइम या मानव रूप चुनें, जो दस चरणों में बढ़ता है","Las cuentas suben de nivel como héroes de RPG con su uso de tokens; elige clase y aspecto de slime o humano, que crece en diez pasos",Les comptes gagnent des niveaux comme des héros de RPG avec leurs jetons ; choisissez une classe et un look slime ou humain qui évolue en dix étapes,ترتقي الحسابات كأبطال ألعاب تقمص الأدوار مع استخدام الرموز؛ اختر فئة ومظهر سلايم أو إنسان يتطور عبر عشر مراحل,"As contas sobem de nível como heróis de RPG com o uso de tokens; escolha classe e visual de slime ou humano, que evolui em dez etapas","Аккаунты растут в уровнях, как герои RPG, по расходу токенов; выберите класс и облик слайма или человека, меняющийся за десять ступеней",Hesaplar token kullanımıyla RPG kahramanları gibi seviye atlar; on adımda gelişen bir sınıf ve balçık ya da insan görünümü seçin,"Konten steigen mit ihrem Token-Verbrauch wie RPG-Helden auf; wählen Sie Klasse und Schleim- oder Menschenlook, der in zehn Stufen wächst","Tài khoản lên cấp như anh hùng RPG theo lượng token; chọn lớp và ngoại hình slime hoặc người, phát triển qua mười bậc"
 MinimumHardwareReq1,800,Text,,,,,,,,,,,,,,
 MinimumHardwareReq2,801,Text,,,,,,,,,,,,,,
 MinimumHardwareReq3,802,Text,,,,,,,,,,,,,,
