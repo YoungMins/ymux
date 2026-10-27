@@ -31,6 +31,22 @@ import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
 import { THEME_IDS, loadTheme, saveTheme, type ThemeId } from "./themes";
 import { OfficePeek, peekBox, type PeekSource, type PeekTab } from "./OfficePeek";
+import { HeroPanel, type HeroRow } from "./HeroPanel";
+import {
+  accountXp,
+  levelOf,
+  levelUps,
+  loadHeroClass,
+  loadSeenLevels,
+  saveHeroClass,
+  saveSeenLevels,
+  tierOf,
+  type HeroClass,
+} from "./heroModel";
+import type { Hero } from "./officeModel";
+import type { TokenUsage } from "../tokenmonitor/model";
+import type { AccountProfile } from "../types";
+import { ACCOUNT_NONE } from "../accounts/accountModel";
 
 /// Narrowest corridor, in CSS pixels; wider ones follow the sprite scale.
 const CORRIDOR_PX = 24;
@@ -47,7 +63,16 @@ export interface OfficeSource extends PeekSource {
   subscribe(cb: () => void): () => void;
   /// The lobby board's notes, newest first (`officeLog`).
   log(): readonly LogEntry[];
+  /// The account a pane runs under: "" default, "none" home, else a profile id.
+  accountOf(paneId: Uuid): string;
+  accounts(): readonly AccountProfile[];
+  /// The Usage view's numbers (all-time tokens per account are experience).
+  tokenUsage(): Promise<TokenUsage>;
 }
+
+/// How often the heroes' experience is re-read while the office is open.
+const XP_REFRESH_MS = 5 * 60 * 1000;
+const LEVEL_UP_MS = 4000;
 
 interface Actor {
   key: string;
@@ -93,6 +118,11 @@ export class OfficeView {
   private readonly lobbyLabel: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
   private readonly peek: OfficePeek;
+  private readonly heroes: HeroPanel;
+  /// All-time tokens per account; null until the first read.
+  private xp: Map<string, number> | null = null;
+  private readonly classes = new Map<string, HeroClass>();
+  private readonly levelUpEl: HTMLElement;
   private theme: ThemeId = loadTheme();
   private readonly reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -133,7 +163,16 @@ export class OfficeView {
     this.themeSelect.addEventListener("change", () => this.setTheme(this.themeSelect.value as ThemeId));
     // Arrow keys and Escape belong to the select while it has focus.
     this.themeSelect.addEventListener("keydown", (ev) => ev.stopPropagation());
-    head.append(this.titleEl, legend, this.kindsEl, this.themeSelect, back);
+    const heroBtn = document.createElement("button");
+    heroBtn.type = "button";
+    heroBtn.className = "office__back office__heroes-btn";
+    heroBtn.textContent = `⚔ ${t("office.heroes")}`;
+    heroBtn.title = t("office.heroes.title");
+    heroBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.toggleHeroes();
+    });
+    head.append(this.titleEl, legend, this.kindsEl, heroBtn, this.themeSelect, back);
 
     this.floor = document.createElement("div");
     this.floor.className = "office__floor";
@@ -169,10 +208,26 @@ export class OfficeView {
     this.fixturesLayer = document.createElement("div");
     this.fixturesLayer.className = "office__fixtures";
     this.peek = new OfficePeek(source);
-    this.floor.append(this.roomsLayer, lobby, this.fixturesLayer, this.actorsLayer, this.emptyEl, this.boardPanel, this.peek.element);
+    this.heroes = new HeroPanel((account, cls) => this.pickClass(account, cls));
+    this.levelUpEl = document.createElement("div");
+    this.levelUpEl.className = "office-levelup";
+    this.levelUpEl.hidden = true;
+    this.levelUpEl.setAttribute("role", "status");
+    this.floor.append(
+      this.roomsLayer,
+      lobby,
+      this.fixturesLayer,
+      this.actorsLayer,
+      this.emptyEl,
+      this.boardPanel,
+      this.peek.element,
+      this.heroes.element,
+      this.levelUpEl,
+    );
     this.floor.addEventListener("click", () => {
       this.boardPanel.hidden = true;
       this.peek.close();
+      this.heroes.hide();
     });
     this.element.append(head, this.floor);
 
@@ -185,6 +240,7 @@ export class OfficeView {
       if (ev.key === "Escape") {
         ev.preventDefault();
         if (this.peek.paneId) this.peek.close();
+        else if (this.heroes.open) this.heroes.hide();
         else if (!this.boardPanel.hidden) this.boardPanel.hidden = true;
         else this.source.close();
       }
@@ -198,6 +254,9 @@ export class OfficeView {
       this.cleanups.push(() => ro.disconnect());
     }
     this.cleanups.push(onOfficeMessage((m) => this.deliver(m)));
+    void this.loadXp();
+    const xpTimer = setInterval(() => void this.loadXp(), XP_REFRESH_MS);
+    this.cleanups.push(() => clearInterval(xpTimer));
     this.translate(back, legend);
     this.applyTheme();
     this.render();
@@ -262,7 +321,7 @@ export class OfficeView {
   // ── Rendering ─────────────────────────────────────────────────────────
 
   private render(): void {
-    const input = this.source.input();
+    const input = { ...this.source.input(), heroOf: (id: Uuid) => this.heroOf(id) };
     const w = this.floor.clientWidth;
     const h = this.floor.clientHeight;
     if (w > 0 && h > 0) {
@@ -383,6 +442,95 @@ export class OfficeView {
       if (target) this.source.openPane(target);
     });
     return el;
+  }
+
+  // ── Heroes: accounts levelling up with their tokens ──────────────────
+
+  private heroOf(paneId: Uuid): Hero | null {
+    if (!this.xp) return null;
+    const account = this.source.accountOf(paneId);
+    const { level } = levelOf(this.xp.get(account) ?? 0);
+    return { cls: this.classOf(account), tier: tierOf(level), level };
+  }
+
+  private classOf(account: string): HeroClass {
+    let cls = this.classes.get(account);
+    if (!cls) {
+      cls = loadHeroClass(account);
+      this.classes.set(account, cls);
+    }
+    return cls;
+  }
+
+  private async loadXp(): Promise<void> {
+    let usage: TokenUsage;
+    try {
+      usage = await this.source.tokenUsage();
+    } catch (e) {
+      console.warn("office: token usage unavailable:", e);
+      if (!this.xp) this.xp = new Map();
+      if (this.heroes.open) this.heroes.render(this.heroRows());
+      return;
+    }
+    if (this.disposed) return;
+    this.xp = accountXp(usage.rows);
+    const levels = new Map([...this.xp].map(([a, n]) => [a, levelOf(n).level]));
+    const ups = levelUps(loadSeenLevels(), levels);
+    saveSeenLevels(levels);
+    this.scheduleRender();
+    if (this.heroes.open) this.heroes.render(this.heroRows());
+    if (ups.length > 0) this.announceLevelUp(ups[0].account, ups[0].level);
+  }
+
+  private accountName(account: string): string {
+    if (account === "") return t("usage.default_account");
+    if (account === ACCOUNT_NONE) return t("usage.home_account");
+    return this.source.accounts().find((p) => p.id === account)?.name || account;
+  }
+
+  /// Every account with tokens or a profile, plus the default.
+  private heroRows(): HeroRow[] | null {
+    if (!this.xp) return null;
+    const ids = new Set<string>(["", ...this.xp.keys(), ...this.source.accounts().map((p) => p.id)]);
+    return [...ids].map((account) => ({
+      account,
+      name: this.accountName(account),
+      color: this.source.accounts().find((p) => p.id === account)?.color ?? "",
+      tokens: this.xp?.get(account) ?? 0,
+      cls: this.classOf(account),
+    }));
+  }
+
+  private toggleHeroes(): void {
+    if (this.heroes.open) {
+      this.heroes.hide();
+      return;
+    }
+    this.peek.close();
+    this.boardPanel.hidden = true;
+    this.heroes.render(this.heroRows());
+    this.heroes.show();
+  }
+
+  private pickClass(account: string, cls: HeroClass): void {
+    saveHeroClass(account, cls);
+    this.classes.set(account, cls);
+    this.heroes.render(this.heroRows());
+    this.scheduleRender();
+  }
+
+  /// A banner over the floor, and the account's agents jump for joy.
+  private announceLevelUp(account: string, level: number): void {
+    this.levelUpEl.textContent = fill(t("office.heroes.levelUp"), { name: this.accountName(account), n: String(level) });
+    this.levelUpEl.hidden = false;
+    void this.sleep(LEVEL_UP_MS).then(() => {
+      this.levelUpEl.hidden = true;
+    });
+    for (const actor of this.actors.values()) {
+      if (actor.model?.role === "lead" && !actor.gone && this.source.accountOf(actor.model.paneId) === account) {
+        this.cheer(actor);
+      }
+    }
   }
 
   // ── Peek: a room's terminal, read and answered in place ───────────────
@@ -678,11 +826,38 @@ export class OfficeView {
     this.seat(actor);
     const tag = el.querySelector<HTMLElement>(".office-char__tag");
     if (tag) tag.textContent = c.label;
+    this.dress(actor, c);
     const status = t(`office.status.${c.status === "waiting" ? "waiting" : c.status}`);
     el.title = [c.label, status, c.tool].filter(Boolean).join(" · ");
     if (!el.classList.contains("office-char--speaking")) {
       const b = this.bubbleFor(c);
       this.setBubble(actor, b.icon, b.text);
+    }
+  }
+
+  /// A lead wears its account's hero gear and level; redrawn only when the
+  /// look changes (a level-up into a new tier, a new class).
+  private dress(actor: Actor, c: CharModel): void {
+    const el = actor.el;
+    const look = c.hero ? `${c.hero.cls}:${c.hero.tier}` : "";
+    if (el.dataset.look !== look) {
+      el.dataset.look = look;
+      el.querySelector("svg.office-sprite")?.remove();
+      el.insertAdjacentHTML("afterbegin", characterSvg(c.kind, c.role, c.hero ? { cls: c.hero.cls, tier: c.hero.tier } : undefined));
+    }
+    el.classList.toggle("office-char--hat", !!c.hero && c.hero.tier >= 2);
+    el.classList.toggle("office-char--aura", !!c.hero && c.hero.tier >= 5);
+    let badge = el.querySelector<HTMLElement>(".office-char__lv");
+    if (c.hero) {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "office-char__lv";
+        el.appendChild(badge);
+      }
+      badge.textContent = `Lv${c.hero.level}`;
+      badge.title = `${this.accountName(this.source.accountOf(c.paneId))} · ${t(`office.class.${c.hero.cls}`)}`;
+    } else {
+      badge?.remove();
     }
   }
 

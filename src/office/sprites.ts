@@ -7,7 +7,7 @@
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
-import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, sproutGrid, tieGrid, type Body, type Eyes } from "./slimeArt";
+import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, gearGrid, sproutGrid, tieGrid, type Body, type Eyes, type GearClass } from "./slimeArt";
 
 
 /// Shared colours. A value starting with "." is a CSS class instead of a
@@ -31,6 +31,29 @@ interface Jelly {
   e: string;
   k: string;
   m: string;
+}
+
+/// Hero gear: steel, mage cloth, rogue cloth, gold, jewel, flowers, ears.
+const GEAR: Palette = {
+  a: "#d5dbe4",
+  A: "#8a94a3",
+  b: "#5a6fe0",
+  B: "#33449e",
+  n: "#5b4f8a",
+  N: "#8a7cc4",
+  y: "#f5c542",
+  Y: "#c8962a",
+  j: "#4fe0e8",
+  l: "#ff8fc0",
+  i: "#ffb3c6",
+};
+/// Tier 4 and up: the metal and trim turn gold.
+const GOLD: Palette = { a: "#f5c542", A: "#c8962a", B: "#c8962a", N: "#c8962a" };
+
+/// What a lead wears for its account (`heroModel`).
+export interface HeroLook {
+  cls: GearClass;
+  tier: number;
 }
 
 const JELLIES: Record<string, Jelly> = {
@@ -101,16 +124,23 @@ export const PX = 3;
 /// a strip of two frames side by side that a single animation slides
 /// across, so the frames can never drift out of step. `role` "sub" grows a
 /// sprout; "manager" (the user) wears a bow tie.
-export function characterSvg(kind: string, role: "lead" | "sub" | "manager"): string {
+export function characterSvg(kind: string, role: "lead" | "sub" | "manager", hero?: HeroLook): string {
   const jelly = role === "manager" ? JELLIES.manager : (JELLIES[kind] ?? FALLBACK);
-  const pal: Palette = { ...BASE, ...jelly };
-  const frame = (body: Body, eyes: Eyes, opts: { mug?: boolean; blink?: boolean } = {}): string =>
-    rects(bodyGrid(body), pal) +
-    rects(eyesGrid(body, eyes), pal) +
-    (role === "sub" ? rects(sproutGrid(body), pal) : "") +
-    (role === "manager" ? rects(tieGrid(body), pal) : "") +
-    (opts.mug ? rects(MUG, pal) : "") +
-    (opts.blink ? `<g class="px-blink">${rects(blinkGrid(body), pal)}</g>` : "");
+  const pal: Palette = { ...BASE, ...GEAR, ...(hero && hero.tier >= 4 ? GOLD : {}), ...jelly };
+  const gear = (body: Body) => (hero && role === "lead" ? gearGrid(body, hero.cls, hero.tier) : null);
+  const frame = (body: Body, eyes: Eyes, opts: { mug?: boolean; blink?: boolean } = {}): string => {
+    const g = gear(body);
+    return (
+      (g ? rects(g.back, pal) : "") +
+      rects(bodyGrid(body), pal) +
+      rects(eyesGrid(body, eyes), pal) +
+      (role === "sub" ? rects(sproutGrid(body), pal) : "") +
+      (role === "manager" ? rects(tieGrid(body), pal) : "") +
+      (opts.mug ? rects(MUG, pal) : "") +
+      (opts.blink ? `<g class="px-blink">${rects(blinkGrid(body), pal)}</g>` : "") +
+      (g ? rects(g.front, pal) : "")
+    );
+  };
   // Second frame of a strip, one canvas to the right (`dy` lifts it: the
   // top of a hop).
   const strip = (cls: string, a: string, b: string, dy = 0): string =>

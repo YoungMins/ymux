@@ -2184,6 +2184,11 @@ export class WorkspaceManager {
         return pane instanceof TerminalPane ? pane.screenText() : null;
       },
       send: (id, text) => this.sendFromOffice(id, text),
+      // Same resolution as the backend's spawn: the pane's own pick, else
+      // the workspace default; "" is the default account.
+      accountOf: (id) => this.getPaneSpec(id)?.account || this.workspaceAccountOfPane(id) || "",
+      accounts: () => this.accounts,
+      tokenUsage: () => api.getTokenUsage(),
       key: (id, key) => {
         const pane = this.findPaneById(id);
         if (pane instanceof TerminalPane) pane.typeText(keyBytes(key, pane.applicationCursorKeys));

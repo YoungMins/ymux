@@ -183,6 +183,15 @@ castle, a ranch, a space station, the sea floor, a snow village or a desert
 temple: desks become stone slabs, hay bales or consoles whose crystal, lantern
 or screen glows with the pane's status. The choice is remembered.
 
+**Heroes.** Every account is an RPG hero: its all-time token total in the
+Usage view (Claude Code and Codex together) is its experience, one level per
+100M tokens. *⚔ Heroes* in the office header opens the adventurers' guild with
+each account's level, XP bar and class: warrior, mage, rogue, cleric or cat.
+Agents on the floor wear their account's class gear and a level badge, and the
+gear grows with the level: starter gear from Lv 1, full gear from Lv 5, a jewel
+from Lv 10, gold from Lv 25, and wings and a glowing aura from Lv 50. A level-up
+is announced with a banner while the office is open.
+
 - **Finished work** — the agent does a victory hop with confetti, and a flag
   goes up outside its room until you open that pane.
 - **Mail** — work ymux hands from one place to another (a fan-out prompt, diff

@@ -4853,6 +4853,150 @@ body,
 .office-peek__send { align-self: stretch; padding: 2px 12px; }
 .office-peek__send:disabled { opacity: 0.6; cursor: default; }
 
+/* Heroes: accounts as RPG characters, levelling up with their tokens. */
+.office-heroes {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 5001;
+  display: flex;
+  width: min(760px, calc(100% - 16px));
+  max-height: calc(100% - 16px);
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(6px 6px 0 rgba(0, 0, 0, 0.35));
+  font-weight: 400;
+}
+.office-heroes[hidden] { display: none; }
+.office-heroes .office-peek__frame { width: 100%; }
+
+.office-heroes__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px;
+}
+
+.office-heroes__note,
+.office-heroes__empty {
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--peek-head-ink);
+  background: var(--peek-head);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+}
+.office-heroes__empty { padding: 16px; text-align: center; }
+
+.office-hero {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: var(--peek-screen);
+  color: var(--peek-screen-ink);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+}
+
+.office-hero__avatar {
+  flex: 0 0 auto;
+  width: 60px;
+  height: 66px;
+  line-height: 0;
+}
+
+/* Avatars show the still pose only. */
+.office-hero__avatar .px-pose,
+.office-hero__class .px-pose { display: none; }
+.office-hero__avatar .px-still-normal,
+.office-hero__class .px-still-normal { display: inline; }
+.office-hero__avatar .px-blink,
+.office-hero__class .px-blink { opacity: 0; }
+.office-hero--aura .office-hero__avatar .office-sprite { animation: office-aura 1.2s steps(2) infinite; }
+
+.office-hero__info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.office-hero__name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-hero__level { font-size: 12px; font-weight: 700; color: #f5c542; }
+.office--theme-castle .office-hero__level { color: #9e2b2b; }
+
+.office-hero__bar {
+  position: relative;
+  height: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+}
+.office-hero__bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: repeating-linear-gradient(90deg, #5be37a 0 6px, #3fbf5f 6px 8px);
+}
+.office-hero__xp { font-size: 10px; opacity: 0.85; }
+
+.office-hero__classes { flex: 0 0 auto; display: flex; gap: 4px; }
+.office-hero__class {
+  width: 36px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: var(--peek-btn);
+  cursor: pointer;
+  line-height: 0;
+  box-shadow: 0 0 0 2px var(--peek-outline), inset -2px -2px 0 var(--peek-btn-lo);
+}
+.office-hero__class .office-sprite { width: 30px; height: 33px; }
+.office-hero__class:hover { filter: brightness(1.08); }
+.office-hero__class[aria-checked="true"] { box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px #f5c542; }
+
+/* On the floor: a level badge by the lead, and an aura at tier 5. */
+.office-char__lv {
+  position: absolute;
+  right: -10px;
+  top: 42%;
+  padding: 0 3px;
+  background: #f5c542;
+  color: #2a1f1a;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 11px;
+  box-shadow: 0 0 0 1px #2a1f1a;
+  transform: scale(calc(1 / var(--o-scale, 1)));
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+.office-char--aura .office-sprite { animation: office-aura 1.2s steps(2) infinite; }
+@keyframes office-aura {
+  0% { filter: drop-shadow(0 0 2px #ffe066) drop-shadow(0 0 4px #f5c542); }
+  50% { filter: drop-shadow(0 0 1px #ffe066) drop-shadow(0 0 2px #f5c542); }
+}
+/* Without a tall hat the canvas's headroom is empty: the bubble sits lower. */
+.office-char:not(.office-char--hat) .office-char__bubble { bottom: calc(100% - 12px); }
+
+.office__heroes-btn { white-space: nowrap; }
+
+.office-levelup {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  z-index: 5002;
+  padding: 8px 16px;
+  transform: translateX(-50%);
+  background: #f5c542;
+  color: #2a1f1a;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  box-shadow: 0 0 0 3px #2a1f1a, 6px 6px 0 rgba(0, 0, 0, 0.35);
+  animation: office-levelup 0.6s steps(3) 2;
+  pointer-events: none;
+}
+.office-levelup[hidden] { display: none; }
+@keyframes office-levelup {
+  0% { transform: translateX(-50%) translateY(-6px); }
+  50% { transform: translateX(-50%) translateY(0); }
+}
+
 /* Outside each door: a flag (finished, unseen) and a mailbox. */
 .office__fixtures { position: absolute; inset: 0; pointer-events: none; }
 
@@ -5049,7 +5193,7 @@ body,
 .office-char {
   position: absolute;
   width: 60px;
-  height: 54px;
+  height: 66px;
   transform: translate(-50%, -100%) scale(var(--o-scale, 1));
   transform-origin: 50% 100%;
   pointer-events: auto;

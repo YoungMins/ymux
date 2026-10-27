@@ -3,7 +3,7 @@ import * as art from "./pixelArt";
 import * as themeArt from "./themeArt";
 import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
 import { characterSvg, deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
-import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, sproutGrid, tieGrid } from "./slimeArt";
+import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, gearGrid, sproutGrid, tieGrid } from "./slimeArt";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
 
@@ -136,5 +136,44 @@ describe("themes", () => {
   it("falls back to the office for an unknown saved theme", () => {
     expect(isThemeId("cave")).toBe(true);
     expect(isThemeId("moon")).toBe(false);
+  });
+});
+
+describe("hero gear", () => {
+  const classes = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
+  // Keys the slime palette (body, face, base colours) and the gear palette define.
+  const KNOWN = new Set("oucCwekmrRgGaAbBnNyYjli");
+
+  it("stays on the canvas with known colours, and is empty at tier 0", () => {
+    for (const body of BODIES) {
+      for (const cls of classes) {
+        for (let tier = 0; tier <= 5; tier++) {
+          const { back, front } = gearGrid(body, cls, tier);
+          for (const rows of [back, front]) {
+            expect(rows).toHaveLength(SLIME_H);
+            for (const r of rows) {
+              expect(r).toHaveLength(SLIME_W);
+              for (const k of r) if (k !== ".") expect(KNOWN.has(k), `${body} ${cls} ${tier} "${k}"`).toBe(true);
+            }
+          }
+          const drawn = front.join("").replace(/\./g, "").length;
+          if (tier === 0) expect(drawn, `${cls} tier 0`).toBe(0);
+          else expect(drawn, `${body} ${cls} ${tier}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("adds wings at tier 5 and a jewel from tier 3", () => {
+    expect(gearGrid("normal", "warrior", 4).back.join("")).not.toMatch(/u/);
+    expect(gearGrid("normal", "warrior", 5).back.join("")).toMatch(/u/);
+    expect(gearGrid("normal", "mage", 2).front.join("")).not.toMatch(/j/);
+    expect(gearGrid("normal", "mage", 3).front.join("")).toMatch(/j/);
+  });
+
+  it("dresses only leads", () => {
+    const plain = characterSvg("claude", "lead");
+    expect(characterSvg("claude", "lead", { cls: "warrior", tier: 2 })).not.toBe(plain);
+    expect(characterSvg("claude", "sub", { cls: "warrior", tier: 2 })).toBe(characterSvg("claude", "sub"));
   });
 });

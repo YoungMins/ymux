@@ -6,6 +6,7 @@
 
 import type { AgentSnapshot, AgentStatus, LayoutNode, PaneKind, PaneSpec, Uuid } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
+import type { HeroClass } from "./heroModel";
 import { corridorGraph, nearestNode, route, simplify, type CorridorGraph } from "./officePaths";
 import type { Mail } from "./officeLog";
 
@@ -80,6 +81,15 @@ export interface CharModel {
   pose: Pose;
   /// Where it belongs right now: at its desk (lead) or a helper spot (sub).
   home: Point;
+  /// A lead's account as a hero (`heroModel`): its class, look tier and
+  /// level. Absent for helpers and before the usage numbers arrive.
+  hero?: Hero;
+}
+
+export interface Hero {
+  cls: HeroClass;
+  tier: number;
+  level: number;
 }
 
 export interface OfficeModel {
@@ -102,6 +112,8 @@ export interface OfficeInput {
   corridor?: { x: number; y: number };
   /// A pane's mailbox (`officeLog`). Empty by default.
   mailOf?: (paneId: Uuid) => readonly Mail[];
+  /// The hero of the account a pane runs under, if known.
+  heroOf?: (paneId: Uuid) => Hero | null;
 }
 
 const STATUS_RANK: Record<PaneStatus, number> = { idle: 0, running: 1, done: 2, attention: 3 };
@@ -269,6 +281,7 @@ export function buildOffice(input: OfficeInput): OfficeModel {
     for (const desk of desks) {
       const a = input.agents[desk.paneId];
       if (!a?.lead) continue;
+      const hero = input.heroOf?.(desk.paneId);
       chars.push({
         key: `${desk.paneId}:lead`,
         paneId: desk.paneId,
@@ -282,6 +295,7 @@ export function buildOffice(input: OfficeInput): OfficeModel {
         // At the desk itself: the view seats it behind the desk, beside the
         // monitor, with the desk hiding its legs.
         home: desk.at,
+        ...(hero ? { hero } : {}),
       });
     }
     subs.forEach(({ desk, s }, i) => {
