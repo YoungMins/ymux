@@ -207,9 +207,11 @@ with a banner while the office is open.
   and hand-over; click it for the list, and click an entry to jump there.
 
 Click a room, desk or slime to peek at its terminal in place: a window over
-the room shows the live screen, with key buttons (arrows, Enter, Esc, Tab,
-1–3) for answering a menu and a box for typing a prompt (Enter sends,
-Shift+Enter adds a line). Double-click a room, or use *Open terminal*, to jump
+the room shows the live screen, with a button for each choice of a menu the
+agent is showing, key buttons (arrows, Enter, Esc, Tab, 1–3) and a box for
+typing a prompt (Enter sends, Shift+Enter adds a line; while it is empty the
+arrow keys, Tab and Enter go to the terminal). Click the screen itself to type
+straight into the terminal. Double-click a room, or use *Open terminal*, to jump
 to the pane; a flag, mailbox or board note jumps there directly. `Esc` closes
 the peek, then the office; the terminals keep running underneath.
 The flags, mail and board live for the session only.

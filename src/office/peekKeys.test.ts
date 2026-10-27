@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PEEK_KEYS, keyBytes } from "./peekKeys";
+import { PEEK_KEYS, directKey, keyBytes, menuOptions } from "./peekKeys";
 import { peekBox } from "./OfficePeek";
 
 describe("keyBytes", () => {
@@ -45,5 +45,61 @@ describe("peekBox", () => {
     expect(b.h).toBe(184);
     expect(b.x).toBe(8);
     expect(b.y).toBe(8);
+  });
+});
+
+describe("menuOptions", () => {
+  it("finds a live menu by its pointer", () => {
+    const screen = [
+      "Do you want to make this edit to api.ts?",
+      "❯ 1. Yes",
+      "  2. Yes, and don't ask again this session",
+      "  3. No, and tell Claude what to do differently (esc)",
+    ];
+    expect(menuOptions(screen)).toEqual([
+      { n: "1", label: "Yes", selected: true },
+      { n: "2", label: "Yes, and don't ask again this session", selected: false },
+      { n: "3", label: "No, and tell Claude what to do differently (esc)", selected: false },
+    ]);
+  });
+
+  it("follows the pointer and allows a description under an option", () => {
+    const screen = ["  1. Plan", "     think first", "› 2. Code", "  3. Ask"];
+    expect(menuOptions(screen).map((o) => [o.n, o.selected])).toEqual([
+      ["1", false],
+      ["2", true],
+      ["3", false],
+    ]);
+  });
+
+  it("ignores a numbered list in an answer, and an old menu above a new one", () => {
+    expect(menuOptions(["Steps:", "1. Read the file", "2. Fix the bug"])).toEqual([]);
+    const two = ["❯ 1. Old", "  2. Older", "done", "  1. New", "❯ 2. Newer"];
+    expect(menuOptions(two).map((o) => o.label)).toEqual(["New", "Newer"]);
+  });
+});
+
+describe("directKey", () => {
+  const k = (key: string, mods: Partial<{ ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; isComposing: boolean }> = {}) =>
+    directKey({ key, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...mods }, false);
+
+  it("sends what a terminal would", () => {
+    expect(k("a")).toBe("a");
+    expect(k("한")).toBe("한");
+    expect(k("Enter")).toBe("\r");
+    expect(k("Backspace")).toBe("\x7f");
+    expect(k("ArrowUp")).toBe("\x1b[A");
+    expect(k("Tab", { shiftKey: true })).toBe("\x1b[Z");
+    expect(k("Escape")).toBe("\x1b");
+    expect(k("c", { ctrlKey: true })).toBe("\x03");
+    expect(k("x", { altKey: true })).toBe("\x1bx");
+  });
+
+  it("leaves modifiers, function keys and IME composition alone", () => {
+    expect(k("Shift")).toBeNull();
+    expect(k("F5")).toBeNull();
+    expect(k("Process")).toBeNull();
+    expect(k("a", { isComposing: true })).toBeNull();
+    expect(k("v", { metaKey: true })).toBeNull();
   });
 });

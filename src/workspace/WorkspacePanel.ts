@@ -236,7 +236,13 @@ export function mountWorkspacePanel(
   const addBtn = document.createElement("button");
   addBtn.className = "workspace-panel__add";
   addBtn.type = "button";
-  addBtn.textContent = "+";
+  const addLabel = document.createElement("span");
+  addLabel.textContent = t("workspace.addWorkspace");
+  const addPlus = document.createElement("span");
+  addPlus.className = "workspace-panel__add-plus";
+  addPlus.textContent = "+";
+  addPlus.setAttribute("aria-hidden", "true");
+  addBtn.append(addPlus, addLabel);
   addBtn.title = t("workspace.addWorkspace");
   addBtn.setAttribute("aria-label", t("workspace.addWorkspace"));
   addBtn.addEventListener("click", () => {
@@ -719,6 +725,7 @@ export function mountWorkspacePanel(
     renderBell();
     addBtn.title = t("workspace.addWorkspace");
     addBtn.setAttribute("aria-label", t("workspace.addWorkspace"));
+    addLabel.textContent = t("workspace.addWorkspace");
     rebuild();
   });
 

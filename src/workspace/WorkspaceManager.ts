@@ -2193,6 +2193,14 @@ export class WorkspaceManager {
         const pane = this.findPaneById(id);
         if (pane instanceof TerminalPane) pane.typeText(keyBytes(key, pane.applicationCursorKeys));
       },
+      type: (id, data) => {
+        const pane = this.findPaneById(id);
+        if (pane instanceof TerminalPane) pane.typeText(data);
+      },
+      cursorKeys: (id) => {
+        const pane = this.findPaneById(id);
+        return pane instanceof TerminalPane && pane.applicationCursorKeys;
+      },
       subscribe: (cb) => {
         const offs = [this.onTreeChange(cb), this.onInboxChange(cb), this.onActivePaneChange(cb), officeLog.onChange(cb)];
         return () => offs.forEach((off) => off());
