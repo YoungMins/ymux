@@ -101,7 +101,10 @@ export class OfficePeek {
     close.title = t("office.peek.close");
     close.setAttribute("aria-label", t("office.peek.close"));
     close.addEventListener("click", () => this.close());
-    head.append(this.titleEl, this.tabsEl, open, close);
+    // A status lamp: blue working, red needs you, green done.
+    const lamp = document.createElement("span");
+    lamp.className = "office-peek__lamp";
+    head.append(lamp, this.titleEl, this.tabsEl, open, close);
 
     this.screenEl = document.createElement("pre");
     this.screenEl.className = "office-peek__screen";
@@ -152,7 +155,12 @@ export class OfficePeek {
     this.sendBtn.addEventListener("click", () => void this.submit());
     form.append(this.input, this.sendBtn);
 
-    this.element.append(head, this.screenEl, keys, form);
+    // The frame is clipped to pixel-stepped corners; the outer box carries
+    // the drop shadow, which a clipped box would cut off.
+    const frame = document.createElement("div");
+    frame.className = "office-peek__frame";
+    frame.append(head, this.screenEl, keys, form);
+    this.element.appendChild(frame);
   }
 
   get paneId(): Uuid | null {
