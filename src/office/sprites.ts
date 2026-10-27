@@ -8,6 +8,7 @@ import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
 import { humanBlinkGrid, humanGrid, type HumanPose } from "./humanArt";
 import { TIER } from "./heroTiers";
+import { PET_H, PET_W, petFrames, type PetSpecies } from "./petArt";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
 import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, gearGrid, sproutGrid, tieGrid, type Body, type Eyes, type GearClass } from "./slimeArt";
 
@@ -316,4 +317,28 @@ export function mailboxSvg(letter: "sealed" | "open" | null): string {
 /// The lobby's cork board, `w` x `h` art pixels.
 export function corkSvg(w: number, h: number): string {
   return fixture(art.corkGrid(w, h), FIXTURES, "office-board__svg");
+}
+
+/// Pet colours: body, shade, white, pink, eyes, nose / beak.
+const PETS: Record<PetSpecies, Palette> = {
+  cat: { o: "#2a1f1a", b: "#f0a050", B: "#c8782e", w: "#fff4e0", p: "#ff9fb0", e: "#2a1f1a", n: "#2a1f1a" },
+  dog: { o: "#2a1f1a", b: "#c8925a", B: "#7a4e2a", w: "#f8f0e0", p: "#ff9fb0", e: "#2a1f1a", n: "#2a1f1a" },
+  rabbit: { o: "#2a1f1a", b: "#f2f0ea", B: "#c9c2b0", w: "#ffffff", p: "#ff9fb0", e: "#2a1f1a", n: "#2a1f1a" },
+  chick: { o: "#2a1f1a", b: "#ffd84a", B: "#e8a820", w: "#fff6c0", p: "#ff9fb0", e: "#2a1f1a", n: "#f08a2a" },
+};
+
+/// Pets are drawn at two CSS pixels per art pixel: smaller than the agents.
+export const PET_PX = 2;
+
+/// A pet, as one group per pose like `characterSvg`: a walk strip (the
+/// rabbit hops), sitting and asleep.
+export function petSvg(species: PetSpecies): string {
+  const pal = PETS[species];
+  const f = petFrames(species);
+  const lift = species === "rabbit" ? 2 : 0;
+  const body =
+    `<g class="px-pose px-anim px-anim-walk">${rects(f.walkA, pal)}<g transform="translate(${PET_W} ${-lift})">${rects(f.walkB, pal)}</g></g>` +
+    `<g class="px-pose px-still-sit">${rects(f.sit, pal)}</g>` +
+    `<g class="px-pose px-still-sleep">${rects(f.sleep, pal)}</g>`;
+  return svg(PET_W, PET_H, PET_PX, body, "office-sprite office-pet__svg");
 }

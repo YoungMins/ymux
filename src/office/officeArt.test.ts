@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import * as art from "./pixelArt";
 import * as themeArt from "./themeArt";
 import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
-import { characterSvg, deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
+import { characterSvg, deskSvg, iconSvg, lobbyProps, petSvg, roomProps } from "./sprites";
+import { PET_H, PET_SPECIES, PET_W, petFrames } from "./petArt";
 import { humanGrid } from "./humanArt";
 import { TIER } from "./heroTiers";
 import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, gearGrid, sproutGrid, tieGrid } from "./slimeArt";
@@ -231,6 +232,23 @@ describe("human heroes", () => {
     expect(human).not.toBe(characterSvg("claude", "lead", { cls: "mage", tier: 2 }));
     for (const pose of ["px-still-normal", "px-still-raise", "px-still-sleep", "px-anim-walk", "px-anim-type", "px-anim-relax", "px-anim-cheer"]) {
       expect(human).toContain(pose);
+    }
+  });
+});
+
+describe("pets", () => {
+  it("draws every species' poses on a 20x14 canvas with known colours", () => {
+    for (const sp of PET_SPECIES) {
+      const f = petFrames(sp);
+      for (const [pose, rows] of Object.entries(f)) {
+        expect(rows, `${sp} ${pose}`).toHaveLength(PET_H);
+        for (const r of rows) {
+          expect(r, `${sp} ${pose}`).toHaveLength(PET_W);
+          expect(r, `${sp} ${pose}`).toMatch(/^[.obBwpen]+$/);
+        }
+      }
+      expect(f.walkA.join(""), sp).not.toBe(f.walkB.join(""));
+      expect(petSvg(sp)).toContain("px-anim-walk");
     }
   });
 });

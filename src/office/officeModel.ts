@@ -387,12 +387,6 @@ export function diffChars(prev: readonly CharModel[], next: readonly CharModel[]
   return { entered, finished, cheered, left };
 }
 
-/// Walk time between two floor points: a steady pace, clamped so a short
-/// hop is still visible and a cross-office trip doesn't drag.
-export function walkMs(a: Point, b: Point): number {
-  const d = Math.hypot(a.x - b.x, a.y - b.y);
-  return Math.round(Math.min(2400, Math.max(350, d * 2600)));
-}
 
 /// The spot next to `target` a visitor walks to: just beside it, on the side
 /// facing the room's middle so it stays inside the room.

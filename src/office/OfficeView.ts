@@ -11,20 +11,22 @@ import type { Uuid } from "../types";
 import { t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
 import {
+  LOBBY_H,
   MANAGER_HOME,
   besideSpot,
   buildOffice,
   diffChars,
   planPath,
   type Place,
-  walkMs,
   type CharModel,
   type OfficeInput,
   type OfficeModel,
   type Point,
   type RoomModel,
 } from "./officeModel";
-import { characterSvg, corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, paletteOf, roomProps } from "./sprites";
+import { characterSvg, corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, paletteOf, petSvg, roomProps } from "./sprites";
+import { petErrand, petsFor, type PetLobby, type PetSpot } from "./petModel";
+import type { PetSpecies } from "./petArt";
 import type { LogEntry } from "./officeLog";
 import { getLang } from "../i18n/i18n";
 import { kindName } from "./officeModel";
@@ -52,8 +54,11 @@ import type { TokenUsage } from "../tokenmonitor/model";
 import type { AccountProfile } from "../types";
 import { ACCOUNT_NONE } from "../accounts/accountModel";
 
-/// Narrowest corridor, in CSS pixels; wider ones follow the sprite scale.
-const CORRIDOR_PX = 24;
+/// Corridor width, in CSS pixels (wide enough for a character).
+const CORRIDOR_PX = 40;
+/// Walking pace, in CSS pixels per second, so a walk takes as long as its
+/// on-screen distance whatever the window size.
+const WALK_PX_PER_S = 240;
 
 export interface OfficeSource extends PeekSource {
   /// The active workspace, as the model wants it.
@@ -77,6 +82,19 @@ export interface OfficeSource extends PeekSource {
 /// How often the heroes' experience is re-read while the office is open.
 const XP_REFRESH_MS = 5 * 60 * 1000;
 const LEVEL_UP_MS = 4000;
+
+/// One of the office pets, wandering on its own (`petModel`).
+interface Pet {
+  species: PetSpecies;
+  el: HTMLElement;
+  bubble: HTMLElement;
+  spot: PetSpot;
+  /// Cleared when the office has fewer rooms and this pet goes home.
+  alive: boolean;
+}
+
+/// Pets amble: slower than the agents.
+const PET_PX_PER_S = 70;
 
 interface Actor {
   key: string;
@@ -128,6 +146,7 @@ export class OfficeView {
   private readonly classes = new Map<string, HeroClass>();
   private readonly forms = new Map<string, HeroForm>();
   private readonly levelUpEl: HTMLElement;
+  private readonly pets: Pet[] = [];
   private theme: ThemeId = loadTheme();
   private readonly reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -333,10 +352,9 @@ export class OfficeView {
     const w = this.floor.clientWidth;
     const h = this.floor.clientHeight;
     if (w > 0 && h > 0) {
-      // Corridors wide enough for the characters walking them: size them
-      // from the sprite scale the rooms allow, then lay the rooms out again.
-      const px = Math.round(Math.min(72, Math.max(CORRIDOR_PX, 40 * this.fitScale(buildOffice(input), w, h))));
-      this.model = buildOffice({ ...input, corridor: { x: px / w, y: px / h } });
+      // Corridors a fixed number of pixels wide, like everything drawn on
+      // the floor: a bigger window means more room, not bigger pixels.
+      this.model = buildOffice({ ...input, corridor: { x: CORRIDOR_PX / w, y: CORRIDOR_PX / h } });
     } else {
       this.model = buildOffice(input);
     }
@@ -345,11 +363,12 @@ export class OfficeView {
     this.renderKinds();
     this.renderRooms();
     this.reconcile();
+    this.ensurePets();
     this.emptyEl.hidden = this.model.chars.length > 0;
   }
 
-  /// Sprites shrink with the smallest room so a character never outgrows
-  /// its room (a character is 44px tall, a desk 34px, at scale 1).
+  /// How the smallest room compares with the space a desk and its character
+  /// need (1 = enough).
   private fitScale(model: OfficeModel, w: number, h: number): number {
     let fit = Number.POSITIVE_INFINITY;
     for (const r of model.rooms) {
@@ -363,7 +382,10 @@ export class OfficeView {
     const h = this.floor.clientHeight;
     if (w <= 0 || h <= 0) return;
     const fit = this.fitScale(this.model, w, h);
-    this.floor.style.setProperty("--o-scale", String(Math.max(0.45, Math.min(1.6, fit))));
+    // Sprites, furniture and floor tiles keep one size whatever the window:
+    // whole art pixels (3 CSS px) that never stretch. The rooms take up the
+    // slack instead.
+    this.floor.style.setProperty("--o-scale", "1");
     // Rooms too small for name cards: tooltips and plates still say who is who.
     this.floor.classList.toggle("office__floor--tiny", fit < 0.6);
   }
@@ -596,6 +618,86 @@ export class OfficeView {
       .map((d) => ({ paneId: d.paneId, label: d.label, status: d.status }));
     const box = peekBox({ x: room.rect.x * w, y: room.rect.y * h, w: room.rect.w * w, h: room.rect.h * h }, w, h);
     return { tabs, box };
+  }
+
+  // ── Pets: animals wandering the corridors and the lobby ─────────────────
+
+  private petLobby(): PetLobby {
+    return { top: 1 - LOBBY_H * 0.42, bottom: 1 - LOBBY_H * 0.1, gate: this.model.lobbyGate };
+  }
+
+  /// As many pets as the office has room for (`petsFor`), each on its own
+  /// errand loop.
+  private ensurePets(): void {
+    if (this.floor.clientWidth <= 0) return;
+    const want = petsFor(this.model.rooms.length);
+    while (this.pets.length > want.length) {
+      const pet = this.pets.pop()!;
+      pet.alive = false;
+      pet.el.remove();
+    }
+    for (const species of want.slice(this.pets.length)) {
+      const el = document.createElement("div");
+      el.className = `office-pet office-pet--${species}`;
+      el.innerHTML = petSvg(species);
+      const bubble = document.createElement("span");
+      bubble.className = "office-pet__bubble";
+      bubble.hidden = true;
+      el.appendChild(bubble);
+      const nodes = this.model.graph.nodes;
+      const start: PetSpot =
+        nodes.length > 0 && Math.random() < 0.7
+          ? { at: nodes[Math.floor(Math.random() * nodes.length)], lobby: false }
+          : { at: { x: 0.1 + Math.random() * 0.8, y: 1 - LOBBY_H * 0.2 }, lobby: true };
+      const pet: Pet = { species, el, bubble, spot: start, alive: true };
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.petBubble(pet, "heart", 1500);
+      });
+      this.position(el, start.at, 5);
+      this.actorsLayer.appendChild(el);
+      this.pets.push(pet);
+      void this.petLife(pet);
+    }
+  }
+
+  private async petLife(pet: Pet): Promise<void> {
+    // Not all at once.
+    await this.sleep(500 + Math.random() * 2500);
+    while (!this.disposed && pet.alive) {
+      const errand = petErrand(this.model.graph, this.petLobby(), pet.spot);
+      pet.el.classList.remove("office-pet--sleeping");
+      pet.bubble.hidden = true;
+      if (!this.reduced) {
+        pet.el.classList.add("office-pet--walking");
+        let at = pet.spot.at;
+        for (const to of errand.path) {
+          if (this.disposed || !pet.alive) return;
+          const ms = this.walkTime(at, to, true, PET_PX_PER_S);
+          if (Math.abs(to.x - at.x) > 0.002) pet.el.classList.toggle("office-pet--face-left", to.x < at.x);
+          pet.el.style.transition = `left ${ms}ms linear, top ${ms}ms linear`;
+          void pet.el.offsetWidth;
+          this.position(pet.el, to, 5);
+          at = to;
+          await this.sleep(ms);
+        }
+        pet.el.classList.remove("office-pet--walking");
+        pet.spot = errand.end;
+      }
+      if (errand.rest === "sleep") {
+        pet.el.classList.add("office-pet--sleeping");
+        this.petBubble(pet, "zzz", errand.restMs);
+      }
+      await this.sleep(errand.restMs);
+    }
+  }
+
+  private petBubble(pet: Pet, icon: string, ms: number): void {
+    pet.bubble.innerHTML = iconSvg(icon);
+    pet.bubble.hidden = false;
+    void this.sleep(ms).then(() => {
+      if (pet.bubble.innerHTML === iconSvg(icon)) pet.bubble.hidden = true;
+    });
   }
 
   private reconcile(): void {
@@ -935,6 +1037,15 @@ export class OfficeView {
     this.seat(actor);
   }
 
+  /// Milliseconds to walk from `a` to `b` at the steady pace. A leg of a
+  /// longer route has no minimum; a whole walk takes at least 350 ms.
+  private walkTime(a: Point, b: Point, leg: boolean, pxPerS = WALK_PX_PER_S): number {
+    const dx = (a.x - b.x) * this.floor.clientWidth;
+    const dy = (a.y - b.y) * this.floor.clientHeight;
+    const ms = (Math.hypot(dx, dy) / pxPerS) * 1000;
+    return Math.round(leg ? Math.max(90, ms) : Math.min(5000, Math.max(350, ms)));
+  }
+
   /// Walk to `to` at a steady pace; resolves on arrival. `leg` is one piece
   /// of a longer route: no minimum time, and the walk cycle keeps going.
   private walk(actor: Actor, to: Point, leg = false): Promise<void> {
@@ -945,9 +1056,7 @@ export class OfficeView {
       this.place(actor, to);
       return Promise.resolve();
     }
-    const ms = leg
-      ? Math.max(90, Math.round(Math.hypot(actor.pos.x - to.x, actor.pos.y - to.y) * 2600))
-      : walkMs(actor.pos, to);
+    const ms = this.walkTime(actor.pos, to, leg);
     actor.el.classList.remove("office-char--seated");
     if (Math.abs(to.x - actor.pos.x) > 0.002) {
       actor.el.classList.toggle("office-char--face-left", to.x < actor.pos.x);

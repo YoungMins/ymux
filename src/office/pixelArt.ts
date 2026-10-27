@@ -170,6 +170,7 @@ export const ICONS: Readonly<Record<string, readonly string[]>> = {
   chat: [".ooooo.", "owwwwwo", "owkwkwo", "owwwwwo", ".oowoo.", "..oo..."],
   review: ["oooooo.", "owwwwo.", "okkwwor", "owwwwrr", "okkwrro", "owwrro.", "ooooo.."],
   box: [".ooooo.", "oddDddo", "oooooo.", "odddddo", "oddgddo", "odddddo", "ooooooo"],
+  heart: [".oo.oo.", "orrorro", "orrrrro", ".orrro.", "..oro..", "...o..."],
 };
 
 /// A pennant with a check, flown outside a room whose agent finished.

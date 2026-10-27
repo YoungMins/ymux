@@ -9,7 +9,6 @@ import {
   helperSpot,
   layoutLeaves,
   poseOf,
-  walkMs,
   worstStatus,
   type OfficeInput,
 } from "./officeModel";
@@ -149,11 +148,6 @@ describe("geometry helpers", () => {
         expect(p.y).toBeLessThanOrEqual(0.9);
       }
     }
-  });
-
-  it("clamps walk time", () => {
-    expect(walkMs({ x: 0, y: 0 }, { x: 0, y: 0 })).toBe(350);
-    expect(walkMs({ x: 0, y: 0 }, { x: 1, y: 1 })).toBe(2400);
   });
 
   it("maps statuses", () => {

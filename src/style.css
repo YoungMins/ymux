@@ -4497,7 +4497,7 @@ body,
 }
 .office--theme-castle .office__lobby {
   background:
-    linear-gradient(90deg, transparent 40%, #9e2f2f 40% 60%, transparent 60%),
+    linear-gradient(#9e2f2f, #9e2f2f) center / calc(var(--px) * 48) 100% no-repeat,
     repeating-conic-gradient(#b9bac4 0 25%, #8d8f9c 0 50%) 0 0 / calc(var(--px) * 8) calc(var(--px) * 8);
   border-top-color: #2b2c36;
 }
@@ -5189,6 +5189,47 @@ body,
   0% { transform: translateX(-50%) translateY(-6px); }
   50% { transform: translateX(-50%) translateY(0); }
 }
+
+/* Pets: animals wandering the corridors and the lobby on their own. Drawn
+   at a fixed size; one pose shows at a time, like the agents. */
+.office-pet {
+  position: absolute;
+  width: 40px;
+  height: 28px;
+  transform: translate(-50%, -100%);
+  line-height: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.office-pet::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -2px;
+  height: 2px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.office-pet .office-sprite { display: block; overflow: hidden; }
+.office-pet--face-left .office-sprite { transform: scaleX(-1); }
+.office-pet .px-pose { display: none; }
+.office-pet .px-still-sit { display: inline; }
+.office-pet--walking .px-still-sit,
+.office-pet--sleeping .px-still-sit { display: none; }
+.office-pet--walking .px-anim-walk { display: inline; animation: office-strip 0.36s steps(1) infinite; }
+.office-pet--sleeping .px-still-sleep { display: inline; }
+.office-pet__bubble {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  padding: 2px 3px;
+  transform: translateX(-50%);
+  background: #fff;
+  line-height: 0;
+  box-shadow: 0 0 0 2px #2a1f1a;
+  pointer-events: none;
+}
+.office-pet__bubble[hidden] { display: none; }
 
 /* Outside each door: a flag (finished, unseen) and a mailbox. */
 .office__fixtures { position: absolute; inset: 0; pointer-events: none; }

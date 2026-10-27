@@ -215,7 +215,10 @@ arrow keys, Tab and Enter go to the terminal). Click the screen itself to type
 straight into the terminal. Double-click a room, or use *Open terminal*, to jump
 to the pane; a flag, mailbox or board note jumps there directly. `Esc` closes
 the peek, then the office; the terminals keep running underneath.
-The flags, mail and board live for the session only.
+The flags, mail and board live for the session only. Everything is drawn at
+a fixed pixel size, so a bigger window gives the office more room rather than
+bigger pixels. A cat and a dog (and, in bigger offices, a rabbit and a chick)
+wander the corridors and the lobby, sit and nap; click one for a heart.
 
 #### Multiple accounts
 
