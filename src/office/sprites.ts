@@ -6,6 +6,7 @@
 
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
+import { humanBlinkGrid, humanGrid, type HumanPose } from "./humanArt";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
 import { MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyesGrid, gearGrid, sproutGrid, tieGrid, type Body, type Eyes, type GearClass } from "./slimeArt";
 
@@ -54,6 +55,57 @@ const GOLD: Palette = { a: "#f5c542", A: "#c8962a", B: "#c8962a", N: "#c8962a" }
 export interface HeroLook {
   cls: GearClass;
   tier: number;
+  /// Drawn as a slime (default) or a human adventurer.
+  form?: "slime" | "human";
+}
+
+/// A human's tunic by class (plain clothes before the first level).
+const TUNICS: Record<GearClass | "plain", { t: string; T: string }> = {
+  plain: { t: "#8aa36a", T: "#6a8350" },
+  warrior: { t: "#b84a3a", T: "#8a3328" },
+  mage: { t: "#5a6fe0", T: "#33449e" },
+  rogue: { t: "#5b4f8a", T: "#3e3566" },
+  cleric: { t: "#f0ede4", T: "#c9c2b0" },
+  cat: { t: "#f0a0b8", T: "#c9788f" },
+};
+
+/// A human adventurer: hair in its agent's colour, the tunic of its class.
+function humanSvg(kind: string, hero: HeroLook): string {
+  const jelly = JELLIES[kind] ?? FALLBACK;
+  const tunic = TUNICS[hero.tier >= 1 ? hero.cls : "plain"];
+  const pal: Palette = {
+    ...BASE,
+    ...GEAR,
+    ...(hero.tier >= 4 ? GOLD : {}),
+    s: "#ffd9b8",
+    S: "#e8b48e",
+    h: jelly.c,
+    H: jelly.C,
+    t: tunic.t,
+    T: tunic.T,
+    q: "#4a5a7a",
+    d: "#6a4024",
+    e: "#2a1f1a",
+    k: "#ff9f9f",
+    m: "#b0503a",
+  };
+  const frame = (pose: HumanPose, blink = false): string => {
+    const g = humanGrid(pose, hero.cls, hero.tier);
+    return rects(g.back, pal) + rects(g.front, pal) + (blink ? `<g class="px-blink">${rects(humanBlinkGrid(), pal)}</g>` : "");
+  };
+  const strip = (cls: string, a: string, b: string, dy = 0): string =>
+    `<g class="px-pose px-anim ${cls}">${a}<g transform="translate(${SLIME_W} ${-dy})">${b}</g></g>`;
+  const still = (cls: string, f: string): string => `<g class="px-pose ${cls}">${f}</g>`;
+  const body = [
+    still("px-still-normal", frame({ arms: "down", legs: "stand", eyes: "open" }, true)),
+    still("px-still-raise", frame({ arms: "raise", legs: "stand", eyes: "open" }, true)),
+    still("px-still-sleep", frame({ arms: "down", legs: "stand", eyes: "shut" })),
+    strip("px-anim-walk", frame({ arms: "swingA", legs: "stepA", eyes: "open" }), frame({ arms: "swingB", legs: "stepB", eyes: "open" })),
+    strip("px-anim-type", frame({ arms: "type", legs: "stand", eyes: "open" }), frame({ arms: "typeUp", legs: "stand", eyes: "open" })),
+    strip("px-anim-relax", frame({ arms: "mug", legs: "stand", eyes: "happy" }), frame({ arms: "sip", legs: "stand", eyes: "happy" })),
+    strip("px-anim-cheer", frame({ arms: "up", legs: "stand", eyes: "happy" }), frame({ arms: "up", legs: "stand", eyes: "happy" }), 2),
+  ].join("");
+  return svg(SLIME_W, SLIME_H, PX, body, "office-sprite");
 }
 
 const JELLIES: Record<string, Jelly> = {
@@ -125,6 +177,7 @@ export const PX = 3;
 /// across, so the frames can never drift out of step. `role` "sub" grows a
 /// sprout; "manager" (the user) wears a bow tie.
 export function characterSvg(kind: string, role: "lead" | "sub" | "manager", hero?: HeroLook): string {
+  if (hero && role === "lead" && hero.form === "human") return humanSvg(kind, hero);
   const jelly = role === "manager" ? JELLIES.manager : (JELLIES[kind] ?? FALLBACK);
   const pal: Palette = { ...BASE, ...GEAR, ...(hero && hero.tier >= 4 ? GOLD : {}), ...jelly };
   const gear = (body: Body) => (hero && role === "lead" ? gearGrid(body, hero.cls, hero.tier) : null);

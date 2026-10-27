@@ -3,6 +3,7 @@ import * as art from "./pixelArt";
 import * as themeArt from "./themeArt";
 import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
 import { characterSvg, deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
+import { humanGrid } from "./humanArt";
 import { BODIES, EYES, MUG, SLIME_H, SLIME_W, blinkGrid, bodyGrid, eyeRow, eyesGrid, gearGrid, sproutGrid, tieGrid } from "./slimeArt";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
@@ -175,5 +176,48 @@ describe("hero gear", () => {
     const plain = characterSvg("claude", "lead");
     expect(characterSvg("claude", "lead", { cls: "warrior", tier: 2 })).not.toBe(plain);
     expect(characterSvg("claude", "sub", { cls: "warrior", tier: 2 })).toBe(characterSvg("claude", "sub"));
+  });
+});
+
+describe("human heroes", () => {
+  const classes = ["warrior", "mage", "rogue", "cleric", "cat"] as const;
+  const arms = ["down", "raise", "type", "typeUp", "up", "mug", "sip", "swingA", "swingB"] as const;
+  // Outline, skin, hair, tunic, trousers, boots, face, mug, plus the gear keys.
+  const KNOWN = new Set("osShHtTqdekmuUaAbBnNyYjlirRgG");
+
+  it("draws every class, tier and pose on the canvas with known colours", () => {
+    for (const cls of classes) {
+      for (let tier = 0; tier <= 5; tier++) {
+        for (const a of arms) {
+          for (const legs of ["stand", "stepA", "stepB"] as const) {
+            const { back, front } = humanGrid({ arms: a, legs, eyes: "open" }, cls, tier);
+            for (const rows of [back, front]) {
+              expect(rows).toHaveLength(SLIME_H);
+              for (const r of rows) {
+                expect(r).toHaveLength(SLIME_W);
+                for (const k of r) if (k !== ".") expect(KNOWN.has(k), `${cls} ${tier} ${a} "${k}"`).toBe(true);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("stands on the canvas floor and is outlined all round", () => {
+    const { front } = humanGrid({ arms: "down", legs: "stand", eyes: "open" }, "warrior", 0);
+    expect(front[SLIME_H - 1]).toMatch(/o/);
+    for (const r of front) {
+      const first = r.search(/[^.]/);
+      if (first >= 0) expect(r[first]).toBe("o");
+    }
+  });
+
+  it("is drawn for a lead whose hero form is human", () => {
+    const human = characterSvg("claude", "lead", { cls: "mage", tier: 2, form: "human" });
+    expect(human).not.toBe(characterSvg("claude", "lead", { cls: "mage", tier: 2 }));
+    for (const pose of ["px-still-normal", "px-still-raise", "px-still-sleep", "px-anim-walk", "px-anim-type", "px-anim-relax", "px-anim-cheer"]) {
+      expect(human).toContain(pose);
+    }
   });
 });

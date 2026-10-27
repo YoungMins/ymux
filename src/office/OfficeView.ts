@@ -37,11 +37,14 @@ import {
   levelOf,
   levelUps,
   loadHeroClass,
+  loadHeroForm,
   loadSeenLevels,
   saveHeroClass,
+  saveHeroForm,
   saveSeenLevels,
   tierOf,
   type HeroClass,
+  type HeroForm,
 } from "./heroModel";
 import type { Hero } from "./officeModel";
 import type { TokenUsage } from "../tokenmonitor/model";
@@ -122,6 +125,7 @@ export class OfficeView {
   /// All-time tokens per account; null until the first read.
   private xp: Map<string, number> | null = null;
   private readonly classes = new Map<string, HeroClass>();
+  private readonly forms = new Map<string, HeroForm>();
   private readonly levelUpEl: HTMLElement;
   private theme: ThemeId = loadTheme();
   private readonly reduced =
@@ -208,7 +212,10 @@ export class OfficeView {
     this.fixturesLayer = document.createElement("div");
     this.fixturesLayer.className = "office__fixtures";
     this.peek = new OfficePeek(source);
-    this.heroes = new HeroPanel((account, cls) => this.pickClass(account, cls));
+    this.heroes = new HeroPanel(
+      (account, cls) => this.pickClass(account, cls),
+      (account, form) => this.pickForm(account, form),
+    );
     this.levelUpEl = document.createElement("div");
     this.levelUpEl.className = "office-levelup";
     this.levelUpEl.hidden = true;
@@ -450,7 +457,7 @@ export class OfficeView {
     if (!this.xp) return null;
     const account = this.source.accountOf(paneId);
     const { level } = levelOf(this.xp.get(account) ?? 0);
-    return { cls: this.classOf(account), tier: tierOf(level), level };
+    return { cls: this.classOf(account), form: this.formOf(account), tier: tierOf(level), level };
   }
 
   private classOf(account: string): HeroClass {
@@ -460,6 +467,15 @@ export class OfficeView {
       this.classes.set(account, cls);
     }
     return cls;
+  }
+
+  private formOf(account: string): HeroForm {
+    let form = this.forms.get(account);
+    if (!form) {
+      form = loadHeroForm(account);
+      this.forms.set(account, form);
+    }
+    return form;
   }
 
   private async loadXp(): Promise<void> {
@@ -498,6 +514,7 @@ export class OfficeView {
       color: this.source.accounts().find((p) => p.id === account)?.color ?? "",
       tokens: this.xp?.get(account) ?? 0,
       cls: this.classOf(account),
+      form: this.formOf(account),
     }));
   }
 
@@ -515,6 +532,13 @@ export class OfficeView {
   private pickClass(account: string, cls: HeroClass): void {
     saveHeroClass(account, cls);
     this.classes.set(account, cls);
+    this.heroes.render(this.heroRows());
+    this.scheduleRender();
+  }
+
+  private pickForm(account: string, form: HeroForm): void {
+    saveHeroForm(account, form);
+    this.forms.set(account, form);
     this.heroes.render(this.heroRows());
     this.scheduleRender();
   }
@@ -839,13 +863,14 @@ export class OfficeView {
   /// look changes (a level-up into a new tier, a new class).
   private dress(actor: Actor, c: CharModel): void {
     const el = actor.el;
-    const look = c.hero ? `${c.hero.cls}:${c.hero.tier}` : "";
+    const look = c.hero ? `${c.hero.form}:${c.hero.cls}:${c.hero.tier}` : "";
     if (el.dataset.look !== look) {
       el.dataset.look = look;
       el.querySelector("svg.office-sprite")?.remove();
-      el.insertAdjacentHTML("afterbegin", characterSvg(c.kind, c.role, c.hero ? { cls: c.hero.cls, tier: c.hero.tier } : undefined));
+      el.insertAdjacentHTML("afterbegin", characterSvg(c.kind, c.role, c.hero));
     }
-    el.classList.toggle("office-char--hat", !!c.hero && c.hero.tier >= 2);
+    el.classList.toggle("office-char--hat", !!c.hero && (c.hero.tier >= 2 || c.hero.form === "human"));
+    el.classList.toggle("office-char--human", c.hero?.form === "human");
     el.classList.toggle("office-char--aura", !!c.hero && c.hero.tier >= 5);
     let badge = el.querySelector<HTMLElement>(".office-char__lv");
     if (c.hero) {

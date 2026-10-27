@@ -4933,6 +4933,21 @@ body,
 }
 .office-hero__xp { font-size: 10px; opacity: 0.85; }
 
+.office-hero__choose { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.office-hero__forms { display: flex; gap: 6px; }
+.office-hero__form {
+  padding: 1px 8px;
+  border: 0;
+  background: var(--peek-btn);
+  color: var(--peek-btn-ink);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--peek-outline), inset -2px -2px 0 var(--peek-btn-lo);
+  filter: saturate(0.4) brightness(0.8);
+}
+.office-hero__form[aria-checked="true"] { filter: none; box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px #f5c542; }
 .office-hero__classes { flex: 0 0 auto; display: flex; gap: 4px; }
 .office-hero__class {
   width: 36px;
@@ -5224,6 +5239,8 @@ body,
   margin-left: calc(var(--px) * -8);
   margin-top: calc(var(--px) * -4);
 }
+/* A human is taller: it sits lower, so the desk hides its legs and lap. */
+.office-char--human.office-char--seated { margin-top: calc(var(--px) * 3); }
 
 /* Pose groups: exactly one shows. A moving pose is a two-frame strip that
    one animation slides by a canvas width (20 art px), so its frames can

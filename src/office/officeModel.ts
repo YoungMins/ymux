@@ -6,7 +6,7 @@
 
 import type { AgentSnapshot, AgentStatus, LayoutNode, PaneKind, PaneSpec, Uuid } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
-import type { HeroClass } from "./heroModel";
+import type { HeroClass, HeroForm } from "./heroModel";
 import { corridorGraph, nearestNode, route, simplify, type CorridorGraph } from "./officePaths";
 import type { Mail } from "./officeLog";
 
@@ -88,6 +88,7 @@ export interface CharModel {
 
 export interface Hero {
   cls: HeroClass;
+  form: HeroForm;
   tier: number;
   level: number;
 }

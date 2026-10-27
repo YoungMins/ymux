@@ -5,7 +5,7 @@
 
 import { getLang, t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
-import { HERO_CLASSES, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass } from "./heroModel";
+import { HERO_CLASSES, HERO_FORMS, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass, type HeroForm } from "./heroModel";
 import { characterSvg } from "./sprites";
 
 export interface HeroRow {
@@ -15,22 +15,26 @@ export interface HeroRow {
   color: string;
   tokens: number;
   cls: HeroClass;
+  form: HeroForm;
 }
 
 function compact(value: number): string {
   return new Intl.NumberFormat(getLang(), { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-/// A still slime in `cls`'s gear for `tier`.
-export function heroAvatar(cls: HeroClass, tier: number): string {
-  return characterSvg("claude", "lead", { cls, tier });
+/// A still hero (slime or human) in `cls`'s gear for `tier`.
+export function heroAvatar(cls: HeroClass, tier: number, form: HeroForm): string {
+  return characterSvg("claude", "lead", { cls, tier, form });
 }
 
 export class HeroPanel {
   readonly element: HTMLElement;
   private readonly list: HTMLElement;
 
-  constructor(private readonly onPick: (account: string, cls: HeroClass) => void) {
+  constructor(
+    private readonly onPick: (account: string, cls: HeroClass) => void,
+    private readonly onForm: (account: string, form: HeroForm) => void,
+  ) {
     this.element = document.createElement("div");
     this.element.className = "office-heroes";
     this.element.hidden = true;
@@ -102,7 +106,7 @@ export class HeroPanel {
 
     const avatar = document.createElement("div");
     avatar.className = "office-hero__avatar";
-    avatar.innerHTML = heroAvatar(r.cls, tier);
+    avatar.innerHTML = heroAvatar(r.cls, tier, r.form);
 
     const info = document.createElement("div");
     info.className = "office-hero__info";
@@ -149,12 +153,31 @@ export class HeroPanel {
       b.setAttribute("role", "radio");
       b.setAttribute("aria-checked", String(cls === r.cls));
       b.title = t(`office.class.${cls}`);
-      b.innerHTML = heroAvatar(cls, Math.max(tier, 2));
+      b.innerHTML = heroAvatar(cls, Math.max(tier, 2), r.form);
       b.addEventListener("click", () => this.onPick(r.account, cls));
       pick.appendChild(b);
     }
 
-    el.append(avatar, info, pick);
+    // Slime or human.
+    const forms = document.createElement("div");
+    forms.className = "office-hero__forms";
+    forms.setAttribute("role", "radiogroup");
+    forms.setAttribute("aria-label", t("office.heroes.form"));
+    for (const form of HERO_FORMS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "office-hero__form";
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", String(form === r.form));
+      b.textContent = t(`office.form.${form}`);
+      b.addEventListener("click", () => this.onForm(r.account, form));
+      forms.appendChild(b);
+    }
+    const choose = document.createElement("div");
+    choose.className = "office-hero__choose";
+    choose.append(forms, pick);
+
+    el.append(avatar, info, choose);
     return el;
   }
 }

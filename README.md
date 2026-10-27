@@ -186,7 +186,8 @@ or screen glows with the pane's status. The choice is remembered.
 **Heroes.** Every account is an RPG hero: its all-time token total in the
 Usage view (Claude Code and Codex together) is its experience, one level per
 100M tokens. *⚔ Heroes* in the office header opens the adventurers' guild with
-each account's level, XP bar and class: warrior, mage, rogue, cleric or cat.
+each account's level, XP bar, class (warrior, mage, rogue, cleric or cat) and
+look: a slime or a human adventurer, whose hair takes the agent's colour.
 Agents on the floor wear their account's class gear and a level badge, and the
 gear grows with the level: starter gear from Lv 1, full gear from Lv 5, a jewel
 from Lv 10, gold from Lv 25, and wings and a glowing aura from Lv 50. A level-up

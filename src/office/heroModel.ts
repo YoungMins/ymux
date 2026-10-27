@@ -1,8 +1,9 @@
 // Accounts as RPG heroes: an account's all-time token total (the Usage
 // view's number, Claude Code and Codex together) is its experience, one
-// level per 100M tokens. The hero's class is the user's pick; its gear grows
-// with the level (`tierOf`). Pure, apart from the localStorage helpers at
-// the bottom (a per-machine view preference, like the office theme).
+// level per 100M tokens. The hero's class and form (slime or human) are the
+// user's picks; its gear grows with the level (`tierOf`). Pure, apart from
+// the localStorage helpers at the bottom (a per-machine view preference,
+// like the office theme).
 
 import type { UsageRow } from "../tokenmonitor/model";
 
@@ -50,6 +51,14 @@ export function accountXp(rows: readonly UsageRow[]): Map<string, number> {
   return out;
 }
 
+/// A hero is drawn as a slime or as a human adventurer.
+export const HERO_FORMS = ["slime", "human"] as const;
+export type HeroForm = (typeof HERO_FORMS)[number];
+
+export function isHeroForm(v: unknown): v is HeroForm {
+  return typeof v === "string" && (HERO_FORMS as readonly string[]).includes(v);
+}
+
 export function isHeroClass(v: unknown): v is HeroClass {
   return typeof v === "string" && (HERO_CLASSES as readonly string[]).includes(v);
 }
@@ -69,6 +78,7 @@ export function levelUps(seen: Readonly<Record<string, number>>, now: ReadonlyMa
 
 const CLASS_KEY = "ymux.office.heroClass";
 const SEEN_KEY = "ymux.office.heroLevels";
+const FORM_KEY = "ymux.office.heroForm";
 
 function readJson(key: string): Record<string, unknown> {
   try {
@@ -95,6 +105,16 @@ export function loadHeroClass(account: string): HeroClass {
 
 export function saveHeroClass(account: string, cls: HeroClass): void {
   writeJson(CLASS_KEY, { ...readJson(CLASS_KEY), [account]: cls });
+}
+
+/// The form picked for `account`; slimes by default.
+export function loadHeroForm(account: string): HeroForm {
+  const v = readJson(FORM_KEY)[account];
+  return isHeroForm(v) ? v : "slime";
+}
+
+export function saveHeroForm(account: string, form: HeroForm): void {
+  writeJson(FORM_KEY, { ...readJson(FORM_KEY), [account]: form });
 }
 
 export function loadSeenLevels(): Record<string, number> {
