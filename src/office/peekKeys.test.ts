@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PEEK_KEYS, directKey, keyBytes, menuOptions } from "./peekKeys";
+import { PEEK_KEYS, directKey, isInputOption, keyBytes, menuOptions } from "./peekKeys";
 import { peekBox } from "./OfficePeek";
 
 describe("keyBytes", () => {
@@ -57,9 +57,9 @@ describe("menuOptions", () => {
       "  3. No, and tell Claude what to do differently (esc)",
     ];
     expect(menuOptions(screen)).toEqual([
-      { n: "1", label: "Yes", selected: true },
-      { n: "2", label: "Yes, and don't ask again this session", selected: false },
-      { n: "3", label: "No, and tell Claude what to do differently (esc)", selected: false },
+      { n: "1", label: "Yes", selected: true, input: false },
+      { n: "2", label: "Yes, and don't ask again this session", selected: false, input: false },
+      { n: "3", label: "No, and tell Claude what to do differently (esc)", selected: false, input: true },
     ]);
   });
 
@@ -101,5 +101,16 @@ describe("directKey", () => {
     expect(k("Process")).toBeNull();
     expect(k("a", { isComposing: true })).toBeNull();
     expect(k("v", { metaKey: true })).toBeNull();
+  });
+});
+
+describe("isInputOption", () => {
+  it("knows the choices that open a text field", () => {
+    for (const l of ["No, and tell Codex what to do differently (esc)", "Type something.", "Other", "직접 입력", "その他"]) {
+      expect(isInputOption(l), l).toBe(true);
+    }
+    for (const l of ["Yes", "Yes, and don't ask again this session", "Plan mode", "Otherwise skip"]) {
+      expect(isInputOption(l), l).toBe(false);
+    }
   });
 });

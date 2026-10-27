@@ -208,7 +208,8 @@ with a banner while the office is open.
 
 Click a room, desk or slime to peek at its terminal in place: a window over
 the room shows the live screen, with a button for each choice of a menu the
-agent is showing, key buttons (arrows, Enter, Esc, Tab, 1–3) and a box for
+agent is showing (a choice that takes text, like "tell Claude what to do
+differently", opens a field for it first), key buttons (arrows, Enter, Esc, Tab, 1–3) and a box for
 typing a prompt (Enter sends, Shift+Enter adds a line; while it is empty the
 arrow keys, Tab and Enter go to the terminal). Click the screen itself to type
 straight into the terminal. Double-click a room, or use *Open terminal*, to jump

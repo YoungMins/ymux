@@ -46,6 +46,19 @@ export interface MenuOption {
   n: string;
   label: string;
   selected: boolean;
+  /// Picking it opens a text field in the agent ("No, and tell Claude what
+  /// to do differently", "Type something", "Other"): the peek asks for the
+  /// text first and sends both.
+  input: boolean;
+}
+
+/// Labels of choices that take typed text, in the agents' own wording and a
+/// few translations of "other / type it yourself".
+const INPUT_OPTION =
+  /tell \S+ (what to do|differently)|what to do differently|type (something|your own|an answer)|something else|^other\b|custom|직접 입력|기타|다른 (답|내용)|自分で入力|その他|其他|自定义|otro|autre|outro|другое|diğer|andere/i;
+
+export function isInputOption(label: string): boolean {
+  return INPUT_OPTION.test(label.trim());
 }
 
 const OPTION = /^\s*([❯›>→▶])?\s*(\d{1,2})[.)]\s+(\S.*?)\s*$/;
@@ -63,7 +76,7 @@ export function menuOptions(lines: readonly string[]): MenuOption[] {
   for (const line of tail) {
     const m = OPTION.exec(line);
     if (!m) continue;
-    const opt = { n: m[2], label: m[3], selected: !!m[1] };
+    const opt = { n: m[2], label: m[3], selected: !!m[1], input: isInputOption(m[3]) };
     if (Number(opt.n) === run.length + 1) run.push(opt);
     else if (opt.n === "1") run = [opt];
     else continue;

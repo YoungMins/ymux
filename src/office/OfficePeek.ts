@@ -71,6 +71,10 @@ export class OfficePeek {
   private readonly screenEl: HTMLPreElement;
   private readonly optionsEl: HTMLElement;
   private shownOptions = "";
+  /// The text field under a choice that takes typed text, and that choice.
+  private readonly answerEl: HTMLElement;
+  private readonly answerInput: HTMLInputElement;
+  private answerFor: MenuOption | null = null;
   private readonly noteEl: HTMLElement;
   private readonly input: HTMLTextAreaElement;
   private readonly sendBtn: HTMLButtonElement;
@@ -143,6 +147,37 @@ export class OfficePeek {
     this.optionsEl.setAttribute("aria-label", t("office.peek.options"));
     this.optionsEl.hidden = true;
 
+    // A choice that takes typed text ("tell Claude what to do differently",
+    // "Type something") opens this field instead of sending its number at
+    // once; Enter sends the number, the text and Enter together. Its own
+    // text box, so Korean and other IME input work.
+    this.answerEl = document.createElement("div");
+    this.answerEl.className = "office-peek__answer";
+    this.answerEl.hidden = true;
+    const answerLabel = document.createElement("span");
+    answerLabel.className = "office-peek__answer-label";
+    this.answerInput = document.createElement("input");
+    this.answerInput.type = "text";
+    this.answerInput.className = "office-peek__answer-input";
+    this.answerInput.placeholder = t("office.peek.answerPlaceholder");
+    const answerSend = document.createElement("button");
+    answerSend.type = "button";
+    answerSend.className = "office-peek__send";
+    answerSend.textContent = t("office.peek.send");
+    answerSend.addEventListener("click", () => this.submitAnswer());
+    this.answerInput.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.isComposing || ev.keyCode === 229) return;
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        this.submitAnswer();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        this.closeAnswer();
+      }
+    });
+    this.answerEl.append(answerLabel, this.answerInput, answerSend);
+
     const keys = document.createElement("div");
     keys.className = "office-peek__keys";
     keys.setAttribute("aria-label", t("office.peek.keys"));
@@ -204,7 +239,7 @@ export class OfficePeek {
     // the drop shadow, which a clipped box would cut off.
     const frame = document.createElement("div");
     frame.className = "office-peek__frame";
-    frame.append(head, this.screenEl, this.optionsEl, keys, form);
+    frame.append(head, this.screenEl, this.optionsEl, this.answerEl, keys, form);
     this.element.appendChild(frame);
   }
 
@@ -243,6 +278,9 @@ export class OfficePeek {
   }
 
   close(): void {
+    this.answerFor = null;
+    this.answerEl.hidden = true;
+    this.answerInput.value = "";
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
     this.pane = null;
@@ -266,6 +304,8 @@ export class OfficePeek {
         b.addEventListener("click", () => {
           if (tab.paneId === this.pane) return;
           this.pane = tab.paneId;
+          this.answerFor = null;
+          this.answerEl.hidden = true;
           this.shown = "";
           this.noteEl.textContent = "";
           this.update(this.tabs, this.boxNow());
@@ -289,9 +329,53 @@ export class OfficePeek {
     setTimeout(() => this.poll(), 60);
   }
 
+  private openAnswer(o: MenuOption): void {
+    this.answerFor = o;
+    const label = this.answerEl.querySelector<HTMLElement>(".office-peek__answer-label");
+    if (label) label.textContent = `${o.n}.`;
+    this.answerEl.title = o.label;
+    this.answerEl.hidden = false;
+    this.shownOptions = "";
+    this.poll(true);
+    this.answerInput.focus();
+  }
+
+  private closeAnswer(): void {
+    this.answerFor = null;
+    this.answerEl.hidden = true;
+    this.answerInput.value = "";
+    this.shownOptions = "";
+    this.poll(true);
+    this.input.focus();
+  }
+
+  /// Pick the choice, give the agent's field a moment to open, then type the
+  /// text and press Enter.
+  private submitAnswer(): void {
+    const o = this.answerFor;
+    const text = this.answerInput.value.replace(/\r?\n/g, " ").trim();
+    if (!o || !text || !this.pane) return;
+    const pane = this.pane;
+    this.source.type(pane, o.n);
+    setTimeout(() => {
+      this.source.type(pane, text);
+      setTimeout(() => {
+        this.source.type(pane, "\r");
+        this.poll();
+      }, 120);
+    }, 250);
+    this.closeAnswer();
+  }
+
   private renderOptions(options: readonly MenuOption[]): void {
-    const key = options.map((o) => `${o.n}${o.selected ? "*" : ""}${o.label}`).join("\n");
+    const key = `${this.answerFor?.n ?? ""}|` + options.map((o) => `${o.n}${o.selected ? "*" : ""}${o.label}`).join("\n");
     if (key === this.shownOptions) return;
+    // The menu went away (answered in the terminal, or timed out): so does
+    // the field for one of its choices.
+    if (this.answerFor && !options.some((o) => o.n === this.answerFor?.n && o.label === this.answerFor.label)) {
+      this.answerFor = null;
+      this.answerEl.hidden = true;
+    }
     this.shownOptions = key;
     this.optionsEl.hidden = options.length === 0;
     this.optionsEl.replaceChildren(
@@ -301,8 +385,15 @@ export class OfficePeek {
         b.className = `office-peek__option${o.selected ? " office-peek__option--on" : ""}`;
         b.textContent = `${o.n}. ${o.label}`;
         b.title = o.label;
-        // Agents take the number as "pick this one".
+        if (o.input) b.classList.add("office-peek__option--input");
+        if (this.answerFor?.n === o.n) b.classList.add("office-peek__option--answering");
+        // Agents take the number as "pick this one"; a choice that wants
+        // text asks for it first.
         b.addEventListener("click", () => {
+          if (o.input) {
+            this.openAnswer(o);
+            return;
+          }
           this.send(o.n);
           this.input.focus();
         });

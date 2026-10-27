@@ -1542,18 +1542,34 @@ body,
    say which workspace is showing. Alphas stay low so the
    label keeps contrast in both light and dark themes. */
 .workspace-panel__ws[data-status="running"] {
+  --ws-edge: var(--status-running);
   background: color-mix(in srgb, var(--status-running) 18%, transparent);
-  box-shadow: inset 3px 0 0 var(--status-running);
 }
 
 .workspace-panel__ws[data-status="done"] {
+  --ws-edge: var(--status-done);
   background: color-mix(in srgb, var(--status-done) 16%, transparent);
-  box-shadow: inset 3px 0 0 var(--status-done);
 }
 
 .workspace-panel__ws[data-status="attention"] {
-  box-shadow: inset 3px 0 0 var(--status-attention);
+  --ws-edge: var(--status-attention);
   animation: ymux-ws-attention-bg 1.2s ease-in-out infinite;
+}
+
+/* The status edge: a plain bar down the left side. The button's rounded
+   corners clip its outer side only, so the inner edge stays straight (an
+   inset shadow would follow the radius on both sides). */
+.workspace-panel__ws[data-status="running"]::before,
+.workspace-panel__ws[data-status="done"]::before,
+.workspace-panel__ws[data-status="attention"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--ws-edge);
+  pointer-events: none;
 }
 
 @keyframes ymux-ws-attention-bg {
@@ -4908,6 +4924,32 @@ body,
 }
 .office-peek__option:hover { filter: brightness(1.08); }
 .office-peek__option--on { box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px var(--peek-focus); }
+/* A choice that takes typed text is marked with a pencil; while its field is
+   open it stays pressed. */
+.office-peek__option--input::before { content: "✎ "; }
+.office-peek__option--answering { filter: brightness(0.9); box-shadow: 0 0 0 2px var(--peek-outline), inset 2px 2px 0 var(--peek-btn-lo); }
+
+.office-peek__answer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px 0;
+}
+.office-peek__answer[hidden] { display: none; }
+.office-peek__answer-label { font-size: 12px; font-weight: 700; color: var(--peek-outline); }
+.office-peek__answer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  background: var(--peek-input);
+  color: #2a1f1a;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  box-shadow: 0 0 0 2px var(--peek-outline), inset 2px 2px 0 rgba(0, 0, 0, 0.12);
+  user-select: text;
+}
+.office-peek__answer-input:focus { outline: 2px solid var(--peek-focus); outline-offset: 2px; }
 
 .office-peek__keys {
   display: flex;
