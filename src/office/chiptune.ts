@@ -17,6 +17,9 @@ const TUNES: Readonly<Record<Chime, readonly [number, number, number][]>> = {
 let ctx: AudioContext | null = null;
 
 export function chime(kind: Chime, volume = 0.05): void {
+  // Before the first click or key the browser refuses to start audio (and
+  // logs a warning per try): stay quiet until the user has interacted.
+  if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.hasBeenActive) return;
   try {
     ctx ??= new AudioContext();
     const now = ctx.currentTime;

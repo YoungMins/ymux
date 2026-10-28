@@ -6,8 +6,7 @@
 
 import type { Raster } from "./paint";
 
-/// jsdom (the tests) has no canvas; asking it for one only logs an error.
-const NO_CANVAS = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent);
+import { NO_CANVAS, writeRgba } from "./canvasPixels";
 
 const tileCanvases = new WeakMap<Raster, HTMLCanvasElement>();
 const drawn = new WeakMap<HTMLCanvasElement, { tile: Raster; w: number; h: number }>();
@@ -21,13 +20,7 @@ function tileCanvas(tile: Raster): HTMLCanvasElement | null {
   const ctx = c.getContext("2d");
   if (!ctx) return null;
   const img = ctx.createImageData(tile.w, tile.h);
-  tile.px.forEach((p, i) => {
-    if (p === null) return;
-    img.data[i * 4] = parseInt(p.slice(1, 3), 16);
-    img.data[i * 4 + 1] = parseInt(p.slice(3, 5), 16);
-    img.data[i * 4 + 2] = parseInt(p.slice(5, 7), 16);
-    img.data[i * 4 + 3] = 255;
-  });
+  writeRgba(img.data, tile.px, tile.w);
   ctx.putImageData(img, 0, 0);
   tileCanvases.set(tile, c);
   return c;

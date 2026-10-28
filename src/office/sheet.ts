@@ -11,7 +11,8 @@ import type { GearClass } from "./hiGear";
 import { humanFrame, type HumanPose } from "./hiHuman";
 import { PET_H, PET_POSES, PET_W, petFrame, type PetSpecies } from "./hiPets";
 import { FRAME_H, FRAME_W, slimeFrame, type Jelly, type SlimePose } from "./hiSlime";
-import { hexToRgb, type Raster } from "./paint";
+import { canDraw, NO_CANVAS, writeRgba } from "./canvasPixels";
+import type { Raster } from "./paint";
 
 /// What a lead wears for its account (`heroModel`).
 export interface HeroLook {
@@ -111,30 +112,13 @@ export function petFrames(species: PetSpecies): Raster[] {
 /// painting, so each look is painted once per session.
 const cache = new Map<string, ImageData | null>();
 
-/// jsdom (the tests) has no canvas; asking it for one only logs an error.
-const NO_CANVAS = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent);
-
 function imageOf(frames: Raster[]): ImageData | null {
-  if (NO_CANVAS || typeof ImageData === "undefined") return null;
+  if (!canDraw()) return null;
   const fw = frames[0].w;
   const fh = frames[0].h;
   const w = fw * frames.length;
   const data = new Uint8ClampedArray(w * fh * 4);
-  const rgb = new Map<string, [number, number, number]>();
-  frames.forEach((f, i) => {
-    for (let y = 0; y < fh; y++)
-      for (let x = 0; x < fw; x++) {
-        const c = f.px[y * fw + x];
-        if (c === null) continue;
-        let v = rgb.get(c);
-        if (!v) rgb.set(c, (v = hexToRgb(c)));
-        const o = (y * w + i * fw + x) * 4;
-        data[o] = v[0];
-        data[o + 1] = v[1];
-        data[o + 2] = v[2];
-        data[o + 3] = 255;
-      }
-  });
+  frames.forEach((f, i) => writeRgba(data, f.px, fw, w, i * fw));
   return new ImageData(data, w, fh);
 }
 

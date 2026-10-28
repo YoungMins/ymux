@@ -11,6 +11,7 @@ import * as art from "./pixelArt";
 import { hiPiece, type HiPiece } from "./hiProps";
 import { FUN_ART, FUN_PAL } from "./funArt";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
+import { canDraw, writeRgba } from "./canvasPixels";
 
 const FIXTURES: Palette = {
   ...PROPS,
@@ -86,12 +87,9 @@ function hi(rows: readonly string[], pal: Palette, cls: string): string {
   return `<span class="hp ${cls}" style="width:${w}px;height:${h}px" aria-hidden="true"><canvas class="hp-canvas" data-hp="${id}" width="${w}" height="${h}"></canvas>${over}</span>`;
 }
 
-/// jsdom (the tests) has no canvas; asking it for one only logs an error.
-const NO_CANVAS = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent);
-
 /// Draw every piece canvas under `root` not drawn yet.
 export function paintProps(root: ParentNode): void {
-  if (NO_CANVAS || typeof ImageData === "undefined") return;
+  if (!canDraw()) return;
   for (const c of root.querySelectorAll<HTMLCanvasElement>("canvas.hp-canvas[data-hp]")) {
     const p = pieces[Number(c.dataset.hp)];
     const ctx = p ? c.getContext("2d") : null;
@@ -106,13 +104,7 @@ function imageOf(px: (string | null)[], w: number, h: number): ImageData {
   let img = images.get(px);
   if (img) return img;
   const data = new Uint8ClampedArray(w * h * 4);
-  px.forEach((c, i) => {
-    if (c === null) return;
-    data[i * 4] = parseInt(c.slice(1, 3), 16);
-    data[i * 4 + 1] = parseInt(c.slice(3, 5), 16);
-    data[i * 4 + 2] = parseInt(c.slice(5, 7), 16);
-    data[i * 4 + 3] = 255;
-  });
+  writeRgba(data, px, w);
   img = new ImageData(data, w, h);
   images.set(px, img);
   return img;

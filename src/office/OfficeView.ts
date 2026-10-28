@@ -72,7 +72,9 @@ import { SHOP_PETS } from "./hiPets";
 import { funProp, themePiece } from "./sprites";
 import { askChoice, askConfirm, askText } from "../ui/Dialog";
 import { chime, type Chime } from "./chiptune";
-import { clampMini, loadMini, movedMini, resizedMini, saveMini, type MiniPlace } from "./miniPlace";
+import { FloorEffects } from "./floorEffects";
+import { MiniFrame } from "./miniFrame";
+import { followPointer, swallowNextClick } from "./pointerDrag";
 import {
   approveOption,
   errandIcon,
@@ -246,8 +248,9 @@ export class OfficeView {
   private queueMode = false;
   /// When each busy character takes its next errand (epoch ms).
   private readonly nextErrand = new Map<string, number>();
-  private miniOn = false;
-  private miniPlace: MiniPlace = loadMini();
+  private miniFrame!: MiniFrame;
+  /// The board note or furniture drag in progress, to cut short on close.
+  private dragCancel: (() => void) | null = null;
   /// Per waiting pane: whether its screen only asks a yes, as of its last output.
   private readonly yesCache = new Map<Uuid, { at: number; yes: boolean }>();
   /// This render's floors, their places, and what the header last showed.
@@ -268,8 +271,7 @@ export class OfficeView {
   private funSettings: FunSettings = loadFunSettings();
   private readonly funBar: HTMLElement;
   private readonly bannerEl: HTMLElement;
-  private readonly banners: string[] = [];
-  private bannerBusy = false;
+  private effects!: FloorEffects;
   private readonly buildingEl: HTMLElement;
   private readonly ambienceEl: HTMLElement;
   private readonly bosses = new Map<Uuid, HTMLElement>();
@@ -448,7 +450,7 @@ export class OfficeView {
       exportRecord: () => {
         void navigator.clipboard
           ?.writeText(JSON.stringify(funStore.get()))
-          .then(() => this.banner(`📋 ${t("fun.exported")}`))
+          .then(() => this.effects.banner(`📋 ${t("fun.exported")}`))
           .catch(() => undefined);
       },
       importRecord: () => void this.importRecord(),
@@ -481,6 +483,7 @@ export class OfficeView {
     this.bannerEl.className = "office-levelup office-banner";
     this.bannerEl.hidden = true;
     this.bannerEl.setAttribute("role", "status");
+    this.effects = new FloorEffects(this.floor, this.bannerEl, (ms) => this.sleep(ms), () => !this.disposed);
     this.buildingEl = document.createElement("span");
     this.buildingEl.className = "office__building";
     // Night, evening and the seasons' weather, over the floor.
@@ -542,18 +545,11 @@ export class OfficeView {
       },
       true,
     );
-    this.floor.addEventListener("click", () => {
-      this.boardPanel.hidden = true;
-      this.launchEl.hidden = true;
-      this.closePeek();
-      this.heroes.hide();
-      this.fun.hide();
-      this.helpEl.hidden = true;
-    });
+    this.floor.addEventListener("click", () => this.closePopups());
     this.peek.onAnswered = (paneId) => this.answered(paneId);
     this.peek.onNext = () => this.nextInQueue();
     this.element.append(head, subhead, this.floor);
-    this.wireMiniDrag(head);
+    this.miniFrame = new MiniFrame(this.element, head);
 
     this.manager = this.makeActor("manager", null, characterSprite("", "manager"));
     this.manager.el.classList.add("office-char--manager", "office-char--relaxing");
@@ -688,6 +684,8 @@ export class OfficeView {
 
   dispose(): void {
     this.disposed = true;
+    this.dragCancel?.();
+    this.miniFrame.dispose();
     for (const c of this.cleanups) c();
     for (const id of this.timers) clearTimeout(id);
     this.timers.clear();
@@ -965,82 +963,18 @@ export class OfficeView {
     return this.miniOn;
   }
 
+  private get miniOn(): boolean {
+    return this.miniFrame?.on ?? false;
+  }
+
   /// Shrink to a corner (the panes are usable again) or fill the window.
   setMini(on: boolean): void {
     if (on === this.miniOn) return;
-    this.miniOn = on;
-    this.element.classList.toggle("office--mini", on);
-    this.applyMiniPlace();
-    this.element.title = on ? t("fun.miniMove") : "";
+    this.miniFrame.set(on);
     if (on) this.record({ t: "count", what: "mini" });
-    if (on) {
-      this.closePeek();
-      this.launchEl.hidden = true;
-      this.boardPanel.hidden = true;
-      this.heroes.hide();
-    }
+    if (on) this.closePopups();
     this.source.setMini(on);
     if (!on) this.focus();
-  }
-
-  /// Mini: drag the head to move it, the corner grip to resize it.
-  private wireMiniDrag(head: HTMLElement): void {
-    const grip = document.createElement("div");
-    grip.className = "office__mini-grip";
-    grip.title = t("fun.miniMove");
-    this.element.appendChild(grip);
-    const area = (): [number, number] => {
-      const host = this.element.offsetParent as HTMLElement | null;
-      return [host?.clientWidth ?? window.innerWidth, host?.clientHeight ?? window.innerHeight];
-    };
-    const drag = (ev: PointerEvent, step: (start: MiniPlace, dx: number, dy: number, w: number, h: number) => MiniPlace): void => {
-      if (!this.miniOn || ev.button !== 0) return;
-      const start = this.miniPlace;
-      const [w, h] = area();
-      const x0 = ev.clientX;
-      const y0 = ev.clientY;
-      let moved = false;
-      const move = (e: PointerEvent): void => {
-        const dx = e.clientX - x0;
-        const dy = e.clientY - y0;
-        if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
-        moved = true;
-        this.miniPlace = step(start, dx, dy, w, h);
-        this.applyMiniPlace();
-      };
-      const up = (): void => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        if (!moved) return;
-        saveMini(this.miniPlace);
-        // The click that ends a drag is not a "bring it back".
-        swallowNextClick();
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      ev.preventDefault();
-    };
-    head.addEventListener("pointerdown", (ev) => {
-      if ((ev.target as HTMLElement | null)?.closest("button, select, input")) return;
-      drag(ev, movedMini);
-    });
-    grip.addEventListener("pointerdown", (ev) => {
-      ev.stopPropagation();
-      drag(ev, resizedMini);
-    });
-  }
-
-  private applyMiniPlace(): void {
-    const s = this.element.style;
-    if (!this.miniOn) {
-      for (const k of ["--mini-r", "--mini-b", "--mini-scale"]) s.removeProperty(k);
-      return;
-    }
-    const host = this.element.offsetParent as HTMLElement | null;
-    this.miniPlace = clampMini(this.miniPlace, host?.clientWidth ?? window.innerWidth, host?.clientHeight ?? window.innerHeight);
-    s.setProperty("--mini-r", `${this.miniPlace.right}px`);
-    s.setProperty("--mini-b", `${this.miniPlace.bottom}px`);
-    s.setProperty("--mini-scale", String(this.miniPlace.scale));
   }
 
   /// One button per workspace: its number, red with how many wait there.
@@ -1380,11 +1314,14 @@ export class OfficeView {
         over = t2;
       }
     };
-    const up = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    const up = (ev: PointerEvent | null) => {
+      this.dragCancel = null;
       over?.classList.remove("office-char--drop");
       this.element.classList.remove("office--dragging");
+      if (!ev) {
+        ghost?.remove();
+        return;
+      }
       if (!ghost) {
         this.source.openPane(e.paneId);
         return;
@@ -1399,8 +1336,7 @@ export class OfficeView {
         this.handoff(e, t2.dataset.pane);
       }
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    this.dragCancel = followPointer(move, up);
   }
 
   // ── The games: achievements, coins, the shop, quests, the paper ───────
@@ -1418,14 +1354,14 @@ export class OfficeView {
       // A few at a time; a pile (after a while away) is one banner.
       if (news.unlocked.length > 2) {
         const coins = news.unlocked.reduce((n, a) => n + a.reward, 0);
-        this.banner(`🏆 ${fill(t("fun.unlockedMany"), { n: news.unlocked.length, coins })}`);
-      } else for (const a of news.unlocked) this.banner(`🏆 ${fill(t("fun.unlocked"), { name: achievementName(a) })} · ${fill(t("fun.reward"), { n: a.reward })}`);
+        this.effects.banner(`🏆 ${fill(t("fun.unlockedMany"), { n: news.unlocked.length, coins })}`);
+      } else for (const a of news.unlocked) this.effects.banner(`🏆 ${fill(t("fun.unlocked"), { name: achievementName(a) })} · ${fill(t("fun.reward"), { n: a.reward })}`);
       for (const id of news.quests.slice(-2)) {
         const q = questDef(id);
-        this.banner(`📜 ${fill(t("fun.questDone"), { name: q ? fill(t(`fun.quest.${id}`), { n: q.target }) : id })}`);
+        this.effects.banner(`📜 ${fill(t("fun.questDone"), { name: q ? fill(t(`fun.quest.${id}`), { n: q.target }) : id })}`);
       }
     }
-    for (let i = 0; i < news.bosses; i++) this.banner(`👹 ${fill(t("fun.bossDefeated"), { n: BOSS_COINS })}`);
+    for (let i = 0; i < news.bosses; i++) this.effects.banner(`👹 ${fill(t("fun.bossDefeated"), { n: BOSS_COINS })}`);
     if (news.unlocked.length > 0 && !this.reduced) this.cheer(this.manager);
     // One tune per change, the biggest news first.
     if (news.unlocked.length > 0) this.play("unlock");
@@ -1446,7 +1382,7 @@ export class OfficeView {
       raw = null;
     }
     if (!isRecord(raw)) {
-      this.banner(`⚠ ${t("fun.importBad")}`);
+      this.effects.banner(`⚠ ${t("fun.importBad")}`);
       return;
     }
     funStore.replace(normalizeStats(raw));
@@ -1463,80 +1399,16 @@ export class OfficeView {
   private useItem(id: string): void {
     if (this.reduced) return;
     if (id === "snacks") {
-      for (const a of this.actors.values()) if (a.model?.role === "lead") this.popOver(a.el, "💗");
+      for (const a of this.actors.values()) if (a.model?.role === "lead") this.effects.popOver(a.el, "💗");
     } else if (id === "party") {
       this.play("party");
-      this.paperRain(36);
+      this.effects.paperRain(36);
       this.cheer(this.manager);
       for (const a of this.actors.values()) if (a.model?.role === "lead" && a.model.status !== "working" && a.busy === 0) this.cheer(a);
     } else if (id === "fireworks") {
       this.play("party");
-      this.fireworks();
+      this.effects.fireworks();
     }
-  }
-
-  /// A short-lived emoji rising over a character.
-  private popOver(host: HTMLElement, glyph: string): void {
-    const el = document.createElement("span");
-    el.className = "office-pop";
-    el.textContent = glyph;
-    host.appendChild(el);
-    void this.sleep(1600).then(() => el.remove());
-  }
-
-  /// Bits of paper falling over the floor.
-  private paperRain(n: number): void {
-    const layer = document.createElement("div");
-    layer.className = "office-rain";
-    for (let i = 0; i < n; i++) {
-      const bit = document.createElement("i");
-      bit.style.left = `${Math.random() * 100}%`;
-      bit.style.animationDelay = `${Math.random() * 0.8}s`;
-      bit.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
-      layer.appendChild(bit);
-    }
-    this.floor.appendChild(layer);
-    void this.sleep(3200).then(() => layer.remove());
-  }
-
-  /// Bursts in the sky over the floor.
-  private fireworks(): void {
-    const layer = document.createElement("div");
-    layer.className = "office-fireworks";
-    for (let i = 0; i < 6; i++) {
-      const burst = document.createElement("span");
-      burst.className = "office-firework";
-      burst.style.left = `${10 + Math.random() * 80}%`;
-      burst.style.top = `${8 + Math.random() * 30}%`;
-      burst.style.animationDelay = `${i * 0.35}s`;
-      burst.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
-      layer.appendChild(burst);
-    }
-    this.floor.appendChild(layer);
-    void this.sleep(3600).then(() => layer.remove());
-  }
-
-  /// A banner over the floor; several wait their turn.
-  private banner(text: string): void {
-    this.banners.push(text);
-    if (this.bannerBusy) return;
-    this.bannerBusy = true;
-    const next = (): void => {
-      const msg = this.banners.shift();
-      if (msg === undefined || this.disposed) {
-        this.bannerBusy = false;
-        this.bannerEl.hidden = true;
-        return;
-      }
-      this.bannerEl.textContent = msg;
-      this.bannerEl.hidden = false;
-      // Restart the pop-in animation.
-      this.bannerEl.style.animation = "none";
-      void this.bannerEl.offsetWidth;
-      this.bannerEl.style.animation = "";
-      void this.sleep(2600).then(next);
-    };
-    next();
   }
 
   /// The games' row in the header, the panel, the building's sign and the
@@ -1555,9 +1427,7 @@ export class OfficeView {
           this.fun.hide();
           return;
         }
-        this.closePeek();
-        this.heroes.hide();
-        this.boardPanel.hidden = true;
+        this.closePopups();
         this.fun.show(tab);
       });
       return b;
@@ -1670,11 +1540,11 @@ export class OfficeView {
     this.element.appendChild(ghost);
     item.style.visibility = "hidden";
     const move = (ev: PointerEvent) => follow(ev.clientX, ev.clientY);
-    const up = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    const up = (ev: PointerEvent | null) => {
+      this.dragCancel = null;
       ghost.remove();
       item.style.visibility = "";
+      if (!ev) return;
       const under = document.elementFromPoint(ev.clientX, ev.clientY);
       const roomEl = under?.closest<HTMLElement>(".office-room");
       const area = roomEl ? roomEl.querySelector<HTMLElement>(".office-room__props") : under?.closest(".office__lobby") ? this.lobbyFurniture : null;
@@ -1689,8 +1559,7 @@ export class OfficeView {
       this.renderLobbyFun();
       this.render();
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    this.dragCancel = followPointer(move, up);
   }
 
   /// Night, evening and the season, as classes the stylesheet dresses.
@@ -1980,6 +1849,17 @@ export class OfficeView {
       cls: this.classOf(account),
       form: this.formOf(account),
     }));
+  }
+
+  /// Close every window over the floor: the peek, launcher, board list,
+  /// heroes, games and help.
+  private closePopups(): void {
+    this.closePeek();
+    this.launchEl.hidden = true;
+    this.boardPanel.hidden = true;
+    this.heroes.hide();
+    this.fun.hide();
+    this.helpEl.hidden = true;
   }
 
   private toggleHeroes(): void {
@@ -2728,13 +2608,3 @@ function isRecord(v: unknown): boolean {
   return !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { counters?: unknown }).counters === "object";
 }
 
-/// Swallow the click a drag's pointerup produces, and only that one: a
-/// release with no click (outside the window) must not eat a later click.
-function swallowNextClick(): void {
-  const swallow = (c: MouseEvent): void => {
-    c.stopPropagation();
-    c.preventDefault();
-  };
-  window.addEventListener("click", swallow, { capture: true, once: true });
-  setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
-}
