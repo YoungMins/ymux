@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import * as art from "./pixelArt";
 import * as themeArt from "./themeArt";
-import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
+import { THEMES, THEME_ICONS, THEME_IDS, defaultFloorTheme, isThemeId, type Piece, type Theme } from "./themes";
 import { deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
 import { CHAR_FRAMES, characterFrames, characterSprite, petFrames, petSprite } from "./sheet";
 import { PET_H, PET_POSES, PET_SPECIES, PET_W } from "./hiPets";
@@ -156,6 +156,14 @@ describe("themes", () => {
       expect(lobbyProps(id), id).toContain("office-prop--reception");
     }
     expect(roomProps("terminal", "cave")).toContain('class="px-flame"');
+  });
+
+  it("gives each workspace its own place by default", () => {
+    expect(defaultFloorTheme(1, "castle")).toBe("castle");
+    expect(defaultFloorTheme(2, "office")).toBe("cave");
+    const places = [1, 2, 3, 4, 5, 6, 7, 8].map((p) => defaultFloorTheme(p, "office"));
+    expect(new Set(places).size).toBe(8);
+    for (const id of THEME_IDS) expect(THEME_ICONS[id]).toBeTruthy();
   });
 
   it("falls back to the office for an unknown saved theme", () => {

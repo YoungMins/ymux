@@ -41,7 +41,7 @@ import type { LogEntry } from "./officeLog";
 import { getLang } from "../i18n/i18n";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
-import { THEME_IDS, loadTheme, saveTheme, type ThemeId } from "./themes";
+import { THEME_ICONS, THEME_IDS, loadFloorTheme, loadTheme, saveFloorTheme, type ThemeId } from "./themes";
 import { OfficePeek, peekBox, type PeekSource, type PeekTab } from "./OfficePeek";
 import { HeroPanel, type HeroRow } from "./HeroPanel";
 import {
@@ -258,6 +258,7 @@ export class OfficeView {
 
   constructor(private readonly source: OfficeSource) {
     this.floorId = source.activeFloor();
+    this.theme = loadFloorTheme(this.floorId, source.floors().find((f) => f.id === this.floorId)?.position ?? 1);
     this.element = document.createElement("section");
     this.element.className = "office";
     this.element.tabIndex = -1;
@@ -539,13 +540,28 @@ export class OfficeView {
     this.board.setAttribute("aria-label", t("office.board"));
   }
 
+  /// Pick the place for the floor on show.
   private setTheme(id: ThemeId): void {
     if (id === this.theme) return;
+    saveFloorTheme(this.floorId, id);
+    this.record({ t: "theme", id });
+    this.render();
+  }
+
+  /// The place a workspace is, by its id.
+  private floorTheme(wsId: number): ThemeId {
+    const f = this.source.floors().find((x) => x.id === wsId);
+    return loadFloorTheme(wsId, f?.position ?? 1);
+  }
+
+  /// Dress the office as the floor on show's place, if it changed.
+  private followTheme(): void {
+    const id = this.floorTheme(this.floorId);
+    if (id === this.theme) return;
     this.theme = id;
-    saveTheme(id);
+    this.themeSelect.value = id;
     this.record({ t: "theme", id });
     this.applyTheme();
-    this.render();
   }
 
   /// The parts drawn once per theme: the floor's class, the lobby's
@@ -585,6 +601,7 @@ export class OfficeView {
   private render(): void {
     if (this.followActive) this.floorId = this.source.activeFloor();
     if (!this.source.floors().some((f) => f.id === this.floorId)) this.floorId = this.source.activeFloor();
+    this.followTheme();
     const input = { ...this.source.input(this.floorId), heroOf: (id: Uuid) => this.heroOf(id) };
     const w = this.floor.clientWidth;
     const h = this.floor.clientHeight;
@@ -766,14 +783,15 @@ export class OfficeView {
         const b = document.createElement("button");
         b.type = "button";
         b.className = `office__floor-btn${f.id === this.floorId ? " office__floor-btn--on" : ""}`;
-        b.textContent = `${f.position}F`;
+        const place = this.floorTheme(f.id);
+        b.textContent = `${THEME_ICONS[place]} ${f.position}F`;
         if (f.waiting > 0) {
           const n = document.createElement("span");
           n.className = "office__floor-wait";
           n.textContent = String(f.waiting);
           b.appendChild(n);
         } else if (f.working > 0) b.classList.add("office__floor-btn--busy");
-        b.title = `${f.label}${f.waiting ? ` · ${fill(t("office.queue"), { n: f.waiting })}` : ""}`;
+        b.title = `${f.label} · ${t(`office.theme.${place}`)}${f.waiting ? ` · ${fill(t("office.queue"), { n: f.waiting })}` : ""}`;
         b.addEventListener("click", (ev) => {
           ev.stopPropagation();
           this.followActive = f.id === this.source.activeFloor();
