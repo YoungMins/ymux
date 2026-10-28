@@ -155,8 +155,13 @@ body,
 }
 
 .gutter:hover,
-.gutter:active {
+.gutter:active,
+.gutter--linked {
   background: var(--accent);
+}
+/* On a neighbour's line: the divider shows it has caught. */
+.gutter--snapped {
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .pane {

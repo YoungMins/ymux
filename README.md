@@ -65,7 +65,9 @@ xattr -dr com.apple.quarantine /Applications/ymux.app
 ### Terminals and layouts
 
 - **Layouts that persist**: recursive horizontal / vertical splits. Each pane
-  remembers its shell, `cwd`, and an optional startup command.
+  remembers its shell, `cwd`, and an optional startup command. A dragged
+  divider snaps onto a neighbouring divider's line, and dividers lined up
+  end to end then move together (`Alt`+drag moves one alone).
 - **Pane tabs**: `Ctrl+Shift+T` adds a tab to the focused pane; hidden tabs keep
   running.
 - **Live cwd inheritance**: splitting a pane opens the new pane in the directory

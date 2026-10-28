@@ -8,6 +8,16 @@ import type { Pane } from "./Pane";
 import type { PaneGroup } from "./PaneGroup";
 import { t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
+import { IS_MAC } from "../platform";
+import { linkedGroup, snapTo, type GutterLine } from "./gutterSnap";
+
+/// What a gutter's drag can do to another gutter it moves with.
+interface GutterHandle {
+  /// Put the divider's centre at `pos` (client px across the drag).
+  moveTo(pos: number): void;
+  commit(): void;
+}
+const handles = new WeakMap<HTMLElement, GutterHandle>();
 
 export interface RenderContext {
   /// Pane instance cache. Key is pane id. Ownership of entries is shared with
@@ -34,6 +44,8 @@ export function render(
   // Detach all children without disposing: pane elements are still held by
   // ctx.paneCache and will be re-inserted below.
   while (container.firstChild) container.removeChild(container.firstChild);
+  // Where a gutter looks for the dividers it snaps to and moves with.
+  container.dataset.layoutRoot = "";
   container.appendChild(build(node, [], ctx));
 }
 
@@ -157,6 +169,7 @@ function makeGutter(
   const gutter = document.createElement("div");
   gutter.className = `gutter gutter--${direction}`;
   gutter.style.flex = "0 0 4px";
+  gutter.title = fill(t("layout.gutter.title"), { alt: IS_MAC ? "Option" : "Alt" });
   if (direction === "horizontal") {
     gutter.style.cursor = "col-resize";
   } else {
@@ -165,18 +178,57 @@ function makeGutter(
 
   let dragging = false;
   let ratio = startRatio;
-  const onMove = (ev: PointerEvent) => {
-    if (!dragging) return;
+  const horizontal = direction === "horizontal";
+  // Moves this divider's centre to `pos`; false when it has no size yet.
+  const moveTo = (pos: number): boolean => {
     const rect = parent.getBoundingClientRect();
-    if (direction === "horizontal") {
-      if (rect.width <= 0) return;
-      ratio = clamp((ev.clientX - rect.left) / rect.width, 0.05, 0.95);
-    } else {
-      if (rect.height <= 0) return;
-      ratio = clamp((ev.clientY - rect.top) / rect.height, 0.05, 0.95);
-    }
+    const start = horizontal ? rect.left : rect.top;
+    const size = horizontal ? rect.width : rect.height;
+    if (size <= 0) return false;
+    ratio = clamp((pos - start) / size, 0.05, 0.95);
     a.style.flex = `${ratio} ${ratio} 0`;
     b.style.flex = `${1 - ratio} ${1 - ratio} 0`;
+    return true;
+  };
+  handles.set(gutter, {
+    moveTo: (pos) => void moveTo(pos),
+    commit: () => ctx.onRatioCommitted(path, ratio),
+  });
+
+  // The dividers of this direction in the workspace, as lines on screen.
+  const peersNow = (): HTMLElement[] => {
+    const root = gutter.closest<HTMLElement>("[data-layout-root]") ?? parent;
+    return [...root.querySelectorAll<HTMLElement>(`.gutter--${direction}`)].filter((g) => g.getClientRects().length > 0);
+  };
+  const lineOf = (g: HTMLElement): GutterLine => {
+    const r = g.getBoundingClientRect();
+    return horizontal ? { at: r.left + r.width / 2, from: r.top, to: r.bottom } : { at: r.top + r.height / 2, from: r.left, to: r.right };
+  };
+  // The dividers this drag moves (this one, plus those on its line meeting
+  // it end to end), fixed when the drag starts; Alt drags this one alone.
+  let group: HTMLElement[] = [gutter];
+  let alone = false;
+  const setGroup = (members: HTMLElement[]) => {
+    for (const g of group) g.classList.remove("gutter--linked");
+    group = members;
+    if (members.length > 1) for (const g of members) g.classList.add("gutter--linked");
+  };
+
+  const onMove = (ev: PointerEvent) => {
+    if (!dragging) return;
+    let pos = horizontal ? ev.clientX : ev.clientY;
+    let snapped = false;
+    if (!alone) {
+      // Re-measured on every move: a divider nested in a moved split moves too.
+      const peers = peersNow();
+      const mine = group.map((g) => peers.indexOf(g)).filter((i) => i >= 0);
+      const hit = snapTo(pos, peers.map(lineOf), mine);
+      pos = hit.at;
+      snapped = hit.snapped !== null;
+    }
+    gutter.classList.toggle("gutter--snapped", snapped);
+    if (!moveTo(pos)) return;
+    for (const g of group) if (g !== gutter) handles.get(g)?.moveTo(pos);
     // Refit every cached pane; cheap at small pane counts and avoids having
     // to walk the DOM to find which xterm instances live inside `a`/`b`.
     for (const pane of ctx.paneCache.values()) pane.scheduleFit();
@@ -194,12 +246,22 @@ function makeGutter(
     window.removeEventListener("blur", endDrag);
     gutter.removeEventListener("lostpointercapture", endDrag);
     setIframePointerEvents("");
+    gutter.classList.remove("gutter--snapped");
+    for (const g of group) if (g !== gutter) handles.get(g)?.commit();
+    setGroup([gutter]);
     ctx.onRatioCommitted(path, ratio);
   };
 
   gutter.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
     dragging = true;
+    alone = ev.altKey;
+    if (alone) setGroup([gutter]);
+    else {
+      const peers = peersNow();
+      const self = peers.indexOf(gutter);
+      setGroup(self < 0 ? [gutter] : linkedGroup(peers.map(lineOf), self).map((i) => peers[i]));
+    }
     // Capture, so the up/cancel comes back here even when released over an
     // iframe or outside the window.
     try {
