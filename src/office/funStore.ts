@@ -4,7 +4,7 @@
 // the office view (reviews, answers, pets, …). What an event unlocks is kept
 // until the office shows it.
 
-import { applyEvent, buy, settle, emptyStats, normalizeStats, type Achievement, type FunEvent, type FunStats } from "./funModel";
+import { applyEvent, buy, settle, shopItem, emptyStats, normalizeStats, type Achievement, type FunEvent, type FunStats, type Place } from "./funModel";
 
 const KEY = "ymux.office.fun";
 const SETTINGS_KEY = "ymux.office.funSettings";
@@ -14,6 +14,8 @@ export interface FunNews {
   unlocked: Achievement[];
   quests: string[];
   bosses: number;
+  /// Consumables just bought, to set off in the office.
+  used: string[];
 }
 
 /// The games' on/off switches.
@@ -24,13 +26,15 @@ export interface FunSettings {
   ambience: boolean;
   /// Banners for achievements and quests.
   banners: boolean;
+  /// Little 8-bit sounds.
+  sound: boolean;
 }
 
-export const DEFAULT_FUN: FunSettings = { life: true, ambience: true, banners: true };
+export const DEFAULT_FUN: FunSettings = { life: true, ambience: true, banners: true, sound: true };
 
 export class FunStore {
   private stats: FunStats;
-  private pending: FunNews = { unlocked: [], quests: [], bosses: 0 };
+  private pending: FunNews = { unlocked: [], quests: [], bosses: 0, used: [] };
   private listeners = new Set<() => void>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -50,27 +54,64 @@ export class FunStore {
   }
 
   record(ev: FunEvent): void {
+    const before = this.summary();
     const r = applyEvent(this.stats, ev, this.now());
     this.pending.unlocked.push(...r.unlocked);
     this.pending.quests.push(...r.quests);
     if (r.boss) this.pending.bosses++;
-    this.changed();
+    // Most events only move a counter: saved, but nobody is woken for that.
+    const news = r.unlocked.length > 0 || r.quests.length > 0 || r.boss;
+    this.changed(news || this.summary() !== before);
+  }
+
+  /// What the office shows of the stats without opening the games window.
+  private summary(): string {
+    const s = this.stats;
+    return `${s.coins}|${Object.keys(s.unlocked).length}|${s.quests.day}:${s.quests.done.length}|${s.owned.length}|${s.title}|${s.counters.turns ?? 0}`;
   }
 
   /// Take what has happened since the last call, for the office to show.
   takeNews(): FunNews {
     const n = this.pending;
-    this.pending = { unlocked: [], quests: [], bosses: 0 };
+    this.pending = { unlocked: [], quests: [], bosses: 0, used: [] };
     return n;
   }
 
   buy(id: string): boolean {
-    if (!buy(this.stats, id)) return false;
+    if (!buy(this.stats, id, this.now())) return false;
+    if (shopItem(id)?.place === "use") this.pending.used.push(id);
     // Buying can unlock the collector's achievements.
     const r = settle(this.stats, this.now());
     this.pending.unlocked.push(...r.unlocked);
     this.changed();
     return true;
+  }
+
+  /// Put bought `id` at `place` (null: back to where the office puts it).
+  setPlace(id: string, place: Place | null): void {
+    if (!this.stats.owned.includes(id)) return;
+    if (place) this.stats.places[id] = place;
+    else delete this.stats.places[id];
+    this.changed();
+  }
+
+  /// The activity log was switched on or off.
+  setActivity(on: boolean): void {
+    if (this.stats.activity === on) return;
+    this.stats.activity = on;
+    this.changed(false);
+  }
+
+  /// Replace the whole record (an import), or start over with `null`.
+  replace(next: FunStats | null): void {
+    this.stats = next ?? emptyStats();
+    this.pending = { unlocked: [], quests: [], bosses: 0, used: [] };
+    this.changed();
+  }
+
+  resetPlaces(): void {
+    this.stats.places = {};
+    this.changed();
   }
 
   setTitle(id: string): void {
@@ -83,13 +124,14 @@ export class FunStore {
     this.changed();
   }
 
-  private changed(): void {
+  private changed(notify = true): void {
     if (this.saveTimer === null) {
       this.saveTimer = setTimeout(() => {
         this.saveTimer = null;
         save(this.stats);
       }, 500);
     }
+    if (!notify) return;
     for (const cb of this.listeners) {
       try {
         cb();
@@ -123,6 +165,7 @@ export function loadFunSettings(): FunSettings {
       life: typeof v.life === "boolean" ? v.life : true,
       ambience: typeof v.ambience === "boolean" ? v.ambience : true,
       banners: typeof v.banners === "boolean" ? v.banners : true,
+      sound: typeof v.sound === "boolean" ? v.sound : true,
     };
   } catch {
     return { ...DEFAULT_FUN };

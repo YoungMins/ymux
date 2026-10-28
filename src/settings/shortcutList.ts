@@ -37,6 +37,12 @@ export const SHORTCUTS: ShortcutEntry[] = [
   { keys: "Ctrl+-", tKey: "shortcut.fontDecrease" },
   { keys: "Ctrl+0", tKey: "shortcut.fontReset" },
 
+  // ── Office view (src/office/OfficeView.ts, OfficePeek.ts) ──────────
+  { keys: "Tab / N", tKey: "shortcut.officeNext" },
+  { keys: "Alt+N", tKey: "shortcut.officePeekNext" },
+  { keys: "1 … 9", tKey: "shortcut.officeAnswer" },
+  { keys: "?", tKey: "shortcut.officeHelp" },
+
   // ── Terminal pane ──────────────────────────────────────────────────
   { keys: "Ctrl+F", tKey: "shortcut.search" },
   { keys: "Ctrl+Click", tKey: "shortcut.openLink" },

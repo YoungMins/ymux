@@ -39,6 +39,7 @@ import { petErrand, petsFor, type PetLobby, type PetSpot } from "./petModel";
 import type { PetSpecies } from "./hiPets";
 import type { LogEntry } from "./officeLog";
 import { getLang } from "../i18n/i18n";
+import { menuQuestion } from "./peekKeys";
 import { kindName } from "./officeModel";
 import { onOfficeMessage, type OfficeMessage } from "./officeEvents";
 import { THEME_ICONS, THEME_IDS, loadFloorTheme, loadTheme, saveFloorTheme, type ThemeId } from "./themes";
@@ -66,10 +67,12 @@ import { ACCOUNT_NONE } from "../accounts/accountModel";
 import { loadTasks } from "./heroModel";
 import { FunPanel, achievementName, type FunTab } from "./FunPanel";
 import { funStore, loadFunSettings, saveFunSettings, type FunSettings } from "./funStore";
-import { ACHIEVEMENTS, BOSS_COINS, BOSS_MS, achievementById, buildingOf, dayPart, pizzaTime, questDef, reportDue, seasonOf, shopItem, type FunEvent } from "./funModel";
+import { ACHIEVEMENTS, BOSS_COINS, BOSS_MS, achievementById, buildingOf, dayPart, pizzaTime, normalizeStats, questDef, reportDue, seasonOf, shopItem, type FunEvent } from "./funModel";
 import { SHOP_PETS } from "./hiPets";
 import { funProp, themePiece } from "./sprites";
-import { askChoice } from "../ui/Dialog";
+import { askChoice, askConfirm, askText } from "../ui/Dialog";
+import { chime, type Chime } from "./chiptune";
+import { clampMini, loadMini, movedMini, resizedMini, saveMini, type MiniPlace } from "./miniPlace";
 import {
   approveOption,
   errandIcon,
@@ -126,6 +129,8 @@ export interface OfficeSource extends PeekSource {
   toolSince(paneId: Uuid): number | null;
   /// When a pane's agent entered its current status (epoch ms).
   statusSince(paneId: Uuid): number | null;
+  /// Tool calls in a pane's current working turn.
+  toolCalls(paneId: Uuid): number;
   /// Open the diff review of the repository a pane works in.
   review(paneId: Uuid): Promise<"ok" | "no-repo">;
   /// The agents an empty desk can start, and starting one there.
@@ -240,6 +245,14 @@ export class OfficeView {
   /// When each busy character takes its next errand (epoch ms).
   private readonly nextErrand = new Map<string, number>();
   private miniOn = false;
+  private miniPlace: MiniPlace = loadMini();
+  private decorating = false;
+  private readonly decorateBar: HTMLElement;
+  private readonly helpEl: HTMLElement;
+  /// Rooms drawn, by id, with what they were drawn from.
+  private roomCache = new Map<string, { sig: string; el: HTMLElement; desks: HTMLElement[] }>();
+  private fixturesSig = "";
+  private miniTicks = 0;
   // ── The games (`funModel`) ──
   private readonly fun: FunPanel;
   private funSettings: FunSettings = loadFunSettings();
@@ -335,7 +348,17 @@ export class OfficeView {
     });
     const spacer = document.createElement("span");
     spacer.className = "office__spacer";
-    head.append(this.titleEl, this.floorsEl, this.queueBtn, this.approveBtn, spacer, heroBtn, this.themeSelect, this.miniBtn, back);
+    const helpBtn = document.createElement("button");
+    helpBtn.type = "button";
+    helpBtn.className = "office__back office__mini-btn";
+    helpBtn.textContent = "?";
+    helpBtn.title = t("office.help");
+    helpBtn.setAttribute("aria-label", t("office.help"));
+    helpBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.helpEl.hidden = !this.helpEl.hidden;
+    });
+    head.append(this.titleEl, this.floorsEl, this.queueBtn, this.approveBtn, spacer, heroBtn, this.themeSelect, helpBtn, this.miniBtn, back);
     // A second, quieter row: the status legend, who is who, the quota left.
     const subhead = document.createElement("div");
     subhead.className = "office__subhead";
@@ -391,6 +414,7 @@ export class OfficeView {
     this.fun = new FunPanel({
       buy: (id) => {
         if (funStore.buy(id)) {
+          this.play("coin");
           this.renderLobbyFun();
           this.scheduleRender();
         }
@@ -405,7 +429,44 @@ export class OfficeView {
       readReport: () => {
         this.record({ t: "count", what: "report" });
       },
+      decorate: () => this.setDecorating(true),
+      resetPlaces: () => {
+        funStore.resetPlaces();
+        this.renderLobbyFun();
+        this.scheduleRender();
+      },
+      exportRecord: () => {
+        void navigator.clipboard
+          ?.writeText(JSON.stringify(funStore.get()))
+          .then(() => this.banner(`📋 ${t("fun.exported")}`))
+          .catch(() => undefined);
+      },
+      importRecord: () => void this.importRecord(),
+      resetRecord: () => {
+        void askConfirm(t("fun.resetConfirm"), t("fun.reset")).then((ok) => {
+          if (!ok) return;
+          funStore.replace(null);
+          this.renderLobbyFun();
+          this.scheduleRender();
+        });
+      },
     });
+    this.helpEl = this.buildHelp();
+    // Decorating: a bar over the floor while the furniture can be moved.
+    this.decorateBar = document.createElement("div");
+    this.decorateBar.className = "office-decorate";
+    this.decorateBar.hidden = true;
+    const decoText = document.createElement("span");
+    decoText.textContent = `🖌 ${t("fun.decorating")}`;
+    const decoDone = document.createElement("button");
+    decoDone.type = "button";
+    decoDone.className = "office-fun__btn";
+    decoDone.textContent = t("fun.done");
+    decoDone.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.setDecorating(false);
+    });
+    this.decorateBar.append(decoText, decoDone);
     this.bannerEl = document.createElement("div");
     this.bannerEl.className = "office-levelup office-banner";
     this.bannerEl.hidden = true;
@@ -435,6 +496,30 @@ export class OfficeView {
       this.ambienceEl,
       this.fun.element,
       this.bannerEl,
+      this.helpEl,
+      this.decorateBar,
+    );
+    // While decorating, a press on bought furniture picks it up and other
+    // clicks do nothing (no peeks, no walking off to a pane).
+    this.floor.addEventListener(
+      "pointerdown",
+      (ev) => {
+        if (!this.decorating || ev.button !== 0) return;
+        const item = (ev.target as HTMLElement | null)?.closest<HTMLElement>(".fun-item");
+        if (!item) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.dragFurniture(item, ev);
+      },
+      true,
+    );
+    this.floor.addEventListener(
+      "click",
+      (ev) => {
+        if (!this.decorating || (ev.target as HTMLElement | null)?.closest(".office-decorate")) return;
+        ev.stopPropagation();
+      },
+      true,
     );
     lobby.appendChild(this.buildingEl);
     // Small in a corner: a click anywhere brings the office back first.
@@ -453,10 +538,12 @@ export class OfficeView {
       this.closePeek();
       this.heroes.hide();
       this.fun.hide();
+      this.helpEl.hidden = true;
     });
     this.peek.onAnswered = (paneId) => this.answered(paneId);
     this.peek.onNext = () => this.nextInQueue();
     this.element.append(head, subhead, this.floor);
+    this.wireMiniDrag(head);
 
     this.manager = this.makeActor("manager", null, characterSprite("", "manager"));
     this.manager.el.classList.add("office-char--manager", "office-char--relaxing");
@@ -467,7 +554,9 @@ export class OfficeView {
       if (ev.key === "Escape") {
         ev.preventDefault();
         if (this.miniOn) return;
-        if (!this.launchEl.hidden) this.launchEl.hidden = true;
+        if (this.decorating) this.setDecorating(false);
+        else if (!this.helpEl.hidden) this.helpEl.hidden = true;
+        else if (!this.launchEl.hidden) this.launchEl.hidden = true;
         else if (this.fun.open) this.fun.hide();
         else if (this.peek.paneId) this.closePeek();
         else if (this.heroes.open) this.heroes.hide();
@@ -478,6 +567,11 @@ export class OfficeView {
       // Tab or N on the floor itself (not in a field): the next agent waiting.
       const t = ev.target as HTMLElement | null;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || t.closest(".office-peek"));
+      if (!typing && !ev.defaultPrevented && ev.key === "?") {
+        ev.preventDefault();
+        this.helpEl.hidden = !this.helpEl.hidden;
+        return;
+      }
       if (!typing && !ev.defaultPrevented && !ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === "Tab" || ev.key === "n" || ev.key === "N")) {
         if (this.waitingNow.length > 0) {
           ev.preventDefault();
@@ -660,11 +754,53 @@ export class OfficeView {
     );
   }
 
+  /// Everything a room's elements are drawn from: when it is unchanged the
+  /// room and its desks are kept as they are (no new DOM, no repaint).
+  private roomSig(room: RoomModel, index: number): string {
+    const r = room.rect;
+    const n = (v: number) => v.toFixed(4);
+    const st = funStore.get();
+    return JSON.stringify([
+      this.theme,
+      index,
+      room.kind,
+      room.label,
+      room.status,
+      room.focused,
+      [n(r.x), n(r.y), n(r.w), n(r.h)],
+      room.desks.map((d) => [d.paneId, d.label, d.status, d.active, n(d.at.x), n(d.at.y), this.canPeek(d.paneId)]),
+      st.owned.join(","),
+      JSON.stringify(st.places ?? {}),
+    ]);
+  }
+
+  /// Rooms and desks, rebuilt only where something changed.
   private renderRooms(): void {
-    const rooms: HTMLElement[] = [];
-    for (const old of this.actorsLayer.querySelectorAll(".office-desk")) old.remove();
-    for (const room of this.model.rooms) {
-      rooms.push(this.roomEl(room));
+    const keep = new Map<string, { sig: string; el: HTMLElement; desks: HTMLElement[] }>();
+    const ordered: HTMLElement[] = [];
+    this.model.rooms.forEach((room, index) => {
+      const sig = this.roomSig(room, index);
+      let cached = this.roomCache.get(room.id);
+      if (!cached || cached.sig !== sig) {
+        for (const d of cached?.desks ?? []) d.remove();
+        cached = { sig, el: this.roomEl(room), desks: this.deskEls(room) };
+      }
+      keep.set(room.id, cached);
+      ordered.push(cached.el);
+    });
+    for (const [id, c] of this.roomCache) if (!keep.has(id)) for (const d of c.desks) d.remove();
+    this.roomCache = keep;
+    const now = [...this.roomsLayer.children];
+    if (now.length !== ordered.length || now.some((el, i) => el !== ordered[i])) this.roomsLayer.replaceChildren(...ordered);
+    this.paintSurfaces();
+    this.placePeek();
+    this.renderFixtures();
+    this.renderBoard();
+  }
+
+  private deskEls(room: RoomModel): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    {
       for (const desk of room.desks) {
         const d = document.createElement("button");
         d.type = "button";
@@ -689,13 +825,10 @@ export class OfficeView {
           d.appendChild(card);
         }
         this.actorsLayer.appendChild(d);
+        out.push(d);
       }
     }
-    this.roomsLayer.replaceChildren(...rooms);
-    this.paintSurfaces();
-    this.placePeek();
-    this.renderFixtures();
-    this.renderBoard();
+    return out;
   }
 
   /// The theme's floor and wall tiles under the corridors, the lobby and
@@ -721,6 +854,7 @@ export class OfficeView {
     el.style.height = `${room.rect.h * 100}%`;
     el.title = room.label;
     el.dataset.kind = room.kind;
+    el.dataset.room = room.id;
     const inner = document.createElement("div");
     inner.className = "office-room__inner";
     const plate = document.createElement("div");
@@ -732,6 +866,7 @@ export class OfficeView {
     const props = document.createElement("div");
     props.className = "office-room__props";
     props.innerHTML = roomProps(room.kind, this.theme) + this.roomFun(room);
+    placeFurniture(props, funStore.get().places);
     paintProps(props);
     const door = document.createElement("div");
     door.className = "office-room__door";
@@ -751,6 +886,56 @@ export class OfficeView {
     return el;
   }
 
+  /// The office's keys and gestures, as a small pixel window (`?`).
+  private buildHelp(): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "office-heroes office-help";
+    el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", t("office.help"));
+    el.addEventListener("click", (ev) => ev.stopPropagation());
+    const frame = document.createElement("div");
+    frame.className = "office-peek__frame";
+    const head = document.createElement("div");
+    head.className = "office-peek__head";
+    const title = document.createElement("span");
+    title.className = "office-peek__title";
+    title.textContent = `⌨ ${t("office.help")}`;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "office-peek__btn office-peek__close";
+    close.textContent = "✕";
+    close.setAttribute("aria-label", t("office.peek.close"));
+    close.addEventListener("click", () => {
+      el.hidden = true;
+    });
+    head.append(title, close);
+    const list = document.createElement("dl");
+    list.className = "office-help__list";
+    for (const [keys, text] of [
+      ["Tab / N", t("shortcut.officeNext")],
+      ["Alt+N", t("shortcut.officePeekNext")],
+      ["1 … 9", t("shortcut.officeAnswer")],
+      ["Esc", t("office.help.esc")],
+      [t("office.help.clickKey"), t("office.help.click")],
+      [t("office.help.dblclickKey"), t("office.help.dblclick")],
+      [t("office.help.dragKey"), t("office.help.drag")],
+      ["Ctrl+Shift+O", t("shortcut.office")],
+      ["?", t("shortcut.officeHelp")],
+    ]) {
+      const dt = document.createElement("dt");
+      const kbd = document.createElement("kbd");
+      kbd.textContent = keys;
+      dt.appendChild(kbd);
+      const dd = document.createElement("dd");
+      dd.textContent = text;
+      list.append(dt, dd);
+    }
+    frame.append(head, list);
+    el.appendChild(frame);
+    return el;
+  }
+
   // ── Control room: floors, the queue, approve all, meters, mini ────────
 
   get mini(): boolean {
@@ -762,6 +947,8 @@ export class OfficeView {
     if (on === this.miniOn) return;
     this.miniOn = on;
     this.element.classList.toggle("office--mini", on);
+    this.applyMiniPlace();
+    this.element.title = on ? t("fun.miniMove") : "";
     if (on) this.record({ t: "count", what: "mini" });
     if (on) {
       this.closePeek();
@@ -771,6 +958,66 @@ export class OfficeView {
     }
     this.source.setMini(on);
     if (!on) this.focus();
+  }
+
+  /// Mini: drag the head to move it, the corner grip to resize it.
+  private wireMiniDrag(head: HTMLElement): void {
+    const grip = document.createElement("div");
+    grip.className = "office__mini-grip";
+    grip.title = t("fun.miniMove");
+    this.element.appendChild(grip);
+    const area = (): [number, number] => {
+      const host = this.element.offsetParent as HTMLElement | null;
+      return [host?.clientWidth ?? window.innerWidth, host?.clientHeight ?? window.innerHeight];
+    };
+    const drag = (ev: PointerEvent, step: (start: MiniPlace, dx: number, dy: number, w: number, h: number) => MiniPlace): void => {
+      if (!this.miniOn || ev.button !== 0) return;
+      const start = this.miniPlace;
+      const [w, h] = area();
+      const x0 = ev.clientX;
+      const y0 = ev.clientY;
+      let moved = false;
+      const move = (e: PointerEvent): void => {
+        const dx = e.clientX - x0;
+        const dy = e.clientY - y0;
+        if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+        moved = true;
+        this.miniPlace = step(start, dx, dy, w, h);
+        this.applyMiniPlace();
+      };
+      const up = (): void => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        if (!moved) return;
+        saveMini(this.miniPlace);
+        // The click that ends a drag is not a "bring it back".
+        window.addEventListener("click", (e) => e.stopPropagation(), { capture: true, once: true });
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      ev.preventDefault();
+    };
+    head.addEventListener("pointerdown", (ev) => {
+      if ((ev.target as HTMLElement | null)?.closest("button, select, input")) return;
+      drag(ev, movedMini);
+    });
+    grip.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();
+      drag(ev, resizedMini);
+    });
+  }
+
+  private applyMiniPlace(): void {
+    const s = this.element.style;
+    if (!this.miniOn) {
+      for (const k of ["--mini-r", "--mini-b", "--mini-scale"]) s.removeProperty(k);
+      return;
+    }
+    const host = this.element.offsetParent as HTMLElement | null;
+    this.miniPlace = clampMini(this.miniPlace, host?.clientWidth ?? window.innerWidth, host?.clientHeight ?? window.innerHeight);
+    s.setProperty("--mini-r", `${this.miniPlace.right}px`);
+    s.setProperty("--mini-b", `${this.miniPlace.bottom}px`);
+    s.setProperty("--mini-scale", String(this.miniPlace.scale));
   }
 
   /// One button per workspace: its number, red with how many wait there.
@@ -813,6 +1060,9 @@ export class OfficeView {
     this.actors.clear();
     for (const b of this.bosses.values()) b.remove();
     this.bosses.clear();
+    for (const c of this.roomCache.values()) for (const d of c.desks) d.remove();
+    this.roomCache.clear();
+    this.fixturesSig = "";
     this.nextErrand.clear();
     this.prev = [];
     this.first = true;
@@ -872,7 +1122,13 @@ export class OfficeView {
   private async approveAll(): Promise<void> {
     const list = this.approvable();
     if (list.length === 0) return;
-    const detail = list.map((a) => `• ${a.w.label} — ${a.n}. ${a.label}`).join("\n");
+    // What each one asks, so a yes is never given blind.
+    const detail = list
+      .map((a) => {
+        const q = menuQuestion(this.source.screen(a.w.paneId) ?? []);
+        return `• ${a.w.label} — ${a.n}. ${a.label}${q.length ? `\n    ${t("office.approveAll.asks")}: ${q.join(" / ")}` : ""}`;
+      })
+      .join("\n");
     const answer = await askChoice(fill(t("office.approveAll.confirm"), { n: list.length }), detail, [
       { id: "cancel", label: t("dialog.cancel") },
       { id: "ok", label: t("office.approveAll.ok"), primary: true },
@@ -894,6 +1150,8 @@ export class OfficeView {
   /// stuck agents in the bubbles, and errands for the busy.
   private tick(): void {
     if (this.disposed) return;
+    // Small in a corner: every third second is enough.
+    if (this.miniOn && ++this.miniTicks % 3 !== 0) return;
     const now = Date.now();
     this.waitingNow = waitQueue(this.source.waiting());
     const n = this.waitingNow.length;
@@ -1117,15 +1375,105 @@ export class OfficeView {
     if (this.disposed) return;
     const news = funStore.takeNews();
     if (this.funSettings.banners) {
-      for (const a of news.unlocked) this.banner(`🏆 ${fill(t("fun.unlocked"), { name: achievementName(a) })} · ${fill(t("fun.reward"), { n: a.reward })}`);
-      for (const id of news.quests) {
+      // A few at a time; a pile (after a while away) is one banner.
+      if (news.unlocked.length > 2) {
+        const coins = news.unlocked.reduce((n, a) => n + a.reward, 0);
+        this.banner(`🏆 ${fill(t("fun.unlockedMany"), { n: news.unlocked.length, coins })}`);
+      } else for (const a of news.unlocked) this.banner(`🏆 ${fill(t("fun.unlocked"), { name: achievementName(a) })} · ${fill(t("fun.reward"), { n: a.reward })}`);
+      for (const id of news.quests.slice(-2)) {
         const q = questDef(id);
         this.banner(`📜 ${fill(t("fun.questDone"), { name: q ? fill(t(`fun.quest.${id}`), { n: q.target }) : id })}`);
       }
     }
     for (let i = 0; i < news.bosses; i++) this.banner(`👹 ${fill(t("fun.bossDefeated"), { n: BOSS_COINS })}`);
     if (news.unlocked.length > 0 && !this.reduced) this.cheer(this.manager);
+    // One tune per change, the biggest news first.
+    if (news.unlocked.length > 0) this.play("unlock");
+    else if (news.bosses > 0) this.play("boss");
+    else if (news.quests.length > 0) this.play("quest");
+    for (const id of news.used) this.useItem(id);
     this.renderFunUi();
+  }
+
+  /// Paste a record copied out with export.
+  private async importRecord(): Promise<void> {
+    const text = await askText(t("fun.importPrompt"));
+    if (text === null || this.disposed) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      raw = null;
+    }
+    if (!isRecord(raw)) {
+      this.banner(`⚠ ${t("fun.importBad")}`);
+      return;
+    }
+    funStore.replace(normalizeStats(raw));
+    this.renderLobbyFun();
+    this.scheduleRender();
+  }
+
+  /// A little tune, when the sounds are on.
+  private play(kind: Chime): void {
+    if (this.funSettings.sound && !this.miniOn) chime(kind);
+  }
+
+  /// A consumable was bought: the floor shows it.
+  private useItem(id: string): void {
+    if (this.reduced) return;
+    if (id === "snacks") {
+      for (const a of this.actors.values()) if (a.model?.role === "lead") this.popOver(a.el, "💗");
+    } else if (id === "party") {
+      this.play("party");
+      this.paperRain(36);
+      this.cheer(this.manager);
+      for (const a of this.actors.values()) if (a.model?.role === "lead" && a.model.status !== "working" && a.busy === 0) this.cheer(a);
+    } else if (id === "fireworks") {
+      this.play("party");
+      this.fireworks();
+    }
+  }
+
+  /// A short-lived emoji rising over a character.
+  private popOver(host: HTMLElement, glyph: string): void {
+    const el = document.createElement("span");
+    el.className = "office-pop";
+    el.textContent = glyph;
+    host.appendChild(el);
+    void this.sleep(1600).then(() => el.remove());
+  }
+
+  /// Bits of paper falling over the floor.
+  private paperRain(n: number): void {
+    const layer = document.createElement("div");
+    layer.className = "office-rain";
+    for (let i = 0; i < n; i++) {
+      const bit = document.createElement("i");
+      bit.style.left = `${Math.random() * 100}%`;
+      bit.style.animationDelay = `${Math.random() * 0.8}s`;
+      bit.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
+      layer.appendChild(bit);
+    }
+    this.floor.appendChild(layer);
+    void this.sleep(3200).then(() => layer.remove());
+  }
+
+  /// Bursts in the sky over the floor.
+  private fireworks(): void {
+    const layer = document.createElement("div");
+    layer.className = "office-fireworks";
+    for (let i = 0; i < 6; i++) {
+      const burst = document.createElement("span");
+      burst.className = "office-firework";
+      burst.style.left = `${10 + Math.random() * 80}%`;
+      burst.style.top = `${8 + Math.random() * 30}%`;
+      burst.style.animationDelay = `${i * 0.35}s`;
+      burst.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
+      layer.appendChild(burst);
+    }
+    this.floor.appendChild(layer);
+    void this.sleep(3600).then(() => layer.remove());
   }
 
   /// A banner over the floor; several wait their turn.
@@ -1205,11 +1553,16 @@ export class OfficeView {
   private renderLobbyFun(): void {
     for (const old of this.lobbyFurniture.querySelectorAll(".office-prop--fun")) old.remove();
     const st = funStore.get();
-    const items = st.owned.filter((id) => shopItem(id)?.place === "lobby");
-    let html = items
-      .slice(0, LOBBY_SLOTS.length)
-      .map((id) => funProp(id, `office-prop office-prop--fun office-prop--slot office-prop--fun-${id}`))
-      .join("");
+    // Bought furniture: where the user put it in the lobby, else the lobby
+    // pieces in their slots.
+    const placed = st.owned.filter((id) => st.places[id]?.room === null);
+    const slotted = st.owned.filter((id) => shopItem(id)?.place === "lobby" && !st.places[id]);
+    let html =
+      placed.map((id) => funProp(id, `office-prop office-prop--fun office-prop--placed fun-item fun-item--${id}`)).join("") +
+      slotted
+        .slice(0, LOBBY_SLOTS.length)
+        .map((id) => funProp(id, `office-prop office-prop--fun office-prop--slot fun-item fun-item--${id}`))
+        .join("");
     const now = Date.now();
     if (this.funSettings.ambience) {
       const season = seasonOf(now);
@@ -1221,6 +1574,7 @@ export class OfficeView {
     this.lobbyFurniture.querySelectorAll<HTMLElement>(".office-prop--slot").forEach((el, i) => {
       el.style.left = `${LOBBY_SLOTS[i] * 100}%`;
     });
+    placeFurniture(this.lobbyFurniture, st.places);
     paintProps(this.lobbyFurniture);
   }
 
@@ -1229,12 +1583,74 @@ export class OfficeView {
   private roomFun(room: RoomModel): string {
     const st = funStore.get();
     const i = this.model.rooms.findIndex((r) => r.id === room.id);
-    const floor = st.owned.filter((id) => shopItem(id)?.place === "room");
-    const wall = st.owned.filter((id) => shopItem(id)?.place === "wall");
-    let html = "";
-    if (floor.length > 0 && i >= 0) html += funProp(floor[i % floor.length], "office-prop office-prop--deco");
-    if (wall.length > 0 && i >= 0) html += `<div class="office-wall-row office-wall-row--fun">${funProp(wall[i % wall.length], "office-prop")}</div>`;
+    // Where the user put things in this room; the rest goes one per room
+    // (never the same piece twice).
+    const placed = st.owned.filter((id) => st.places[id]?.room === room.id);
+    const floor = st.owned.filter((id) => shopItem(id)?.place === "room" && !st.places[id]);
+    const wall = st.owned.filter((id) => shopItem(id)?.place === "wall" && !st.places[id]);
+    let html = placed.map((id) => funProp(id, `office-prop office-prop--placed fun-item fun-item--${id}`)).join("");
+    if (i >= 0 && i < floor.length) html += funProp(floor[i], `office-prop office-prop--deco fun-item fun-item--${floor[i]}`);
+    if (i >= 0 && i < wall.length) html += `<div class="office-wall-row office-wall-row--fun">${funProp(wall[i], `office-prop fun-item fun-item--${wall[i]}`)}</div>`;
     return html;
+  }
+
+  private setDecorating(on: boolean): void {
+    this.decorating = on;
+    this.element.classList.toggle("office--decorating", on);
+    this.decorateBar.hidden = !on;
+    if (on) {
+      this.fun.hide();
+      this.closePeek();
+      this.boardPanel.hidden = true;
+    }
+  }
+
+  /// Carry a piece of furniture with the pointer and set it down in the room
+  /// (or the lobby) under it.
+  private dragFurniture(item: HTMLElement, down: PointerEvent): void {
+    const id = [...item.classList].find((c) => c.startsWith("fun-item--"))?.slice("fun-item--".length);
+    if (!id) return;
+    const box = item.getBoundingClientRect();
+    const dx = down.clientX - box.left;
+    const dy = down.clientY - box.top;
+    // A copy follows the pointer over the whole office (rooms clip their
+    // own contents); the canvases are copied by hand, cloning leaves them blank.
+    const ghost = item.cloneNode(true) as HTMLElement;
+    const from = item.querySelectorAll("canvas");
+    ghost.querySelectorAll("canvas").forEach((c, i) => c.getContext("2d")?.drawImage(from[i], 0, 0));
+    ghost.classList.add("fun-item--lifted");
+    const host = this.element.getBoundingClientRect();
+    ghost.style.position = "absolute";
+    ghost.style.right = ghost.style.bottom = "auto";
+    const follow = (x: number, y: number) => {
+      ghost.style.left = `${x - dx - host.left}px`;
+      ghost.style.top = `${y - dy - host.top}px`;
+    };
+    follow(down.clientX, down.clientY);
+    this.element.appendChild(ghost);
+    item.style.visibility = "hidden";
+    const move = (ev: PointerEvent) => follow(ev.clientX, ev.clientY);
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      ghost.remove();
+      item.style.visibility = "";
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const roomEl = under?.closest<HTMLElement>(".office-room");
+      const area = roomEl ? roomEl.querySelector<HTMLElement>(".office-room__props") : under?.closest(".office__lobby") ? this.lobbyFurniture : null;
+      if (!area) return;
+      const r = area.getBoundingClientRect();
+      const clamp = (v: number) => Math.max(0, Math.min(0.95, v));
+      funStore.setPlace(id, {
+        room: roomEl ? (roomEl.dataset.room ?? null) : null,
+        x: clamp((ev.clientX - dx - r.left) / Math.max(1, r.width)),
+        y: clamp((ev.clientY - dy - r.top) / Math.max(1, r.height)),
+      });
+      this.renderLobbyFun();
+      this.render();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   }
 
   /// Night, evening and the season, as classes the stylesheet dresses.
@@ -1290,8 +1706,17 @@ export class OfficeView {
         this.bosses.set(c.paneId, el);
       }
       this.position(el, { x: room.rect.x + room.rect.w * 0.82, y: room.rect.y + room.rect.h * 0.62 }, 15);
-      const left = Math.max(0.05, 1 - (now - since - BOSS_MS) / (50 * 60_000));
+      // Every tool call the agent makes is a blow: the boss loses health
+      // with the work done, not with the clock.
+      const hits = this.source.toolCalls(c.paneId);
+      const left = Math.max(0.05, 1 - hits * 0.04);
       el.querySelector<HTMLElement>(".office-boss__hp i")!.style.width = `${Math.round(left * 100)}%`;
+      if (Number(el.dataset.hits ?? hits) < hits && !this.reduced) {
+        el.classList.remove("office-boss--hit");
+        void el.offsetWidth;
+        el.classList.add("office-boss--hit");
+      }
+      el.dataset.hits = String(hits);
       el.title = fill(t("fun.boss"), { t: shortDuration(now - since, getLang()) });
     }
     for (const [pane, el] of this.bosses) {
@@ -1319,13 +1744,33 @@ export class OfficeView {
     const b = others[Math.floor(Math.random() * others.length)];
     const room = b.model ? this.roomOf(b.model) : undefined;
     if (!room || !b.model) return;
-    const line = (): string => t(`fun.chat.${1 + Math.floor(Math.random() * CHAT_LINES)}`);
     this.record({ t: "count", what: "chat" });
+    const aLine = this.talkLine(a, b);
+    const bLine = this.talkLine(b, a);
     this.errand(a, async () => {
       await this.travel(a, { at: besideSpot(b.model!.home, room.rect), room: room.id });
-      await this.sayText(a, "chat", line(), 2200);
-      if (!b.busy) await this.sayText(b, "chat", line(), 2200);
+      await this.sayText(a, "chat", aLine, 2400);
+      if (!b.busy) await this.sayText(b, "chat", bLine, 2400);
     });
+  }
+
+  /// What `who` says to `to`: about its own last turn, the other's room, its
+  /// tool or tests when the office knows them, else a pleasantry.
+  private talkLine(who: Actor, to: Actor): string {
+    const log = this.source.log();
+    const mine = who.model ? log.find((e) => e.kind === "done" && e.paneId === who.model!.paneId)?.turn : undefined;
+    const theirs = to.model ? log.find((e) => e.kind === "done" && e.paneId === to.model!.paneId)?.turn : undefined;
+    const pane = to.model ? (this.model.rooms.find((r) => r.id === to.model!.roomId)?.label ?? to.model.label) : "";
+    const lines: string[] = [];
+    if (mine?.headline) lines.push(fill(t("fun.talk.done"), { what: clip(mine.headline, 40) }));
+    if (mine && (mine.add ?? 0) + (mine.del ?? 0) > 0) lines.push(fill(t("fun.talk.lines"), { n: (mine.add ?? 0) + (mine.del ?? 0) }));
+    if (to.model?.status === "working" && to.model.tool) lines.push(fill(t("fun.talk.tool"), { tool: clip(to.model.tool, 16) }));
+    if (theirs?.test === true) lines.push(fill(t("fun.talk.pass"), { pane: clip(pane, 18) }));
+    if (theirs?.test === false) lines.push(fill(t("fun.talk.fail"), { pane: clip(pane, 18) }));
+    if (pane) lines.push(fill(t("fun.talk.ask"), { pane: clip(pane, 18) }));
+    // Now and then just small talk, so it is not all shop.
+    if (lines.length === 0 || Math.random() < 0.3) return t(`fun.chat.${1 + Math.floor(Math.random() * CHAT_LINES)}`);
+    return lines[Math.floor(Math.random() * lines.length)];
   }
 
   /// A finished or idle lead now and then stretches its legs: coffee in the
@@ -1628,6 +2073,10 @@ export class OfficeView {
     // Not all at once.
     await this.sleep(500 + Math.random() * 2500);
     while (!this.disposed && pet.alive) {
+      if (this.miniOn) {
+        await this.sleep(3000);
+        continue;
+      }
       const errand = petErrand(this.model.graph, this.petLobby(), pet.spot);
       pet.el.classList.remove("office-pet--sleeping");
       pet.bubble.hidden = true;
@@ -1732,6 +2181,11 @@ export class OfficeView {
   /// Outside each door: a flag while its agent's finished work is unseen,
   /// a mailbox while it holds letters.
   private renderFixtures(): void {
+    const sig = JSON.stringify(
+      this.model.rooms.map((r) => [r.door, r.rect.y + r.rect.h, r.doneDesk, r.mail.map((m) => [m.paneId, m.mail.id, m.mail.opened]), r.desks.map((d) => d.active)]),
+    );
+    if (sig === this.fixturesSig) return;
+    this.fixturesSig = sig;
     const out: HTMLElement[] = [];
     for (const room of this.model.rooms) {
       const outside = { x: room.door.x, y: room.rect.y + room.rect.h };
@@ -1990,6 +2444,10 @@ export class OfficeView {
 
   /// A bubble is a pixel icon, a short text, or both; neither hides it.
   private setBubble(actor: Actor, icon: string | null, text = ""): void {
+    // Unchanged: leave the DOM alone (this runs every second for everyone).
+    const key = `${icon ?? ""}|${text}`;
+    if (actor.bubble.dataset.key === key) return;
+    actor.bubble.dataset.key = key;
     actor.bubble.innerHTML = icon ? iconSvg(icon) : "";
     if (text) {
       const span = document.createElement("span");
@@ -2189,6 +2647,17 @@ function noteText(e: LogEntry): string {
     : fill(t("office.note.to"), { kind, pane: e.label });
 }
 
+/// Put each placed piece of furniture under `root` where the user set it.
+function placeFurniture(root: HTMLElement, places: Readonly<Record<string, { x: number; y: number }>>): void {
+  for (const el of root.querySelectorAll<HTMLElement>(".office-prop--placed")) {
+    const id = [...el.classList].find((c) => c.startsWith("fun-item--"))?.slice("fun-item--".length);
+    const p = id ? places[id] : undefined;
+    if (!p) continue;
+    el.style.left = `${p.x * 100}%`;
+    el.style.top = `${p.y * 100}%`;
+  }
+}
+
 /// A finished turn's facts ("Changed 2 files (+10/-3) · 3m"), or a
 /// message's first line.
 function turnLine(e: LogEntry): string {
@@ -2212,4 +2681,9 @@ function ago(rel: Intl.RelativeTimeFormat, at: number): string {
 
 function clip(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+/// Looks like a record export (an object with counters).
+function isRecord(v: unknown): boolean {
+  return !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { counters?: unknown }).counters === "object";
 }

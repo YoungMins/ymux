@@ -264,6 +264,6 @@ describe("office games art", () => {
       expect(new Set(rows.map((r) => r.length)).size, name).toBe(1);
       for (const k of new Set(rows.join(""))) if (k !== ".") expect(FUN_PAL[k], `${name} "${k}"`).toBeDefined();
     }
-    for (const item of SHOP) if (item.place !== "pet") expect(FUN_ART[item.id], item.id).toBeDefined();
+    for (const item of SHOP) if (item.place !== "pet" && item.place !== "use") expect(FUN_ART[item.id], item.id).toBeDefined();
   });
 });

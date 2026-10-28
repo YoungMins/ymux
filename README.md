@@ -511,6 +511,10 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+U`              | `Cmd+Shift+U`      | Jump to next pane needing attention  |
 | `Ctrl+Shift+O`              | `Cmd+Shift+O`      | Toggle office view                   |
+| `Tab` / `N` (office)        | `Tab` / `N`        | Office: next agent waiting for you   |
+| `Alt+N` (office peek)       | `Opt+N`            | Office peek: next one waiting        |
+| `1`…`9` (office peek)       | `1`…`9`            | Office peek: answer the menu         |
+| `?` (office)                | `?`                | Office: show its keys                |
 | `Ctrl+Shift+←/→`            | `Cmd+Shift+←/→`    | Swap pane with previous / next       |
 | `Ctrl+Shift+R`              | `Cmd+Shift+R`      | Rename focused pane                  |
 | `Ctrl+Shift+P`              | `Cmd+Shift+P`      | Open command palette                 |
