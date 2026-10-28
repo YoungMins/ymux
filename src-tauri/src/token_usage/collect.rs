@@ -21,6 +21,10 @@ struct Cached {
     len: u64,
     modified: Option<SystemTime>,
     parsed: Parsed,
+    /// Set when the file had more events than the budget left for it: the
+    /// events are dropped (not kept in memory) and this is how many there
+    /// were, so an unchanged file is skipped again without re-reading it.
+    over_budget: Option<usize>,
 }
 static CACHE: OnceLock<Mutex<BTreeMap<PathBuf, Cached>>> = OnceLock::new();
 
@@ -167,7 +171,12 @@ pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
             let unchanged = cache
                 .get(&path)
                 .is_some_and(|c| c.len == meta.len() && c.modified == modified);
-            if !unchanged {
+            let over = cache.get(&path).and_then(|c| c.over_budget);
+            if unchanged && over.is_some_and(|n| n > event_budget) {
+                provider.skipped += 1;
+                continue;
+            }
+            if !unchanged || over.is_some() {
                 let fallback = path
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -180,6 +189,7 @@ pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
                                 len: meta.len(),
                                 modified,
                                 parsed,
+                                over_budget: None,
                             },
                         );
                     }
@@ -195,8 +205,16 @@ pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
             };
             if cached.parsed.events.len() > event_budget {
                 provider.skipped += 1;
-                seen.remove(&path);
-                cache.remove(&path);
+                let n = cached.parsed.events.len();
+                cache.insert(
+                    path.clone(),
+                    Cached {
+                        len: meta.len(),
+                        modified,
+                        parsed: Parsed::default(),
+                        over_budget: Some(n),
+                    },
+                );
                 continue;
             }
             event_budget -= cached.parsed.events.len();

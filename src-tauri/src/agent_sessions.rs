@@ -896,6 +896,18 @@ impl SessionTracker {
     /// id came from a hook is not scanned: the agent already told us, exactly.
     /// Once that agent has exited (the record is inactive) the pane is
     /// scanned again, so the next agent in it gets a binding of its own.
+    /// Whether observing `process` in `pane_id` now could reach the disk
+    /// scan, the one step that reads `others` (every agent on the machine).
+    /// A superset of what [`Self::observe`] does: a process the pane is not
+    /// bound to yet (or a different one) always may. The scan loop asks this
+    /// first so it lists the machine's agents only when some pane needs them.
+    pub fn may_disk_scan(&self, pane_id: Uuid, process: ProcessKey, now: u64) -> bool {
+        match self.bindings.get(&pane_id) {
+            Some(b) if b.process == process => self.wants_disk_scan(pane_id, now),
+            _ => true,
+        }
+    }
+
     pub fn wants_disk_scan(&self, pane_id: Uuid, now: u64) -> bool {
         if self
             .store
@@ -1362,6 +1374,7 @@ impl SessionTracker {
     pub fn forget(&mut self, pane_id: Uuid) {
         self.dirty |= self.store.remove(pane_id);
         self.last_disk_scan.remove(&pane_id);
+        self.last_hook_check.remove(&pane_id);
         self.bindings.remove(&pane_id);
         self.pending.remove(&pane_id);
         self.failed.remove(&pane_id);
@@ -3239,5 +3252,48 @@ mod tests {
             });
         }
         assert_eq!(calls, 1);
+    }
+    #[test]
+    fn may_disk_scan_covers_every_observation_that_scans() {
+        let pane = Uuid::new_v4();
+        let mut t = SessionTracker::default();
+        let key = ProcessKey {
+            pid: 7,
+            start_secs: 100,
+        };
+        // Unbound: an observation may scan.
+        assert!(t.may_disk_scan(pane, key, 1_000));
+        t.bindings.insert(
+            pane,
+            Binding {
+                process: key,
+                session_id: None,
+            },
+        );
+        // Bound to this process, no conversation yet: as wants_disk_scan says.
+        assert_eq!(
+            t.may_disk_scan(pane, key, 1_000),
+            t.wants_disk_scan(pane, 1_000)
+        );
+        t.last_disk_scan.insert(pane, 1_000);
+        assert!(!t.may_disk_scan(pane, key, 1_001));
+        // A different process in the pane always may.
+        assert!(t.may_disk_scan(
+            pane,
+            ProcessKey {
+                pid: 8,
+                start_secs: 100
+            },
+            1_001
+        ));
+        // Tied to a conversation: no scan.
+        t.bindings.insert(
+            pane,
+            Binding {
+                process: key,
+                session_id: Some("s".into()),
+            },
+        );
+        assert!(!t.may_disk_scan(pane, key, 99_999));
     }
 }

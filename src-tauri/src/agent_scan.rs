@@ -470,7 +470,19 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                     let pane_agents = scan_pane_agents(&shells, &procs);
                     // Only worth enumerating every agent on the machine when a
                     // pane has one whose conversation may need guessing.
-                    let others = if pane_agents.is_empty() {
+                    // Only worth it when a pane's next observation can reach
+                    // the disk scan (at most every 10 s per unbound pane):
+                    // otherwise this read every Claude pid file and cloned
+                    // the config on every tick.
+                    let wanted = !pane_agents.is_empty() && {
+                        let now = crate::agent_sessions::now_secs();
+                        let tracker = app.state::<SharedSessions>();
+                        let tracker = tracker.0.lock();
+                        pane_agents
+                            .iter()
+                            .any(|(id, a)| tracker.may_disk_scan(*id, a.process.key(), now))
+                    };
+                    let others = if !wanted {
                         Vec::new()
                     } else {
                         // A Claude outside ymux can run under any account

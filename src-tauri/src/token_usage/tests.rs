@@ -383,3 +383,22 @@ fn print_real_hourly_bucket_count() {
         json.len()
     );
 }
+
+#[test]
+fn a_file_over_the_event_budget_is_skipped_the_same_way_every_refresh() {
+    let (_dir, claude, codex) = setup();
+    let line = |i: usize| {
+        format!("{{\"type\":\"assistant\",\"sessionId\":\"s\",\"timestamp\":\"2026-09-21T00:00:00Z\",\"message\":{{\"id\":\"m{i}\",\"usage\":{{\"input_tokens\":1}}}}}}\n")
+    };
+    // A file holds at most 10k events; the provider's budget is 25k, so the
+    // third full file does not fit after the first two and the small one.
+    for f in 0..3 {
+        let big: String = (f * 10_000..(f + 1) * 10_000).map(line).collect();
+        fs::write(claude.join(format!("projects/p/big{f}.jsonl")), big).unwrap();
+    }
+    fs::write(claude.join("projects/p/small.jsonl"), line(99_999)).unwrap();
+    for _ in 0..2 {
+        let p = &collect_from(&claude, &codex, NOW).providers[0];
+        assert_eq!((p.files, p.skipped, p.all_time.total), (3, 1, 20_001));
+    }
+}

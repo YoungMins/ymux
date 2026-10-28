@@ -1646,7 +1646,19 @@ pub fn start_pty_event_pump(app: AppHandle) {
     std::thread::Builder::new()
         .name("ymux-pty-pump".into())
         .spawn(move || {
-            while let Ok(event) = rx.recv() {
+            // An event taken off the queue while merging, to handle next.
+            let mut held: Option<crate::pty::session::PaneEvent> = None;
+            loop {
+                let first = match held.take() {
+                    Some(e) => e,
+                    None => match rx.recv() {
+                        Ok(e) => e,
+                        Err(_) => break,
+                    },
+                };
+                // Output already queued behind this read goes out with it.
+                let (event, next) = crate::pty::session::merge_queued(first, || rx.try_recv().ok());
+                held = next;
                 match event {
                     crate::pty::session::PaneEvent::Data(id, bytes) => {
                         // Raw bytes through the pane's channel (an

@@ -13,6 +13,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Disk space changes slowly: re-read it every this many polls (30 s).
+const DISK_EVERY: u32 = 15;
 pub const SYSMONITOR_EVENT: &str = "app:sysmonitor";
 
 // ── Payload types ──────────────────────────────────────────────────────────
@@ -82,9 +84,12 @@ pub fn start_sysmonitor(app: AppHandle) {
 fn monitor_loop(app: AppHandle) {
     use sysinfo::{Disks, Networks, System};
 
-    let mut sys = System::new_all();
+    // Only CPU and memory are read, so no process table (`new_all` would
+    // load every process with every field, and keep it).
+    let mut sys = System::new();
     let mut networks = Networks::new_with_refreshed_list();
-    let disks = Disks::new_with_refreshed_list();
+    let mut disks = Disks::new_with_refreshed_list();
+    let mut polls: u32 = 0;
 
     // GPU poller (Windows only, no-op on other platforms).
     #[cfg(windows)]
@@ -92,12 +97,18 @@ fn monitor_loop(app: AppHandle) {
 
     // Give the system a moment to gather baseline data.
     std::thread::sleep(Duration::from_millis(500));
-    sys.refresh_all();
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
 
     loop {
         sys.refresh_cpu_usage();
         sys.refresh_memory();
         networks.refresh(true);
+        // Used/free space was read once at start and never again before.
+        polls = polls.wrapping_add(1);
+        if polls % DISK_EVERY == 0 {
+            disks.refresh(true);
+        }
 
         let cpu_usage = sys.global_cpu_usage();
         let ram_total_mb = sys.total_memory() / (1024 * 1024);
@@ -109,6 +120,7 @@ fn monitor_loop(app: AppHandle) {
         };
 
         let disk_infos: Vec<DiskInfo> = disks
+            .list()
             .iter()
             .filter(|d| d.total_space() > 0 && shown_disk(&d.mount_point().to_string_lossy()))
             .map(|d| {

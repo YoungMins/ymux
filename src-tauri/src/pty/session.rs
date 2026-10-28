@@ -211,6 +211,32 @@ pub enum PaneEvent {
     Cwd(Uuid, String),
 }
 
+/// Most bytes [`merge_queued`] puts into one `Data` event.
+pub const MERGE_MAX: usize = 64 * 1024;
+
+/// `first`, with the `Data` events for the same pane already waiting in the
+/// queue (`next` yields them without blocking) appended to it, up to
+/// [`MERGE_MAX`] bytes. Each delivery to the webview has a fixed cost, so a
+/// burst of reads (a build log, `cat`) goes out as one. Returns the merged
+/// event and the first queued event it could not take (another pane's
+/// data, an exit, a cwd), which must be handled next to keep the order.
+pub fn merge_queued(
+    first: PaneEvent,
+    mut next: impl FnMut() -> Option<PaneEvent>,
+) -> (PaneEvent, Option<PaneEvent>) {
+    let PaneEvent::Data(id, mut bytes) = first else {
+        return (first, None);
+    };
+    while bytes.len() < MERGE_MAX {
+        match next() {
+            Some(PaneEvent::Data(other, more)) if other == id => bytes.extend_from_slice(&more),
+            Some(other) => return (PaneEvent::Data(id, bytes), Some(other)),
+            None => break,
+        }
+    }
+    (PaneEvent::Data(id, bytes), None)
+}
+
 impl PtySession {
     /// Spawn the shell described by `profile` under a fresh ConPTY and wire
     /// its output into `events`. The reader thread also feeds bytes through
@@ -495,6 +521,44 @@ impl Drop for PtySession {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn merge_queued_joins_one_panes_data_and_keeps_order() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let mut q = vec![
+            PaneEvent::Data(a, b"cd".to_vec()),
+            PaneEvent::Data(a, b"ef".to_vec()),
+            PaneEvent::Cwd(a, "/tmp".into()),
+            PaneEvent::Data(a, b"gh".to_vec()),
+        ]
+        .into_iter();
+        let (ev, rest) = merge_queued(PaneEvent::Data(a, b"ab".to_vec()), || q.next());
+        assert!(matches!(ev, PaneEvent::Data(id, ref d) if id == a && d == b"abcdef"));
+        assert!(matches!(rest, Some(PaneEvent::Cwd(id, _)) if id == a));
+        // Another pane's data is not merged in, and is handed back.
+        let mut q = vec![PaneEvent::Data(b, b"x".to_vec())].into_iter();
+        let (ev, rest) = merge_queued(PaneEvent::Data(a, b"y".to_vec()), || q.next());
+        assert!(matches!(ev, PaneEvent::Data(id, ref d) if id == a && d == b"y"));
+        assert!(matches!(rest, Some(PaneEvent::Data(id, _)) if id == b));
+        // Non-data passes straight through.
+        let (ev, rest) = merge_queued(PaneEvent::Exit(a, 0), || panic!("not read"));
+        assert!(matches!(ev, PaneEvent::Exit(..)) && rest.is_none());
+    }
+
+    #[test]
+    fn merge_queued_stops_at_the_size_cap() {
+        let a = Uuid::new_v4();
+        let mut taken = 0;
+        let (ev, rest) = merge_queued(PaneEvent::Data(a, vec![0; 8192]), || {
+            taken += 1;
+            Some(PaneEvent::Data(a, vec![0; 8192]))
+        });
+        let PaneEvent::Data(_, d) = ev else { panic!() };
+        assert_eq!(d.len(), MERGE_MAX);
+        assert!(rest.is_none());
+        assert_eq!(taken, MERGE_MAX / 8192 - 1);
+    }
 
     fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |k| {
