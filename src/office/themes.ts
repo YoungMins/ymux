@@ -1,8 +1,10 @@
 // The office view's themes: the same floor plan dressed as an office, a
 // cave, a castle, … A theme is a palette plus the pieces that fill each slot
 // of a room (back wall by pane kind, corner, floor pieces) and of the lobby;
-// its floors and walls are CSS (`.office--theme-<id>`). The chosen theme is
-// a per-machine view preference, kept in localStorage.
+// its floors and walls are CSS (`.office--theme-<id>`). Each workspace (a
+// floor of the office) is its own place: the theme picked for it is a
+// per-machine view preference, kept in localStorage, and a floor nobody
+// picked for gets the next place along (`defaultFloorTheme`).
 
 import * as art from "./pixelArt";
 import * as th from "./themeArt";
@@ -353,6 +355,53 @@ export function loadTheme(): ThemeId {
 export function saveTheme(id: ThemeId): void {
   try {
     localStorage.setItem(STORAGE_KEY, id);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+/// An icon per place, for the floor buttons.
+export const THEME_ICONS: Readonly<Record<ThemeId, string>> = {
+  office: "🏢",
+  cave: "⛏",
+  castle: "🏰",
+  ranch: "🌾",
+  space: "🚀",
+  sea: "🌊",
+  snow: "❄",
+  desert: "🏜",
+};
+
+const FLOORS_KEY = "ymux.office.floorThemes";
+
+/// The place a floor gets before anyone picks one: the first workspace keeps
+/// the theme chosen before themes were per floor, the others take the next
+/// places in turn.
+export function defaultFloorTheme(position: number, first: ThemeId): ThemeId {
+  if (position <= 1) return first;
+  const i = THEME_IDS.indexOf(first);
+  return THEME_IDS[(i + position - 1) % THEME_IDS.length];
+}
+
+function readFloors(): Record<string, ThemeId> {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(FLOORS_KEY) ?? "{}");
+    const out: Record<string, ThemeId> = {};
+    if (v && typeof v === "object" && !Array.isArray(v)) for (const [k, id] of Object.entries(v)) if (isThemeId(id)) out[k] = id;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/// The theme of workspace `wsId` (at 1-based `position` in the panel).
+export function loadFloorTheme(wsId: number, position: number): ThemeId {
+  return readFloors()[String(wsId)] ?? defaultFloorTheme(position, loadTheme());
+}
+
+export function saveFloorTheme(wsId: number, id: ThemeId): void {
+  try {
+    localStorage.setItem(FLOORS_KEY, JSON.stringify({ ...readFloors(), [String(wsId)]: id }));
   } catch {
     /* localStorage unavailable */
   }

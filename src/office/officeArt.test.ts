@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import * as art from "./pixelArt";
 import * as themeArt from "./themeArt";
-import { THEMES, THEME_IDS, isThemeId, type Piece, type Theme } from "./themes";
+import { THEMES, THEME_ICONS, THEME_IDS, defaultFloorTheme, isThemeId, type Piece, type Theme } from "./themes";
 import { deskSvg, iconSvg, lobbyProps, roomProps } from "./sprites";
 import { CHAR_FRAMES, characterFrames, characterSprite, petFrames, petSprite } from "./sheet";
 import { PET_H, PET_POSES, PET_SPECIES, PET_W } from "./hiPets";
@@ -158,6 +158,14 @@ describe("themes", () => {
     expect(roomProps("terminal", "cave")).toContain('class="px-flame"');
   });
 
+  it("gives each workspace its own place by default", () => {
+    expect(defaultFloorTheme(1, "castle")).toBe("castle");
+    expect(defaultFloorTheme(2, "office")).toBe("cave");
+    const places = [1, 2, 3, 4, 5, 6, 7, 8].map((p) => defaultFloorTheme(p, "office"));
+    expect(new Set(places).size).toBe(8);
+    for (const id of THEME_IDS) expect(THEME_ICONS[id]).toBeTruthy();
+  });
+
   it("falls back to the office for an unknown saved theme", () => {
     expect(isThemeId("cave")).toBe(true);
     expect(isThemeId("moon")).toBe(false);
@@ -256,6 +264,6 @@ describe("office games art", () => {
       expect(new Set(rows.map((r) => r.length)).size, name).toBe(1);
       for (const k of new Set(rows.join(""))) if (k !== ".") expect(FUN_PAL[k], `${name} "${k}"`).toBeDefined();
     }
-    for (const item of SHOP) if (item.place !== "pet") expect(FUN_ART[item.id], item.id).toBeDefined();
+    for (const item of SHOP) if (item.place !== "pet" && item.place !== "use") expect(FUN_ART[item.id], item.id).toBeDefined();
   });
 });

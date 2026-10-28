@@ -2164,6 +2164,7 @@ export class WorkspaceManager {
 
   openOffice(): void {
     if (this.office) return;
+    funStore.setActivity(this.activityConfig.enabled);
     // Embedded browsers are OS-level child webviews that would float over
     // the overlay; the popup counter hides them until it closes.
     pushPopup();
@@ -2196,6 +2197,7 @@ export class WorkspaceManager {
       },
       toolSince: (id) => officeLog.toolSince(id),
       statusSince: (id) => officeLog.statusSince(id),
+      toolCalls: (id) => officeLog.toolCalls(id),
       review: (id) => this.reviewFromOffice(id),
       launchers: (id) => this.officeLaunchers(id),
       launch: (id, command) => {
@@ -3036,6 +3038,7 @@ export class WorkspaceManager {
 
   setActivityConfig(next: ActivityConfig): void {
     this.config.activity = next;
+    funStore.setActivity(next.enabled);
     this.persistDebounced();
   }
 

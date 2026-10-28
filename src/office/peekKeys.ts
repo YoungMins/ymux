@@ -61,6 +61,11 @@ export function isInputOption(label: string): boolean {
   return INPUT_OPTION.test(label.trim());
 }
 
+/// A screen line without the box it may be drawn in (`│ ❯ 1. Yes │`).
+function unframe(line: string): string {
+  return line.replace(/^[\s│┃║|]+/, "").replace(/[\s│┃║|]+$/, "");
+}
+
 const OPTION = /^\s*([❯›>→▶])?\s*(\d{1,2})[.)]\s+(\S.*?)\s*$/;
 /// Rows from the bottom of the screen a menu is looked for in.
 const MENU_ROWS = 30;
@@ -74,7 +79,7 @@ export function menuOptions(lines: readonly string[]): MenuOption[] {
   let best: MenuOption[] = [];
   let run: MenuOption[] = [];
   for (const line of tail) {
-    const m = OPTION.exec(line);
+    const m = OPTION.exec(unframe(line));
     if (!m) continue;
     const opt = { n: m[2], label: m[3], selected: !!m[1], input: isInputOption(m[3]) };
     if (Number(opt.n) === run.length + 1) run.push(opt);
@@ -118,4 +123,28 @@ export function directKey(
     return c >= 97 && c <= 122 ? String.fromCharCode(c - 96) : null;
   }
   return ev.altKey ? `\x1b${ev.key}` : ev.key;
+}
+
+/// The question a menu at the bottom of `lines` answers: up to `max` lines
+/// just above its first choice, frames and blanks dropped ("Do you want to
+/// run `rm -rf build`?"). Empty when there is no menu.
+export function menuQuestion(lines: readonly string[], max = 3): string[] {
+  const opts = menuOptions(lines);
+  if (opts.length === 0) return [];
+  const tail = lines.slice(-30);
+  const first = tail.findIndex((l) => {
+    const m = /^[❯›>→▶]?\s*(\d{1,2})[.)]\s+/.exec(unframe(l));
+    return m !== null && m[1] === opts[0].n && l.includes(opts[0].label);
+  });
+  if (first <= 0) return [];
+  const out: string[] = [];
+  for (let i = first - 1; i >= 0 && out.length < max; i--) {
+    const text = tail[i].replace(/[│┃║╭╮╰╯─━═┌┐└┘|]/g, "").trim();
+    if (text === "") {
+      if (out.length > 0) break;
+      continue;
+    }
+    out.unshift(text);
+  }
+  return out;
 }

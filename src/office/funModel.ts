@@ -63,6 +63,17 @@ export interface FunStats {
   lastTest: Record<string, boolean>;
   /// The week whose report was last shown by itself.
   reportWeek: string;
+  /// Where the user put bought furniture: a room's id (null: the lobby) and
+  /// the spot in it, as shares of its width and height.
+  places: Record<string, Place>;
+  /// The activity log is on (quests that need it are only offered then).
+  activity: boolean;
+}
+
+export interface Place {
+  room: string | null;
+  x: number;
+  y: number;
 }
 
 export function emptyStats(): FunStats {
@@ -79,6 +90,8 @@ export function emptyStats(): FunStats {
     quests: { day: "", ids: [], done: [] },
     lastTest: {},
     reportWeek: "",
+    places: {},
+    activity: true,
   };
 }
 
@@ -111,6 +124,11 @@ export function normalizeStats(v: unknown): FunStats {
   const q = o.quests;
   if (q && typeof q.day === "string" && strs(q.ids) && strs(q.done)) s.quests = { day: q.day, ids: q.ids, done: q.done };
   s.reportWeek = typeof o.reportWeek === "string" ? o.reportWeek : "";
+  s.activity = typeof o.activity === "boolean" ? o.activity : true;
+  s.places = rec(o.places, (y): y is Place => {
+    const p = y as Place;
+    return !!p && typeof p === "object" && (p.room === null || typeof p.room === "string") && num(p.x) && num(p.y);
+  });
   return s;
 }
 
@@ -299,7 +317,9 @@ export const BOSS_COINS = 40;
 /// A turn this long brought a boss into the room.
 export const BOSS_MS = 10 * 60 * 1000;
 
-export type ItemPlace = "lobby" | "room" | "wall" | "pet";
+/// Where a bought item goes; "use" items are spent at once (a party,
+/// snacks, fireworks) and can be bought again.
+export type ItemPlace = "lobby" | "room" | "wall" | "pet" | "use";
 
 export interface ShopItem {
   id: string;
@@ -327,7 +347,30 @@ export const SHOP: readonly ShopItem[] = [
   { id: "penguin", price: 350, place: "pet" },
   { id: "turtle", price: 300, place: "pet" },
   { id: "blackcat", price: 250, place: "pet" },
+  { id: "snacks", price: 40, place: "use" },
+  { id: "party", price: 150, place: "use" },
+  { id: "fireworks", price: 220, place: "use" },
 ];
+
+/// This week's special: one furniture piece or pet at 30% off (seeded by
+/// the week, so it is the same all week).
+export function weeklySpecial(now: number): string {
+  const pool = SHOP.filter((i) => i.place !== "use");
+  let h = 2166136261;
+  for (const ch of weekKey(now)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return pool[h % pool.length].id;
+}
+
+/// What `id` costs at `now` (the weekly special is cheaper).
+export function priceOf(item: ShopItem, now: number): number {
+  return item.id === weeklySpecial(now) ? Math.round(item.price * 0.7) : item.price;
+}
+
+/// Achievement families counted from the activity log (diffs and tests):
+/// they stand still while the log is off.
+export const ACTIVITY_FAMILIES: ReadonlySet<string> = new Set(["add", "del", "files", "tests", "bughunt", "cleanup", "bigdiff", "tiny"]);
+/// Quest counters that need the activity log.
+const ACTIVITY_KEYS: ReadonlySet<string> = new Set(["add", "testPass"]);
 
 export function shopItem(id: string): ShopItem | undefined {
   return SHOP.find((i) => i.id === id);
@@ -374,10 +417,11 @@ export const QUEST_POOL: readonly QuestDef[] = [
 ];
 
 /// Three quests for `day`, the same all day (seeded by the date).
-export function questsFor(day: string): string[] {
+export function questsFor(day: string, activity = true): string[] {
   let h = 2166136261;
   for (const ch of day) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
-  const pool = [...QUEST_POOL];
+  // Without the activity log, no quest that only it could count.
+  const pool = QUEST_POOL.filter((q) => activity || !ACTIVITY_KEYS.has(q.key));
   const out: string[] = [];
   const keys = new Set<string>();
   while (out.length < 3 && pool.length > 0) {
@@ -562,7 +606,7 @@ export function settle(s: FunStats, now: number): FunResult {
   let coins = 0;
   // Today's quests.
   const today = dayKey(now);
-  if (s.quests.day !== today) s.quests = { day: today, ids: questsFor(today), done: [] };
+  if (s.quests.day !== today) s.quests = { day: today, ids: questsFor(today, s.activity), done: [] };
   const quests: string[] = [];
   for (const id of s.quests.ids) {
     const q = questDef(id);
@@ -592,12 +636,16 @@ export function settle(s: FunStats, now: number): FunResult {
   return { unlocked, quests, coins, boss: false };
 }
 
-/// Buy `id`: false when it is unknown, owned already or too dear.
-export function buy(s: FunStats, id: string): boolean {
+/// Buy `id` at `now`'s price: false when it is unknown, owned already or
+/// too dear. A "use" item is spent, not kept.
+export function buy(s: FunStats, id: string, now = Date.now()): boolean {
   const item = shopItem(id);
-  if (!item || s.owned.includes(id) || s.coins < item.price) return false;
-  s.coins -= item.price;
-  s.owned.push(id);
+  if (!item || s.owned.includes(id)) return false;
+  const price = priceOf(item, now);
+  if (s.coins < price) return false;
+  s.coins -= price;
+  if (item.place === "use") s.counters[`used:${id}`] = (s.counters[`used:${id}`] ?? 0) + 1;
+  else s.owned.push(id);
   return true;
 }
 

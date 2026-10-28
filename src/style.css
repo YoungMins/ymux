@@ -155,8 +155,13 @@ body,
 }
 
 .gutter:hover,
-.gutter:active {
+.gutter:active,
+.gutter--linked {
   background: var(--accent);
+}
+/* On a neighbour's line: the divider shows it has caught. */
+.gutter--snapped {
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .pane {
@@ -4349,10 +4354,10 @@ body,
 /* Mini: the whole office at half size in the bottom-right corner, the panes
    usable around it. A click brings it back; it flashes while anyone waits. */
 .office.office--mini {
-  inset: auto 12px 12px auto;
+  inset: auto var(--mini-r, 12px) var(--mini-b, 12px) auto;
   width: 960px;
   height: 600px;
-  transform: scale(0.5);
+  transform: scale(var(--mini-scale, 0.5));
   transform-origin: 100% 100%;
   box-shadow: 0 0 0 6px #12131d, 12px 12px 0 rgba(0, 0, 0, 0.35);
   cursor: pointer;
@@ -4360,6 +4365,20 @@ body,
 .office--mini .office__head > :not(.office__title):not(.office__queue):not(.office__floors):not(.office__mini-btn) { display: none; }
 .office--mini .office__head { font-size: 20px; }
 .office--mini .office__floor { margin: 4px; }
+.office--mini .office__head { cursor: move; touch-action: none; }
+.office__mini-grip { display: none; }
+.office--mini .office__mini-grip {
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  width: 40px;
+  height: 40px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, #f5c542 0 30%, transparent 30%);
+}
 .office--mini.office--alert { animation: office-mini-alert 0.8s steps(1) infinite; }
 @keyframes office-mini-alert { 50% { box-shadow: 0 0 0 6px #e05555, 12px 12px 0 rgba(0, 0, 0, 0.35); } }
 
@@ -6006,3 +6025,135 @@ body,
   pointer-events: none;
 }
 @keyframes office-star { to { left: 110%; transform: rotate(12deg) translateY(120px); opacity: 0; } }
+
+/* Mini: everything inside holds still (the corner flash is on the root). */
+.office--mini * { animation-play-state: paused !important; }
+
+/* The office's keys (`?`). */
+.office-help { width: min(520px, calc(100% - 16px)); }
+.office-help__list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--peek-screen);
+  color: var(--peek-screen-ink);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+  font-size: 12px;
+}
+.office-help__list dd { margin: 0; }
+.office-help__list kbd {
+  display: inline-block;
+  padding: 0 6px;
+  background: var(--peek-btn);
+  color: var(--peek-btn-ink);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+  font: inherit;
+  white-space: nowrap;
+}
+.office-boss--hit .office-sprite { animation: office-boss-hit 0.3s steps(2) 1; }
+@keyframes office-boss-hit { 50% { filter: brightness(2.2); transform: translateX(-2px); } }
+
+/* Decorating: bought furniture can be picked up and moved. */
+.office-decorate {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  z-index: 5003;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  transform: translateX(-50%);
+  background: #fff3b8;
+  color: var(--ink);
+  font-size: 12px;
+  box-shadow: 0 0 0 3px var(--ink), 4px 4px 0 rgba(0, 0, 0, 0.3);
+}
+.office-decorate[hidden] { display: none; }
+.office-prop--placed { right: auto; bottom: auto; }
+.office--decorating .fun-item { pointer-events: auto; cursor: grab; outline: 2px dashed #f5c542; outline-offset: 2px; }
+.office--decorating .fun-item--lifted { cursor: grabbing; z-index: 6000; opacity: 0.85; }
+.office-fun__deco { margin-left: 8px; }
+
+/* Office games: achievement filters, shop specials, record buttons. */
+.office-fun__tools { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 8px; }
+.office-fun__search {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: #2a1f1a;
+  background: #fff4d8;
+  border: 0;
+  box-shadow: 0 0 0 2px var(--peek-outline);
+}
+.office-fun__needs { font-size: 10px; color: #ffcf8a; }
+.office-fun__item { position: relative; }
+.office-fun__item-art { font-size: 34px; }
+.office-fun__special {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #e05555;
+  box-shadow: 0 0 0 2px var(--peek-outline);
+}
+.office-fun__record { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+
+/* Consumables on the floor: hearts, falling paper, fireworks. */
+.office-pop {
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  font-size: 16px;
+  pointer-events: none;
+  animation: office-pop 1.6s steps(8) forwards;
+}
+@keyframes office-pop {
+  from { transform: translate(-50%, 0); opacity: 1; }
+  to { transform: translate(-50%, -36px); opacity: 0; }
+}
+.office-rain, .office-fireworks { position: absolute; inset: 0; z-index: 30; pointer-events: none; overflow: hidden; }
+.office-rain i {
+  position: absolute;
+  top: -8px;
+  width: 6px;
+  height: 4px;
+  background: hsl(var(--hue, 40) 85% 60%);
+  animation: office-rain 2.4s steps(16) forwards;
+}
+@keyframes office-rain {
+  to { transform: translateY(110vh) rotate(540deg); }
+}
+.office-firework {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  opacity: 0;
+  color: hsl(var(--hue, 40) 90% 65%);
+  animation: office-firework 1.4s steps(7) forwards;
+}
+@keyframes office-firework {
+  0% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  100% {
+    opacity: 0;
+    box-shadow: 0 -40px 0 0 currentColor, 28px -28px 0 0 currentColor, 40px 0 0 0 currentColor, 28px 28px 0 0 currentColor,
+      0 40px 0 0 currentColor, -28px 28px 0 0 currentColor, -40px 0 0 0 currentColor, -28px -28px 0 0 currentColor;
+  }
+}
+
+/* A narrow window: the header drops its legend and meter names. */
+@media (max-width: 1100px) {
+  .office__legend { display: none; }
+  .office__meter-name { display: none; }
+}
+@media (max-width: 820px) {
+  .office__kinds { display: none; }
+}

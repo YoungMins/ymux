@@ -7,7 +7,10 @@ import { getLang, t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
 import {
   ACHIEVEMENTS,
+  ACTIVITY_FAMILIES,
   FAMILIES,
+  priceOf,
+  weeklySpecial,
   QUEST_COINS,
   SHOP,
   achievementById,
@@ -52,7 +55,16 @@ export interface FunActions {
   wear(id: string): void;
   setSettings(s: FunSettings): void;
   readReport(): void;
+  /// Start moving the bought furniture around, or put it all back.
+  decorate(): void;
+  resetPlaces(): void;
+  /// The record: copy it out, paste one in, or start over.
+  exportRecord(): void;
+  importRecord(): void;
+  resetRecord(): void;
 }
+
+type AchFilter = "all" | "got" | "near" | "locked";
 
 export class FunPanel {
   readonly element: HTMLElement;
@@ -61,6 +73,8 @@ export class FunPanel {
   private tab: FunTab = "achievements";
   private stats: FunStats | null = null;
   private settings: FunSettings | null = null;
+  private filter: AchFilter = "all";
+  private query = "";
 
   constructor(private readonly actions: FunActions) {
     this.element = document.createElement("div");
@@ -166,10 +180,47 @@ export class FunPanel {
       const a = achievementById(s.title);
       if (a) head.textContent += ` · ${t("fun.wearing")}: ${a.family.icon} ${achievementName(a)}`;
     }
+    // Filters and a search box.
+    const tools = document.createElement("div");
+    tools.className = "office-fun__tools";
+    for (const f of ["all", "got", "near", "locked"] as const) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `office-fun__tab${this.filter === f ? " office-fun__tab--on" : ""}`;
+      b.textContent = t(`fun.filter.${f}`);
+      b.addEventListener("click", () => {
+        this.filter = f;
+        this.paint();
+      });
+      tools.appendChild(b);
+    }
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "office-fun__search";
+    search.placeholder = t("fun.search");
+    search.value = this.query;
+    search.addEventListener("keydown", (ev) => ev.stopPropagation());
+    search.addEventListener("input", () => {
+      this.query = search.value;
+      this.paint();
+      const again = this.body.querySelector<HTMLInputElement>(".office-fun__search");
+      again?.focus();
+      again?.setSelectionRange(again.value.length, again.value.length);
+    });
+    tools.appendChild(search);
     const grid = document.createElement("div");
     grid.className = "office-fun__grid";
+    const q = this.query.trim().toLowerCase();
+    const shown = ACHIEVEMENTS.filter((a) => {
+      const got = s.unlocked[a.id] !== undefined;
+      if (this.filter === "got" && !got) return false;
+      if (this.filter === "locked" && got) return false;
+      if (this.filter === "near" && (got || progressOf(s, a, now).share < 0.5)) return false;
+      if (!q) return true;
+      return `${achievementName(a)} ${t(`fun.achd.${a.family.id}`)}`.toLowerCase().includes(q);
+    });
     // Unlocked first, then the closest to unlocking.
-    const list = [...ACHIEVEMENTS].sort((a, b) => {
+    const list = [...shown].sort((a, b) => {
       const ua = s.unlocked[a.id] !== undefined;
       const ub = s.unlocked[b.id] !== undefined;
       if (ua !== ub) return ua ? -1 : 1;
@@ -199,6 +250,13 @@ export class FunPanel {
         bar.appendChild(f);
         bar.title = `${num(Math.min(p.value, a.target))} / ${num(a.target)}`;
         text.appendChild(bar);
+        // Counted from the activity log: say so while it is off.
+        if (!s.activity && ACTIVITY_FAMILIES.has(a.family.id)) {
+          const note = document.createElement("span");
+          note.className = "office-fun__needs";
+          note.textContent = `📋 ${t("fun.needsLog")}`;
+          text.appendChild(note);
+        }
       }
       const side = document.createElement("div");
       side.className = "office-fun__ach-side";
@@ -214,13 +272,29 @@ export class FunPanel {
       card.append(icon, text, side);
       grid.appendChild(card);
     }
-    return [head, grid];
+    return [head, tools, grid];
   }
 
   private shop(s: FunStats): HTMLElement[] {
     const head = this.note(`🪙 ${fill(t("fun.coins"), { n: num(s.coins) })}`);
+    if (s.owned.some((id) => SHOP.find((i) => i.id === id)?.place !== "pet")) {
+      const deco = document.createElement("button");
+      deco.type = "button";
+      deco.className = "office-fun__btn office-fun__deco";
+      deco.textContent = `🖌 ${t("fun.decorate")}`;
+      deco.addEventListener("click", () => this.actions.decorate());
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "office-fun__btn office-fun__deco";
+      reset.textContent = t("fun.resetPlaces");
+      reset.disabled = Object.keys(s.places).length === 0;
+      reset.addEventListener("click", () => this.actions.resetPlaces());
+      head.append(deco, reset);
+    }
     const out: HTMLElement[] = [head];
-    for (const place of ["lobby", "room", "wall", "pet"] as ItemPlace[]) {
+    const now = Date.now();
+    const special = weeklySpecial(now);
+    for (const place of ["use", "lobby", "room", "wall", "pet"] as ItemPlace[]) {
       const h = document.createElement("div");
       h.className = "office-fun__section";
       h.textContent = t(`fun.place.${place}`);
@@ -233,15 +307,23 @@ export class FunPanel {
         const art = document.createElement("div");
         art.className = "office-fun__item-art";
         if (place === "pet") art.appendChild(petSprite(item.id as PetSpecies));
+        else if (place === "use") art.textContent = item.id === "snacks" ? "🍩" : item.id === "party" ? "🎉" : "🎆";
         else art.innerHTML = funProp(item.id, "");
+        const price = priceOf(item, now);
+        if (item.id === special && !owned) {
+          const tag = document.createElement("span");
+          tag.className = "office-fun__special";
+          tag.textContent = t("fun.special");
+          card.appendChild(tag);
+        }
         const name = document.createElement("span");
         name.className = "office-fun__item-name";
         name.textContent = t(`fun.item.${item.id}`);
         const b = document.createElement("button");
         b.type = "button";
         b.className = "office-fun__btn";
-        b.disabled = owned || s.coins < item.price;
-        b.textContent = owned ? t("fun.owned") : `${t("fun.buy")} · 🪙${num(item.price)}`;
+        b.disabled = owned || s.coins < price;
+        b.textContent = owned ? t("fun.owned") : `${t("fun.buy")} · 🪙${num(price)}`;
         b.addEventListener("click", () => this.actions.buy(item.id));
         card.append(art, name, b);
         grid.appendChild(card);
@@ -351,7 +433,7 @@ export class FunPanel {
   private settingsView(settings: FunSettings): HTMLElement {
     const box = document.createElement("div");
     box.className = "office-fun__settings";
-    for (const key of ["life", "ambience", "banners"] as const) {
+    for (const key of ["life", "ambience", "banners", "sound"] as const) {
       const label = document.createElement("label");
       const cb = document.createElement("input");
       cb.type = "checkbox";
@@ -360,6 +442,21 @@ export class FunPanel {
       label.append(cb, ` ${t(`fun.settings.${key}`)}`);
       box.appendChild(label);
     }
+    const row = document.createElement("div");
+    row.className = "office-fun__record";
+    for (const [k, act] of [
+      ["export", () => this.actions.exportRecord()],
+      ["import", () => this.actions.importRecord()],
+      ["reset", () => this.actions.resetRecord()],
+    ] as const) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "office-fun__btn";
+      b.textContent = t(`fun.${k}`);
+      b.addEventListener("click", act);
+      row.appendChild(b);
+    }
+    box.appendChild(row);
     return box;
   }
 }

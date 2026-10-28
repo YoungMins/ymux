@@ -13,6 +13,8 @@ import {
   emptyStats,
   normalizeStats,
   pizzaTime,
+  priceOf,
+  questDef,
   questsFor,
   reportDue,
   roman,
@@ -21,6 +23,7 @@ import {
   toolKind,
   weekKey,
   weekReport,
+  weeklySpecial,
 } from "./funModel";
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -157,5 +160,38 @@ describe("quests and the weekly report", () => {
   it("survives whatever is in storage", () => {
     expect(normalizeStats(null).coins).toBe(0);
     expect(normalizeStats({ coins: -5, counters: { a: "x", b: 2 } }).counters).toEqual({ b: 2 });
+  });
+});
+
+describe("consumables and the weekly special", () => {
+  it("spends coins on a consumable without owning it", () => {
+    const s = emptyStats();
+    s.coins = 100;
+    const now = at(2026, 10, 28);
+    expect(buy(s, "snacks", now)).toBe(true);
+    expect(buy(s, "snacks", now)).toBe(true);
+    expect(s.owned).not.toContain("snacks");
+    expect(s.counters["used:snacks"]).toBe(2);
+    expect(s.coins).toBe(20);
+  });
+
+  it("sells one piece of furniture 30% off each week, the same all week", () => {
+    const mon = at(2026, 10, 26);
+    const id = weeklySpecial(mon);
+    expect(weeklySpecial(at(2026, 10, 30))).toBe(id);
+    const item = SHOP.find((i) => i.id === id)!;
+    expect(item.place).not.toBe("use");
+    expect(priceOf(item, mon)).toBe(Math.round(item.price * 0.7));
+    const other = SHOP.find((i) => i.id !== id)!;
+    expect(priceOf(other, mon)).toBe(other.price);
+  });
+
+  it("skips quests only the activity log could count while it is off", () => {
+    for (let d = 1; d <= 28; d++) {
+      const day = `2026-10-${String(d).padStart(2, "0")}`;
+      const keys = questsFor(day, false).map((id) => questDef(id)!.key);
+      expect(keys).not.toContain("add");
+      expect(keys).not.toContain("testPass");
+    }
   });
 });

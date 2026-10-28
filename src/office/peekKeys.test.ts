@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PEEK_KEYS, directKey, isInputOption, keyBytes, menuOptions } from "./peekKeys";
+import { PEEK_KEYS, directKey, isInputOption, keyBytes, menuOptions, menuQuestion } from "./peekKeys";
 import { peekBox } from "./OfficePeek";
 
 describe("keyBytes", () => {
@@ -112,5 +112,13 @@ describe("isInputOption", () => {
     for (const l of ["Yes", "Yes, and don't ask again this session", "Plan mode", "Otherwise skip"]) {
       expect(isInputOption(l), l).toBe(false);
     }
+  });
+});
+
+describe("menuQuestion", () => {
+  it("finds the lines a menu answers, without frames", () => {
+    const screen = ["older output", "", "╭──────────╮", "│ Bash command │", "│   rm -rf build │", "│ Do you want to proceed? │", "│ ❯ 1. Yes │", "│   2. No │"];
+    expect(menuQuestion(screen)).toEqual(["Bash command", "rm -rf build", "Do you want to proceed?"]);
+    expect(menuQuestion(["just text"])).toEqual([]);
   });
 });

@@ -72,6 +72,8 @@ export class OfficeLog {
   private mail = new Map<Uuid, Mail[]>();
   private statuses = new Map<Uuid, { status: string; at: number }>();
   private tools = new Map<Uuid, { tool: string | null; at: number }>();
+  /// Tool calls seen in each pane's current working turn.
+  private calls = new Map<Uuid, number>();
   private listeners = new Set<() => void>();
   private nextId = 1;
 
@@ -136,11 +138,23 @@ export class OfficeLog {
     if (status === null) {
       this.statuses.delete(paneId);
       this.tools.delete(paneId);
+      this.calls.delete(paneId);
       return;
     }
-    if (this.statuses.get(paneId)?.status !== status) this.statuses.set(paneId, { status, at: this.now() });
+    if (this.statuses.get(paneId)?.status !== status) {
+      this.statuses.set(paneId, { status, at: this.now() });
+      if (status === "working") this.calls.set(paneId, 0);
+    }
     const t = this.tools.get(paneId);
-    if (!t || t.tool !== tool) this.tools.set(paneId, { tool, at: this.now() });
+    if (!t || t.tool !== tool) {
+      this.tools.set(paneId, { tool, at: this.now() });
+      if (tool) this.calls.set(paneId, (this.calls.get(paneId) ?? 0) + 1);
+    }
+  }
+
+  /// Tool calls (changes of tool) in `paneId`'s current working turn.
+  toolCalls(paneId: Uuid): number {
+    return this.calls.get(paneId) ?? 0;
   }
 
   /// When the agent in `paneId` entered its current status, or null.
