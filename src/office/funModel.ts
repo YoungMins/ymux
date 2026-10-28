@@ -601,6 +601,14 @@ export function applyEvent(s: FunStats, ev: FunEvent, now: number): FunResult {
 }
 
 /// Today's quests and the achievements `s` has reached, paid out.
+/// An event that would change nothing: a peak no higher than the best so
+/// far, with nothing started. The store skips it (no save, no re-check).
+export function isNoop(s: Readonly<FunStats>, ev: FunEvent): boolean {
+  if (ev.t === "concurrent") return ev.n <= (s.maxes.concurrent ?? 0);
+  if (ev.t === "subs") return ev.started === 0 && ev.n <= (s.maxes.subs ?? 0);
+  return false;
+}
+
 export function settle(s: FunStats, now: number): FunResult {
   const d = day(s, now);
   let coins = 0;

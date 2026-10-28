@@ -20,6 +20,7 @@ function stub(): { source: OfficeSource; opened: string[]; refresh: () => void }
   const source: OfficeSource = {
     input: () => ({ root, agents, statusOf: (id: string) => (status[id] ?? "idle") as never, labelOf: (id: string) => id, focused: "A", mailOf: () => [] }) as never,
     workspaceName: () => "1 · test",
+    isTerminal: () => true,
     floors: () => [{ id: 1, label: "1", position: 1, waiting: 1, working: 1 }],
     activeFloor: () => 1,
     floorOf: () => 1,

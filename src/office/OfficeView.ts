@@ -116,6 +116,8 @@ export interface OfficeSource extends PeekSource {
   /// Workspace `wsId`, as the model wants it.
   input(wsId: number): OfficeInput;
   workspaceName(wsId: number): string;
+  /// The pane is a terminal (it has a screen to peek at). Cheap: no text.
+  isTerminal(paneId: Uuid): boolean;
   /// Every workspace, and which one is active.
   floors(): OfficeFloor[];
   activeFloor(): number;
@@ -246,6 +248,14 @@ export class OfficeView {
   private readonly nextErrand = new Map<string, number>();
   private miniOn = false;
   private miniPlace: MiniPlace = loadMini();
+  /// Per waiting pane: whether its screen only asks a yes, as of its last output.
+  private readonly yesCache = new Map<Uuid, { at: number; yes: boolean }>();
+  /// This render's floors, their places, and what the header last showed.
+  private floorsNow: OfficeFloor[] | null = null;
+  private readonly themesNow = new Map<number, ThemeId>();
+  private furnitureSig = "";
+  private floorsSig = "";
+  private kindsSig = "";
   private decorating = false;
   private readonly decorateBar: HTMLElement;
   private readonly helpEl: HTMLElement;
@@ -644,8 +654,12 @@ export class OfficeView {
 
   /// The place a workspace is, by its id.
   private floorTheme(wsId: number): ThemeId {
-    const f = this.source.floors().find((x) => x.id === wsId);
-    return loadFloorTheme(wsId, f?.position ?? 1);
+    const known = this.themesNow.get(wsId);
+    if (known) return known;
+    const f = (this.floorsNow ?? this.source.floors()).find((x) => x.id === wsId);
+    const id = loadFloorTheme(wsId, f?.position ?? 1);
+    this.themesNow.set(wsId, id);
+    return id;
   }
 
   /// Dress the office as the floor on show's place, if it changed.
@@ -693,8 +707,16 @@ export class OfficeView {
   // ── Rendering ─────────────────────────────────────────────────────────
 
   private render(): void {
+    // One walk of the workspaces per render; the floor buttons and themes
+    // read this snapshot.
+    this.floorsNow = this.source.floors();
+    this.themesNow.clear();
+    this.furnitureSig = (() => {
+      const st = funStore.get();
+      return `${st.owned.join(",")}|${JSON.stringify(st.places ?? {})}`;
+    })();
     if (this.followActive) this.floorId = this.source.activeFloor();
-    if (!this.source.floors().some((f) => f.id === this.floorId)) this.floorId = this.source.activeFloor();
+    if (!this.floorsNow.some((f) => f.id === this.floorId)) this.floorId = this.source.activeFloor();
     this.followTheme();
     const input = { ...this.source.input(this.floorId), heroOf: (id: Uuid) => this.heroOf(id) };
     const w = this.floor.clientWidth;
@@ -743,6 +765,9 @@ export class OfficeView {
   /// One colour chip per agent kind on the floor (who is who).
   private renderKinds(): void {
     const kinds = [...new Set(this.model.chars.filter((c) => c.role === "lead").map((c) => c.kind))];
+    const sig = kinds.join(",");
+    if (sig === this.kindsSig) return;
+    this.kindsSig = sig;
     this.kindsEl.replaceChildren(
       ...kinds.map((k) => {
         const chip = document.createElement("span");
@@ -759,7 +784,6 @@ export class OfficeView {
   private roomSig(room: RoomModel, index: number): string {
     const r = room.rect;
     const n = (v: number) => v.toFixed(4);
-    const st = funStore.get();
     return JSON.stringify([
       this.theme,
       index,
@@ -769,8 +793,7 @@ export class OfficeView {
       room.focused,
       [n(r.x), n(r.y), n(r.w), n(r.h)],
       room.desks.map((d) => [d.paneId, d.label, d.status, d.active, n(d.at.x), n(d.at.y), this.canPeek(d.paneId)]),
-      st.owned.join(","),
-      JSON.stringify(st.places ?? {}),
+      this.furnitureSig,
     ]);
   }
 
@@ -991,7 +1014,7 @@ export class OfficeView {
         if (!moved) return;
         saveMini(this.miniPlace);
         // The click that ends a drag is not a "bring it back".
-        window.addEventListener("click", (e) => e.stopPropagation(), { capture: true, once: true });
+        swallowNextClick();
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
@@ -1022,9 +1045,12 @@ export class OfficeView {
 
   /// One button per workspace: its number, red with how many wait there.
   private renderFloors(): void {
-    const floors = this.source.floors();
+    const floors = this.floorsNow ?? this.source.floors();
     this.floorsEl.hidden = floors.length < 2;
     if (floors.length < 2) return;
+    const sig = JSON.stringify([this.floorId, floors.map((f) => [f.id, f.position, f.label, f.waiting, f.working, this.floorTheme(f.id)])]);
+    if (sig === this.floorsSig) return;
+    this.floorsSig = sig;
     this.floorsEl.replaceChildren(
       ...floors.map((f) => {
         const b = document.createElement("button");
@@ -1107,6 +1133,25 @@ export class OfficeView {
   }
 
   /// Every waiting agent whose screen asks a plain yes/no, with its "yes".
+  /// How many waiting agents only ask a yes, for the button: each screen is
+  /// read again only when its terminal printed something since.
+  private approvableCount(): number {
+    let n = 0;
+    const live = new Set<Uuid>();
+    for (const w of this.waitingNow) {
+      live.add(w.paneId);
+      const at = this.source.outputAt(w.paneId) ?? 0;
+      let hit = this.yesCache.get(w.paneId);
+      if (!hit || hit.at !== at) {
+        hit = { at, yes: approveOption(this.source.screen(w.paneId)) !== null };
+        this.yesCache.set(w.paneId, hit);
+      }
+      if (hit.yes) n++;
+    }
+    for (const id of this.yesCache.keys()) if (!live.has(id)) this.yesCache.delete(id);
+    return n;
+  }
+
   private approvable(): { w: Waiting; n: string; label: string }[] {
     const out: { w: Waiting; n: string; label: string }[] = [];
     for (const w of this.waitingNow) {
@@ -1158,7 +1203,7 @@ export class OfficeView {
     this.queueBtn.hidden = n === 0;
     this.queueBtn.textContent = `⚠ ${fill(t("office.queue"), { n })}`;
     this.element.classList.toggle("office--alert", n > 0);
-    const yes = n >= 2 ? this.approvable().length : 0;
+    const yes = n >= 2 ? this.approvableCount() : 0;
     this.approveBtn.hidden = yes < 2;
     this.approveBtn.textContent = `✓ ${fill(t("office.approveAll"), { n: yes })}`;
     if (this.peek.paneId) {
@@ -1347,12 +1392,7 @@ export class OfficeView {
       ghost.remove();
       // The click that ends a drag lands on the floor, which would close the
       // peek this opens: swallow it.
-      const swallow = (c: MouseEvent) => {
-        c.stopPropagation();
-        c.preventDefault();
-      };
-      window.addEventListener("click", swallow, { capture: true, once: true });
-      setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+      swallowNextClick();
       const t2 = target(ev);
       if (t2?.dataset.pane) {
         this.boardPanel.hidden = true;
@@ -1986,7 +2026,7 @@ export class OfficeView {
   // ── Peek: a room's terminal, read and answered in place ───────────────
 
   private canPeek(paneId: Uuid | undefined): boolean {
-    return paneId !== undefined && this.source.screen(paneId) !== null;
+    return paneId !== undefined && this.source.isTerminal(paneId);
   }
 
   /// Peek at a terminal; any other pane kind is opened as before.
@@ -2686,4 +2726,15 @@ function clip(s: string, n: number): string {
 /// Looks like a record export (an object with counters).
 function isRecord(v: unknown): boolean {
   return !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { counters?: unknown }).counters === "object";
+}
+
+/// Swallow the click a drag's pointerup produces, and only that one: a
+/// release with no click (outside the window) must not eat a later click.
+function swallowNextClick(): void {
+  const swallow = (c: MouseEvent): void => {
+    c.stopPropagation();
+    c.preventDefault();
+  };
+  window.addEventListener("click", swallow, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
 }

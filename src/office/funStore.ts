@@ -4,7 +4,7 @@
 // the office view (reviews, answers, pets, …). What an event unlocks is kept
 // until the office shows it.
 
-import { applyEvent, buy, settle, shopItem, emptyStats, normalizeStats, type Achievement, type FunEvent, type FunStats, type Place } from "./funModel";
+import { applyEvent, buy, isNoop, settle, shopItem, emptyStats, normalizeStats, type Achievement, type FunEvent, type FunStats, type Place } from "./funModel";
 
 const KEY = "ymux.office.fun";
 const SETTINGS_KEY = "ymux.office.funSettings";
@@ -54,6 +54,8 @@ export class FunStore {
   }
 
   record(ev: FunEvent): void {
+    // Sent on every agent snapshot while agents work; most change nothing.
+    if (isNoop(this.stats, ev)) return;
     const before = this.summary();
     const r = applyEvent(this.stats, ev, this.now());
     this.pending.unlocked.push(...r.unlocked);

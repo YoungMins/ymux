@@ -11,6 +11,7 @@ import {
   dayKey,
   dayPart,
   emptyStats,
+  isNoop,
   normalizeStats,
   pizzaTime,
   priceOf,
@@ -193,5 +194,19 @@ describe("consumables and the weekly special", () => {
       expect(keys).not.toContain("add");
       expect(keys).not.toContain("testPass");
     }
+  });
+});
+
+describe("isNoop", () => {
+  it("skips peaks that do not beat the best so far", () => {
+    const s = emptyStats();
+    expect(isNoop(s, { t: "concurrent", n: 2 })).toBe(false);
+    applyEvent(s, { t: "concurrent", n: 3 }, at(2026, 10, 28));
+    expect(isNoop(s, { t: "concurrent", n: 3 })).toBe(true);
+    expect(isNoop(s, { t: "concurrent", n: 4 })).toBe(false);
+    applyEvent(s, { t: "subs", n: 2, started: 2 }, at(2026, 10, 28));
+    expect(isNoop(s, { t: "subs", n: 2, started: 0 })).toBe(true);
+    expect(isNoop(s, { t: "subs", n: 1, started: 1 })).toBe(false);
+    expect(isNoop(s, { t: "tool", tool: "Bash" })).toBe(false);
   });
 });

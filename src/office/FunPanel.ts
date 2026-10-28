@@ -131,6 +131,18 @@ export class FunPanel {
   private paint(): void {
     const s = this.stats;
     if (!s || !this.settings) return;
+    // A repaint (a keystroke, or a turn finishing meanwhile) keeps typing in
+    // the search box going.
+    const typing = document.activeElement instanceof HTMLInputElement && document.activeElement.classList.contains("office-fun__search") ? document.activeElement.selectionStart : null;
+    this.paintTabs(s, this.settings);
+    if (typing !== null) {
+      const again = this.body.querySelector<HTMLInputElement>(".office-fun__search");
+      again?.focus();
+      again?.setSelectionRange(typing, typing);
+    }
+  }
+
+  private paintTabs(s: FunStats, settings: FunSettings): void {
     this.tabsEl.replaceChildren(
       ...TABS.map((x) => {
         const b = document.createElement("button");
@@ -158,7 +170,7 @@ export class FunPanel {
         this.body.replaceChildren(this.report(s));
         break;
       case "settings":
-        this.body.replaceChildren(this.settingsView(this.settings));
+        this.body.replaceChildren(this.settingsView(settings));
         break;
     }
     paintProps(this.body);
@@ -203,9 +215,6 @@ export class FunPanel {
     search.addEventListener("input", () => {
       this.query = search.value;
       this.paint();
-      const again = this.body.querySelector<HTMLInputElement>(".office-fun__search");
-      again?.focus();
-      again?.setSelectionRange(again.value.length, again.value.length);
     });
     tools.appendChild(search);
     const grid = document.createElement("div");

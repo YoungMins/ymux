@@ -2220,6 +2220,7 @@ export class WorkspaceManager {
       },
       openPane: (id) => this.closeOffice(id),
       close: () => this.closeOffice(),
+      isTerminal: (id) => this.findPaneById(id) instanceof TerminalPane,
       screen: (id) => {
         const pane = this.findPaneById(id);
         return pane instanceof TerminalPane ? pane.screenText() : null;
@@ -2414,6 +2415,7 @@ export class WorkspaceManager {
   /// The activity log's account of `paneId`'s turn, once its worker has
   /// written it, onto the board's note. Quietly nothing while the log is off.
   private describeTurnSoon(paneId: Uuid): void {
+    if (!this.activityConfig.enabled) return;
     const at = Date.now();
     setTimeout(() => {
       void activityApi
