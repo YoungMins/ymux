@@ -176,6 +176,9 @@ export const ICONS: Readonly<Record<string, readonly string[]>> = {
   gear: ["o.ooo.o", ".oKKKo.", "oKKoKKo", "oKo.oKo", "oKKoKKo", ".oKKKo.", "o.ooo.o"],
   globe: [".ooooo.", "obgbbgo", "oggbbbo", "obggbgo", "obbggbo", ".ooooo."],
   pencil: [".....oo", "....oyo", "...oyo.", "..oyo..", ".oyo...", "oao....", "oo....."],
+  coffee: [".o.o...", "..o.o..", "ooooo..", "owwwooo", "owwwo.o", "owwwooo", ".ooo..."],
+  star: ["...o...", "..oyo..", "ooyyyoo", ".oyyyo.", ".oyoyo.", "oo...oo"],
+  cloud: ["..ooo..", ".obbbo.", "obbbbbo", "ooooooo", ".b.b.b.", "b.b.b.."],
 };
 
 /// A pennant with a check, flown outside a room whose agent finished.

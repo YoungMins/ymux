@@ -106,6 +106,7 @@ import { officeLog } from "../office/officeLog";
 import type { PeekSendResult } from "../office/OfficePeek";
 import { keyBytes } from "../office/peekKeys";
 import { addTask } from "../office/heroModel";
+import { funStore } from "../office/funStore";
 import type { OfficeFloor } from "../office/OfficeView";
 import type { Waiting } from "../office/officeQueue";
 import { launchableAgents } from "./agentLaunch";
@@ -2194,6 +2195,7 @@ export class WorkspaceManager {
         return pane instanceof TerminalPane ? pane.outputAt : null;
       },
       toolSince: (id) => officeLog.toolSince(id),
+      statusSince: (id) => officeLog.statusSince(id),
       review: (id) => this.reviewFromOffice(id),
       launchers: (id) => this.officeLaunchers(id),
       launch: (id, command) => {
@@ -2386,14 +2388,25 @@ export class WorkspaceManager {
         else if (before === "working") officeLog.agentStopped(id);
         if (after === "done") {
           const started = before === "working" ? officeLog.statusSince(id) : null;
-          officeLog.done(id, this.tabLabelFor(id), lead?.kind ?? null, started === null ? null : Date.now() - started);
+          const ms = started === null ? null : Date.now() - started;
+          officeLog.done(id, this.tabLabelFor(id), lead?.kind ?? null, ms);
+          funStore.record({ t: "turn", kind: lead?.kind ?? "agent", ms, at: Date.now() });
           // A finished task is experience for the account's hero.
           addTask(this.getPaneSpec(id)?.account || this.workspaceAccountOfPane(id) || "");
           this.describeTurnSoon(id);
         }
       }
+      if (lead?.tool && lead.tool !== prev[id]?.lead?.tool) funStore.record({ t: "tool", tool: lead.tool });
       officeLog.track(id, lead?.status ?? null, lead?.tool ?? null);
+      // Helpers: how many work for this lead now, and how many are new.
+      const subs = next[id]?.subagents ?? [];
+      const known = new Set((prev[id]?.subagents ?? []).map((x) => x.id));
+      const started = subs.filter((x) => !known.has(x.id)).length;
+      const busy = subs.filter((x) => x.status === "working").length;
+      if (started > 0 || busy > 0) funStore.record({ t: "subs", n: busy, started });
     }
+    const working = Object.values(next).filter((a) => a?.lead?.status === "working").length;
+    if (working >= 2) funStore.record({ t: "concurrent", n: working });
   }
 
   /// The activity log's account of `paneId`'s turn, once its worker has
@@ -2410,13 +2423,17 @@ export class WorkspaceManager {
           const stats = (d.stats ?? {}) as Record<string, unknown>;
           const summary = (d.summary ?? {}) as Record<string, unknown>;
           const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+          const test = (d.test ?? null) as Record<string, unknown> | null;
+          const passed = test && typeof test.passed === "boolean" ? test.passed : null;
           officeLog.describeTurn(paneId, {
             headline: typeof summary.headline === "string" ? summary.headline : "",
             durationMs: num(d.duration_ms),
             files: num(stats.files),
             add: num(stats.insertions),
             del: num(stats.deletions),
+            test: passed,
           });
+          funStore.record({ t: "facts", pane: paneId, files: num(stats.files), add: num(stats.insertions), del: num(stats.deletions), test: passed });
         })
         .catch(() => {});
     }, 2500);

@@ -12,6 +12,8 @@ import { TIER } from "./heroTiers";
 import { Raster, ellipse, paint, ramp } from "./paint";
 import { hiPiece, scale3x } from "./hiProps";
 import { WALL_FACE, surfaceTile } from "./hiFloors";
+import { FUN_ART, FUN_PAL } from "./funArt";
+import { SHOP } from "./funModel";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
 const same = (a: Raster, b: Raster) => a.px.every((c, i) => c === b.px[i]);
@@ -245,5 +247,15 @@ describe("hi-res floors", () => {
       }
     }
     expect(surfaceTile("office", "room", "git")).not.toBe(surfaceTile("office", "room", "terminal"));
+  });
+});
+
+describe("office games art", () => {
+  it("draws every shop piece and prop rectangular, with known colours", () => {
+    for (const [name, rows] of Object.entries(FUN_ART)) {
+      expect(new Set(rows.map((r) => r.length)).size, name).toBe(1);
+      for (const k of new Set(rows.join(""))) if (k !== ".") expect(FUN_PAL[k], `${name} "${k}"`).toBeDefined();
+    }
+    for (const item of SHOP) if (item.place !== "pet") expect(FUN_ART[item.id], item.id).toBeDefined();
   });
 });

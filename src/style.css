@@ -5785,3 +5785,224 @@ body,
 
 /* Top-bar toggle, lit while the office is open. */
 .workspace-bar__icon-btn--on { color: var(--accent); }
+
+/* ── Office games: the fun bar, the games window, banners ────────────── */
+.office__funbar { display: flex; gap: 4px; flex: 0 0 auto; }
+.office__fun-btn {
+  padding: 1px 6px;
+  border: 0;
+  background: #3d4058;
+  color: #f4ecd8;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px #12131d;
+  white-space: nowrap;
+}
+.office__fun-btn:hover { background: #4a4e6a; }
+
+.office-fun__tabs { flex: 1 1 auto; display: flex; gap: 4px; flex-wrap: wrap; }
+.office-fun__tab {
+  padding: 1px 8px;
+  border: 0;
+  background: var(--peek-btn);
+  color: var(--peek-btn-ink);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--peek-outline);
+  filter: saturate(0.5) brightness(0.85);
+}
+.office-fun__tab--on { filter: none; box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px #f5c542; }
+.office-fun__body { min-height: 280px; max-height: 62vh; }
+.office-fun__section { margin-top: 6px; font-size: 11px; color: var(--peek-head-ink); letter-spacing: 0.08em; }
+.office-fun__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
+.office-fun__ach {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--peek-screen);
+  color: var(--peek-screen-ink);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+  opacity: 0.6;
+  font-size: 11px;
+}
+.office-fun__ach--got { opacity: 1; }
+.office-fun__ach--worn { box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px #f5c542; }
+.office-fun__ach-icon { flex: 0 0 auto; font-size: 18px; line-height: 1; filter: grayscale(1); }
+.office-fun__ach--got .office-fun__ach-icon { filter: none; }
+.office-fun__ach-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.office-fun__ach-text b { font-size: 12px; }
+.office-fun__ach-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; color: #f5c542; font-size: 10px; }
+.office-fun__bar { position: relative; height: 6px; background: rgba(0, 0, 0, 0.4); box-shadow: 0 0 0 1px var(--peek-outline); }
+.office-fun__bar i { position: absolute; inset: 0 auto 0 0; background: repeating-linear-gradient(90deg, #5be37a 0 3px, #3fbf5f 3px 4px); }
+.office-fun__btn {
+  padding: 1px 6px;
+  border: 0;
+  background: var(--peek-btn);
+  color: var(--peek-btn-ink);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--peek-outline), inset -2px -2px 0 var(--peek-btn-lo);
+}
+.office-fun__btn:disabled { cursor: default; filter: saturate(0.3) brightness(0.8); }
+.office-fun__shop { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.office-fun__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  background: var(--peek-screen);
+  color: var(--peek-screen-ink);
+  box-shadow: 0 0 0 2px var(--peek-outline);
+  font-size: 11px;
+}
+.office-fun__item--owned { box-shadow: 0 0 0 2px var(--peek-outline), 0 0 0 4px #5be37a; }
+.office-fun__item-art { height: 72px; display: flex; align-items: flex-end; justify-content: center; }
+.office-fun__item-art .hp { position: relative; }
+.office-fun__item-art .office-sprite { --fw: 40px; --fh: 28px; }
+.office-fun__item-art .px-sheet { --f: 2; }
+.office-fun__item-name { text-align: center; }
+.office-fun__paper {
+  padding: 12px 16px;
+  background: #f4ecd8;
+  color: #2a1f1a;
+  box-shadow: 0 0 0 3px #2a1f1a;
+  font-size: 12px;
+}
+.office-fun__paper h3 { margin: 0; font-size: 20px; text-align: center; letter-spacing: 0.08em; border-bottom: 3px double #2a1f1a; }
+.office-fun__paper h4 { margin: 10px 0 4px; font-size: 12px; }
+.office-fun__paper-sub { text-align: center; font-size: 11px; margin: 4px 0 8px; }
+.office-fun__paper-lead { font-size: 14px; font-weight: 700; }
+.office-fun__paper dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 8px 0; }
+.office-fun__paper dt { color: #6a5f4c; }
+.office-fun__paper dd { margin: 0; font-weight: 700; }
+.office-fun__paper ul { margin: 0; padding-left: 18px; }
+.office-fun__settings { display: flex; flex-direction: column; gap: 8px; padding: 8px; font-size: 12px; color: var(--peek-head-ink); }
+.office-fun__settings label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.office-banner { top: 10%; background: #fff3b8; font-size: 14px; }
+
+/* The building's sign in the lobby. */
+.office__building {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  padding: 1px 6px;
+  background: #f5c542;
+  color: var(--ink);
+  font-size: 10px;
+  box-shadow: 0 0 0 2px var(--ink);
+  pointer-events: auto;
+}
+/* The user's title, under their character. */
+.office-char__title {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-top: 4px;
+  padding: 0 4px;
+  transform: translateX(-50%);
+  background: #f5c542;
+  color: var(--ink);
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+/* Bought furniture: lobby slots, a room's corner, the back wall. */
+.office-prop--slot { bottom: 12%; }
+.office-prop--deco { right: 4%; bottom: 4%; }
+.office-wall-row--fun { left: 30%; right: auto; }
+.office-prop--fun-tree { left: 31%; bottom: 10%; }
+.office-prop--fun-pumpkin-l { left: 23%; bottom: 8%; }
+.office-prop--fun-pumpkin-r { right: 12%; bottom: 8%; }
+.office-prop--fun-pizza { left: 44%; bottom: 40%; }
+
+/* A boss over a long task, its health running down. */
+.office-boss {
+  position: absolute;
+  width: 60px;
+  height: 66px;
+  /* Twice the size, a whole number of pixels each. */
+  transform: translate(-50%, -100%) scale(2);
+  transform-origin: 50% 100%;
+  pointer-events: auto;
+  animation: office-boss 1.4s steps(2) infinite;
+}
+.office-boss .office-sprite { image-rendering: pixelated; }
+.office-boss .px-sheet { --f: 7; animation: office-strip 0.5s steps(1) infinite; }
+.office-boss__hp {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: -6px;
+  height: 4px;
+  background: #12131d;
+  box-shadow: 0 0 0 1px #12131d;
+}
+.office-boss__hp i { position: absolute; inset: 0 auto 0 0; background: #e05555; }
+@keyframes office-boss { 50% { filter: drop-shadow(0 0 3px #e05555); } }
+.office-boss--defeated { animation: office-boss-down 1.2s steps(6) forwards; }
+@keyframes office-boss-down {
+  0% { filter: brightness(2); }
+  100% { transform: translate(-50%, -100%) scale(2) rotate(90deg); opacity: 0; }
+}
+.office-char--courier .office-sprite { filter: saturate(0.8); }
+
+/* Time of day and the seasons over the floor (`applyAmbience`). */
+.office__ambience {
+  position: absolute;
+  inset: 0;
+  z-index: 2900;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  padding-top: 6px;
+  font-size: 22px;
+  color: #ffe066;
+  text-shadow: 2px 2px 0 #12131d;
+}
+.office--evening .office__ambience { background: rgba(255, 140, 60, 0.12); }
+.office--night .office__ambience { background: rgba(16, 20, 64, 0.36); }
+.office--season-xmas .office__ambience {
+  background-image: radial-gradient(circle, #fff 1.5px, transparent 2px), radial-gradient(circle, #fff 1px, transparent 1.5px);
+  background-size: 90px 90px, 60px 60px;
+  animation: office-snow 9s linear infinite;
+}
+.office--night.office--season-xmas .office__ambience { background-color: rgba(16, 20, 64, 0.36); }
+@keyframes office-snow { to { background-position: 30px 90px, -20px 60px; } }
+.office--season-spring .office__ambience {
+  background-image: radial-gradient(ellipse 3px 2px, #ffb7d0 90%, transparent), radial-gradient(ellipse 2px 3px, #ffd0e0 90%, transparent);
+  background-size: 120px 110px, 80px 95px;
+  animation: office-petals 12s linear infinite;
+}
+@keyframes office-petals { to { background-position: -60px 110px, 40px 95px; } }
+.office--season-halloween .office__ambience { background-color: rgba(90, 30, 110, 0.12); }
+.office--season-xmas .office-room__wall::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 6px;
+  background: radial-gradient(circle, #e05555 2px, transparent 2.5px) 0 0 / 24px 6px, radial-gradient(circle, #5be37a 2px, transparent 2.5px) 8px 0 / 24px 6px, radial-gradient(circle, #f5c542 2px, transparent 2.5px) 16px 0 / 24px 6px;
+  animation: office-lights 1s steps(1) infinite;
+}
+@keyframes office-lights { 50% { filter: brightness(0.6); } }
+/* A shooting star at night. */
+.office-star {
+  position: absolute;
+  left: -10%;
+  z-index: 2950;
+  width: 60px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #fff6c0);
+  transform: rotate(12deg);
+  animation: office-star 1.6s linear forwards;
+  pointer-events: none;
+}
+@keyframes office-star { to { left: 110%; transform: rotate(12deg) translateY(120px); opacity: 0; } }

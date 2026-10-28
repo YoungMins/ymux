@@ -38,6 +38,8 @@ export interface TurnFacts {
   files: number | null;
   add: number | null;
   del: number | null;
+  /// The turn's test run passed (true), failed (false), or none ran.
+  test?: boolean | null;
 }
 
 export interface Mail {

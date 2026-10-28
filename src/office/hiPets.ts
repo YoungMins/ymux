@@ -3,10 +3,12 @@
 // 40x28 frame facing right, painted from parts (`paint.ts`): two walk frames
 // (the rabbit hops), sitting and asleep.
 
-import { Raster, capsule, dome, ellipse, flat, paint, polygon, ramp, slope, union, type Ramp } from "./paint";
+import { Raster, capsule, dome, ellipse, flat, paint, polygon, ramp, rect, slope, union, type Ramp } from "./paint";
 
 export const PET_SPECIES = ["cat", "dog", "rabbit", "chick"] as const;
-export type PetSpecies = (typeof PET_SPECIES)[number];
+/// Pets bought in the office shop (`funModel.SHOP`).
+export const SHOP_PETS = ["penguin", "turtle", "blackcat"] as const;
+export type PetSpecies = (typeof PET_SPECIES)[number] | (typeof SHOP_PETS)[number];
 export type PetPose = "walkA" | "walkB" | "sit" | "sleep";
 export const PET_POSES: readonly PetPose[] = ["walkA", "walkB", "sit", "sleep"];
 
@@ -27,6 +29,9 @@ const COATS: Record<PetSpecies, Coat> = {
   dog: { body: ramp("#c8925a"), belly: ramp("#f8f0e0", "#6a5a40"), pink: "#ff9fb0", nose: INK },
   rabbit: { body: ramp("#f2f0ea", "#6a6458"), belly: ramp("#ffffff", "#6a6458"), pink: "#ffb0c0", nose: "#e0708a" },
   chick: { body: ramp("#ffd84a", "#7a5a10"), belly: ramp("#fff6c0", "#7a5a10"), pink: "#ffb0a0", nose: "#f08a2a" },
+  penguin: { body: ramp("#2f3440", "#0e1016"), belly: ramp("#f4f4f0", "#5a5a58"), pink: "#ffb0b0", nose: "#f0a030" },
+  turtle: { body: ramp("#7cbf5a", "#24461a"), belly: ramp("#c8a060", "#4a3418"), pink: "#ffb0b0", nose: "#2a1f1a" },
+  blackcat: { body: ramp("#3a3442", "#121016"), belly: ramp("#5a5266", "#121016"), pink: "#ff9fb0", nose: "#e0708a" },
 };
 
 /// A leg from the body down to the ground, its foot `dx` from the hip.
@@ -184,10 +189,58 @@ function chick(out: Raster, pose: PetPose, c: Coat): void {
   paint(out, ellipse(25, 13.5 - lift, 1.5, 0.8), flat(c.pink), { outline: false });
 }
 
+function penguin(out: Raster, pose: PetPose, c: Coat): void {
+  const feet = flat(c.nose, "#8a4a10");
+  if (pose === "sleep") {
+    paint(out, ellipse(20, 21, 9, 5.5), c.body, { light: dome(18, 18, 9, 6) });
+    paint(out, ellipse(23, 22, 5, 3.5), c.belly, { outline: false, light: () => 0.75 });
+    eye(out, 26, 19.5, false);
+    paint(out, polygon([[29, 20], [32, 21], [29, 22]]), feet);
+    return;
+  }
+  // A waddle: the body tips from side to side.
+  const tilt = pose === "walkA" ? -1 : pose === "walkB" ? 1 : 0;
+  for (const [x, lift] of [[17, pose === "walkA" ? 1 : 0], [22, pose === "walkB" ? 1 : 0]] as const) {
+    paint(out, ellipse(x, GROUND - 1 - lift, 2.6, 1.3), feet);
+  }
+  paint(out, ellipse(19.5 + tilt, 15.5, 7.5, 9.5), c.body, { light: dome(17 + tilt, 11, 8, 9) });
+  paint(out, ellipse(21 + tilt, 17.5, 4.6, 6.5), c.belly, { outline: false, light: () => 0.8 });
+  // Flippers.
+  paint(out, ellipse(13 + tilt, 17, 1.8, 4.5), c.body, { light: dome(13, 15, 2, 4) });
+  eye(out, 22.5 + tilt, 11, true);
+  paint(out, polygon([[25 + tilt, 12], [29 + tilt, 13.5], [25 + tilt, 14.5]]), feet);
+  paint(out, ellipse(22 + tilt, 14, 1.4, 0.7), flat(c.pink), { outline: false });
+}
+
+function turtle(out: Raster, pose: PetPose, c: Coat): void {
+  const skin = ramp("#a8c87a", "#2e4a1e");
+  const step = pose === "walkA" ? 1 : pose === "walkB" ? -1 : 0;
+  if (pose !== "sleep") {
+    // Head out front, legs below the shell.
+    paint(out, ellipse(31 + Math.max(0, step), 19, 3.6, 3), skin, { light: dome(30, 17, 3, 3) });
+    eye(out, 32 + Math.max(0, step), 18.2, true);
+  }
+  for (const [x, dx] of [[12, step], [24, -step]] as const) paint(out, ellipse(x + dx, GROUND - 2, 2.6, 1.8), skin);
+  paint(out, ellipse(4, 22, 2, 1.2), skin);
+  // The shell: a dome with plates.
+  const shell = intersectTop(ellipse(18, 22, 12, 9), 22.5);
+  paint(out, shell, c.body, { light: dome(15, 15, 12, 9) });
+  for (const [x, y] of [[13, 18], [18, 16.5], [23, 18], [15.5, 21], [20.5, 21]] as const) paint(out, ellipse(x, y, 2.2, 1.6), ramp("#5a9a42", "#24461a"), { outline: false, light: () => 0.35 });
+  paint(out, rect(6, 21.5, 24, 2), c.belly, { light: slope(6, 21, 24, 2) });
+  if (pose === "sleep") paint(out, ellipse(30, 22, 2.4, 1.6), skin);
+}
+
+/// The part of `m` above `y`.
+function intersectTop(m: ReturnType<typeof ellipse>, y: number): ReturnType<typeof ellipse> {
+  const out = ((x: number, yy: number) => yy < y && m(x, yy)) as ReturnType<typeof ellipse>;
+  out.box = m.box;
+  return out;
+}
+
 /// One frame of a pet.
 export function petFrame(species: PetSpecies, pose: PetPose): Raster {
   const out = new Raster(PET_W, PET_H);
   const c = COATS[species];
-  ({ cat, dog, rabbit, chick })[species](out, pose, c);
+  ({ cat, dog, rabbit, chick, penguin, turtle, blackcat: cat })[species](out, pose, c);
   return out;
 }

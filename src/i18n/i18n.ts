@@ -1,5 +1,6 @@
 import { tokenStrings } from "./tokenStrings";
 import { activityStrings } from "./activityStrings";
+import { funStrings } from "./funStrings";
 export type Lang =
   | "en" | "ko" | "ja" | "zh" | "hi" | "es"
   | "fr" | "ar" | "pt" | "ru" | "tr" | "de" | "vi";
@@ -85,6 +86,7 @@ type Translations = Record<string, Partial<Record<Lang, string>>>;
 const strings: Translations = {
   ...tokenStrings,
   ...activityStrings,
+  ...funStrings,
   // ── Settings panel (gear icon) ─────────────────────────────────
   "settings.title": {
     en: "Settings", ko: "설정", ja: "設定",

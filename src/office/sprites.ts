@@ -9,6 +9,7 @@
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
 import { hiPiece, type HiPiece } from "./hiProps";
+import { FUN_ART, FUN_PAL } from "./funArt";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
 
 const FIXTURES: Palette = {
@@ -198,4 +199,18 @@ export function mailboxSvg(letter: "sealed" | "open" | null): string {
 /// The lobby's cork board, `w` x `h` art pixels.
 export function corkSvg(w: number, h: number): string {
   return hi(art.corkGrid(w, h), FIXTURES, "office-board__svg");
+}
+
+/// A piece of the office games' art (`funArt`): shop furniture, the
+/// seasons' and events' props. "" for an unknown id.
+export function funProp(id: string, cls: string): string {
+  const rows = FUN_ART[id];
+  return rows ? hi(rows, FUN_PAL, cls) : "";
+}
+
+/// A theme piece by name from another theme (the snow theme's tree at
+/// Christmas, whatever the theme).
+export function themePiece(theme: ThemeId, pick: (t: (typeof THEMES)[ThemeId]) => Piece, cls: string): string {
+  const t = THEMES[theme];
+  return piece(pick(t), t.pal, cls);
 }

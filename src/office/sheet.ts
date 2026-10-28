@@ -34,6 +34,9 @@ const JELLIES: Record<string, Jelly> = {
   aider: { body: "#4fd1c5", eye: "#123b37", blush: "#ffb0b0" },
   copilot: { body: "#b48cf2", eye: "#2a1745", blush: "#ffb0d0" },
   manager: { body: "#7fd3b4", eye: "#1d2a24", blush: "#ff9fb0" },
+  // The office games' visitors: a courier, and the boss of a long task.
+  courier: { body: "#c89a5a", eye: "#2a1f1a", blush: "#ff9f8f" },
+  boss: { body: "#8a3a8a", eye: "#ffe066", blush: "#c85a9a" },
 };
 const FALLBACK: Jelly = { body: "#a7b0bb", eye: "#22262b", blush: "#f4a3a0" };
 
