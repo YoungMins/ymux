@@ -1,11 +1,14 @@
-// Pixel-art SVG for the office's furniture and fixtures. The grids live in
-// `pixelArt.ts` and `themeArt.ts`; this turns them into inline SVG (no
-// external assets, so the app's CSP is happy) with
-// `shape-rendering="crispEdges"`, one <rect> per run of equal pixels.
-// Characters and pets are hi-res canvas sheets (`sheet.ts`).
+// The office's furniture and fixtures on the page. The grids live in
+// `pixelArt.ts` and `themeArt.ts`; `hiProps` redraws each at three times its
+// resolution, which goes on a <canvas> (no external assets or data: URLs, so
+// the app's CSP is happy) with the pixels the stylesheet colours (screens,
+// LEDs, flames) as an SVG overlay. The markup is a string; `paintProps` fills
+// the canvases once it is in the document. Bubble icons stay small SVG.
+// Characters and pets are canvas sheets too (`sheet.ts`).
 
 import type { PaneKind } from "../types";
 import * as art from "./pixelArt";
+import { hiPiece, type HiPiece } from "./hiProps";
 import { PROPS, THEMES, type Palette, type Piece, type ThemeId } from "./themes";
 
 const FIXTURES: Palette = {
@@ -21,7 +24,7 @@ const FIXTURES: Palette = {
   q: "#c89a6a",
   Q: "#a9774a",
 };
-const LETTER: Palette = { ...FIXTURES, w: "#ffffff" };
+const LETTER: Palette = { ...FIXTURES, L: "#ffffff" };
 const ICON: Palette = { ...PROPS, w: "#ffffff", k: "#8a94a3", g: "#3aa55a", r: "#d64545" };
 
 /// The <rect>s of one grid, merging horizontal runs of the same key.
@@ -52,22 +55,77 @@ function width(rows: readonly string[]): number {
   return rows.reduce((m, r) => Math.max(m, r.length), 0);
 }
 
-/// Art pixels are drawn this many CSS pixels wide (before the view's scale).
-export const PX = 3;
+/// Pieces already redrawn, by grid and palette; `data-hp` on a canvas is
+/// the index into `pieces`.
+const pieceIds = new Map<string, number>();
+const pieces: HiPiece[] = [];
 
-/// A desk (a monitor, a crystal, a lantern, … by theme); the `n`/`N` pixels
+function pieceId(rows: readonly string[], pal: Palette): number {
+  const key = `${rows.join("/")}#${JSON.stringify(pal)}`;
+  let id = pieceIds.get(key);
+  if (id === undefined) {
+    id = pieces.length;
+    pieces.push(hiPiece(rows, pal));
+    pieceIds.set(key, id);
+  }
+  return id;
+}
+
+/// A piece as markup: a box its size holding the canvas and, when it has
+/// stylesheet-coloured pixels, the SVG over it.
+function hi(rows: readonly string[], pal: Palette, cls: string): string {
+  const id = pieceId(rows, pal);
+  const { raster, classes } = pieces[id];
+  const { w, h } = raster;
+  const over = classes.length
+    ? `<svg class="hp-over" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" shape-rendering="crispEdges">${classes
+        .map((c) => `<rect x="${c.x}" y="${c.y}" width="${c.w}" height="1" class="${c.cls}"/>`)
+        .join("")}</svg>`
+    : "";
+  return `<span class="hp ${cls}" style="width:${w}px;height:${h}px" aria-hidden="true"><canvas class="hp-canvas" data-hp="${id}" width="${w}" height="${h}"></canvas>${over}</span>`;
+}
+
+/// jsdom (the tests) has no canvas; asking it for one only logs an error.
+const NO_CANVAS = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent);
+
+/// Draw every piece canvas under `root` not drawn yet.
+export function paintProps(root: ParentNode): void {
+  if (NO_CANVAS || typeof ImageData === "undefined") return;
+  for (const c of root.querySelectorAll<HTMLCanvasElement>("canvas.hp-canvas[data-hp]")) {
+    const p = pieces[Number(c.dataset.hp)];
+    const ctx = p ? c.getContext("2d") : null;
+    if (ctx) ctx.putImageData(imageOf(p.raster.px, p.raster.w, p.raster.h), 0, 0);
+    c.removeAttribute("data-hp");
+  }
+}
+
+const images = new Map<HiPiece["raster"]["px"], ImageData>();
+
+function imageOf(px: (string | null)[], w: number, h: number): ImageData {
+  let img = images.get(px);
+  if (img) return img;
+  const data = new Uint8ClampedArray(w * h * 4);
+  px.forEach((c, i) => {
+    if (c === null) return;
+    data[i * 4] = parseInt(c.slice(1, 3), 16);
+    data[i * 4 + 1] = parseInt(c.slice(3, 5), 16);
+    data[i * 4 + 2] = parseInt(c.slice(5, 7), 16);
+    data[i * 4 + 3] = 255;
+  });
+  img = new ImageData(data, w, h);
+  images.set(px, img);
+  return img;
+}
+
+/// A desk (a monitor, a crystal, a lantern, … by theme); its screen pixels
 /// are coloured by the desk's status class.
 export function deskSvg(theme: ThemeId = "office"): string {
   const t = THEMES[theme];
-  return svg(width(t.desk), t.desk.length, PX, rects(t.desk, t.pal), "office-desk__svg");
+  return hi(t.desk, t.pal, "office-desk__svg");
 }
 
-/// Furniture is sized in art pixels (`--px`, which follows the view's
-/// scale) rather than transformed, so it takes up its real size in layout.
 function prop(rows: readonly string[], pal: Palette, cls: string): string {
-  const w = width(rows);
-  const h = rows.length;
-  return `<svg class="office-prop ${cls}" viewBox="0 0 ${w} ${h}" style="width:calc(${w} * var(--px));height:calc(${h} * var(--px))" shape-rendering="crispEdges" aria-hidden="true">${rects(rows, pal)}</svg>`;
+  return hi(rows, pal, `office-prop ${cls}`);
 }
 
 function piece(p: Piece, pal: Palette, cls: string): string {
@@ -122,26 +180,22 @@ export function iconSvg(name: string): string {
   return rows ? svg(width(rows), rows.length, 2, rects(rows, ICON), "office-icon") : "";
 }
 
-/// Like `prop`, without the furniture class: for sprites inside buttons,
-/// which must stay in flow so the button takes their size.
-function fixture(rows: readonly string[], pal: Palette, cls: string, over = ""): string {
-  const w = width(rows);
-  const h = rows.length;
-  return `<svg class="${cls}" viewBox="0 0 ${w} ${h}" style="width:calc(${w} * var(--px));height:calc(${h} * var(--px))" shape-rendering="crispEdges" aria-hidden="true">${rects(rows, pal)}${over}</svg>`;
-}
-
 /// The done flag outside a room.
 export function flagSvg(): string {
-  return fixture(art.FLAG, FIXTURES, "office-flag__svg");
+  return hi(art.FLAG, FIXTURES, "office-flag__svg");
 }
 
 /// A mailbox; `letter` sticks out of the slot while it holds mail.
 export function mailboxSvg(letter: "sealed" | "open" | null): string {
   const top = letter === "sealed" ? art.LETTER_SEALED : letter === "open" ? art.LETTER_OPEN : null;
-  return fixture(art.MAILBOX, FIXTURES, "office-mailbox__svg", top ? rects(top, LETTER) : "");
+  // The letter, drawn into the box's grid (its white keyed apart).
+  const rows = top
+    ? art.MAILBOX.map((r, y) => [...r].map((k, x) => (top[y]?.[x] && top[y][x] !== "." ? (top[y][x] === "w" ? "L" : top[y][x]) : k)).join(""))
+    : art.MAILBOX;
+  return hi(rows, LETTER, "office-mailbox__svg");
 }
 
 /// The lobby's cork board, `w` x `h` art pixels.
 export function corkSvg(w: number, h: number): string {
-  return fixture(art.corkGrid(w, h), FIXTURES, "office-board__svg");
+  return hi(art.corkGrid(w, h), FIXTURES, "office-board__svg");
 }

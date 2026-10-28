@@ -7,7 +7,7 @@
 // Rooms and desks are rebuilt on every update (they are cheap and static);
 // characters are kept by key so they can walk between updates.
 
-import type { Uuid } from "../types";
+import type { PaneKind, Uuid } from "../types";
 import { t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
 import {
@@ -24,8 +24,10 @@ import {
   type Point,
   type RoomModel,
 } from "./officeModel";
-import { corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, roomProps } from "./sprites";
+import { corkSvg, deskSvg, flagSvg, iconSvg, lobbyProps, mailboxSvg, paintProps, roomProps } from "./sprites";
 import { characterSprite, paletteOf, petSprite } from "./sheet";
+import { surfaceTile } from "./hiFloors";
+import { tileSurface } from "./tiles";
 import { petErrand, petsFor, type PetLobby, type PetSpot } from "./petModel";
 import type { PetSpecies } from "./hiPets";
 import type { LogEntry } from "./officeLog";
@@ -138,6 +140,7 @@ export class OfficeView {
   private readonly boardNotes: HTMLElement;
   private readonly boardPanel: HTMLElement;
   private readonly lobbyFurniture: HTMLElement;
+  private readonly lobby: HTMLElement;
   private readonly lobbyLabel: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
   private readonly peek: OfficePeek;
@@ -207,6 +210,7 @@ export class OfficeView {
     this.actorsLayer.className = "office__actors";
     const lobby = document.createElement("div");
     lobby.className = "office__lobby";
+    this.lobby = lobby;
     this.lobbyLabel = document.createElement("span");
     this.lobbyLabel.className = "office__lobby-label";
     this.lobbyFurniture = document.createElement("div");
@@ -217,6 +221,7 @@ export class OfficeView {
     this.board.type = "button";
     this.board.className = "office-board";
     this.board.innerHTML = corkSvg(36, 20);
+    paintProps(this.board);
     this.boardNotes = document.createElement("span");
     this.boardNotes.className = "office-board__notes";
     this.board.appendChild(this.boardNotes);
@@ -321,6 +326,7 @@ export class OfficeView {
   private applyTheme(): void {
     for (const id of THEME_IDS) this.element.classList.toggle(`office--theme-${id}`, id === this.theme);
     this.lobbyFurniture.innerHTML = lobbyProps(this.theme);
+    paintProps(this.lobbyFurniture);
     this.lobbyLabel.textContent = t(this.theme === "office" ? "office.lobby" : `office.lobby.${this.theme}`);
   }
 
@@ -415,6 +421,7 @@ export class OfficeView {
         d.type = "button";
         d.className = `office-desk office-desk--${desk.status}${desk.active ? "" : " office-desk--back"}`;
         d.innerHTML = deskSvg(this.theme);
+        paintProps(d);
         d.title = desk.label;
         // Above characters at the same height: a seated lead sits behind it.
         this.position(d, desk.at, 20);
@@ -433,9 +440,24 @@ export class OfficeView {
       }
     }
     this.roomsLayer.replaceChildren(...rooms);
+    this.paintSurfaces();
     this.placePeek();
     this.renderFixtures();
     this.renderBoard();
+  }
+
+  /// The theme's floor and wall tiles under the corridors, the lobby and
+  /// every room (the stylesheet's colours show until they are painted).
+  private paintSurfaces(): void {
+    tileSurface(this.floor, surfaceTile(this.theme, "corridor"));
+    tileSurface(this.lobby, surfaceTile(this.theme, "lobby"));
+    for (const room of this.roomsLayer.querySelectorAll<HTMLElement>(".office-room")) {
+      const kind = (room.dataset.kind ?? "terminal") as PaneKind;
+      const inner = room.querySelector<HTMLElement>(".office-room__inner");
+      const wall = room.querySelector<HTMLElement>(".office-room__wall");
+      if (inner) tileSurface(inner, surfaceTile(this.theme, "room", kind));
+      if (wall) tileSurface(wall, surfaceTile(this.theme, "wall", kind), "hp-tiles--wall");
+    }
   }
 
   private roomEl(room: RoomModel): HTMLElement {
@@ -446,6 +468,7 @@ export class OfficeView {
     el.style.width = `${room.rect.w * 100}%`;
     el.style.height = `${room.rect.h * 100}%`;
     el.title = room.label;
+    el.dataset.kind = room.kind;
     const inner = document.createElement("div");
     inner.className = "office-room__inner";
     const plate = document.createElement("div");
@@ -457,6 +480,7 @@ export class OfficeView {
     const props = document.createElement("div");
     props.className = "office-room__props";
     props.innerHTML = roomProps(room.kind, this.theme);
+    paintProps(props);
     const door = document.createElement("div");
     door.className = "office-room__door";
     inner.append(wall, props, plate, door);
@@ -778,6 +802,7 @@ export class OfficeView {
         flag.type = "button";
         flag.className = "office-flag";
         flag.innerHTML = flagSvg();
+        paintProps(flag);
         flag.title = t("office.flag");
         this.position(flag, outside, 2);
         const target = room.doneDesk;
@@ -792,6 +817,7 @@ export class OfficeView {
       box.className = `office-mailbox${room.mail.length ? " office-mailbox--full" : ""}`;
       const sealed = room.mail.some((m) => !m.mail.opened);
       box.innerHTML = mailboxSvg(room.mail.length === 0 ? null : sealed ? "sealed" : "open");
+      paintProps(box);
       if (room.mail.length > 1) {
         const n = document.createElement("span");
         n.className = "office-mailbox__count";

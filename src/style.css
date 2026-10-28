@@ -4436,6 +4436,21 @@ body,
 /* Furniture: placed by class, drawn at the room's scale. */
 .office-room__props { position: absolute; inset: 0; pointer-events: none; }
 
+/* A hi-res piece (`sprites.hi`): its canvas, and the SVG of the pixels the
+   stylesheet colours (screens, LEDs, flames) laid over it. */
+.hp { position: relative; display: block; flex: 0 0 auto; line-height: 0; }
+.hp-canvas,
+.hp-over { position: absolute; left: 0; top: 0; }
+.hp-canvas { image-rendering: pixelated; }
+/* A floor or wall tile (`tiles.ts`) under a surface's content, over its
+   CSS background (the fallback). */
+.office__floor,
+.office__lobby,
+.office-room__inner,
+.office-room__wall { isolation: isolate; }
+.hp-tiles { position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: -1; image-rendering: pixelated; pointer-events: none; }
+/* A wall's tile covers its face, between the top and base bands. */
+.hp-tiles--wall { top: calc(var(--px) * 3); height: calc(100% - var(--px) * 6); }
 .office-prop { position: absolute; }
 
 /* Wall furniture lines up along the back wall, so pieces never overlap. */
@@ -4447,7 +4462,7 @@ body,
   gap: calc(var(--px) * 3);
 }
 
-.office-wall-row .office-prop { position: static; }
+.office-wall-row .office-prop { position: relative; }
 .office-prop--plant { left: calc(var(--px) * 2); bottom: calc(var(--px) * 2); }
 .office-prop--sofa { right: 8%; bottom: 16%; }
 .office-prop--side { right: 8%; bottom: 22%; }
@@ -4494,6 +4509,31 @@ body,
     linear-gradient(90deg, rgba(0, 0, 0, 0.25) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 12) calc(var(--px) * 6),
     linear-gradient(rgba(0, 0, 0, 0.25) var(--px), transparent var(--px)) 0 0 / calc(var(--px) * 12) calc(var(--px) * 6),
     #6b6d7a;
+}
+.office--theme-castle .office__lobby::before,
+.office--theme-space .office__lobby::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+/* A red carpet up the middle of the castle's hall, with gold edges. */
+.office--theme-castle .office__lobby::before {
+  left: calc(50% - 72px);
+  width: 144px;
+  top: 0;
+  bottom: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 8px, rgba(0, 0, 0, 0.08) 8px 9px),
+    #9e2f2f;
+  box-shadow: inset 3px 0 0 #e8c14a, inset -3px 0 0 #e8c14a, inset 4px 0 0 #6b1d1d, inset -4px 0 0 #6b1d1d;
+}
+/* Hazard stripes along the top of the space station's dock. */
+.office--theme-space .office__lobby::before {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 6px;
+  background: repeating-linear-gradient(45deg, #f5c542 0 6px, #1b1f2a 6px 12px);
 }
 .office--theme-castle .office__lobby {
   background:

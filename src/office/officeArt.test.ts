@@ -10,6 +10,8 @@ import { FRAME_H, FRAME_W, slimeFrame } from "./hiSlime";
 import { humanFrame } from "./hiHuman";
 import { TIER } from "./heroTiers";
 import { Raster, ellipse, paint, ramp } from "./paint";
+import { hiPiece, scale3x } from "./hiProps";
+import { WALL_FACE, surfaceTile } from "./hiFloors";
 
 const grids = Object.entries(art).filter(([, v]) => Array.isArray(v)) as [string, readonly string[]][];
 const same = (a: Raster, b: Raster) => a.px.every((c, i) => c === b.px[i]);
@@ -210,5 +212,38 @@ describe("pets", () => {
       expect(same(f[0], f[1]), sp).toBe(false);
       expect(lowest(f[PET_POSES.indexOf("sit")]), sp).toBeGreaterThanOrEqual(PET_H - 4);
     }
+  });
+});
+
+describe("hi-res furniture", () => {
+  it("redraws a grid at three times the size, rounding diagonals", () => {
+    const g = scale3x(["x.", ".x"]);
+    expect([g.length, g[0].length]).toEqual([6, 6]);
+    expect(g[0][0]).toBe("x");
+  });
+
+  it("thins outer outlines, keeps class pixels apart and every piece drawn", () => {
+    const pal = { o: "#2a1f1a", a: "#c08a5a", n: ".px-screen" };
+    const { raster, classes } = hiPiece(["oooo", "oano", "oooo"], pal);
+    expect([raster.w, raster.h]).toEqual([12, 9]);
+    // The outer two of three outline rows are worn away.
+    expect(raster.get(5, 0)).toBeNull();
+    expect(raster.get(5, 2)).toBe("#2a1f1a");
+    expect(classes.some((c) => c.cls === "px-screen")).toBe(true);
+    for (const id of THEME_IDS) expect(deskSvg(id), id).toContain("hp-canvas");
+  });
+});
+
+describe("hi-res floors", () => {
+  it("has a tile for every surface of every theme, walls the height of the face", () => {
+    for (const id of THEME_IDS) {
+      for (const s of ["corridor", "lobby", "room", "wall"] as const) {
+        const tile = surfaceTile(id, s);
+        expect(tile, `${id} ${s}`).not.toBeNull();
+        expect(tile!.count(), `${id} ${s}`).toBe(tile!.w * tile!.h);
+        if (s === "wall") expect(tile!.h, id).toBe(WALL_FACE);
+      }
+    }
+    expect(surfaceTile("office", "room", "git")).not.toBe(surfaceTile("office", "room", "terminal"));
   });
 });
