@@ -455,111 +455,85 @@ RIÊNG TƯ TỪ THIẾT KẾ yMux không cần đăng ký, không phân tích v�
 CHẾ ĐỘ VĂN PHÒNG Nhấn Ctrl+Shift+O để xem không gian làm việc như một văn phòng pixel art: mỗi ngăn là một căn phòng, mỗi agent là một nhân vật làm việc tại bàn, giơ tay khi cần bạn, ăn mừng khi xong việc và tự đi giao việc sang phòng khác. Nhấp vào một phòng để đọc và trả lời terminal ngay tại chỗ, chọn một trong tám chủ đề và xem mỗi tài khoản lên cấp như một anh hùng RPG theo lượng token đã dùng.
 
 yMux miễn phí và mã nguồn mở: https://github.com/YoungMins/ymux"
-ReleaseNotes,3,Text,,"Office view (Ctrl+Shift+O): see your workspace as a pixel-art office. Each pane is a room with corridors between them, and agents are characters that work at their desks, raise a hand when they need you and nap when idle. Subagents walk in, help and report back.
+ReleaseNotes,3,Text,,"Office control room: agents waiting for you line up in a queue. Press Tab or N to jump to the next one and answer with a number key, or approve every plain yes prompt at once. Stuck agents and usage quotas are shown on the floor, and mini mode keeps the office small in a corner (drag to move it, drag the corner to resize). Press ? for every office key.
 
-Done flags, mail and a lobby board: a flag goes up when an agent finishes, work handed between panes arrives as a letter in the room's mailbox, and the lobby board keeps a note of every finished turn.
+Office games: 157 achievements, coins, daily quests, a weekly newspaper, bosses on long tasks and a building that grows. The shop sells furniture, pets and party treats, with a weekly sale. Decorate mode lets you drag furniture between rooms. Optional 8-bit sounds.
 
-Answer agents without leaving the office: click a room to read its terminal live and type a prompt or press keys to reply.
+A place per workspace: each workspace is its own floor with its own theme. Sharper pixel art for characters, pets, furniture and floors, and busy agents walk around on errands while they work.
 
-Eight themes: office, cave, castle, ranch, space station, undersea, snow village and desert temple.
+Split dividers snap onto a neighbouring divider's line, and dividers lined up end to end then move together (Alt+drag moves one alone).","사무실 관제실: 확인을 기다리는 에이전트가 대기열에 줄을 섭니다. Tab이나 N으로 다음 에이전트로 이동해 숫자 키로 답하거나, 단순한 '예' 질문을 한 번에 모두 승인할 수 있습니다. 멈춘 에이전트와 사용량 한도가 사무실에 표시되고, 미니 모드에서는 사무실을 구석에 작게 띄워 둘 수 있습니다(끌어서 이동, 모서리를 끌어 크기 조절). ?를 누르면 사무실 단축키가 모두 나옵니다.
 
-Heroes: each account levels up with its token usage (one level per 100M tokens). Pick a class and a slime or human look; the gear grows over ten steps up to a legendary crown.","사무실 보기(Ctrl+Shift+O): 워크스페이스를 픽셀 아트 사무실로 볼 수 있습니다. 창마다 방이 되고 방 사이에는 복도가 생기며, 에이전트는 캐릭터가 되어 책상에서 일하고, 확인이 필요하면 손을 들고, 대기 중에는 낮잠을 잡니다. 서브에이전트는 방에 들어와 돕고 리드에게 보고합니다.
+사무실 게임: 업적 157개, 코인, 일일 퀘스트, 주간 신문, 긴 작업에 나타나는 보스, 점점 커지는 건물. 상점에서 가구·애완동물·파티 간식을 팔고 매주 할인 품목이 바뀝니다. 꾸미기 모드에서 가구를 끌어 방 사이로 옮길 수 있습니다. 8비트 효과음은 선택 사항입니다.
 
-완료 깃발·우편함·게시판: 에이전트가 일을 마치면 깃발이 올라가고, 창끼리 넘긴 작업은 방 우편함에 편지로 도착하며, 로비 게시판에 완료된 턴이 모두 기록됩니다.
+워크스페이스마다 다른 장소: 워크스페이스가 각각 자기 테마를 가진 층이 됩니다. 캐릭터·애완동물·가구·바닥의 픽셀 아트가 더 선명해졌고, 바쁜 에이전트는 일하는 동안 심부름을 다니며 돌아다닙니다.
 
-사무실에서 바로 답하기: 방을 누르면 그 터미널 화면을 실시간으로 보면서 프롬프트를 입력하거나 키를 눌러 답할 수 있습니다.
+창 분할 경계를 끌면 이웃 경계선에 딱 붙고, 한 줄로 이어진 경계는 그 뒤로 함께 움직입니다(Alt+드래그는 하나만 이동).","オフィスの管制室: 返事を待つエージェントが待ち行列に並びます。Tab か N で次のエージェントへ移って数字キーで答えるか、単純な「はい」の確認をまとめて承認できます。止まっているエージェントと使用量の上限がフロアに表示され、ミニモードではオフィスを隅に小さく置いておけます（ドラッグで移動、角をドラッグでサイズ変更）。? でオフィスのキー一覧を表示します。
 
-테마 8종: 사무실, 동굴, 성, 목장, 우주정거장, 해저, 설원 마을, 사막 신전.
+オフィスゲーム: 157 の実績、コイン、デイリークエスト、週刊新聞、長いタスクに現れるボス、成長するビル。ショップでは家具・ペット・パーティーのおやつを販売し、毎週セール品が変わります。模様替えモードで家具を部屋の間でドラッグして動かせます。8ビットの効果音（任意）。
 
-모험가: 계정마다 토큰 사용량에 따라 레벨이 오릅니다(1억 토큰당 1레벨). 직업과 슬라임·인간형 외형을 고르면 장비가 10단계에 걸쳐 전설의 왕관까지 성장합니다.","オフィス表示（Ctrl+Shift+O）：ワークスペースをピクセルアートのオフィスとして表示します。ペインごとに部屋ができ、部屋の間には廊下が通ります。エージェントはキャラクターになって机で作業し、対応が必要なときは手を挙げ、待機中は昼寝します。サブエージェントは部屋に入ってきて手伝い、リードに報告します。
+ワークスペースごとの場所: 各ワークスペースが独自のテーマを持つフロアになります。キャラクター・ペット・家具・床のドット絵がより精細になり、忙しいエージェントは作業中に用事で歩き回ります。
 
-完了の旗・郵便受け・掲示板：エージェントが作業を終えると旗が立ち、ペイン間で渡した作業は部屋の郵便受けに手紙として届き、ロビーの掲示板には完了したターンがすべて記録されます。
+分割の境界をドラッグすると隣の境界線に吸着し、一直線につながった境界はその後一緒に動きます（Alt+ドラッグで1本だけ移動）。","办公室控制室：等待你回复的智能体会排成队列。按 Tab 或 N 跳到下一个，用数字键回答，或一次批准所有简单的“是”提示。卡住的智能体和用量额度会显示在楼层上，迷你模式可把办公室缩小放在角落（拖动以移动，拖动角落调整大小）。按 ? 查看所有办公室快捷键。
 
-オフィスからそのまま返答：部屋をクリックするとターミナル画面をリアルタイムで見ながら、プロンプトを入力したりキーを押したりして返答できます。
+办公室游戏：157 个成就、金币、每日任务、每周报纸、长任务中出现的首领，以及不断长高的大楼。商店出售家具、宠物和派对零食，每周有特价商品。装修模式可把家具拖到各个房间。可选的 8 位音效。
 
-8 種類のテーマ：オフィス、洞窟、城、牧場、宇宙ステーション、海底、雪の村、砂漠の神殿。
+每个工作区一个地方：每个工作区都是拥有自己主题的一层楼。角色、宠物、家具和地板的像素画更加精细，忙碌的智能体工作时会四处跑腿。
 
-冒険者：アカウントごとにトークン使用量に応じてレベルが上がります（1 億トークンで 1 レベル）。職業とスライムか人間の外見を選ぶと、装備が 10 段階で伝説の王冠まで成長します。","办公室视图（Ctrl+Shift+O）：把工作区显示为像素风办公室。每个窗格是一个房间，房间之间有走廊；智能体化身角色，在办公桌前工作，需要你时举手，空闲时打盹。子智能体会走进房间帮忙，并向主智能体汇报。
+拖动分屏分隔线时会吸附到相邻分隔线上，首尾相连成一条线的分隔线之后会一起移动（Alt+拖动只移动这一条）。","ऑफ़िस कंट्रोल रूम: आपका इंतज़ार कर रहे एजेंट एक कतार में लगते हैं। अगले पर जाने के लिए Tab या N दबाएँ और नंबर कुंजी से जवाब दें, या सभी सीधे ""हाँ"" वाले सवाल एक साथ मंज़ूर करें। अटके हुए एजेंट और उपयोग सीमा फ़्लोर पर दिखते हैं, और मिनी मोड ऑफ़िस को कोने में छोटा रखता है (खींचकर हिलाएँ, कोना खींचकर आकार बदलें)। सभी ऑफ़िस कुंजियों के लिए ? दबाएँ।
 
-完成旗帜、信箱和公告板：智能体完成工作时会升起旗帜，窗格之间交接的工作会以信件形式送到房间信箱，大厅公告板会记录每一轮完成的工作。
+ऑफ़िस गेम: 157 उपलब्धियाँ, सिक्के, रोज़ाना क्वेस्ट, साप्ताहिक अख़बार, लंबे कामों पर बॉस और बढ़ती इमारत। दुकान में फ़र्नीचर, पालतू जानवर और पार्टी के नाश्ते मिलते हैं, हर हफ़्ते सेल के साथ। सजावट मोड में फ़र्नीचर को कमरों के बीच खींचकर रखें। वैकल्पिक 8-बिट आवाज़ें।
 
-在办公室里直接回复：点击房间即可实时查看其终端画面，输入提示或按键进行回复。
+हर वर्कस्पेस की अपनी जगह: हर वर्कस्पेस अपनी थीम वाली एक अलग मंज़िल है। किरदारों, पालतू जानवरों, फ़र्नीचर और फ़र्श की पिक्सेल आर्ट और साफ़ हुई, और व्यस्त एजेंट काम करते हुए इधर-उधर काम निपटाने जाते हैं।
 
-8 种主题：办公室、洞穴、城堡、牧场、空间站、海底、雪村和沙漠神殿。
+स्प्लिट विभाजक खींचने पर पास के विभाजक की रेखा से चिपक जाता है, और एक सीध में जुड़े विभाजक इसके बाद साथ चलते हैं (Alt+खींचें से केवल एक हिलता है)।","Sala de control de la oficina: los agentes que te esperan forman una cola. Pulsa Tab o N para ir al siguiente y responde con una tecla numérica, o aprueba de una vez todas las preguntas de sí simples. Los agentes atascados y las cuotas de uso aparecen en la planta, y el modo mini deja la oficina pequeña en una esquina (arrástrala para moverla y arrastra la esquina para cambiar su tamaño). Pulsa ? para ver todas las teclas de la oficina.
 
-冒险者：每个账户会随 token 用量升级（每 1 亿 token 升 1 级）。选择职业以及史莱姆或人类外形，装备会分 10 个阶段成长，直到传说王冠。","ऑफ़िस व्यू (Ctrl+Shift+O): अपने वर्कस्पेस को पिक्सेल-आर्ट ऑफ़िस के रूप में देखें। हर पेन एक कमरा बनता है और कमरों के बीच गलियारे होते हैं। एजेंट किरदार बनकर अपनी मेज़ पर काम करते हैं, आपकी ज़रूरत होने पर हाथ उठाते हैं और खाली होने पर झपकी लेते हैं। सब-एजेंट कमरे में आकर मदद करते हैं और अपने लीड को रिपोर्ट करते हैं।
+Juegos de la oficina: 157 logros, monedas, misiones diarias, un periódico semanal, jefes en las tareas largas y un edificio que crece. La tienda vende muebles, mascotas y aperitivos de fiesta, con una oferta semanal. El modo decorar permite arrastrar muebles entre salas. Sonidos de 8 bits opcionales.
 
-पूरा होने का झंडा, मेलबॉक्स और नोटिस बोर्ड: एजेंट का काम पूरा होने पर झंडा लगता है, पेन के बीच सौंपा गया काम कमरे के मेलबॉक्स में चिट्ठी बनकर पहुँचता है, और लॉबी का बोर्ड हर पूरे हुए टर्न को दर्ज करता है।
+Un lugar por espacio de trabajo: cada espacio de trabajo es una planta con su propio tema. Pixel art más nítido para personajes, mascotas, muebles y suelos, y los agentes ocupados hacen recados mientras trabajan.
 
-ऑफ़िस से ही जवाब दें: किसी कमरे पर क्लिक करके उसका टर्मिनल लाइव देखें और प्रॉम्प्ट लिखकर या कुंजियाँ दबाकर जवाब दें।
+Los divisores de las divisiones se ajustan a la línea de un divisor vecino, y los divisores alineados de extremo a extremo se mueven juntos después (Alt+arrastrar mueve solo uno).","Salle de contrôle du bureau : les agents qui vous attendent forment une file. Appuyez sur Tab ou N pour passer au suivant et répondez avec une touche numérique, ou approuvez d’un coup toutes les simples demandes de oui. Les agents bloqués et les quotas d’utilisation s’affichent à l’étage, et le mode mini garde le bureau en petit dans un coin (glissez pour le déplacer, glissez le coin pour le redimensionner). Appuyez sur ? pour toutes les touches du bureau.
 
-आठ थीम: ऑफ़िस, गुफा, महल, फ़ार्म, अंतरिक्ष स्टेशन, समुद्र तल, बर्फ़ीला गाँव और रेगिस्तानी मंदिर।
+Jeux du bureau : 157 succès, des pièces, des quêtes quotidiennes, un journal hebdomadaire, des boss sur les longues tâches et un immeuble qui grandit. La boutique vend meubles, animaux et friandises de fête, avec une promo chaque semaine. Le mode décoration permet de glisser les meubles d’une pièce à l’autre. Sons 8 bits en option.
 
-नायक: हर खाता अपने टोकन उपयोग से लेवल अप करता है (हर 10 करोड़ टोकन पर 1 लेवल)। वर्ग और स्लाइम या मानव रूप चुनें; उपकरण दस चरणों में बढ़ते हुए पौराणिक मुकुट तक पहुँचते हैं।","Vista de oficina (Ctrl+Shift+O): ve tu espacio de trabajo como una oficina en pixel art. Cada panel es una sala, con pasillos entre ellas, y los agentes son personajes que trabajan en su escritorio, levantan la mano cuando te necesitan y echan una siesta cuando están inactivos. Los subagentes entran, ayudan e informan a su agente principal.
+Un lieu par espace de travail : chaque espace de travail est un étage avec son propre thème. Pixel art plus net pour les personnages, animaux, meubles et sols, et les agents occupés font des courses pendant qu’ils travaillent.
 
-Banderas, buzones y tablón: se iza una bandera cuando un agente termina, el trabajo enviado entre paneles llega como carta al buzón de la sala y el tablón del vestíbulo anota cada turno terminado.
+Les séparateurs s’aimantent à la ligne d’un séparateur voisin, et les séparateurs alignés bout à bout bougent ensuite ensemble (Alt+glisser en déplace un seul).","غرفة التحكم في المكتب: يصطف الوكلاء الذين ينتظرونك في طابور. اضغط Tab أو N للانتقال إلى التالي وأجب بمفتاح رقمي، أو وافق على كل أسئلة ""نعم"" البسيطة دفعة واحدة. يظهر الوكلاء العالقون وحصص الاستخدام في الطابق، ويُبقي الوضع المصغّر المكتب صغيرًا في زاوية (اسحبه لتحريكه واسحب الزاوية لتغيير حجمه). اضغط ? لعرض كل مفاتيح المكتب.
 
-Responde sin salir de la oficina: haz clic en una sala para leer su terminal en directo y escribir un prompt o pulsar teclas para responder.
+ألعاب المكتب: 157 إنجازًا وعملات ومهام يومية وصحيفة أسبوعية وزعماء في المهام الطويلة ومبنى يكبر. يبيع المتجر الأثاث والحيوانات الأليفة ووجبات الحفلات مع تخفيض أسبوعي. يتيح وضع التزيين سحب الأثاث بين الغرف. أصوات 8 بت اختيارية.
 
-Ocho temas: oficina, cueva, castillo, rancho, estación espacial, fondo marino, pueblo nevado y templo del desierto.
+مكان لكل مساحة عمل: كل مساحة عمل طابق مستقل بسمته الخاصة. رسوم بكسل أوضح للشخصيات والحيوانات والأثاث والأرضيات، ويتجول الوكلاء المشغولون في مهام أثناء عملهم.
 
-Héroes: cada cuenta sube de nivel con su uso de tokens (un nivel cada 100 millones). Elige una clase y un aspecto de slime o humano; el equipo crece en diez pasos hasta una corona legendaria.","Vue bureau (Ctrl+Shift+O) : affichez votre espace de travail comme un bureau en pixel art. Chaque volet devient une pièce, reliée aux autres par des couloirs, et les agents sont des personnages qui travaillent à leur bureau, lèvent la main quand ils ont besoin de vous et font la sieste quand ils sont inactifs. Les sous-agents entrent, aident puis font leur rapport à l'agent principal.
+تلتصق فواصل التقسيم بخط فاصل مجاور، ثم تتحرك الفواصل المتصلة على خط واحد معًا (Alt+سحب يحرك فاصلًا واحدًا فقط).","Sala de controle do escritório: os agentes que esperam por você formam uma fila. Pressione Tab ou N para ir ao próximo e responda com uma tecla numérica, ou aprove de uma vez todas as perguntas simples de sim. Agentes travados e cotas de uso aparecem no andar, e o modo mini deixa o escritório pequeno em um canto (arraste para mover, arraste o canto para redimensionar). Pressione ? para ver todas as teclas do escritório.
 
-Drapeaux, boîtes aux lettres et tableau : un drapeau se lève quand un agent termine, le travail transmis entre volets arrive en lettre dans la boîte de la pièce, et le tableau du hall note chaque tour terminé.
+Jogos do escritório: 157 conquistas, moedas, missões diárias, um jornal semanal, chefões em tarefas longas e um prédio que cresce. A loja vende móveis, pets e petiscos de festa, com uma promoção semanal. O modo decorar permite arrastar móveis entre as salas. Sons de 8 bits opcionais.
 
-Répondez sans quitter le bureau : cliquez sur une pièce pour lire son terminal en direct et saisir un prompt ou appuyer sur des touches pour répondre.
+Um lugar por espaço de trabalho: cada espaço de trabalho é um andar com seu próprio tema. Pixel art mais nítida para personagens, pets, móveis e pisos, e agentes ocupados saem para fazer tarefas enquanto trabalham.
 
-Huit thèmes : bureau, grotte, château, ranch, station spatiale, fonds marins, village enneigé et temple du désert.
+Os divisores das divisões se encaixam na linha de um divisor vizinho, e divisores alinhados de ponta a ponta passam a se mover juntos (Alt+arrastar move só um).","Диспетчерская офиса: агенты, ждущие вашего ответа, встают в очередь. Нажмите Tab или N, чтобы перейти к следующему, и ответьте цифровой клавишей, или одобрите все простые вопросы «да» сразу. Застрявшие агенты и лимиты использования видны на этаже, а мини-режим держит офис маленьким в углу (перетащите, чтобы переместить, потяните угол, чтобы изменить размер). Нажмите ?, чтобы увидеть все клавиши офиса.
 
-Héros : chaque compte gagne des niveaux avec son utilisation de jetons (un niveau tous les 100 millions). Choisissez une classe et une apparence de slime ou d'humain ; l'équipement évolue en dix étapes jusqu'à une couronne légendaire.","عرض المكتب (Ctrl+Shift+O): اعرض مساحة عملك كمكتب بفن البكسل. يصبح كل جزء غرفة تفصل بينها ممرات، ويصبح الوكلاء شخصيات تعمل على مكاتبها، وترفع يدها عندما تحتاج إليك، وتغفو عندما تكون خاملة. يدخل الوكلاء الفرعيون للمساعدة ثم يرفعون تقاريرهم إلى الوكيل الرئيسي.
+Игры в офисе: 157 достижений, монеты, ежедневные задания, еженедельная газета, боссы на долгих задачах и растущее здание. В магазине продаются мебель, питомцы и угощения для вечеринок, с еженедельной скидкой. В режиме оформления мебель можно перетаскивать между комнатами. 8-битные звуки по желанию.
 
-أعلام الإنجاز وصناديق البريد ولوحة الإعلانات: يرتفع علم عندما ينهي الوكيل عمله، ويصل العمل المُسلَّم بين الأجزاء كرسالة إلى صندوق بريد الغرفة، وتسجل لوحة الردهة كل دورة مكتملة.
+Своё место для каждого рабочего пространства: каждое рабочее пространство — отдельный этаж со своей темой. Более чёткий пиксель-арт персонажей, питомцев, мебели и полов, а занятые агенты бегают по делам во время работы.
 
-ردّ دون مغادرة المكتب: انقر على غرفة لقراءة طرفيتها مباشرة، واكتب موجّهًا أو اضغط المفاتيح للرد.
+Разделители при перетаскивании прилипают к линии соседнего разделителя, а выстроенные в одну линию разделители затем двигаются вместе (Alt+перетаскивание двигает только один).","Ofis kontrol odası: sizi bekleyen ajanlar bir sıraya girer. Sıradakine geçmek için Tab veya N'ye basıp bir rakam tuşuyla yanıtlayın ya da tüm basit ""evet"" sorularını tek seferde onaylayın. Takılan ajanlar ve kullanım kotaları katta görünür; mini mod ofisi bir köşede küçük tutar (taşımak için sürükleyin, boyut için köşeyi sürükleyin). Tüm ofis tuşları için ? tuşuna basın.
 
-ثماني سمات: مكتب وكهف وقلعة ومزرعة ومحطة فضائية وقاع البحر وقرية ثلجية ومعبد صحراوي.
+Ofis oyunları: 157 başarım, jetonlar, günlük görevler, haftalık gazete, uzun görevlerde patronlar ve büyüyen bir bina. Mağazada mobilya, evcil hayvan ve parti ikramları satılır, her hafta bir indirimle. Dekorasyon modunda mobilyaları odalar arasında sürükleyebilirsiniz. İsteğe bağlı 8-bit sesler.
 
-الأبطال: يرتقي كل حساب في المستويات مع استخدامه للرموز (مستوى واحد لكل 100 مليون رمز). اختر فئة ومظهر سلايم أو إنسان، وتتطور المعدات عبر عشر مراحل حتى التاج الأسطوري.","Visão de escritório (Ctrl+Shift+O): veja seu espaço de trabalho como um escritório em pixel art. Cada painel vira uma sala, com corredores entre elas, e os agentes são personagens que trabalham em suas mesas, levantam a mão quando precisam de você e cochilam quando estão ociosos. Os subagentes entram, ajudam e se reportam ao agente principal.
+Her çalışma alanına bir yer: her çalışma alanı kendi temasına sahip ayrı bir kat. Karakterler, evcil hayvanlar, mobilyalar ve zeminler için daha net piksel sanatı; meşgul ajanlar çalışırken ayak işlerine koşar.
 
-Bandeiras, caixas de correio e mural: uma bandeira sobe quando um agente termina, o trabalho passado entre painéis chega como carta na caixa de correio da sala e o mural do saguão registra cada turno concluído.
+Bölme ayırıcıları komşu ayırıcının çizgisine yapışır ve uç uca hizalanmış ayırıcılar bundan sonra birlikte hareket eder (Alt+sürükle yalnızca birini taşır).","Kontrollraum im Büro: Agenten, die auf Sie warten, stellen sich in einer Warteschlange an. Mit Tab oder N springen Sie zum nächsten und antworten mit einer Zifferntaste, oder Sie bestätigen alle einfachen Ja-Fragen auf einmal. Hängende Agenten und Nutzungskontingente werden auf der Etage angezeigt, und der Minimodus hält das Büro klein in einer Ecke (zum Verschieben ziehen, zum Skalieren die Ecke ziehen). Mit ? sehen Sie alle Bürotasten.
 
-Responda sem sair do escritório: clique em uma sala para ler o terminal ao vivo e digitar um prompt ou pressionar teclas para responder.
+Bürospiele: 157 Erfolge, Münzen, tägliche Quests, eine Wochenzeitung, Bosse bei langen Aufgaben und ein wachsendes Gebäude. Der Laden verkauft Möbel, Haustiere und Party-Snacks, mit einem wöchentlichen Angebot. Im Einrichtungsmodus ziehen Sie Möbel zwischen Räumen hin und her. Optionale 8-Bit-Klänge.
 
-Oito temas: escritório, caverna, castelo, fazenda, estação espacial, fundo do mar, vila nevada e templo do deserto.
+Ein Ort pro Arbeitsbereich: Jeder Arbeitsbereich ist eine eigene Etage mit eigenem Thema. Schärfere Pixelkunst für Figuren, Haustiere, Möbel und Böden, und beschäftigte Agenten laufen bei der Arbeit Botengänge.
 
-Heróis: cada conta sobe de nível com o uso de tokens (um nível a cada 100 milhões). Escolha uma classe e uma aparência de slime ou humano; o equipamento evolui em dez etapas até uma coroa lendária.","Вид «Офис» (Ctrl+Shift+O): рабочее пространство в виде офиса в стиле пиксель-арт. Каждая панель становится комнатой, между комнатами проходят коридоры, а агенты — персонажи, которые работают за столами, поднимают руку, когда нужны вы, и дремлют без дела. Субагенты заходят помочь и отчитываются перед главным агентом.
+Teiler rasten beim Ziehen an der Linie eines benachbarten Teilers ein, und Teiler, die Ende an Ende auf einer Linie liegen, bewegen sich danach gemeinsam (Alt+Ziehen bewegt nur einen).","Phòng điều khiển văn phòng: các tác tử đang chờ bạn xếp thành hàng đợi. Nhấn Tab hoặc N để chuyển đến tác tử tiếp theo và trả lời bằng phím số, hoặc duyệt tất cả câu hỏi ""có"" đơn giản cùng lúc. Tác tử bị kẹt và hạn mức sử dụng hiện trên tầng, còn chế độ mini thu nhỏ văn phòng vào một góc (kéo để di chuyển, kéo góc để đổi cỡ). Nhấn ? để xem mọi phím của văn phòng.
 
-Флажки, почтовые ящики и доска: когда агент заканчивает работу, поднимается флажок; работа, переданная между панелями, приходит письмом в почтовый ящик комнаты, а доска в холле отмечает каждый завершённый ход.
+Trò chơi văn phòng: 157 thành tích, xu, nhiệm vụ hằng ngày, tờ báo hằng tuần, trùm xuất hiện trong việc dài và tòa nhà lớn dần. Cửa hàng bán đồ đạc, thú cưng và đồ ăn tiệc, có món giảm giá mỗi tuần. Chế độ trang trí cho phép kéo đồ đạc giữa các phòng. Âm thanh 8-bit tùy chọn.
 
-Отвечайте прямо из офиса: щёлкните комнату, чтобы видеть её терминал в реальном времени, ввести промпт или нажать клавиши для ответа.
+Mỗi không gian làm việc một nơi: mỗi không gian làm việc là một tầng riêng với chủ đề riêng. Pixel art sắc nét hơn cho nhân vật, thú cưng, đồ đạc và sàn, còn tác tử bận rộn đi làm việc vặt khi đang làm việc.
 
-Восемь тем: офис, пещера, замок, ранчо, космическая станция, морское дно, снежная деревня и храм в пустыне.
-
-Герои: каждый аккаунт повышает уровень по мере расхода токенов (один уровень за 100 млн). Выберите класс и облик слайма или человека — снаряжение растёт за десять ступеней вплоть до легендарной короны.","Ofis görünümü (Ctrl+Shift+O): çalışma alanınızı piksel sanatı bir ofis olarak görün. Her bölme bir oda olur ve odaların arasında koridorlar bulunur; ajanlar masalarında çalışan, size ihtiyaç duyduğunda el kaldıran ve boştayken şekerleme yapan karakterlerdir. Alt ajanlar odaya gelip yardım eder ve ana ajana rapor verir.
-
-Bayraklar, posta kutuları ve pano: bir ajan işini bitirince bayrak çekilir, bölmeler arasında devredilen iş odanın posta kutusuna mektup olarak gelir ve lobideki pano biten her turu not eder.
-
-Ofisten ayrılmadan yanıt verin: bir odaya tıklayarak terminalini canlı okuyun, istem yazın veya tuşlara basarak yanıt verin.
-
-Sekiz tema: ofis, mağara, kale, çiftlik, uzay istasyonu, deniz altı, kar köyü ve çöl tapınağı.
-
-Kahramanlar: her hesap token kullanımıyla seviye atlar (her 100 milyon tokende bir seviye). Bir sınıf ve balçık ya da insan görünümü seçin; ekipman on adımda efsanevi taca kadar gelişir.","Büroansicht (Ctrl+Shift+O): Sehen Sie Ihren Arbeitsbereich als Pixel-Art-Büro. Jeder Bereich wird zu einem Raum mit Fluren dazwischen, und Agenten sind Figuren, die an ihrem Schreibtisch arbeiten, sich melden, wenn sie Sie brauchen, und ein Nickerchen machen, wenn sie untätig sind. Subagenten kommen herein, helfen und erstatten dem Hauptagenten Bericht.
-
-Fahnen, Briefkästen und Pinnwand: Wenn ein Agent fertig ist, wird eine Fahne gehisst, zwischen Bereichen übergebene Arbeit kommt als Brief im Briefkasten des Raums an, und die Pinnwand in der Lobby notiert jeden abgeschlossenen Durchgang.
-
-Antworten, ohne das Büro zu verlassen: Klicken Sie auf einen Raum, um sein Terminal live zu lesen und mit einem Prompt oder Tastendrücken zu antworten.
-
-Acht Designs: Büro, Höhle, Burg, Bauernhof, Raumstation, Meeresgrund, Schneedorf und Wüstentempel.
-
-Helden: Jedes Konto steigt mit seinem Token-Verbrauch im Level auf (ein Level pro 100 Millionen Tokens). Wählen Sie eine Klasse und das Aussehen als Schleim oder Mensch; die Ausrüstung wächst in zehn Stufen bis zur legendären Krone.","Chế độ văn phòng (Ctrl+Shift+O): xem không gian làm việc như một văn phòng pixel art. Mỗi ngăn là một căn phòng, giữa các phòng có hành lang, còn các agent là nhân vật làm việc tại bàn, giơ tay khi cần bạn và ngủ trưa khi rảnh. Các subagent bước vào giúp đỡ rồi báo cáo lại cho agent chính.
-
-Cờ hoàn thành, hộp thư và bảng tin: khi agent làm xong, một lá cờ được kéo lên; công việc chuyển giữa các ngăn đến hộp thư của phòng dưới dạng thư; bảng tin ở sảnh ghi lại mọi lượt đã xong.
-
-Trả lời ngay trong văn phòng: nhấp vào một phòng để xem terminal trực tiếp và nhập prompt hoặc nhấn phím để trả lời.
-
-Tám chủ đề: văn phòng, hang động, lâu đài, nông trại, trạm vũ trụ, đáy biển, làng tuyết và đền sa mạc.
-
-Anh hùng: mỗi tài khoản lên cấp theo lượng token đã dùng (100 triệu token cho mỗi cấp). Chọn lớp nhân vật và ngoại hình slime hoặc người; trang bị phát triển qua mười bậc đến vương miện huyền thoại."
+Đường chia khi kéo sẽ hít vào đường của đường chia bên cạnh, và các đường chia nối tiếp thành một đường sau đó sẽ di chuyển cùng nhau (Alt+kéo chỉ di chuyển một đường)."
 Title,4,Text,,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux
 ShortTitle,5,Text,,,,,,,,,,,,,,
 SortTitle,6,Text,,,,,,,,,,,,,,
