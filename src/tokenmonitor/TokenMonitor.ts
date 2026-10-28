@@ -162,7 +162,8 @@ export class TokenMonitorPane implements Pane {
   private async refreshIfOld(): Promise<void> { if (performance.now() - this.lastRefresh >= 10_000) await this.refresh(); }
   async spawn(): Promise<void> {
     if (this.disposed || this.timer !== null) return;
-    this.timer = setInterval(() => { if (this.visible()) { this.render(); void this.refresh(); } }, 10_000);
+    // refresh() renders when the numbers land (relative reset times too).
+    this.timer = setInterval(() => { if (this.visible()) void this.refresh(); }, 10_000);
     if (this.visible()) await this.refresh();
   }
   dispose(): void {

@@ -129,6 +129,9 @@ export type PendingPromptState =
   | "timeout"
   | "failed";
 
+/// Scrollback is saved once the output has been quiet this long.
+const SCROLLBACK_QUIET_MS = 2000;
+
 export class TerminalPane implements Pane {
   readonly id: Uuid;
   readonly element: HTMLElement;
@@ -217,6 +220,7 @@ export class TerminalPane implements Pane {
   private isFocused = false;
   private statusTimer: number | undefined;
   private scrollbackSaveTimer: number | undefined;
+  private lastOutputSaveAt = 0;
   /// Owns IME input instead of xterm, which drops the in-place syllable
   /// revisions a Hangul IME is built out of. Created in `open()`, once the
   /// helper textarea exists. See `ime.ts`.
@@ -476,10 +480,12 @@ export class TerminalPane implements Pane {
     // Drive the derived idle/running/done/attention status from a 1s
     // ticker so `running` decays back to `idle` after a quiet period even
     // when no new output/input arrives to trigger a recheck.
-    this.statusTimer = window.setInterval(
-      () => this.statusMachine.tick(Date.now(), this.visible()),
-      1000,
-    );
+    // Only running and done can change on a tick, and only done looks at
+    // visibility (which walks the layout), so idle panes skip both.
+    this.statusTimer = window.setInterval(() => {
+      const status = this.statusMachine.status;
+      if (status === "running" || status === "done") this.statusMachine.tick(Date.now(), status === "done" && this.visible());
+    }, 1000);
 
     // Bell (BEL 0x07) → attention signal with no message.
     this.term.onBell(() => {
@@ -1544,12 +1550,20 @@ export class TerminalPane implements Pane {
     ) {
       return;
     }
-    if (this.scrollbackSaveTimer !== undefined) {
-      window.clearTimeout(this.scrollbackSaveTimer);
-    }
-    this.scrollbackSaveTimer = window.setTimeout(() => {
+    // One timer for a burst of output, not one per chunk: it re-arms itself
+    // until the output has been quiet for SCROLLBACK_QUIET_MS.
+    this.lastOutputSaveAt = Date.now();
+    if (this.scrollbackSaveTimer !== undefined) return;
+    const check = (): void => {
+      const quiet = Date.now() - this.lastOutputSaveAt;
+      if (quiet < SCROLLBACK_QUIET_MS) {
+        this.scrollbackSaveTimer = window.setTimeout(check, SCROLLBACK_QUIET_MS - quiet);
+        return;
+      }
+      this.scrollbackSaveTimer = undefined;
       void api.saveScrollback(this.id, this.serializeAddon.serialize());
-    }, 2000);
+    };
+    this.scrollbackSaveTimer = window.setTimeout(check, SCROLLBACK_QUIET_MS);
   }
 
   /// Tear down this pane. `permanent` distinguishes the two callers:

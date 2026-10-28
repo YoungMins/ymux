@@ -558,91 +558,128 @@ export function mountWorkspacePanel(
     return key === null ? label : `${label} — ${t(key)}`;
   }
 
-  function makePaneRow(pane: PaneRow): HTMLElement {
-    const btn = document.createElement("button");
-    btn.type = "button";
+  // Tree rows, kept across renders by key so an agent update only patches
+  // the rows that changed (hover and a half-done double-click survive).
+  const treeRows = new Map<string, HTMLButtonElement>();
+
+  /// The row for `key`, made once with a click that focuses `paneId`.
+  function treeRow(key: string, paneId: Uuid): HTMLButtonElement {
+    let btn = treeRows.get(key);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        void manager.focusPane(paneId).then(highlight);
+      });
+      treeRows.set(key, btn);
+    }
+    return btn;
+  }
+
+  function paneRow(pane: PaneRow): HTMLElement {
+    const btn = treeRow(`p:${pane.paneId}`, pane.paneId);
     btn.className = "workspace-panel__pane";
-    btn.dataset.status = pane.status;
-    btn.textContent = pane.label;
-    btn.title = statusTitle(pane.label, pane.status === "idle" ? null : `status.${pane.status}`);
-    btn.addEventListener("click", () => {
-      void manager.focusPane(pane.paneId).then(highlight);
-    });
+    fillRow(btn, pane.label, pane.status, pane.status === "idle" ? null : `status.${pane.status}`);
     return btn;
   }
 
-  function makeTabRow(tab: TabRow): HTMLElement {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "workspace-panel__tab";
-    if (tab.active) btn.classList.add("workspace-panel__tab--active");
-    btn.dataset.status = tab.status;
-    btn.textContent = tab.label;
-    btn.title = statusTitle(tab.label, tab.status === "idle" ? null : `status.${tab.status}`);
-    // Shows the tab first (it may be hidden), then focuses it.
-    btn.addEventListener("click", () => {
-      void manager.focusPane(tab.paneId).then(highlight);
-    });
+  /// A tab row; a click shows the tab first (it may be hidden), then focuses it.
+  function tabRow(tab: TabRow): HTMLElement {
+    const btn = treeRow(`t:${tab.paneId}`, tab.paneId);
+    btn.className = tab.active ? "workspace-panel__tab workspace-panel__tab--active" : "workspace-panel__tab";
+    fillRow(btn, tab.label, tab.status, tab.status === "idle" ? null : `status.${tab.status}`);
     return btn;
   }
 
-  function makeAgentRow(paneId: Uuid, agent: AgentRow): HTMLElement {
-    const btn = document.createElement("button");
-    btn.type = "button";
+  function fillRow(btn: HTMLButtonElement, label: string, status: string, key: string | null): void {
+    if (btn.dataset.status !== status) btn.dataset.status = status;
+    if (btn.textContent !== label) btn.textContent = label;
+    const title = statusTitle(label, key);
+    if (btn.title !== title) btn.title = title;
+  }
+
+  function agentRow(paneId: Uuid, agent: AgentRow): HTMLElement {
+    const btn = treeRow(`a:${paneId}:${agent.key}`, paneId);
     btn.className = `workspace-panel__agent workspace-panel__agent--depth${agent.depth}`;
     btn.dataset.status = agent.status;
-    const dot = document.createElement("span");
-    dot.className = "workspace-panel__agent-dot";
-    dot.textContent = agent.status === "done" ? "✓" : "●";
-    const name = document.createElement("span");
-    name.className = "workspace-panel__agent-name";
-    name.textContent = agent.label;
-    const state = document.createElement("span");
-    state.className = "workspace-panel__agent-state";
-    state.textContent = t(`agent.status.${agent.status}`);
-    btn.append(dot, name, state);
+    if (btn.childElementCount !== 3) {
+      const dot = document.createElement("span");
+      dot.className = "workspace-panel__agent-dot";
+      const name = document.createElement("span");
+      name.className = "workspace-panel__agent-name";
+      const state = document.createElement("span");
+      state.className = "workspace-panel__agent-state";
+      btn.replaceChildren(dot, name, state);
+    }
+    const [dot, name, state] = btn.children as unknown as HTMLElement[];
+    const glyph = agent.status === "done" ? "✓" : "●";
+    if (dot.textContent !== glyph) dot.textContent = glyph;
+    if (name.textContent !== agent.label) name.textContent = agent.label;
+    const stateText = t(`agent.status.${agent.status}`);
+    if (state.textContent !== stateText) state.textContent = stateText;
     const base = statusTitle(agent.label, `agent.status.${agent.status}`);
-    btn.title = agent.tool ? `${base} (${agent.tool})` : base;
-    btn.addEventListener("click", () => {
-      void manager.focusPane(paneId).then(highlight);
-    });
+    const title = agent.tool ? `${base} (${agent.tool})` : base;
+    if (btn.title !== title) btn.title = title;
     return btn;
+  }
+
+  /// Several tree changes in one frame (agent events, statuses, saves) are
+  /// one render.
+  let treeQueued = false;
+  function scheduleTree(): void {
+    if (treeQueued) return;
+    treeQueued = true;
+    requestAnimationFrame(() => {
+      treeQueued = false;
+      renderTree();
+    });
   }
 
   /// Re-render only the pane/agent rows under each workspace. Workspace rows
   /// are left alone, so an agent update mid-drag never detaches the row
-  /// being dragged.
+  /// being dragged. Collapsed workspaces are not built at all.
   function renderTree(): void {
+    const open = manager.workspaces.filter((ws) => isExpanded(expanded, ws.id));
+    for (const ws of manager.workspaces) {
+      const isOpen = isExpanded(expanded, ws.id);
+      const caret = carets.get(ws.id);
+      if (caret) {
+        caret.textContent = isOpen ? "▾" : "▸";
+        caret.title = t(isOpen ? "tree.collapse" : "tree.expand");
+        caret.setAttribute("aria-label", caret.title);
+        caret.setAttribute("aria-expanded", String(isOpen));
+      }
+      const host = childHosts.get(ws.id);
+      if (host) host.style.display = isOpen ? "" : "none";
+    }
     const tree = buildAgentTree(
-      manager.workspaces,
+      open,
       manager.agents,
       (id) => manager.paneStatus.get(id) ?? "idle",
       treeLabels(),
       manager.paneLabels,
     );
+    const used = new Set<HTMLElement>();
     for (const ws of tree) {
       const host = childHosts.get(ws.wsId);
       if (!host) continue;
-      const open = isExpanded(expanded, ws.wsId);
-      const caret = carets.get(ws.wsId);
-      if (caret) {
-        caret.textContent = open ? "▾" : "▸";
-        caret.title = t(open ? "tree.collapse" : "tree.expand");
-        caret.setAttribute("aria-label", caret.title);
-        caret.setAttribute("aria-expanded", String(open));
-      }
-      host.replaceChildren();
-      host.style.display = open ? "" : "none";
-      if (!open) continue;
+      const want: HTMLElement[] = [];
       for (const pane of ws.panes) {
-        host.appendChild(makePaneRow(pane));
-        for (const agent of pane.agents) host.appendChild(makeAgentRow(pane.paneId, agent));
+        want.push(paneRow(pane));
+        for (const agent of pane.agents) want.push(agentRow(pane.paneId, agent));
         for (const tab of pane.tabs) {
-          host.appendChild(makeTabRow(tab));
-          for (const agent of tab.agents) host.appendChild(makeAgentRow(tab.paneId, agent));
+          want.push(tabRow(tab));
+          for (const agent of tab.agents) want.push(agentRow(tab.paneId, agent));
         }
       }
+      for (const el of want) used.add(el);
+      const have = host.children;
+      if (have.length !== want.length || want.some((el, i) => have[i] !== el)) host.replaceChildren(...want);
     }
+    // Rows of panes that left (or of collapsed workspaces) are made afresh
+    // next time.
+    for (const [key, el] of treeRows) if (!used.has(el)) treeRows.delete(key);
+    for (const ws of manager.workspaces) if (!isExpanded(expanded, ws.id)) childHosts.get(ws.id)?.replaceChildren();
   }
 
   function rebuild(): void {
@@ -711,10 +748,10 @@ export function mountWorkspacePanel(
   manager.onWorkspacesChange(rebuild);
   manager.onPaneStatusChange = () => {
     highlight();
-    renderTree();
+    scheduleTree();
   };
   const cleanupTree = manager.onTreeChange(() => {
-    renderTree();
+    scheduleTree();
     renderHint(); // the Settings toggle reaches the panel through here
   });
   const cleanupInbox = manager.onInboxChange(renderBell);

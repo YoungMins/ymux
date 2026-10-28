@@ -13,8 +13,11 @@ import { linkedGroup, snapTo, type GutterLine } from "./gutterSnap";
 
 /// What a gutter's drag can do to another gutter it moves with.
 interface GutterHandle {
-  /// Put the divider's centre at `pos` (client px across the drag).
-  moveTo(pos: number): void;
+  /// The ratio that puts the divider's centre at `pos` (client px across
+  /// the drag), or null while its split has no size. Reads layout only.
+  ratioAt(pos: number): number | null;
+  /// Writes only.
+  apply(ratio: number): void;
   commit(): void;
 }
 const handles = new WeakMap<HTMLElement, GutterHandle>();
@@ -179,21 +182,31 @@ function makeGutter(
   let dragging = false;
   let ratio = startRatio;
   const horizontal = direction === "horizontal";
-  // Moves this divider's centre to `pos`; false when it has no size yet.
-  const moveTo = (pos: number): boolean => {
-    const rect = parent.getBoundingClientRect();
-    const start = horizontal ? rect.left : rect.top;
-    const size = horizontal ? rect.width : rect.height;
-    if (size <= 0) return false;
-    ratio = clamp((pos - start) / size, 0.05, 0.95);
-    a.style.flex = `${ratio} ${ratio} 0`;
-    b.style.flex = `${1 - ratio} ${1 - ratio} 0`;
-    return true;
-  };
-  handles.set(gutter, {
-    moveTo: (pos) => void moveTo(pos),
+  const handle: GutterHandle = {
+    ratioAt: (pos) => {
+      const rect = parent.getBoundingClientRect();
+      const start = horizontal ? rect.left : rect.top;
+      const size = horizontal ? rect.width : rect.height;
+      return size > 0 ? clamp((pos - start) / size, 0.05, 0.95) : null;
+    },
+    apply: (r) => {
+      ratio = r;
+      a.style.flex = `${r} ${r} 0`;
+      b.style.flex = `${1 - r} ${1 - r} 0`;
+    },
     commit: () => ctx.onRatioCommitted(path, ratio),
-  });
+  };
+  handles.set(gutter, handle);
+  // Terminals refit at most this often while dragging (each refit that
+  // changes the grid resizes the PTY and redraws the program in it), and
+  // once more when the drag ends.
+  let lastFit = 0;
+  const refit = () => {
+    lastFit = performance.now();
+    // Refit every cached pane; cheap at small pane counts and avoids having
+    // to walk the DOM to find which xterm instances live inside `a`/`b`.
+    for (const pane of ctx.paneCache.values()) pane.scheduleFit();
+  };
 
   // The dividers of this direction in the workspace, as lines on screen.
   const peersNow = (): HTMLElement[] => {
@@ -226,12 +239,17 @@ function makeGutter(
       pos = hit.at;
       snapped = hit.snapped !== null;
     }
+    // Every measurement first, then every write: one layout per move.
+    const moves: [GutterHandle, number][] = [];
+    for (const g of group) {
+      const h = handles.get(g);
+      const r = h?.ratioAt(pos);
+      if (h && r !== null && r !== undefined) moves.push([h, r]);
+    }
+    if (!moves.some(([h]) => h === handle)) return;
     gutter.classList.toggle("gutter--snapped", snapped);
-    if (!moveTo(pos)) return;
-    for (const g of group) if (g !== gutter) handles.get(g)?.moveTo(pos);
-    // Refit every cached pane; cheap at small pane counts and avoids having
-    // to walk the DOM to find which xterm instances live inside `a`/`b`.
-    for (const pane of ctx.paneCache.values()) pane.scheduleFit();
+    for (const [h, r] of moves) h.apply(r);
+    if (performance.now() - lastFit >= FIT_EVERY_MS) refit();
   };
 
   // Every way a drag can end, not just `pointerup`: an Alt+Tab (window
@@ -250,6 +268,7 @@ function makeGutter(
     for (const g of group) if (g !== gutter) handles.get(g)?.commit();
     setGroup([gutter]);
     ctx.onRatioCommitted(path, ratio);
+    refit();
   };
 
   gutter.addEventListener("pointerdown", (ev) => {
@@ -279,6 +298,9 @@ function makeGutter(
 
   return gutter;
 }
+
+/// How often terminals refit during a divider drag.
+const FIT_EVERY_MS = 80;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
