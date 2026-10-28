@@ -1,6 +1,6 @@
 // Accounts as RPG heroes: an account's all-time token total (the Usage
-// view's number, Claude Code and Codex together) is its experience, one
-// level per 100M tokens. The hero's class and form (slime or human) are the
+// view's number, Claude Code and Codex together) plus a bonus for every task
+// its agents finished (`TASK_XP`) is its experience, one level per 100M. The hero's class and form (slime or human) are the
 // user's picks; its gear grows with the level (`tierOf`). Pure, apart from
 // the localStorage helpers at the bottom (a per-machine view preference,
 // like the office theme).
@@ -42,10 +42,15 @@ export function nextTierLevel(level: number): number | null {
   return TIER_LEVELS.find((min) => min > level) ?? null;
 }
 
-/// All-time tokens per account id ("" default, "none" home, else a profile).
-export function accountXp(rows: readonly UsageRow[]): Map<string, number> {
+/// Experience a finished task is worth: fifty tasks make a level.
+export const TASK_XP = TOKENS_PER_LEVEL / 50;
+
+/// Experience per account id ("" default, "none" home, else a profile): its
+/// all-time tokens, plus `TASK_XP` for each finished task in `tasks`.
+export function accountXp(rows: readonly UsageRow[], tasks: Readonly<Record<string, number>> = {}): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.account, (out.get(r.account) ?? 0) + r.all_time.total);
+  for (const [account, n] of Object.entries(tasks)) out.set(account, (out.get(account) ?? 0) + n * TASK_XP);
   return out;
 }
 
@@ -77,6 +82,7 @@ export function levelUps(seen: Readonly<Record<string, number>>, now: ReadonlyMa
 const CLASS_KEY = "ymux.office.heroClass";
 const SEEN_KEY = "ymux.office.heroLevels";
 const FORM_KEY = "ymux.office.heroForm";
+const TASKS_KEY = "ymux.office.heroTasks";
 
 function readJson(key: string): Record<string, unknown> {
   try {
@@ -123,4 +129,16 @@ export function loadSeenLevels(): Record<string, number> {
 
 export function saveSeenLevels(levels: ReadonlyMap<string, number>): void {
   writeJson(SEEN_KEY, { ...loadSeenLevels(), ...Object.fromEntries(levels) });
+}
+
+/// Tasks finished per account (an agent's turn reaching "done").
+export function loadTasks(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(readJson(TASKS_KEY))) if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = Math.floor(v);
+  return out;
+}
+
+export function addTask(account: string): void {
+  const tasks = loadTasks();
+  writeJson(TASKS_KEY, { ...tasks, [account]: (tasks[account] ?? 0) + 1 });
 }

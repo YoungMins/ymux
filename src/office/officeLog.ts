@@ -1,6 +1,7 @@
 // What the office remembers between glances: the lobby board's notes
-// (agents finishing, work handed from one place to another) and each pane's
-// mailbox. A letter arrives sealed, is opened when the pane's agent starts
+// (agents finishing, with what the turn did; work handed from one place to
+// another), each pane's mailbox, and since when each agent has been in its
+// status and on its tool (for wait times and stuck agents). A letter arrives sealed, is opened when the pane's agent starts
 // working, and leaves the box when that turn ends. Kept for
 // the app's lifetime only, never written to disk; fed by WorkspaceManager
 // whether or not the office is open, and read by OfficeView.
@@ -24,6 +25,19 @@ export interface LogEntry {
   /// A message's sender pane and label; null when the user sent it.
   from: Uuid | null;
   fromLabel: string | null;
+  /// A message's first line ("" for a finished turn).
+  snippet: string;
+  /// A finished turn: how long it took, and what the activity log says it
+  /// did (when the log is on).
+  turn?: TurnFacts;
+}
+
+export interface TurnFacts {
+  durationMs: number | null;
+  headline: string;
+  files: number | null;
+  add: number | null;
+  del: number | null;
 }
 
 export interface Mail {
@@ -54,6 +68,8 @@ export function snippetOf(text: string): string {
 export class OfficeLog {
   private entries: LogEntry[] = [];
   private mail = new Map<Uuid, Mail[]>();
+  private statuses = new Map<Uuid, { status: string; at: number }>();
+  private tools = new Map<Uuid, { tool: string | null; at: number }>();
   private listeners = new Set<() => void>();
   private nextId = 1;
 
@@ -85,10 +101,54 @@ export class OfficeLog {
     return this.mail.get(paneId) ?? [];
   }
 
-  /// An agent finished in `paneId`.
-  done(paneId: Uuid, label: string, agent: string | null): void {
-    this.push({ kind: "done", paneId, label, agent, from: null, fromLabel: null });
+  /// An agent finished in `paneId`, after `durationMs` of work if known.
+  done(paneId: Uuid, label: string, agent: string | null, durationMs: number | null = null): void {
+    this.push({
+      kind: "done",
+      paneId,
+      label,
+      agent,
+      from: null,
+      fromLabel: null,
+      snippet: "",
+      turn: { durationMs, headline: "", files: null, add: null, del: null },
+    });
     this.changed();
+  }
+
+  /// What the activity log says `paneId`'s last turn did, onto its newest
+  /// "done" note.
+  describeTurn(paneId: Uuid, facts: Partial<TurnFacts>): void {
+    const i = this.entries.findIndex((e) => e.kind === "done" && e.paneId === paneId);
+    if (i < 0) return;
+    const e = this.entries[i];
+    const turn = { ...(e.turn ?? { durationMs: null, headline: "", files: null, add: null, del: null }) };
+    for (const [k, v] of Object.entries(facts)) if (v !== null && v !== undefined && v !== "") (turn as Record<string, unknown>)[k] = v;
+    this.entries = this.entries.map((x, j) => (j === i ? { ...x, turn } : x));
+    this.changed();
+  }
+
+  /// The agent in `paneId` is in `status` with `tool`: remembered with the
+  /// time each last changed. Null status: no agent there any more.
+  track(paneId: Uuid, status: string | null, tool: string | null): void {
+    if (status === null) {
+      this.statuses.delete(paneId);
+      this.tools.delete(paneId);
+      return;
+    }
+    if (this.statuses.get(paneId)?.status !== status) this.statuses.set(paneId, { status, at: this.now() });
+    const t = this.tools.get(paneId);
+    if (!t || t.tool !== tool) this.tools.set(paneId, { tool, at: this.now() });
+  }
+
+  /// When the agent in `paneId` entered its current status, or null.
+  statusSince(paneId: Uuid): number | null {
+    return this.statuses.get(paneId)?.at ?? null;
+  }
+
+  /// When the agent in `paneId` started on its current tool, or null.
+  toolSince(paneId: Uuid): number | null {
+    return this.tools.get(paneId)?.at ?? null;
   }
 
   /// Work was handed to `paneId`: a note on the board and a sealed letter
@@ -97,7 +157,7 @@ export class OfficeLog {
     m: { kind: OfficeMessageKind; to: Uuid; label: string; agent: string | null; from: Uuid | null; fromLabel: string | null },
     text: string,
   ): void {
-    this.push({ kind: m.kind, paneId: m.to, label: m.label, agent: m.agent, from: m.from, fromLabel: m.fromLabel });
+    this.push({ kind: m.kind, paneId: m.to, label: m.label, agent: m.agent, from: m.from, fromLabel: m.fromLabel, snippet: snippetOf(text) });
     const box = [
       { id: this.nextId++, at: this.now(), kind: m.kind, from: m.from, fromLabel: m.fromLabel, snippet: snippetOf(text), opened: false },
       ...(this.mail.get(m.to) ?? []),

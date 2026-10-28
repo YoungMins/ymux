@@ -83,6 +83,13 @@ export class OfficePeek {
   private shown = "";
   private timer: ReturnType<typeof setInterval> | null = null;
   private sending = false;
+  private options: readonly MenuOption[] = [];
+  private readonly waitEl: HTMLElement;
+  private readonly nextBtn: HTMLButtonElement;
+  /// A menu choice was answered in `paneId` (the queue moves on).
+  onAnswered: ((paneId: Uuid) => void) | null = null;
+  /// The "next waiting" button was pressed.
+  onNext: (() => void) | null = null;
 
   constructor(private readonly source: PeekSource) {
     this.element = document.createElement("div");
@@ -116,7 +123,15 @@ export class OfficePeek {
     // A status lamp: blue working, red needs you, green done.
     const lamp = document.createElement("span");
     lamp.className = "office-peek__lamp";
-    head.append(lamp, this.titleEl, this.tabsEl, open, close);
+    // How long it has been waiting, and the way to the next one waiting.
+    this.waitEl = document.createElement("span");
+    this.waitEl.className = "office-peek__wait";
+    this.nextBtn = document.createElement("button");
+    this.nextBtn.type = "button";
+    this.nextBtn.className = "office-peek__btn office-peek__next";
+    this.nextBtn.hidden = true;
+    this.nextBtn.addEventListener("click", () => this.onNext?.());
+    head.append(lamp, this.titleEl, this.waitEl, this.tabsEl, this.nextBtn, open, close);
 
     this.screenEl = document.createElement("pre");
     this.screenEl.className = "office-peek__screen";
@@ -212,6 +227,23 @@ export class OfficePeek {
         return;
       }
       const composing = ev.isComposing || ev.keyCode === 229;
+      // Alt+N: on to the next agent waiting.
+      if (ev.altKey && ev.code === "KeyN" && this.onNext && !this.nextBtn.hidden) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.onNext();
+        return;
+      }
+      // With the box empty and a menu up, a digit picks that choice.
+      if (!composing && this.input.value === "" && /^[1-9]$/.test(ev.key) && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        const o = this.options.find((x) => x.n === ev.key);
+        if (o) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          this.pick(o);
+          return;
+        }
+      }
       // With the box empty, arrows, Tab and Enter drive the terminal (move
       // through a menu, pick, cycle modes) instead of the empty box.
       if (!composing && this.input.value === "" && this.pane && FORWARD_WHEN_EMPTY.has(ev.key) && !(ev.key === "Enter" && ev.shiftKey)) {
@@ -275,6 +307,40 @@ export class OfficePeek {
     this.element.dataset.status = current?.status ?? "idle";
     this.element.setAttribute("aria-label", current?.label ?? "");
     this.renderTabs();
+  }
+
+  /// The wait shown by the title ("2m"), or "" for none.
+  setWait(text: string): void {
+    this.waitEl.textContent = text;
+    this.waitEl.hidden = text === "";
+  }
+
+  /// The next agent waiting after this one (its label), or null.
+  setNext(label: string | null): void {
+    this.nextBtn.hidden = label === null;
+    if (label !== null) {
+      this.nextBtn.textContent = `${t("office.queue.next")} ▶`;
+      this.nextBtn.title = `${label} (Alt+N)`;
+    }
+  }
+
+  /// Put `text` in the prompt box, for the user to edit and send.
+  prefill(text: string): void {
+    this.input.value = text;
+    this.input.focus();
+    this.input.setSelectionRange(text.length, text.length);
+  }
+
+  /// Answer the menu with `o` (a choice that takes text asks for it first).
+  private pick(o: MenuOption): void {
+    if (o.input) {
+      this.openAnswer(o);
+      return;
+    }
+    const pane = this.pane;
+    this.send(o.n);
+    this.input.focus();
+    if (pane) this.onAnswered?.(pane);
   }
 
   close(): void {
@@ -362,6 +428,7 @@ export class OfficePeek {
       setTimeout(() => {
         this.source.type(pane, "\r");
         this.poll();
+        this.onAnswered?.(pane);
       }, 120);
     }, 250);
     this.closeAnswer();
@@ -389,14 +456,7 @@ export class OfficePeek {
         if (this.answerFor?.n === o.n) b.classList.add("office-peek__option--answering");
         // Agents take the number as "pick this one"; a choice that wants
         // text asks for it first.
-        b.addEventListener("click", () => {
-          if (o.input) {
-            this.openAnswer(o);
-            return;
-          }
-          this.send(o.n);
-          this.input.focus();
-        });
+        b.addEventListener("click", () => this.pick(o));
         return b;
       }),
     );
@@ -417,7 +477,8 @@ export class OfficePeek {
     const atBottom = force || el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     this.shown = text;
     el.textContent = text;
-    this.renderOptions(menuOptions(lines));
+    this.options = menuOptions(lines);
+    this.renderOptions(this.options);
     if (atBottom) el.scrollTop = el.scrollHeight;
   }
 

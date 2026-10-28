@@ -4,6 +4,13 @@
 // works, reports back to its lead and leaves. Work one session sends to
 // another (`officeEvents`) is carried over by a character on foot.
 //
+// It is also a control room: a queue of the agents waiting for the user
+// (Alt+N / Tab walks it, a digit answers a menu and moves on), "approve all"
+// for plain yes/no prompts, a done flag that opens the diff review, notes on
+// the board with what each turn did, stuck agents sweating, the providers'
+// quota as energy bars, a floor per workspace, and a mini mode in a corner.
+// Busy agents run to the shelves, the machines and the window as they work.
+//
 // Rooms and desks are rebuilt on every update (they are cheap and static);
 // characters are kept by key so they can walk between updates.
 
@@ -56,6 +63,22 @@ import type { Hero } from "./officeModel";
 import type { TokenUsage } from "../tokenmonitor/model";
 import type { AccountProfile } from "../types";
 import { ACCOUNT_NONE } from "../accounts/accountModel";
+import { loadTasks } from "./heroModel";
+import { askChoice } from "../ui/Dialog";
+import {
+  approveOption,
+  errandIcon,
+  errandSpot,
+  nextWaiting,
+  quotaMeters,
+  shortDuration,
+  stuckReason,
+  waitQueue,
+  wanderSpot,
+  type Meter,
+  type Stuck,
+  type Waiting,
+} from "./officeQueue";
 
 /// Corridor width, in CSS pixels (wide enough for a character).
 const CORRIDOR_PX = 40;
@@ -63,10 +86,38 @@ const CORRIDOR_PX = 40;
 /// on-screen distance whatever the window size.
 const WALK_PX_PER_S = 240;
 
+/// A workspace, as a floor of the office.
+export interface OfficeFloor {
+  id: number;
+  label: string;
+  /// Its number in the workspace panel (1-based).
+  position: number;
+  waiting: number;
+  working: number;
+}
+
 export interface OfficeSource extends PeekSource {
-  /// The active workspace, as the model wants it.
-  input(): OfficeInput;
-  workspaceName(): string;
+  /// Workspace `wsId`, as the model wants it.
+  input(wsId: number): OfficeInput;
+  workspaceName(wsId: number): string;
+  /// Every workspace, and which one is active.
+  floors(): OfficeFloor[];
+  activeFloor(): number;
+  /// The workspace a pane is in.
+  floorOf(paneId: Uuid): number | null;
+  /// Agents waiting for the user, in every workspace.
+  waiting(): Waiting[];
+  /// When a pane's terminal last printed something (epoch ms).
+  outputAt(paneId: Uuid): number | null;
+  /// When a pane's agent started on its current tool (epoch ms).
+  toolSince(paneId: Uuid): number | null;
+  /// Open the diff review of the repository a pane works in.
+  review(paneId: Uuid): Promise<"ok" | "no-repo">;
+  /// The agents an empty desk can start, and starting one there.
+  launchers(paneId: Uuid): Promise<{ label: string; command: string }[]>;
+  launch(paneId: Uuid, command: string): void;
+  /// The office shrank to a corner (true) or filled the window again.
+  setMini(mini: boolean): void;
   /// Leave the office and focus `paneId` in the split view.
   openPane(paneId: Uuid): void;
   close(): void;
@@ -117,6 +168,12 @@ interface Actor {
 }
 
 const BUBBLE_MS = 1600;
+/// The control room's clock: wait times, stuck agents, errands.
+const TICK_MS = 1000;
+/// Pause at the desk between a busy agent's errands (plus up to as much again).
+const ERRAND_GAP_MS = 3500;
+/// A screen-pixel drag that turns a press on a board note into a drag.
+const DRAG_PX = 6;
 
 export class OfficeView {
   readonly element: HTMLElement;
@@ -152,10 +209,27 @@ export class OfficeView {
   private readonly levelUpEl: HTMLElement;
   private readonly pets: Pet[] = [];
   private theme: ThemeId = loadTheme();
+  /// The workspace on show, and whether it follows the active one.
+  private floorId: number;
+  private followActive = true;
+  private readonly floorsEl: HTMLElement;
+  private readonly queueBtn: HTMLButtonElement;
+  private readonly approveBtn: HTMLButtonElement;
+  private readonly metersEl: HTMLElement;
+  private readonly miniBtn: HTMLButtonElement;
+  private readonly launchEl: HTMLElement;
+  private meters: Meter[] = [];
+  private waitingNow: Waiting[] = [];
+  /// The peek was opened from the queue: answering moves on to the next.
+  private queueMode = false;
+  /// When each busy character takes its next errand (epoch ms).
+  private readonly nextErrand = new Map<string, number>();
+  private miniOn = false;
   private readonly reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   constructor(private readonly source: OfficeSource) {
+    this.floorId = source.activeFloor();
     this.element = document.createElement("section");
     this.element.className = "office";
     this.element.tabIndex = -1;
@@ -200,7 +274,43 @@ export class OfficeView {
       ev.stopPropagation();
       this.toggleHeroes();
     });
-    head.append(this.titleEl, legend, this.kindsEl, heroBtn, this.themeSelect, back);
+    // A floor per workspace, with a red count of who waits there.
+    this.floorsEl = document.createElement("div");
+    this.floorsEl.className = "office__floors";
+    // The queue: who waits for the user, longest first.
+    this.queueBtn = document.createElement("button");
+    this.queueBtn.type = "button";
+    this.queueBtn.className = "office__back office__queue";
+    this.queueBtn.hidden = true;
+    this.queueBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.nextInQueue();
+    });
+    this.approveBtn = document.createElement("button");
+    this.approveBtn.type = "button";
+    this.approveBtn.className = "office__back office__approve";
+    this.approveBtn.hidden = true;
+    this.approveBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void this.approveAll();
+    });
+    // The providers' quota left, as energy bars.
+    this.metersEl = document.createElement("div");
+    this.metersEl.className = "office__meters";
+    this.miniBtn = document.createElement("button");
+    this.miniBtn.type = "button";
+    this.miniBtn.className = "office__back office__mini-btn";
+    this.miniBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.setMini(!this.miniOn);
+    });
+    const spacer = document.createElement("span");
+    spacer.className = "office__spacer";
+    head.append(this.titleEl, this.floorsEl, this.queueBtn, this.approveBtn, spacer, heroBtn, this.themeSelect, this.miniBtn, back);
+    // A second, quieter row: the status legend, who is who, the quota left.
+    const subhead = document.createElement("div");
+    subhead.className = "office__subhead";
+    subhead.append(legend, this.kindsEl, this.metersEl);
 
     this.floor = document.createElement("div");
     this.floor.className = "office__floor";
@@ -246,6 +356,11 @@ export class OfficeView {
     this.levelUpEl.className = "office-levelup";
     this.levelUpEl.hidden = true;
     this.levelUpEl.setAttribute("role", "status");
+    // An empty desk's menu: start an agent there, or look at its terminal.
+    this.launchEl = document.createElement("div");
+    this.launchEl.className = "office-launch";
+    this.launchEl.hidden = true;
+    this.launchEl.addEventListener("click", (ev) => ev.stopPropagation());
     this.floor.append(
       this.roomsLayer,
       lobby,
@@ -256,13 +371,27 @@ export class OfficeView {
       this.peek.element,
       this.heroes.element,
       this.levelUpEl,
+      this.launchEl,
+    );
+    // Small in a corner: a click anywhere brings the office back first.
+    this.floor.addEventListener(
+      "click",
+      (ev) => {
+        if (!this.miniOn) return;
+        ev.stopPropagation();
+        this.setMini(false);
+      },
+      true,
     );
     this.floor.addEventListener("click", () => {
       this.boardPanel.hidden = true;
-      this.peek.close();
+      this.launchEl.hidden = true;
+      this.closePeek();
       this.heroes.hide();
     });
-    this.element.append(head, this.floor);
+    this.peek.onAnswered = (paneId) => this.answered(paneId);
+    this.peek.onNext = () => this.nextInQueue();
+    this.element.append(head, subhead, this.floor);
 
     this.manager = this.makeActor("manager", null, characterSprite("", "manager"));
     this.manager.el.classList.add("office-char--manager", "office-char--relaxing");
@@ -272,10 +401,22 @@ export class OfficeView {
     this.element.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") {
         ev.preventDefault();
-        if (this.peek.paneId) this.peek.close();
+        if (this.miniOn) return;
+        if (!this.launchEl.hidden) this.launchEl.hidden = true;
+        else if (this.peek.paneId) this.closePeek();
         else if (this.heroes.open) this.heroes.hide();
         else if (!this.boardPanel.hidden) this.boardPanel.hidden = true;
         else this.source.close();
+        return;
+      }
+      // Tab or N on the floor itself (not in a field): the next agent waiting.
+      const t = ev.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || t.closest(".office-peek"));
+      if (!typing && !ev.defaultPrevented && !ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === "Tab" || ev.key === "n" || ev.key === "N")) {
+        if (this.waitingNow.length > 0) {
+          ev.preventDefault();
+          this.nextInQueue();
+        }
       }
     });
 
@@ -290,6 +431,8 @@ export class OfficeView {
     void this.loadXp();
     const xpTimer = setInterval(() => void this.loadXp(), XP_REFRESH_MS);
     this.cleanups.push(() => clearInterval(xpTimer));
+    const tick = setInterval(() => this.tick(), TICK_MS);
+    this.cleanups.push(() => clearInterval(tick));
     this.translate(back, legend);
     this.applyTheme();
     this.render();
@@ -309,6 +452,12 @@ export class OfficeView {
       chip.textContent = t(`office.status.${chip.dataset.status}`);
     }
     this.emptyEl.textContent = t("office.empty");
+    this.queueBtn.title = t("office.queue.title");
+    this.approveBtn.title = t("office.approveAll.title");
+    this.miniBtn.textContent = "▣";
+    this.miniBtn.title = t("office.mini.title");
+    this.miniBtn.setAttribute("aria-label", t("office.mini.title"));
+    this.floorsEl.setAttribute("aria-label", t("office.floors"));
     this.board.title = t("office.board");
     this.board.setAttribute("aria-label", t("office.board"));
   }
@@ -355,7 +504,9 @@ export class OfficeView {
   // ── Rendering ─────────────────────────────────────────────────────────
 
   private render(): void {
-    const input = { ...this.source.input(), heroOf: (id: Uuid) => this.heroOf(id) };
+    if (this.followActive) this.floorId = this.source.activeFloor();
+    if (!this.source.floors().some((f) => f.id === this.floorId)) this.floorId = this.source.activeFloor();
+    const input = { ...this.source.input(this.floorId), heroOf: (id: Uuid) => this.heroOf(id) };
     const w = this.floor.clientWidth;
     const h = this.floor.clientHeight;
     if (w > 0 && h > 0) {
@@ -365,13 +516,15 @@ export class OfficeView {
     } else {
       this.model = buildOffice(input);
     }
-    this.titleEl.textContent = `${t(`office.theme.${this.theme}`)} — ${this.source.workspaceName()}`;
+    this.titleEl.textContent = `${t(`office.theme.${this.theme}`)} — ${this.source.workspaceName(this.floorId)}`;
     this.applyScale();
+    this.renderFloors();
     this.renderKinds();
     this.renderRooms();
     this.reconcile();
     this.ensurePets();
     this.emptyEl.hidden = this.model.chars.length > 0;
+    this.tick();
   }
 
   /// How the smallest room compares with the space a desk and its character
@@ -427,7 +580,10 @@ export class OfficeView {
         this.position(d, desk.at, 20);
         d.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this.peekOrOpen(desk.paneId);
+          // A terminal with nobody at the desk: offer to start an agent.
+          if (room.kind === "terminal" && !this.model.chars.some((c) => c.paneId === desk.paneId && c.role === "lead")) {
+            void this.openLauncher(desk.paneId, desk.at);
+          } else this.peekOrOpen(desk.paneId);
         });
         // Tabs at the same desk row get a name card under their desk.
         if (room.desks.length > 1) {
@@ -499,6 +655,343 @@ export class OfficeView {
     return el;
   }
 
+  // ── Control room: floors, the queue, approve all, meters, mini ────────
+
+  get mini(): boolean {
+    return this.miniOn;
+  }
+
+  /// Shrink to a corner (the panes are usable again) or fill the window.
+  setMini(on: boolean): void {
+    if (on === this.miniOn) return;
+    this.miniOn = on;
+    this.element.classList.toggle("office--mini", on);
+    if (on) {
+      this.closePeek();
+      this.launchEl.hidden = true;
+      this.boardPanel.hidden = true;
+      this.heroes.hide();
+    }
+    this.source.setMini(on);
+    if (!on) this.focus();
+  }
+
+  /// One button per workspace: its number, red with how many wait there.
+  private renderFloors(): void {
+    const floors = this.source.floors();
+    this.floorsEl.hidden = floors.length < 2;
+    if (floors.length < 2) return;
+    this.floorsEl.replaceChildren(
+      ...floors.map((f) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = `office__floor-btn${f.id === this.floorId ? " office__floor-btn--on" : ""}`;
+        b.textContent = `${f.position}F`;
+        if (f.waiting > 0) {
+          const n = document.createElement("span");
+          n.className = "office__floor-wait";
+          n.textContent = String(f.waiting);
+          b.appendChild(n);
+        } else if (f.working > 0) b.classList.add("office__floor-btn--busy");
+        b.title = `${f.label}${f.waiting ? ` · ${fill(t("office.queue"), { n: f.waiting })}` : ""}`;
+        b.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.followActive = f.id === this.source.activeFloor();
+          this.showFloor(f.id);
+        });
+        return b;
+      }),
+    );
+  }
+
+  /// Show workspace `id`: its rooms and people appear in place, no walking in.
+  private showFloor(id: number): void {
+    if (id === this.floorId) return;
+    this.floorId = id;
+    this.closePeek();
+    this.launchEl.hidden = true;
+    for (const a of this.actors.values()) a.el.remove();
+    this.actors.clear();
+    this.nextErrand.clear();
+    this.prev = [];
+    this.first = true;
+    this.render();
+  }
+
+  private closePeek(): void {
+    this.queueMode = false;
+    this.peek.close();
+  }
+
+  /// Open the next agent waiting for the user (on its own floor).
+  private nextInQueue(): void {
+    const queue = waitQueue(this.source.waiting());
+    const next = nextWaiting(queue, this.peek.paneId);
+    if (!next) {
+      this.closePeek();
+      return;
+    }
+    if (next.ws !== this.floorId) {
+      this.followActive = next.ws === this.source.activeFloor();
+      this.showFloor(next.ws);
+    }
+    this.queueMode = true;
+    if (this.canPeek(next.paneId)) this.peekOrOpen(next.paneId, true);
+    else this.source.openPane(next.paneId);
+    this.tick();
+  }
+
+  /// A menu was answered in the peek: in the queue, on to the next one.
+  private answered(paneId: Uuid): void {
+    if (!this.queueMode) return;
+    void this.sleep(700).then(() => {
+      if (this.disposed || this.peek.paneId !== paneId) return;
+      const rest = waitQueue(this.source.waiting()).filter((w) => w.paneId !== paneId);
+      if (rest.length === 0) this.closePeek();
+      else this.nextInQueue();
+    });
+  }
+
+  /// Every waiting agent whose screen asks a plain yes/no, with its "yes".
+  private approvable(): { w: Waiting; n: string; label: string }[] {
+    const out: { w: Waiting; n: string; label: string }[] = [];
+    for (const w of this.waitingNow) {
+      const o = approveOption(this.source.screen(w.paneId));
+      if (o) out.push({ w, n: o.n, label: o.label });
+    }
+    return out;
+  }
+
+  /// Answer "yes" in every waiting agent that only asks that, after the
+  /// user confirms the list. Each screen is read again just before, so a
+  /// prompt that changed meanwhile is left alone.
+  private async approveAll(): Promise<void> {
+    const list = this.approvable();
+    if (list.length === 0) return;
+    const detail = list.map((a) => `• ${a.w.label} — ${a.n}. ${a.label}`).join("\n");
+    const answer = await askChoice(fill(t("office.approveAll.confirm"), { n: list.length }), detail, [
+      { id: "cancel", label: t("dialog.cancel") },
+      { id: "ok", label: t("office.approveAll.ok"), primary: true },
+    ]);
+    if (answer?.id !== "ok" || this.disposed) return;
+    for (const a of list) {
+      const o = approveOption(this.source.screen(a.w.paneId));
+      if (o && o.n === a.n && o.label === a.label) this.source.type(a.w.paneId, o.n);
+    }
+    this.tick();
+  }
+
+  /// The once-a-second pass: the queue and approve buttons, wait times and
+  /// stuck agents in the bubbles, and errands for the busy.
+  private tick(): void {
+    if (this.disposed) return;
+    const now = Date.now();
+    this.waitingNow = waitQueue(this.source.waiting());
+    const n = this.waitingNow.length;
+    this.queueBtn.hidden = n === 0;
+    this.queueBtn.textContent = `⚠ ${fill(t("office.queue"), { n })}`;
+    this.element.classList.toggle("office--alert", n > 0);
+    const yes = n >= 2 ? this.approvable().length : 0;
+    this.approveBtn.hidden = yes < 2;
+    this.approveBtn.textContent = `✓ ${fill(t("office.approveAll"), { n: yes })}`;
+    if (this.peek.paneId) {
+      const w = this.waitingNow.find((x) => x.paneId === this.peek.paneId);
+      this.peek.setWait(w?.since ? shortDuration(now - w.since, getLang()) : "");
+      const others = this.waitingNow.filter((x) => x.paneId !== this.peek.paneId);
+      this.peek.setNext(others.length > 0 ? (nextWaiting(this.waitingNow, this.peek.paneId)?.label ?? null) : null);
+    }
+    const since = new Map(this.waitingNow.map((w) => [w.paneId, w.since]));
+    for (const actor of this.actors.values()) {
+      const c = actor.model;
+      if (!c || actor.gone) continue;
+      const stuck =
+        c.role === "lead"
+          ? stuckReason({ working: c.status === "working", tool: c.tool, outputAt: this.source.outputAt(c.paneId), toolSince: this.source.toolSince(c.paneId), now })
+          : null;
+      actor.el.classList.toggle("office-char--stuck", stuck !== null);
+      actor.el.dataset.stuck = stuck ?? "";
+      if (!actor.el.classList.contains("office-char--speaking")) {
+        const b = this.bubbleFor(c, since.get(c.paneId) ?? null, stuck, now);
+        this.setBubble(actor, b.icon, b.text);
+      }
+      if (stuck) actor.el.title = `${c.label} · ${t(`office.stuck.${stuck}`)}`;
+      this.busyErrand(actor, now);
+    }
+  }
+
+  /// A busy agent runs to the shelf, the machines or the window now and
+  /// then; a busy helper paces about its spot.
+  private busyErrand(actor: Actor, now: number): void {
+    const c = actor.model;
+    if (!c || c.status !== "working" || actor.busy > 0 || this.reduced || this.miniOn) {
+      if (c && c.status !== "working") this.nextErrand.delete(actor.key);
+      return;
+    }
+    const due = this.nextErrand.get(actor.key);
+    if (due === undefined) {
+      this.nextErrand.set(actor.key, now + ERRAND_GAP_MS * (0.3 + Math.random()));
+      return;
+    }
+    if (now < due) return;
+    const room = this.roomOf(c);
+    if (!room) return;
+    const w = this.floor.clientWidth;
+    const h = this.floor.clientHeight;
+    this.nextErrand.set(actor.key, Number.POSITIVE_INFINITY);
+    if (c.role === "lead") {
+      const spot = errandSpot(room.rect, w, h, Math.random);
+      const icon = errandIcon(c.tool);
+      this.errand(actor, async () => {
+        await this.walk(actor, spot);
+        actor.el.classList.add("office-char--looking");
+        await this.say(actor, icon, 1200 + Math.random() * 1400);
+        actor.el.classList.remove("office-char--looking");
+      });
+    } else {
+      const spot = wanderSpot(c.home, room.rect, w, h, Math.random);
+      this.errand(actor, async () => {
+        await this.walk(actor, spot);
+        await this.sleep(500 + Math.random() * 900);
+      });
+    }
+    // Next errand once this one is over and it has sat a while.
+    void actor.chain.then(() => this.nextErrand.set(actor.key, Date.now() + ERRAND_GAP_MS * (1 + Math.random())));
+  }
+
+  /// The providers' quota left, as small energy bars in the header.
+  private renderMeters(): void {
+    this.metersEl.replaceChildren(
+      ...this.meters.map((m) => {
+        const el = document.createElement("span");
+        el.className = `office__meter${m.left <= 15 ? " office__meter--low" : m.left <= 40 ? " office__meter--mid" : ""}`;
+        el.title = fill(t("office.quota"), { provider: kindName(m.provider), window: m.window, n: m.left });
+        const name = document.createElement("span");
+        name.className = "office__meter-name";
+        name.textContent = `${kindName(m.provider).split(" ")[0]} ${m.window}`;
+        const bar = document.createElement("span");
+        bar.className = "office__meter-bar";
+        const fillEl = document.createElement("i");
+        fillEl.style.width = `${m.left}%`;
+        bar.appendChild(fillEl);
+        el.append(name, bar);
+        return el;
+      }),
+    );
+  }
+
+  /// An agentless terminal's desk: start an agent there, or peek.
+  private async openLauncher(paneId: Uuid, at: Point): Promise<void> {
+    const head = document.createElement("div");
+    head.className = "office-launch__head";
+    head.textContent = t("office.launch.title");
+    const peekBtn = document.createElement("button");
+    peekBtn.type = "button";
+    peekBtn.className = "office-launch__item";
+    peekBtn.textContent = `👁 ${t("office.launch.peek")}`;
+    peekBtn.addEventListener("click", () => {
+      this.launchEl.hidden = true;
+      this.peekOrOpen(paneId);
+    });
+    const wait = document.createElement("div");
+    wait.className = "office-launch__note";
+    wait.textContent = "…";
+    this.launchEl.replaceChildren(head, wait, peekBtn);
+    this.launchEl.style.left = `${at.x * 100}%`;
+    this.launchEl.style.top = `${at.y * 100}%`;
+    this.launchEl.hidden = false;
+    const agents = await this.source.launchers(paneId).catch(() => []);
+    if (this.disposed || this.launchEl.hidden) return;
+    const items = agents.map((a) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "office-launch__item";
+      b.textContent = `▶ ${a.label}`;
+      b.title = a.command;
+      b.addEventListener("click", () => {
+        this.launchEl.hidden = true;
+        this.source.launch(paneId, a.command);
+      });
+      return b;
+    });
+    if (items.length === 0) {
+      wait.textContent = t("office.launch.none");
+      this.launchEl.replaceChildren(head, wait, peekBtn);
+    } else this.launchEl.replaceChildren(head, ...items, peekBtn);
+  }
+
+  /// A board note dropped on an agent: its peek opens with a prompt handing
+  /// the note over, for the user to edit and send.
+  private handoff(e: LogEntry, paneId: Uuid): void {
+    if (!this.canPeek(paneId)) return;
+    const text =
+      e.kind === "done"
+        ? fill(t("office.handoff.review"), { pane: e.label, what: e.turn?.headline || t("office.handoff.lastTurn") })
+        : fill(t("office.handoff.message"), { pane: e.label, text: e.snippet });
+    this.peekOrOpen(paneId);
+    this.peek.prefill(text);
+  }
+
+  /// Drag a board note with the pointer (HTML drag and drop is taken by the
+  /// window's file drop on Windows); drop it on a character.
+  private dragNote(e: LogEntry, down: PointerEvent, src: HTMLElement): void {
+    const x0 = down.clientX;
+    const y0 = down.clientY;
+    let ghost: HTMLElement | null = null;
+    let over: HTMLElement | null = null;
+    const target = (ev: PointerEvent): HTMLElement | null => {
+      const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+      const el = hit?.closest<HTMLElement>(".office-char");
+      return el && el.dataset.pane ? el : null;
+    };
+    const move = (ev: PointerEvent) => {
+      if (!ghost) {
+        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < DRAG_PX) return;
+        ghost = document.createElement("div");
+        ghost.className = "office-note-ghost";
+        ghost.textContent = src.querySelector(".office-board__text")?.textContent ?? "";
+        this.element.appendChild(ghost);
+        this.element.classList.add("office--dragging");
+      }
+      const r = this.element.getBoundingClientRect();
+      ghost.style.left = `${ev.clientX - r.left + 12}px`;
+      ghost.style.top = `${ev.clientY - r.top + 12}px`;
+      ghost.hidden = true;
+      const t2 = target(ev);
+      ghost.hidden = false;
+      if (t2 !== over) {
+        over?.classList.remove("office-char--drop");
+        t2?.classList.add("office-char--drop");
+        over = t2;
+      }
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      over?.classList.remove("office-char--drop");
+      this.element.classList.remove("office--dragging");
+      if (!ghost) {
+        this.source.openPane(e.paneId);
+        return;
+      }
+      ghost.remove();
+      // The click that ends a drag lands on the floor, which would close the
+      // peek this opens: swallow it.
+      const swallow = (c: MouseEvent) => {
+        c.stopPropagation();
+        c.preventDefault();
+      };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+      const t2 = target(ev);
+      if (t2?.dataset.pane) {
+        this.boardPanel.hidden = true;
+        this.handoff(e, t2.dataset.pane);
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
   // ── Heroes: accounts levelling up with their tokens ──────────────────
 
   private heroOf(paneId: Uuid): Hero | null {
@@ -537,7 +1030,9 @@ export class OfficeView {
       return;
     }
     if (this.disposed) return;
-    this.xp = accountXp(usage.rows);
+    this.xp = accountXp(usage.rows, loadTasks());
+    this.meters = quotaMeters(usage.providers, Date.now());
+    this.renderMeters();
     const levels = new Map([...this.xp].map(([a, n]) => [a, levelOf(n).level]));
     const ups = levelUps(loadSeenLevels(), levels);
     saveSeenLevels(levels);
@@ -556,11 +1051,13 @@ export class OfficeView {
   private heroRows(): HeroRow[] | null {
     if (!this.xp) return null;
     const ids = new Set<string>(["", ...this.xp.keys(), ...this.source.accounts().map((p) => p.id)]);
+    const tasks = loadTasks();
     return [...ids].map((account) => ({
       account,
       name: this.accountName(account),
       color: this.source.accounts().find((p) => p.id === account)?.color ?? "",
       tokens: this.xp?.get(account) ?? 0,
+      tasks: tasks[account] ?? 0,
       cls: this.classOf(account),
       form: this.formOf(account),
     }));
@@ -612,7 +1109,10 @@ export class OfficeView {
   }
 
   /// Peek at a terminal; any other pane kind is opened as before.
-  private peekOrOpen(paneId: Uuid): void {
+  /// `fromQueue`: opened by walking the queue, so answering moves on.
+  private peekOrOpen(paneId: Uuid, fromQueue = false): void {
+    this.queueMode = fromQueue;
+    this.launchEl.hidden = true;
     if (!this.canPeek(paneId)) {
       this.source.openPane(paneId);
       return;
@@ -803,12 +1303,15 @@ export class OfficeView {
         flag.className = "office-flag";
         flag.innerHTML = flagSvg();
         paintProps(flag);
-        flag.title = t("office.flag");
+        flag.title = t("office.flag.review");
         this.position(flag, outside, 2);
         const target = room.doneDesk;
+        // The finished work's diff review; a pane outside a repository opens.
         flag.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this.source.openPane(target);
+          void this.source.review(target).then((r) => {
+            if (r === "no-repo" && !this.disposed) this.source.openPane(target);
+          });
         });
         out.push(flag);
       }
@@ -889,11 +1392,37 @@ export class OfficeView {
       when.dateTime = new Date(e.at).toISOString();
       when.textContent = ago(rel, e.at);
       b.append(icon, text, when);
-      b.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        this.source.openPane(e.paneId);
+      // What the turn did (the activity log's headline, the diff, the time),
+      // or the message's first line.
+      const facts = turnLine(e);
+      if (facts) {
+        const sub = document.createElement("span");
+        sub.className = "office-board__facts";
+        sub.textContent = facts;
+        b.appendChild(sub);
+      }
+      b.title = t("office.board.drag");
+      // A click opens the pane; dragging the note onto an agent hands it over.
+      b.addEventListener("click", (ev) => ev.stopPropagation());
+      b.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        this.dragNote(e, ev, b);
       });
       li.appendChild(b);
+      if (e.kind === "done") {
+        const rv = document.createElement("button");
+        rv.type = "button";
+        rv.className = "office-board__review";
+        rv.textContent = t("office.board.review");
+        rv.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void this.source.review(e.paneId).then((r) => {
+            if (r === "no-repo" && !this.disposed) this.source.openPane(e.paneId);
+          });
+        });
+        li.appendChild(rv);
+      }
       list.appendChild(li);
     }
     if (log.length === 0) {
@@ -945,6 +1474,7 @@ export class OfficeView {
     bubble.hidden = true;
     el.appendChild(bubble);
     if (model) {
+      el.dataset.pane = model.paneId;
       const tag = document.createElement("span");
       tag.className = "office-char__tag";
       el.appendChild(tag);
@@ -984,7 +1514,8 @@ export class OfficeView {
     const status = t(`office.status.${c.status === "waiting" ? "waiting" : c.status}`);
     el.title = [c.label, status, c.tool].filter(Boolean).join(" · ");
     if (!el.classList.contains("office-char--speaking")) {
-      const b = this.bubbleFor(c);
+      const since = this.waitingNow.find((w) => w.paneId === c.paneId)?.since ?? null;
+      const b = this.bubbleFor(c, since, (el.dataset.stuck || null) as Stuck | null, Date.now());
       this.setBubble(actor, b.icon, b.text);
     }
   }
@@ -1038,7 +1569,13 @@ export class OfficeView {
     actor.el.classList.toggle("office-char--seated", seated);
   }
 
-  private bubbleFor(c: CharModel): { icon: string | null; text: string } {
+  /// The bubble: the tool at work (a sweat drop when stuck), how long it has
+  /// waited for the user, a tick when done, zzz when idle.
+  private bubbleFor(c: CharModel, waitingSince: number | null, stuck: Stuck | null, now: number): { icon: string | null; text: string } {
+    if (stuck) return { icon: "sweat", text: c.tool ? clip(c.tool, 12) : "" };
+    if (waitingSince !== null && (c.status === "waiting" || c.role === "lead")) {
+      return { icon: "alert", text: shortDuration(now - waitingSince, getLang()) };
+    }
     switch (c.status) {
       case "working":
         return c.tool ? { icon: null, text: clip(c.tool, 14) } : { icon: "dots", text: "" };
@@ -1206,6 +1743,19 @@ function noteText(e: LogEntry): string {
   return e.fromLabel
     ? fill(t("office.note.fromTo"), { kind, from: e.fromLabel, pane: e.label })
     : fill(t("office.note.to"), { kind, pane: e.label });
+}
+
+/// A finished turn's facts ("Changed 2 files (+10/-3) · 3m"), or a
+/// message's first line.
+function turnLine(e: LogEntry): string {
+  if (e.kind !== "done") return e.snippet ? `“${e.snippet}”` : "";
+  const turn = e.turn;
+  if (!turn) return "";
+  const parts: string[] = [];
+  if (turn.headline) parts.push(turn.headline);
+  else if (turn.files !== null) parts.push(fill(t("office.note.stats"), { files: turn.files, add: turn.add ?? 0, del: turn.del ?? 0 }));
+  if (turn.durationMs !== null) parts.push(shortDuration(turn.durationMs, getLang()));
+  return parts.join(" · ");
 }
 
 function ago(rel: Intl.RelativeTimeFormat, at: number): string {

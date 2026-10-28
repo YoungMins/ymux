@@ -171,6 +171,11 @@ export const ICONS: Readonly<Record<string, readonly string[]>> = {
   review: ["oooooo.", "owwwwo.", "okkwwor", "owwwwrr", "okkwrro", "owwrro.", "ooooo.."],
   box: [".ooooo.", "oddDddo", "oooooo.", "odddddo", "oddgddo", "odddddo", "ooooooo"],
   heart: [".oo.oo.", "orrorro", "orrrrro", ".orrro.", "..oro..", "...o..."],
+  sweat: ["..o..", ".obo.", "obbbo", "obBbo", "obbbo", ".ooo."],
+  book: [".oo.oo.", "owwowwo", "okwowko", "owwowwo", "okwowko", "ooooooo"],
+  gear: ["o.ooo.o", ".oKKKo.", "oKKoKKo", "oKo.oKo", "oKKoKKo", ".oKKKo.", "o.ooo.o"],
+  globe: [".ooooo.", "obgbbgo", "oggbbbo", "obggbgo", "obbggbo", ".ooooo."],
+  pencil: [".....oo", "....oyo", "...oyo.", "..oyo..", ".oyo...", "oao....", "oo....."],
 };
 
 /// A pennant with a check, flown outside a room whose agent finished.

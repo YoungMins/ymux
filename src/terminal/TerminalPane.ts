@@ -826,6 +826,17 @@ export class TerminalPane implements Pane {
   }
 
   /// The foreground app turned on application cursor keys (DECCKM).
+  /// The user has seen what this pane flags (its done turn reviewed from
+  /// the office) without focusing it.
+  acknowledge(): void {
+    this.statusMachine.onFocus();
+  }
+
+  /// When output last arrived (epoch ms), or null before any.
+  get outputAt(): number | null {
+    return this.lastOutputAt > 0 ? this.lastOutputAt : null;
+  }
+
   get applicationCursorKeys(): boolean {
     return this.term.modes.applicationCursorKeysMode;
   }

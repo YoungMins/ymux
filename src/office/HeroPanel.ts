@@ -5,7 +5,7 @@
 
 import { getLang, t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
-import { HERO_CLASSES, HERO_FORMS, TIER, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass, type HeroForm } from "./heroModel";
+import { HERO_CLASSES, HERO_FORMS, TASK_XP, TIER, TOKENS_PER_LEVEL, levelOf, nextTierLevel, tierOf, type HeroClass, type HeroForm } from "./heroModel";
 import { characterSprite } from "./sheet";
 
 export interface HeroRow {
@@ -13,7 +13,10 @@ export interface HeroRow {
   name: string;
   /// "#rrggbb" or "".
   color: string;
+  /// Experience: all-time tokens plus the finished tasks' bonus.
   tokens: number;
+  /// Tasks its agents finished.
+  tasks: number;
   cls: HeroClass;
   form: HeroForm;
 }
@@ -136,7 +139,8 @@ export class HeroPanel {
     const next = nextTierLevel(lv.level);
     xp.textContent = [
       `${compact(lv.xp)} / ${compact(TOKENS_PER_LEVEL)} XP`,
-      fill(t("office.heroes.total"), { n: compact(r.tokens) }),
+      fill(t("office.heroes.total"), { n: compact(Math.max(0, r.tokens - r.tasks * TASK_XP)) }),
+      ...(r.tasks > 0 ? [fill(t("office.heroes.tasks"), { n: String(r.tasks) })] : []),
       next === null ? t("office.heroes.max") : fill(t("office.heroes.next"), { n: String(next) }),
     ].join(" · ");
     info.append(name, level, bar, xp);

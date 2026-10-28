@@ -4211,7 +4211,20 @@ body,
   font-size: 12px;
 }
 
-.office__title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.04em; }
+.office__title { flex: 0 1 auto; min-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.04em; }
+.office__spacer { flex: 1 1 auto; }
+.office__subhead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 3px 10px;
+  background: #23253a;
+  border-bottom: 3px solid #12131d;
+  font-size: 11px;
+}
+.office__subhead .office__legend { flex: 0 1 auto; }
+.office__subhead .office__meters { margin-left: auto; }
+.office--mini .office__subhead { display: none; }
 
 .office__legend,
 .office__kinds { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -4267,6 +4280,88 @@ body,
   box-shadow: 0 0 0 2px #12131d, inset -2px -2px 0 #c9bfa5;
 }
 .office__back:active { box-shadow: 0 0 0 2px #12131d, inset 2px 2px 0 #c9bfa5; }
+
+/* Control room: floors (workspaces), the waiting queue, approve all, the
+   providers' quota as energy bars, the mini toggle. */
+.office__floors { display: flex; gap: 4px; flex: 0 0 auto; }
+.office__floors[hidden] { display: none; }
+.office__floor-btn {
+  position: relative;
+  padding: 2px 6px;
+  border: 0;
+  background: #3d4058;
+  color: #d8d3e6;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px #12131d;
+}
+.office__floor-btn:hover { background: #4a4e6a; }
+.office__floor-btn--on { background: #f4ecd8; color: var(--ink); }
+.office__floor-btn--busy::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  width: 5px;
+  height: 5px;
+  background: #5aa0d8;
+  box-shadow: 0 0 0 1px #12131d;
+}
+.office__floor-wait {
+  position: absolute;
+  right: -7px;
+  top: -7px;
+  min-width: 11px;
+  padding: 0 2px;
+  background: #e05555;
+  color: #fff;
+  font-size: 9px;
+  line-height: 11px;
+  box-shadow: 0 0 0 1px #12131d;
+}
+.office__queue { background: #ffd9d9; animation: office-queue 1s steps(1) infinite; }
+.office__queue:hover { background: #ffe9e9; }
+@keyframes office-queue { 50% { box-shadow: 0 0 0 2px #12131d, 0 0 0 4px #e05555, inset -2px -2px 0 #c9a5a5; } }
+.office__approve { background: #d9f5d9; }
+.office__approve:hover { background: #e9ffe9; }
+.office__queue[hidden],
+.office__approve[hidden] { display: none; }
+.office__meters { display: flex; gap: 8px; flex: 0 0 auto; }
+.office__meter { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #b8b3c9; }
+.office__meter-bar {
+  position: relative;
+  width: 36px;
+  height: 6px;
+  background: #12131d;
+  box-shadow: 0 0 0 1px #12131d;
+}
+.office__meter-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: repeating-linear-gradient(90deg, #5be37a 0 3px, #3fbf5f 3px 4px);
+}
+.office__meter--mid .office__meter-bar i { background: repeating-linear-gradient(90deg, #f5c542 0 3px, #c8962a 3px 4px); }
+.office__meter--low .office__meter-bar i { background: repeating-linear-gradient(90deg, #e05555 0 3px, #a83232 3px 4px); }
+.office__meter--low { color: #ff9f9f; }
+.office__mini-btn { padding: 3px 7px; }
+
+/* Mini: the whole office at half size in the bottom-right corner, the panes
+   usable around it. A click brings it back; it flashes while anyone waits. */
+.office.office--mini {
+  inset: auto 12px 12px auto;
+  width: 960px;
+  height: 600px;
+  transform: scale(0.5);
+  transform-origin: 100% 100%;
+  box-shadow: 0 0 0 6px #12131d, 12px 12px 0 rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.office--mini .office__head > :not(.office__title):not(.office__queue):not(.office__floors):not(.office__mini-btn) { display: none; }
+.office--mini .office__head { font-size: 20px; }
+.office--mini .office__floor { margin: 4px; }
+.office--mini.office--alert { animation: office-mini-alert 0.8s steps(1) infinite; }
+@keyframes office-mini-alert { 50% { box-shadow: 0 0 0 6px #e05555, 12px 12px 0 rgba(0, 0, 0, 0.35); } }
 
 .office__floor {
   /* One art pixel. Defined here, where the view sets --o-scale. */
@@ -4879,6 +4974,10 @@ body,
 @keyframes office-blink-lamp { 50% { background: #7a2020; } }
 
 .office-peek__title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-peek__wait { flex: 0 0 auto; padding: 0 4px; background: #e05555; color: #fff; font-size: 10px; }
+.office-peek__wait[hidden],
+.office-peek__wait:empty { display: none; }
+.office-peek__next[hidden] { display: none; }
 .office-peek__tabs { display: flex; gap: 6px; overflow-x: auto; flex: 0 1 auto; padding: 2px; }
 .office-peek__tabs[hidden] { display: none; }
 
@@ -5396,6 +5495,81 @@ body,
 .office-board__icon { flex: 0 0 auto; line-height: 0; }
 .office-board__text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .office-board__time { flex: 0 0 auto; color: #7a6f5c; font-size: 11px; }
+.office-board__list li { display: flex; align-items: flex-start; }
+.office-board__list li .office-board__item { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; touch-action: none; }
+.office-board__facts {
+  flex: 1 0 100%;
+  padding-left: 22px;
+  color: #6a5f4c;
+  font-size: 11px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.office-board__review {
+  flex: 0 0 auto;
+  margin: 5px 8px 0 0;
+  padding: 1px 6px;
+  border: 0;
+  background: #c89a6a;
+  color: var(--ink);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.office-board__review:hover { background: #dcb488; }
+/* A board note being dragged to an agent. */
+.office-note-ghost {
+  position: absolute;
+  z-index: 6000;
+  max-width: 240px;
+  padding: 4px 8px;
+  background: #fff3b8;
+  color: var(--ink);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--ink), 4px 4px 0 rgba(0, 0, 0, 0.3);
+}
+.office--dragging { cursor: grabbing; }
+.office--dragging .office-board__panel { opacity: 0.6; }
+.office-char--drop .office-sprite { filter: drop-shadow(0 0 2px #fff3b8) drop-shadow(0 0 4px #f5c542); }
+
+/* An empty desk's menu: start an agent there. */
+.office-launch {
+  position: absolute;
+  z-index: 3500;
+  min-width: 170px;
+  transform: translate(-50%, 18px);
+  background: #fffdf5;
+  color: var(--ink);
+  box-shadow: 0 0 0 3px var(--ink), 5px 5px 0 rgba(0, 0, 0, 0.35);
+}
+.office-launch[hidden] { display: none; }
+.office-launch__head { padding: 4px 8px; background: #c89a6a; font-size: 11px; letter-spacing: 0.06em; border-bottom: 3px solid var(--ink); }
+.office-launch__note { padding: 6px 8px; font-size: 11px; color: #7a6f5c; }
+.office-launch__item {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.office-launch__item:hover { background: #f2ead2; }
+
+/* A stuck agent sweats; a busy one looking at the shelf bobs. */
+.office-char--stuck .office-char__bubble { background: #dff1ff; animation: office-hop 1.2s steps(1) infinite; }
+.office-char--looking:not(.office-char--walking) .office-sprite { animation: office-hop 0.5s steps(1) 3; }
+
 .office-board__empty { margin: 0; padding: 10px; font-size: 12px; color: #7a6f5c; }
 
 /* A burst of pixel confetti over a lead that just finished. */

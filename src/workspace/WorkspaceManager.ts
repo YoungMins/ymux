@@ -105,6 +105,12 @@ import { emitOfficeMessage, type OfficeMessageKind } from "../office/officeEvent
 import { officeLog } from "../office/officeLog";
 import type { PeekSendResult } from "../office/OfficePeek";
 import { keyBytes } from "../office/peekKeys";
+import { addTask } from "../office/heroModel";
+import type { OfficeFloor } from "../office/OfficeView";
+import type { Waiting } from "../office/officeQueue";
+import { launchableAgents } from "./agentLaunch";
+import { openDiffReview } from "../diff/DiffReview";
+import { activityApi } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
 
 /// What the top bar's "+" launcher starts in a new tab: a shell, an optional
@@ -2149,7 +2155,9 @@ export class WorkspaceManager {
   }
 
   toggleOffice(): void {
-    if (this.office) this.closeOffice();
+    // A mini office in the corner grows back first.
+    if (this.office?.mini) this.office.setMini(false);
+    else if (this.office) this.closeOffice();
     else this.openOffice();
   }
 
@@ -2159,24 +2167,53 @@ export class WorkspaceManager {
     // the overlay; the popup counter hides them until it closes.
     pushPopup();
     this.office = new OfficeView({
-      input: () => ({
-        root: this.active.root,
-        agents: this._agents,
-        statusOf: (id) => this.paneStatus.get(id) ?? "idle",
-        // Terminals by their tab label; other panes as the workspace tree
-        // names them ("Browser", "Git", …).
-        labelOf: (id) => {
-          const spec = findPane(this.active.root, id);
-          return spec && (spec.pane_kind ?? "terminal") !== "terminal"
-            ? paneLabel(spec, this.inboxLabels())
-            : this.tabLabelFor(id);
-        },
-        focused: this.activePaneId(),
-        mailOf: (id) => officeLog.mailOf(id),
-      }),
+      input: (wsId) => {
+        const ws = this.config.workspaces.find((w) => w.id === wsId) ?? this.active;
+        return {
+          root: ws.root,
+          agents: this._agents,
+          statusOf: (id) => this.paneStatus.get(id) ?? "idle",
+          // Terminals by their tab label; other panes as the workspace tree
+          // names them ("Browser", "Git", …).
+          labelOf: (id) => {
+            const spec = findPane(ws.root, id);
+            return spec && (spec.pane_kind ?? "terminal") !== "terminal"
+              ? paneLabel(spec, this.inboxLabels())
+              : this.tabLabelFor(id);
+          },
+          focused: ws.id === this.activeId ? this.activePaneId() : null,
+          mailOf: (id) => officeLog.mailOf(id),
+        };
+      },
+      floors: () => this.officeFloors(),
+      activeFloor: () => this.activeId,
+      floorOf: (id) => this.workspaceOfPane(id),
+      waiting: () => this.officeWaiting(),
+      outputAt: (id) => {
+        const pane = this.findPaneById(id);
+        return pane instanceof TerminalPane ? pane.outputAt : null;
+      },
+      toolSince: (id) => officeLog.toolSince(id),
+      review: (id) => this.reviewFromOffice(id),
+      launchers: (id) => this.officeLaunchers(id),
+      launch: (id, command) => {
+        const pane = this.findPaneById(id);
+        if (pane instanceof TerminalPane) pane.typeText(`${command}\r`);
+      },
+      setMini: (mini) => {
+        // Small in a corner, the panes are back in use: embedded browsers
+        // may show again.
+        if (mini) {
+          popPopup();
+          const id = this.activePaneId();
+          if (id) void this.focusPane(id);
+        } else pushPopup();
+      },
       log: () => officeLog.list(),
-      workspaceName: () =>
-        formatWorkspaceLabel(this.activeId, this.active.name ?? null, this.workspacePosition(this.activeId)),
+      workspaceName: (wsId) => {
+        const ws = this.config.workspaces.find((w) => w.id === wsId) ?? this.active;
+        return formatWorkspaceLabel(ws.id, ws.name ?? null, this.workspacePosition(ws.id));
+      },
       openPane: (id) => this.closeOffice(id),
       close: () => this.closeOffice(),
       screen: (id) => {
@@ -2234,6 +2271,91 @@ export class WorkspaceManager {
     return "sent";
   }
 
+  /// Every workspace as a floor of the office, with how many of its agents
+  /// wait for the user and how many work.
+  private officeFloors(): OfficeFloor[] {
+    return this.config.workspaces.map((ws) => {
+      let waiting = 0;
+      let working = 0;
+      const walk = (n: LayoutNode): void => {
+        if (n.kind === "pane") {
+          const lead = this._agents[n.id]?.lead;
+          if (this.paneStatus.get(n.id) === "attention" || lead?.status === "waiting") waiting++;
+          else if (lead?.status === "working") working++;
+        } else if (n.kind === "tabs") n.children.forEach(walk);
+        else {
+          walk(n.a);
+          walk(n.b);
+        }
+      };
+      walk(ws.root);
+      return {
+        id: ws.id,
+        label: formatWorkspaceLabel(ws.id, ws.name ?? null, this.workspacePosition(ws.id)),
+        position: this.workspacePosition(ws.id),
+        waiting,
+        working,
+      };
+    });
+  }
+
+  /// Agents waiting for the user, in every workspace, with since when.
+  private officeWaiting(): Waiting[] {
+    const out: Waiting[] = [];
+    for (const ws of this.config.workspaces) {
+      const walk = (n: LayoutNode): void => {
+        if (n.kind === "pane") {
+          const lead = this._agents[n.id]?.lead;
+          if (this.paneStatus.get(n.id) === "attention" || lead?.status === "waiting") {
+            out.push({
+              paneId: n.id,
+              ws: ws.id,
+              label: this.tabLabelFor(n.id),
+              since: this.statusSince.get(n.id) ?? officeLog.statusSince(n.id),
+            });
+          }
+        } else if (n.kind === "tabs") n.children.forEach(walk);
+        else {
+          walk(n.a);
+          walk(n.b);
+        }
+      };
+      walk(ws.root);
+    }
+    return out;
+  }
+
+  /// The diff review of the repository a pane works in (the office's flag).
+  private async reviewFromOffice(paneId: Uuid): Promise<"ok" | "no-repo"> {
+    let cwd: string | null = null;
+    try {
+      cwd = (await api.getPaneCwd(paneId)) || null;
+    } catch {
+      /* not spawned or no OSC 7: the saved cwd */
+    }
+    cwd ??= this.getPaneSpec(paneId)?.cwd || null;
+    if (!cwd) return "no-repo";
+    try {
+      await openDiffReview(await gitApi.repoRoot(cwd));
+      // Reviewed: the done flag comes down.
+      const pane = this.findPaneById(paneId);
+      if (pane instanceof TerminalPane) pane.acknowledge();
+      return "ok";
+    } catch {
+      return "no-repo";
+    }
+  }
+
+  /// The agents an empty desk can start, as the command lines for its shell.
+  private async officeLaunchers(paneId: Uuid): Promise<{ label: string; command: string }[]> {
+    const spec = this.getPaneSpec(paneId);
+    if (!spec || (spec.pane_kind ?? "terminal") !== "terminal") return [];
+    const shell = this.resolveShell(spec.shell);
+    const family = shellFamilyFromExecutable(this.shells.find((s) => s.name === shell)?.executable);
+    const detected = await api.detectAgents().catch(() => []);
+    return launchableAgents(detected, family).map(({ agent, command }) => ({ label: agent.name, command }));
+  }
+
   /// Work handed to `to`: walked over in the office view, a note on its
   /// board and a letter in `to`'s mailbox (`officeLog`).
   private deliverToOffice(from: Uuid | null, to: Uuid, kind: OfficeMessageKind, text: string): void {
@@ -2258,20 +2380,56 @@ export class WorkspaceManager {
     for (const id of ids) {
       const before = prev[id]?.lead?.status;
       const after = next[id]?.lead?.status;
-      if (before === after) continue;
-      if (after === "working") officeLog.agentWorking(id);
-      else if (before === "working") officeLog.agentStopped(id);
-      if (after === "done") officeLog.done(id, this.tabLabelFor(id), next[id]?.lead?.kind ?? null);
+      const lead = next[id]?.lead;
+      if (before !== after) {
+        if (after === "working") officeLog.agentWorking(id);
+        else if (before === "working") officeLog.agentStopped(id);
+        if (after === "done") {
+          const started = before === "working" ? officeLog.statusSince(id) : null;
+          officeLog.done(id, this.tabLabelFor(id), lead?.kind ?? null, started === null ? null : Date.now() - started);
+          // A finished task is experience for the account's hero.
+          addTask(this.getPaneSpec(id)?.account || this.workspaceAccountOfPane(id) || "");
+          this.describeTurnSoon(id);
+        }
+      }
+      officeLog.track(id, lead?.status ?? null, lead?.tool ?? null);
     }
+  }
+
+  /// The activity log's account of `paneId`'s turn, once its worker has
+  /// written it, onto the board's note. Quietly nothing while the log is off.
+  private describeTurnSoon(paneId: Uuid): void {
+    const at = Date.now();
+    setTimeout(() => {
+      void activityApi
+        .read(80)
+        .then((records) => {
+          const end = [...records].reverse().find((r) => r.pane === paneId && r.kind === "turn_end" && r.ts >= at - 120_000);
+          if (!end) return;
+          const d = end.data as Record<string, unknown>;
+          const stats = (d.stats ?? {}) as Record<string, unknown>;
+          const summary = (d.summary ?? {}) as Record<string, unknown>;
+          const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+          officeLog.describeTurn(paneId, {
+            headline: typeof summary.headline === "string" ? summary.headline : "",
+            durationMs: num(d.duration_ms),
+            files: num(stats.files),
+            add: num(stats.insertions),
+            del: num(stats.deletions),
+          });
+        })
+        .catch(() => {});
+    }, 2500);
   }
 
   /// Close the office; focus `paneId` (in whatever workspace it lives), or
   /// the pane that was active before.
   closeOffice(paneId?: Uuid): void {
     if (!this.office) return;
+    const mini = this.office.mini;
     this.office.dispose();
     this.office = null;
-    popPopup();
+    if (!mini) popPopup();
     for (const cb of this.officeListeners) cb(false);
     const target = paneId ?? this.activePaneId();
     if (target) void this.focusPane(target);
