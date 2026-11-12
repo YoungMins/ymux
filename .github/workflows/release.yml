@@ -198,7 +198,7 @@ jobs:
     # creates the GitHub release, and this job uploads onto it. Running both
     # in parallel would race two tauri-action jobs to create the same release.
     needs: build-windows
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
