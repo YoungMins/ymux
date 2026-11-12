@@ -1267,7 +1267,7 @@ mod tests {
                 _ => continue,
             };
 
-            let (tx, rx) = mpsc::channel();
+            let (tx, rx) = mpsc::sync_channel(crate::pty::session::EVENT_QUEUE);
             let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
             let session = match PtySession::spawn(
                 &PaneSpec::new_default(),

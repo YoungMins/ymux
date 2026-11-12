@@ -47,7 +47,27 @@ fn save_under(base: &Path, millis: u128, bytes: &[u8]) -> std::io::Result<PathBu
     let tmp = path.with_extension("png.tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, &path)?;
-    Ok(path)
+    Ok(real_path(path))
+}
+
+/// The path other processes must use to reach `path`.
+///
+/// The Microsoft Store (MSIX) build runs with file-system virtualisation:
+/// a write to `%LOCALAPPDATA%\ymux\…` lands in
+/// `%LOCALAPPDATA%\Packages\<family>\LocalCache\Local\ymux\…`, and only
+/// processes inside the package see the redirected spelling. The path
+/// typed into the terminal is read by an agent CLI that may not share that
+/// view, so it got a path to a file that, for it, does not exist (while the
+/// path-link tooltip, which canonicalises, showed the real one).
+/// `canonicalize` asks the file system for the final path of the handle,
+/// which is the real location; the verbatim `\\?\` prefix is dropped
+/// again. Unpackaged builds get their own path back unchanged; any failure
+/// falls back to `path`.
+fn real_path(path: PathBuf) -> PathBuf {
+    match std::fs::canonicalize(&path) {
+        Ok(canon) => crate::fspath::strip_verbatim(&canon),
+        Err(_) => path,
+    }
 }
 
 /// Delete every `clip-<millis>.png` in `base` whose embedded timestamp is
@@ -190,6 +210,19 @@ mod tests {
         );
         assert!(path.exists());
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The returned path is the file system's final spelling (what an MSIX
+    /// redirect resolves to), with no `\\?\` prefix to trip up a CLI.
+    #[test]
+    fn save_under_returns_the_final_path_without_verbatim_prefix() {
+        let base = tempdir();
+        let path = save_under(&base, 5678, b"x").expect("save_under should succeed");
+        let canon = crate::fspath::strip_verbatim(&std::fs::canonicalize(&path).unwrap());
+        assert_eq!(path, canon);
+        assert!(!path.to_string_lossy().starts_with(r"\\?\"));
+        assert!(path.is_absolute());
         let _ = std::fs::remove_dir_all(&base);
     }
 
