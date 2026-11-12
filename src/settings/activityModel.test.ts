@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   ATTACH_GROUPS,
   clampInt,
+  DEFAULT_DIGEST_HOUR,
+  defaultActivity,
   defaultEndpoint,
   endpointOnProviderChange,
   formatBytes,
@@ -62,6 +64,11 @@ describe("newDestination", () => {
     expect(d.enabled).toBe(false);
     expect(d.format).toBe("json");
     expect(d.url_hint).toBe("");
+  });
+  it("has the daily digest off, and the digest hour defaults to 18:00", () => {
+    expect(newDestination("x").daily_digest).toBe(false);
+    expect(defaultActivity("en").digest_hour).toBe(DEFAULT_DIGEST_HOUR);
+    expect(DEFAULT_DIGEST_HOUR).toBe(18);
   });
 });
 

@@ -91,6 +91,14 @@ impl PtyManager {
             |k| std::env::var(k).ok(),
             dirs::home_dir().as_deref(),
         );
+        // A session already under this id is killed (and its cwd cleared)
+        // first, so its detached reader cannot report under the new
+        // session's id.
+        let replaced = self.sessions.lock().remove(&spec.id);
+        if let Some(old) = replaced {
+            let _ = old.kill();
+            self.cwds.lock().remove(&spec.id);
+        }
         let session = PtySession::spawn(
             spec,
             profile,
@@ -161,14 +169,18 @@ impl PtyManager {
         // Remove under the lock so the Drop impl can run unguarded and join
         // the reader thread without deadlocking the manager.
         let session = self.sessions.lock().remove(&id);
+        // Kill first: it sets the flag the reader thread checks before
+        // touching `cwds`, so no stale cwd can be re-inserted after the clear
+        // below.
+        let killed = match session {
+            Some(s) => s.kill(),
+            None => Err(YmuxError::UnknownPane(id)),
+        };
         // Drop the dead pane's cached cwd so a later pane reusing the same
         // id doesn't inherit a stale directory.
         self.cwds.lock().remove(&id);
         self.agent_dirs.lock().remove(&id);
-        match session {
-            Some(s) => s.kill(),
-            None => Err(YmuxError::UnknownPane(id)),
-        }
+        killed
     }
 
     pub fn has(&self, id: Uuid) -> bool {
@@ -232,7 +244,9 @@ mod tests {
         mgr.spawn(&spec, &profile, size, &[]).expect("spawn");
         assert!(mgr.pids_snapshot().get(&spec.id).is_some_and(|p| *p > 0));
         assert!(mgr.agent_dirs(spec.id).is_some());
+        mgr.cwds.lock().insert(spec.id, "/x".into());
         mgr.kill(spec.id).expect("kill");
+        assert!(mgr.cwd_for(spec.id).is_none());
         assert!(!mgr.pids_snapshot().contains_key(&spec.id));
         assert!(mgr.agent_dirs(spec.id).is_none());
     }

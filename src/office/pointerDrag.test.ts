@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { followPointer, swallowNextClick } from "./pointerDrag";
 
-const pointer = (type: string): Event => new MouseEvent(type, { clientX: 5, clientY: 6 });
+const pointer = (type: string, buttons = 1): Event => new MouseEvent(type, { clientX: 5, clientY: 6, buttons });
 
 describe("followPointer", () => {
   it("follows moves until the release, then stops listening", () => {
@@ -23,6 +23,19 @@ describe("followPointer", () => {
     window.dispatchEvent(new Event("blur"));
     cancel();
     window.dispatchEvent(pointer("pointerup"));
+    expect(end.mock.calls).toEqual([[null]]);
+  });
+});
+
+describe("followPointer lost release", () => {
+  it("ends cancelled when a move arrives with no button down", () => {
+    const move = vi.fn();
+    const end = vi.fn();
+    followPointer(move, end);
+    window.dispatchEvent(pointer("pointermove"));
+    window.dispatchEvent(pointer("pointermove", 0));
+    window.dispatchEvent(pointer("pointermove"));
+    expect(move).toHaveBeenCalledTimes(1);
     expect(end.mock.calls).toEqual([[null]]);
   });
 });

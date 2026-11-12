@@ -97,26 +97,6 @@ fn quota_selection_ignores_future_and_out_of_order_records() {
 }
 
 #[test]
-fn oversized_transcripts_report_partial_without_scanning() {
-    let (_dir, claude, codex) = setup();
-    let file = fs::File::create(claude.join("projects/p/large.jsonl")).unwrap();
-    file.set_len(64 * 1024 * 1024 + 1).unwrap();
-    let snapshot = collect_from(&claude, &codex, NOW);
-    assert!(snapshot.providers[0].warnings.contains(&"partial"));
-    assert!(snapshot.warnings.is_empty());
-    assert_eq!(snapshot.providers[0].files, 0);
-}
-
-#[test]
-fn file_reader_rejects_growth_beyond_charged_metadata() {
-    let (_dir, claude, _codex) = setup();
-    let path = claude.join("projects/p/growing.jsonl");
-    fs::write(&path, b"{}\n{}\n").unwrap();
-    assert!(super::disk::parse_file(&path, "claude", "session", 3).is_err());
-    assert!(super::disk::parse_file(&path, "claude", "session", 6).is_ok());
-}
-
-#[test]
 fn oversized_retained_metadata_is_not_copied_into_events() {
     let mut parsed = super::parse::Parsed::new("session");
     let metadata = serde_json::json!({"cwd": "x".repeat(4097)});
@@ -179,7 +159,8 @@ fn hourly_buckets_honor_dedupe_codex_delta_window_and_order() {
     let claude_line = |time: &str, id: &str, input: u64, output: u64| {
         format!("{{\"type\":\"assistant\",\"timestamp\":\"{time}\",\"message\":{{\"id\":\"{id}\",\"usage\":{{\"input_tokens\":{input},\"output_tokens\":{output}}}}}}}\n")
     };
-    // `a` is streamed twice (the larger record wins); `old` is outside 371 days.
+    // `a` is streamed twice (the larger record wins); `old` is in the oldest
+    // hour the heatmap still shows.
     let records = [
         claude_line("2026-09-21T05:10:00Z", "a", 10, 1),
         claude_line("2026-09-21T05:10:00Z", "a", 10, 5),
@@ -210,7 +191,9 @@ fn hourly_buckets_honor_dedupe_codex_delta_window_and_order() {
     assert_eq!(
         got,
         vec![
-            (hour("2025-09-15T05:30:00Z"), "claude", 3),
+            // The heatmap's oldest hour is whole: `old` (05:29:59) is in the
+            // same hour as `edge` (05:30:00), for live and folded data alike.
+            (hour("2025-09-15T05:30:00Z"), "claude", 103),
             (hour("2026-09-21T03:00:00Z"), "claude", 7),
             (hour("2026-09-21T04:00:00Z"), "codex", 20),
             (hour("2026-09-21T05:00:00Z"), "claude", 15),
@@ -350,8 +333,12 @@ fn transcript_copied_into_profile_counts_once_for_default() {
 #[test]
 fn card_warnings_do_not_leak_across_accounts() {
     let (_dir, dirs, wclaude) = two_accounts();
-    let file = fs::File::create(wclaude.join("projects/p/large.jsonl")).unwrap();
-    file.set_len(64 * 1024 * 1024 + 1).unwrap();
+    fs::write(
+        wclaude.join("projects/p/bad.jsonl"),
+        "broken
+",
+    )
+    .unwrap();
     let snapshot = collect_from_roots(&scan_roots(&dirs), NOW);
     let warnings: Vec<_> = snapshot
         .providers
@@ -382,23 +369,4 @@ fn print_real_hourly_bucket_count() {
         days.len(),
         json.len()
     );
-}
-
-#[test]
-fn a_file_over_the_event_budget_is_skipped_the_same_way_every_refresh() {
-    let (_dir, claude, codex) = setup();
-    let line = |i: usize| {
-        format!("{{\"type\":\"assistant\",\"sessionId\":\"s\",\"timestamp\":\"2026-09-21T00:00:00Z\",\"message\":{{\"id\":\"m{i}\",\"usage\":{{\"input_tokens\":1}}}}}}\n")
-    };
-    // A file holds at most 10k events; the provider's budget is 25k, so the
-    // third full file does not fit after the first two and the small one.
-    for f in 0..3 {
-        let big: String = (f * 10_000..(f + 1) * 10_000).map(line).collect();
-        fs::write(claude.join(format!("projects/p/big{f}.jsonl")), big).unwrap();
-    }
-    fs::write(claude.join("projects/p/small.jsonl"), line(99_999)).unwrap();
-    for _ in 0..2 {
-        let p = &collect_from(&claude, &codex, NOW).providers[0];
-        assert_eq!((p.files, p.skipped, p.all_time.total), (3, 1, 20_001));
-    }
 }

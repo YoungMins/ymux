@@ -72,6 +72,9 @@ export function setGroup(types: readonly string[], group: AttachGroup, on: boole
   return on ? [...rest, ...group.exts] : rest;
 }
 
+/// Local hour the daily digest goes out unless the user picks another.
+export const DEFAULT_DIGEST_HOUR = 18;
+
 export function defaultActivity(language: string): ActivityConfig {
   return {
     enabled: false,
@@ -80,6 +83,7 @@ export function defaultActivity(language: string): ActivityConfig {
     record_prompts: false,
     report_dir: ".ymux/report",
     language,
+    digest_hour: DEFAULT_DIGEST_HOUR,
   };
 }
 
@@ -111,6 +115,7 @@ export function newDestination(name: string): WebhookDestination {
     max_file_mb: 8,
     max_total_mb: 8,
     max_files: 4,
+    daily_digest: false,
   };
 }
 

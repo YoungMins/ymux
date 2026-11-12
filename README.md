@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.0-7fdbca?style=flat-square" alt="version 0.14.0" />
+  <img src="https://img.shields.io/badge/version-0.15.0-7fdbca?style=flat-square" alt="version 0.15.0" />
 </p>
 
 <p align="center">
@@ -509,9 +509,12 @@ the application switcher, and workspace switching drops the `Alt`.
 | `Ctrl+Shift+V`              | `Cmd+Shift+V`      | Split pane vertically                |
 | `Ctrl+Shift+W`              | `Cmd+Shift+W`      | Close focused pane                   |
 | `Ctrl+Shift+T`              | `Cmd+Shift+T`      | New tab in focused pane              |
+| `Ctrl+Shift+Y`              | `Cmd+Shift+Y`      | Reopen the last closed pane          |
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | Previous / next tab in pane         |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | Zoom / unzoom focused pane           |
 | `Ctrl+Shift+U`              | `Cmd+Shift+U`      | Jump to next pane needing attention  |
+| `Ctrl+Shift+K`              | `Cmd+Shift+K`      | Queue a prompt for the focused pane's agent (sent when its turn ends) |
+| `Ctrl+Shift+B`              | `Cmd+Shift+B`      | Toggle broadcast input to this workspace's shown terminals |
 | `Ctrl+Shift+O`              | `Cmd+Shift+O`      | Toggle office view                   |
 | `Tab` / `N` (office)        | `Tab` / `N`        | Office: next agent waiting for you   |
 | `Alt+N` (office peek)       | `Opt+N`            | Office peek: next one waiting        |

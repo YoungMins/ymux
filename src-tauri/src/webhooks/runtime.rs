@@ -31,6 +31,7 @@ use uuid::Uuid;
 
 use super::client::{self, SendOutcome};
 use super::delivery::{event_from_record, DestStatus, Dispatcher, Options};
+use super::digest;
 use super::payload::{self, BuildCtx};
 use super::{is_valid_dest_id, url_hint, DeliveryEvent, PlanHint, WebhookDestination};
 use crate::activity::runtime::ActivityRuntime;
@@ -750,4 +751,242 @@ mod tests {
         // Nothing was known before, so nothing can be "removed".
         assert!(removed_ids(&[], &[d("x")]).is_empty());
     }
+}
+
+// ------------------------------------------------------------ daily digest
+
+/// Earliest next due-check, Unix ms. The activity worker ticks about once a
+/// minute; this keeps a faster tick from re-reading the state file.
+static DIGEST_NEXT_CHECK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// When the last scheduled build found its period empty (`0` = none); see
+/// [`digest::in_empty_backoff`].
+static DIGEST_EMPTY_AT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// A digest build (log read + token scan) is in flight.
+static DIGEST_BUSY: AtomicBool = AtomicBool::new(false);
+const DIGEST_CHECK_EVERY_MS: i64 = 60_000;
+
+fn digest_state_path() -> std::path::PathBuf {
+    ytheme::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("./ymux-config"))
+        .join("webhooks")
+        .join("digest_state.json")
+}
+
+fn load_digest_state() -> digest::State {
+    std::fs::read_to_string(digest_state_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_digest_state(state: &digest::State) {
+    let path = digest_state_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(text) = serde_json::to_vec(state) else {
+        return;
+    };
+    if let Err(e) = crate::durable::write_atomic(&path, &text) {
+        tracing::warn!(error = %e, "saving the digest state failed");
+    }
+}
+
+/// Called from the activity worker's minute tick (no thread of its own).
+/// Cheap when nothing is due: a config snapshot, a clock read and a tiny
+/// state file. The build runs on a short-lived thread, one at a time, so the
+/// worker never waits on the log or the token scan.
+pub fn digest_tick(app: &AppHandle, now_ms: i64) {
+    if now_ms < DIGEST_NEXT_CHECK.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(rt) = app.try_state::<WebhookRuntime>() else {
+        return;
+    };
+    DIGEST_NEXT_CHECK.store(now_ms + DIGEST_CHECK_EVERY_MS, Ordering::Relaxed);
+    if !rt.dests.read().iter().any(|d| d.enabled && d.daily_digest) {
+        return;
+    }
+    let hour = app
+        .state::<AppState>()
+        .config
+        .snapshot()
+        .activity
+        .digest_hour;
+    let offset = digest::local_offset_minutes(now_ms);
+    let prev_end = load_digest_state().period_end(offset, hour);
+    let Some(period) = digest::next_due(now_ms, offset, hour, prev_end) else {
+        return;
+    };
+    if digest::in_empty_backoff(now_ms, offset, DIGEST_EMPTY_AT.load(Ordering::Relaxed)) {
+        return;
+    }
+    if DIGEST_BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("ymux-digest".into())
+        .spawn(move || {
+            let run = run_digest(&app, period, now_ms, offset, false);
+            // An empty period is not re-read for a while; a sent one resets.
+            DIGEST_EMPTY_AT.store(if run.empty { now_ms } else { 0 }, Ordering::Relaxed);
+            DIGEST_BUSY.store(false, Ordering::SeqCst);
+        });
+    if spawned.is_err() {
+        DIGEST_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// What a digest run did.
+struct DigestRun {
+    /// The day's log had no turns or tool calls.
+    empty: bool,
+    turns: u32,
+}
+
+/// Build the digest of `period` and hand it to the dispatcher.
+/// `test` = a manual test send: today so far, sent even when empty, and the
+/// period state is left alone. A scheduled run records the period's end once
+/// it has sent; an empty period records nothing (the next check the same day
+/// looks at it again, so no turn is ever skipped).
+fn run_digest(
+    app: &AppHandle,
+    period: digest::Period,
+    now_ms: i64,
+    offset: i32,
+    test: bool,
+) -> DigestRun {
+    let Some(rt) = app.try_state::<WebhookRuntime>() else {
+        return DigestRun {
+            empty: true,
+            turns: 0,
+        };
+    };
+    let cfg = app.state::<AppState>().config.snapshot();
+    let range = (period.start_ms, period.end_ms);
+    let date = digest::day_name(digest::local_day(period.end_ms.min(now_ms), offset));
+    let records = app
+        .try_state::<ActivityRuntime>()
+        .map(|a| {
+            a.store().read_range(
+                u64::try_from(range.0).unwrap_or(0),
+                u64::try_from(range.1).unwrap_or(0),
+            )
+        })
+        .unwrap_or_default();
+    let ws = |id: u32| ws_name(&cfg, id);
+    let acc = |id: &str| -> String {
+        match id {
+            "" => "default".to_string(),
+            crate::accounts::ACCOUNT_NONE => "home".to_string(),
+            other => cfg
+                .accounts
+                .iter()
+                .find(|a| a.id == other)
+                .map(|a| a.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "account".to_string()),
+        }
+    };
+    let names = digest::Names {
+        workspace: &ws,
+        account: &acc,
+    };
+    let mut d = digest::build(&date, test, range, &records, &[], &names);
+    if !test {
+        d.from = digest::local_stamp(period.start_ms, offset);
+        d.to = digest::local_stamp(period.end_ms, offset);
+    }
+    if !d.is_empty() {
+        // The token scan is the expensive part: only for a period worth
+        // sending. Tokens are per UTC hour; per-model and cost figures are
+        // not exposed by `token_usage`, so the digest carries per-account and
+        // per-provider totals only. While the index is still building the
+        // figures would undercount, so they are left out and said so.
+        let snapshot = crate::token_usage::collect(&cfg.accounts);
+        if snapshot.indexing {
+            d.tokens_unavailable = true;
+        } else {
+            let hours: Vec<digest::HourTokens> = snapshot
+                .hourly
+                .into_iter()
+                .map(|h| digest::HourTokens {
+                    hour: h.hour,
+                    account: h.account,
+                    provider: h.provider.to_string(),
+                    total: h.total,
+                })
+                .collect();
+            let (from, to) = (std::mem::take(&mut d.from), std::mem::take(&mut d.to));
+            d = digest::build(&date, test, range, &records, &hours, &names);
+            d.from = from;
+            d.to = to;
+        }
+    }
+    let run = DigestRun {
+        empty: d.is_empty(),
+        turns: d.turns,
+    };
+    if run.empty && !test {
+        return run;
+    }
+    rt.dispatcher.publish(&digest::to_event(&d, now_ms, test));
+    if !test {
+        save_digest_state(&digest::State {
+            period_end_ms: period.end_ms,
+            ..digest::State::default()
+        });
+    }
+    run
+}
+
+#[derive(Debug, Serialize)]
+pub struct DigestTestResult {
+    /// Enabled destinations with the daily digest switched on.
+    pub destinations: usize,
+    /// Turns in the digest that was queued.
+    pub turns: u32,
+    /// Nothing happened today yet; an empty test digest was queued anyway.
+    pub empty: bool,
+}
+
+/// "Send digest now" (a test send): queues today's digest so far to every
+/// enabled destination that has the daily digest on, through the normal
+/// queue, retry and HMAC path. Never marks the day as sent.
+#[tauri::command(async)]
+pub async fn webhook_send_digest_test(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+) -> YmuxResult<DigestTestResult> {
+    guard_local(&webview, &request, "webhook_send_digest_test")?;
+    let destinations = app
+        .state::<WebhookRuntime>()
+        .dests
+        .read()
+        .iter()
+        .filter(|d| d.enabled && d.daily_digest)
+        .count();
+    if destinations == 0 {
+        return Ok(DigestTestResult {
+            destinations,
+            turns: 0,
+            empty: true,
+        });
+    }
+    let run = tauri::async_runtime::spawn_blocking(move || {
+        let now = now_ms();
+        let offset = digest::local_offset_minutes(now);
+        let (start_ms, end_ms) = digest::day_range(digest::local_day(now, offset), offset);
+        let period = digest::Period { start_ms, end_ms };
+        run_digest(&app, period, now, offset, true)
+    })
+    .await
+    .map_err(|e| YmuxError::Other(format!("webhook_send_digest_test: {e}")))?;
+    Ok(DigestTestResult {
+        destinations,
+        turns: run.turns,
+        empty: run.empty,
+    })
 }

@@ -125,3 +125,20 @@ export function quotePathForPaste(path: string, family: ShellFamily): string | n
     }
   }
 }
+
+/// Whether the profile is `wsl.exe`: the shell inside it is a Linux one, so
+/// a Windows path must be translated before it is typed (`windowsPathToWsl`).
+export function isWslExecutable(executable: string | null | undefined): boolean {
+  if (!executable) return false;
+  const base = executable.split(/[\\/]/).pop()!.toLowerCase();
+  return (base.endsWith(".exe") ? base.slice(0, -4) : base) === "wsl";
+}
+
+/// `C:\a\b.png` -> `/mnt/c/a/b.png`, the default WSL mount of a Windows
+/// drive. `null` for anything that is not a drive-letter path (UNC, verbatim,
+/// relative): there is no mount point to guess for those.
+export function windowsPathToWsl(path: string): string | null {
+  const m = /^([A-Za-z]):[\\/](.*)$/.exec(path);
+  if (!m) return null;
+  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`;
+}

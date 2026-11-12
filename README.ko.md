@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.0-7fdbca?style=flat-square" alt="version 0.14.0" />
+  <img src="https://img.shields.io/badge/version-0.15.0-7fdbca?style=flat-square" alt="version 0.15.0" />
 </p>
 
 <p align="center">
@@ -468,9 +468,12 @@ pane 순환은 macOS가 `Cmd+Tab`을 앱 전환기로 쓰기 때문에 `Ctrl+Tab
 | `Ctrl+Shift+V`              | `Cmd+Shift+V`      | pane 세로 분할                       |
 | `Ctrl+Shift+W`              | `Cmd+Shift+W`      | 포커스된 pane 닫기                   |
 | `Ctrl+Shift+T`              | `Cmd+Shift+T`      | 포커스된 pane에 새 탭                |
+| `Ctrl+Shift+Y`              | `Cmd+Shift+Y`      | 마지막으로 닫은 창 다시 열기         |
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | pane 안에서 이전 / 다음 탭          |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | 포커스된 pane 확대 / 원복            |
 | `Ctrl+Shift+U`              | `Cmd+Shift+U`      | 확인이 필요한 다음 창으로 이동       |
+| `Ctrl+Shift+K`              | `Cmd+Shift+K`      | 포커스된 pane의 에이전트에 프롬프트 대기열 추가 (턴이 끝나면 전송) |
+| `Ctrl+Shift+B`              | `Cmd+Shift+B`      | 이 워크스페이스의 보이는 터미널에 입력 브로드캐스트 전환 |
 | `Ctrl+Shift+O`              | `Cmd+Shift+O`      | 사무실 보기 전환                     |
 | `Tab` / `N` (사무실)        | `Tab` / `N`        | 사무실: 나를 기다리는 다음 에이전트  |
 | `Alt+N` (사무실 피크)       | `Opt+N`            | 사무실 피크: 다음 대기 에이전트      |

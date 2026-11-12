@@ -836,6 +836,80 @@ pub fn strip_verbatim(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// The path other processes must use to reach `path`.
+///
+/// The Microsoft Store (MSIX) build runs with file-system virtualisation: a
+/// write by ymux itself to `%APPDATA%\ymux\…` / `%LOCALAPPDATA%\ymux\…`
+/// lands in `%LOCALAPPDATA%\Packages\<family>\LocalCache\…`, and only
+/// processes inside the package (ymux and its WebView2) see the redirected
+/// spelling. Everything ymux launches (shells, agent CLIs, Explorer, default
+/// programs) runs outside it, so any AppData path handed to such a process
+/// must go through here (CLAUDE.md rule 18). `canonicalize` asks the file
+/// system for the final path of the handle, which is the real location; the
+/// verbatim `\\?\` prefix is dropped again. Unpackaged builds get their
+/// own path back unchanged; any failure (the path does not exist yet)
+/// falls back to `path`, so write the file first.
+pub fn real_path(path: PathBuf) -> PathBuf {
+    match std::fs::canonicalize(&path) {
+        Ok(canon) => strip_verbatim(&canon),
+        Err(_) => path,
+    }
+}
+
+/// [`real_path`] for a directory. The directory itself may exist in both the
+/// package's view and the real one, so canonicalising it proves nothing;
+/// a file inside it only exists in one of them. Canonicalise the first
+/// regular file found and take its parent. A directory with no file in it
+/// (nothing to disambiguate by) gets plain [`real_path`].
+pub fn real_dir(dir: &Path) -> PathBuf {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|t| t.is_file()) {
+                continue;
+            }
+            let real = real_path(entry.path());
+            if let Some(parent) = real.parent() {
+                if parent.file_name() == dir.file_name() {
+                    return parent.to_path_buf();
+                }
+            }
+            break;
+        }
+    }
+    real_path(dir.to_path_buf())
+}
+
+/// Whether this process runs with MSIX package identity (the Microsoft Store
+/// build). Cached; always `false` off Windows.
+pub fn is_packaged() -> bool {
+    static PACKAGED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PACKAGED.get_or_init(detect_packaged)
+}
+
+#[cfg(windows)]
+fn detect_packaged() -> bool {
+    use windows::core::PWSTR;
+    use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+    let mut len = 0u32;
+    // SAFETY: a zero-length query with a null buffer is the documented way
+    // to ask "do I have a package identity?"; nothing is written.
+    let code = unsafe { GetCurrentPackageFullName(&mut len, PWSTR::null()) };
+    packaged_from_code(code.0)
+}
+
+#[cfg(not(windows))]
+fn detect_packaged() -> bool {
+    false
+}
+
+/// `GetCurrentPackageFullName` answers `ERROR_INSUFFICIENT_BUFFER` (122) to a
+/// zero-length query when the process has an identity, `ERROR_SUCCESS` if it
+/// somehow fit, and `APPMODEL_ERROR_NO_PACKAGE` (15700) when it has none.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn packaged_from_code(code: u32) -> bool {
+    matches!(code, 0 | 122)
+}
+
 /// File types a click may hand to the OS default program. **Everything
 /// else is revealed** in the file manager instead of opened.
 ///
@@ -1066,6 +1140,38 @@ pub fn probe_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packaged_detection_reads_the_win32_code() {
+        assert!(packaged_from_code(122));
+        assert!(packaged_from_code(0));
+        assert!(!packaged_from_code(15700));
+    }
+
+    #[test]
+    fn real_path_falls_back_for_a_missing_path_and_resolves_an_existing_one() {
+        let missing = PathBuf::from("definitely/not/here.txt");
+        assert_eq!(real_path(missing.clone()), missing);
+        let dir = std::env::temp_dir().join(format!("ymux-realpath-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.txt");
+        std::fs::write(&f, b"x").unwrap();
+        let real = real_path(f.clone());
+        assert!(real.is_absolute());
+        assert!(!real.to_string_lossy().starts_with(r"\\?\"));
+        assert_eq!(real.file_name(), f.file_name());
+        // `real_dir` goes through a file inside and lands on the same folder.
+        assert_eq!(real_dir(&dir), real.parent().unwrap());
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(real_dir(&empty).ends_with("empty"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn this_test_process_is_not_packaged() {
+        assert!(!is_packaged());
+    }
 
     #[test]
     fn only_the_main_webview_may_ask() {

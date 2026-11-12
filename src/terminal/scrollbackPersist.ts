@@ -28,3 +28,19 @@ export function shouldSaveScrollback(params: {
 }): boolean {
   return params.persistEnabled && params.hadUserActivity;
 }
+
+/// How long to wait before the next scrollback save: until the output has been
+/// quiet for `quietMs`, but never past `maxWaitMs` after the burst began, so a
+/// pane that never goes quiet (a log tail, a running agent) still saves
+/// periodically. `0` means save now.
+export function scrollbackSaveDelay(p: {
+  now: number;
+  burstStartedAt: number;
+  lastOutputAt: number;
+  quietMs: number;
+  maxWaitMs: number;
+}): number {
+  const quietLeft = p.quietMs - (p.now - p.lastOutputAt);
+  const capLeft = p.maxWaitMs - (p.now - p.burstStartedAt);
+  return Math.max(0, Math.min(quietLeft, capLeft));
+}

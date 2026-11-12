@@ -1,7 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TokenTotals {
     pub input: u64,
     pub output: u64,
@@ -30,7 +31,7 @@ impl TokenTotals {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Quota {
     pub window_minutes: u64,
     pub used_percent: f64,
@@ -91,13 +92,30 @@ pub struct TokenSnapshot {
     pub rows: Vec<UsageRow>,
     pub hourly: Vec<HourBucket>,
     pub warnings: Vec<String>,
+    /// True while some transcript bytes are not indexed yet (first run over a
+    /// large history, or a burst of new data); the figures cover what is.
+    pub indexing: bool,
+    /// Transcript bytes indexed so far, and the bytes in all transcripts.
+    pub indexed_bytes: u64,
+    pub total_bytes: u64,
+    /// Transcript files that exist but could not be read (not in the figures).
+    pub unreadable_files: usize,
+    /// Directory entries a listing could not look at.
+    pub skipped_entries: usize,
+    /// Some root's listing hit the safety limit on files: the rest are not
+    /// indexed (and nothing is retired on the strength of that listing).
+    pub file_limit_hit: bool,
+    /// Some root's listing was cut short (an unreadable folder, the limit).
+    pub listing_incomplete: bool,
+    /// The retired-history store could not be used: its figures are missing
+    /// from this snapshot, nothing is retired or deleted, and the file is
+    /// left exactly as it was.
+    pub retired_unavailable: bool,
+    pub retired_unavailable_reason: String,
 }
 
 #[derive(Debug)]
 pub(super) struct Event {
-    /// Index into the account list `aggregate` is given.
-    pub account: usize,
-    pub provider: &'static str,
     pub session: String,
     pub id: String,
     pub timestamp: u64,

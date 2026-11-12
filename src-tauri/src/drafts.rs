@@ -101,9 +101,58 @@ pub fn list() -> io::Result<Vec<String>> {
     list_under(&drafts_dir())
 }
 
-/// Write `blob` as `pane_id`'s draft, replacing any previous one.
-pub fn save(pane_id: &str, blob: &str) -> io::Result<()> {
-    save_under(&drafts_dir(), pane_id, blob)
+/// Per-pane ordering for the async save and the sync delete. Tauri starts an
+/// `async` command's body whenever the runtime gets to it, so a save issued
+/// before a delete can still run after it. The frontend stamps every save and
+/// delete with a sequence number taken in call order; an operation older than
+/// the newest one already applied to that pane is dropped, and the per-pane
+/// lock is held across the write so two writers never interleave.
+#[derive(Default)]
+pub struct DraftOrder {
+    panes:
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<u64>>>>,
+}
+
+impl DraftOrder {
+    /// Run `op` unless a newer-or-equal `seq` was already applied to `key`.
+    /// Returns whether it ran.
+    fn apply(&self, key: &str, seq: u64, op: impl FnOnce() -> io::Result<()>) -> io::Result<bool> {
+        let slot = {
+            let mut panes = self.panes.lock().unwrap_or_else(|e| e.into_inner());
+            panes.entry(key.to_string()).or_default().clone()
+        };
+        let mut newest = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if seq <= *newest {
+            return Ok(false);
+        }
+        *newest = seq;
+        op()?;
+        Ok(true)
+    }
+}
+
+fn order() -> &'static DraftOrder {
+    static ORDER: std::sync::OnceLock<DraftOrder> = std::sync::OnceLock::new();
+    ORDER.get_or_init(DraftOrder::default)
+}
+
+/// The ordering key for an id: what [`draft_file_under`] reduces it to.
+fn order_key(pane_id: &str) -> String {
+    pane_id
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit() || *c == '-')
+        .collect()
+}
+
+/// Write `blob` as `pane_id`'s draft, replacing any previous one. A save
+/// older than a later save or delete for the pane (`seq`) is dropped.
+pub fn save(pane_id: &str, seq: u64, blob: &str) -> io::Result<()> {
+    let base = drafts_dir();
+    order()
+        .apply(&order_key(pane_id), seq, || {
+            save_under(&base, pane_id, blob)
+        })
+        .map(|_| ())
 }
 
 /// `pane_id`'s draft, or `""` if it has none.
@@ -111,9 +160,13 @@ pub fn load(pane_id: &str) -> io::Result<String> {
     load_under(&drafts_dir(), pane_id)
 }
 
-/// Forget `pane_id`'s draft. A missing draft is not an error.
-pub fn delete(pane_id: &str) -> io::Result<()> {
-    delete_under(&drafts_dir(), pane_id)
+/// Forget `pane_id`'s draft. A missing draft is not an error. Also makes any
+/// save stamped before `seq` a no-op.
+pub fn delete(pane_id: &str, seq: u64) -> io::Result<()> {
+    let base = drafts_dir();
+    order()
+        .apply(&order_key(pane_id), seq, || delete_under(&base, pane_id))
+        .map(|_| ())
 }
 
 #[cfg(test)]
@@ -195,6 +248,34 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         // The previous draft survives the refusal.
         assert_eq!(load_under(&base, ID).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_save_stamped_before_a_delete_cannot_resurrect_the_draft() {
+        let base = tempdir();
+        let o = DraftOrder::default();
+        assert!(o.apply(ID, 1, || save_under(&base, ID, "a")).unwrap());
+        // Save (seq 2) issued, then delete (seq 3); the delete runs first.
+        assert!(o.apply(ID, 3, || delete_under(&base, ID)).unwrap());
+        assert!(!o.apply(ID, 2, || save_under(&base, ID, "stale")).unwrap());
+        assert_eq!(load_under(&base, ID).unwrap(), "");
+        // A later save still lands.
+        assert!(o.apply(ID, 4, || save_under(&base, ID, "b")).unwrap());
+        assert_eq!(load_under(&base, ID).unwrap(), "b");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn saves_land_in_call_order_and_panes_are_independent() {
+        let base = tempdir();
+        let o = DraftOrder::default();
+        assert!(o.apply(ID, 5, || save_under(&base, ID, "new")).unwrap());
+        assert!(!o.apply(ID, 4, || save_under(&base, ID, "old")).unwrap());
+        assert!(!o.apply(ID, 5, || save_under(&base, ID, "dup")).unwrap());
+        assert_eq!(load_under(&base, ID).unwrap(), "new");
+        // Another pane's low seq is unaffected.
+        assert!(o.apply("abc", 1, || Ok(())).unwrap());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

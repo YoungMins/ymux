@@ -1,32 +1,29 @@
 use super::{
-    aggregate::aggregate,
+    aggregate::{aggregate, FileView},
+    disk::Budget,
+    index::{Index, RootSpec},
     model::{ProviderUsage, TokenSnapshot, TokenTotals},
-    parse::Parsed,
+    retired::static_provider,
 };
 use crate::accounts::{account_dirs, distinct, AgentDirs};
 use crate::agent_sessions::AgentKind;
 use crate::config::model::AccountProfile;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
-    time::SystemTime,
+    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
+    time::{Duration, SystemTime},
 };
 
-const MAX_FILES: usize = 20000;
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
-struct Cached {
-    len: u64,
-    modified: Option<SystemTime>,
-    parsed: Parsed,
-    /// Set when the file had more events than the budget left for it: the
-    /// events are dropped (not kept in memory) and this is how many there
-    /// were, so an unchanged file is skipped again without re-reading it.
-    over_budget: Option<usize>,
+/// What one refresh may spend indexing: reading stops at the first of these.
+const TICK_BYTES: u64 = 256 * 1024 * 1024;
+const TICK_TIME: Duration = Duration::from_millis(1500);
+
+static INDEX: OnceLock<Mutex<Index>> = OnceLock::new();
+
+/// Where the index shards live: `<config_dir>/ymux/token-index`.
+pub(super) fn index_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|p| p.join("ymux").join("token-index"))
 }
-static CACHE: OnceLock<Mutex<BTreeMap<PathBuf, Cached>>> = OnceLock::new();
 
 /// One directory to scan for one provider, and who owns it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,16 +64,36 @@ pub fn scan_roots(dirs: &[(String, AgentDirs)]) -> Vec<ScanRoot> {
     roots
 }
 
-pub fn collect(accounts: &[AccountProfile]) -> TokenSnapshot {
-    let now = SystemTime::now()
+fn now_secs() -> u64 {
+    SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Lock `m`, taking the guard of a poisoned mutex too: one panic in a refresh
+/// must not switch usage tracking off for the rest of the run (the index is
+/// rebuilt from shards and transcripts, so a half-done refresh is harmless).
+pub(super) fn lock_recovering<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub fn collect(accounts: &[AccountProfile]) -> TokenSnapshot {
     let dirs = account_dirs(
         accounts,
         |k| std::env::var(k).ok(),
         dirs::home_dir().as_deref(),
     );
-    collect_from_roots(&scan_roots(&dirs), now)
+    let roots = scan_roots(&dirs);
+    let mut index = lock_recovering(INDEX.get_or_init(|| Mutex::new(Index::new(None))));
+    if let Some(dir) = index_dir() {
+        index.set_dir_if_unset(dir);
+    }
+    collect_with(
+        &mut index,
+        &roots,
+        now_secs(),
+        Budget::new(TICK_BYTES, Some(TICK_TIME)),
+    )
 }
 
 /// Single-account form: the two directories are the default account's.
@@ -91,32 +108,80 @@ pub fn collect_from(claude: &Path, codex: &Path, now: u64) -> TokenSnapshot {
     collect_from_roots(&[root("claude", claude), root("codex", codex)], now)
 }
 
-/// One pass over every root with one cache lock, one `seen` set and one
-/// eviction: scanning per account would evict each other's cache entries and
-/// re-parse everything on every refresh. Roots must list the default account
-/// first (see [`aggregate`]'s dedup).
+/// One refresh of a throw-away, memory-only index with a byte budget but no
+/// time limit. It does not share the process-wide index: that one keeps the
+/// history of roots it stops seeing, which a one-off scan of other roots must
+/// neither inherit nor leave behind.
 pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
+    collect_with(&mut Index::new(None), roots, now, Budget::bytes(TICK_BYTES))
+}
+
+/// What the index lists for each root: the folders under it that hold JSONL.
+pub(super) fn specs_of(roots: &[ScanRoot]) -> Vec<RootSpec> {
+    roots
+        .iter()
+        .map(|scan| RootSpec {
+            provider: scan.provider,
+            owner: scan.owner.clone(),
+            dir: scan.dir.clone(),
+            folders: if scan.provider == "claude" {
+                vec![scan.dir.join("projects")]
+            } else {
+                vec![
+                    scan.dir.join("sessions"),
+                    scan.dir.join("archived_sessions"),
+                ]
+            },
+        })
+        .collect()
+}
+
+/// Refresh `index` for `roots` within `budget`, then build the snapshot from
+/// what is indexed. Roots must list the default account first (see
+/// [`aggregate`]'s dedup).
+pub(super) fn collect_with(
+    index: &mut Index,
+    roots: &[ScanRoot],
+    now: u64,
+    mut budget: Budget,
+) -> TokenSnapshot {
     let mut snapshot = TokenSnapshot {
         collected_at: now,
         providers: Vec::new(),
         rows: Vec::new(),
         hourly: Vec::new(),
         warnings: Vec::new(),
+        indexing: false,
+        indexed_bytes: 0,
+        total_bytes: 0,
+        unreadable_files: 0,
+        skipped_entries: 0,
+        file_limit_hit: false,
+        listing_incomplete: false,
+        retired_unavailable: false,
+        retired_unavailable_reason: String::new(),
     };
-    let mut events = Vec::new();
+    let specs = specs_of(roots);
+    let progress = index.refresh(&specs, &mut budget, now);
+    snapshot.indexed_bytes = progress.indexed;
+    snapshot.total_bytes = progress.total;
+    snapshot.indexing = progress.working;
+    let health = index.health(&specs);
+    snapshot.unreadable_files = health.unreadable;
+    snapshot.skipped_entries = health.skipped;
+    snapshot.file_limit_hit = health.file_limit_hit;
+    snapshot.listing_incomplete = health.listing_incomplete;
+    snapshot.retired_unavailable = health.retired_unavailable;
+    snapshot.retired_unavailable_reason = health.retired_reason;
+
     let mut accounts: Vec<String> = Vec::new();
-    let mut seen = BTreeSet::new();
-    let Ok(mut cache) = CACHE.get_or_init(|| Mutex::new(BTreeMap::new())).lock() else {
-        snapshot.warnings.push("collector_unavailable".into());
-        return snapshot;
-    };
+    let mut views = Vec::new();
     for scan in roots {
         let id = scan.provider;
-        let root = scan.dir.as_path();
-        let (folders, auth) = if id == "claude" {
-            (&["projects"][..], ".credentials.json")
+        let auth = if id == "claude" {
+            ".credentials.json"
         } else {
-            (&["sessions", "archived_sessions"][..], "auth.json")
+            "auth.json"
         };
         let account = accounts
             .iter()
@@ -125,13 +190,12 @@ pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
                 accounts.push(scan.owner.clone());
                 accounts.len() - 1
             });
-        let mut budget = MAX_SCAN_BYTES;
-        let mut event_budget = 25_000;
+        let (problems, truncated) = index.root_problems(id, &scan.dir);
         let mut provider = ProviderUsage {
             id,
             account: scan.owner.clone(),
             also: scan.also.clone(),
-            auth_status: if root.join(auth).is_file() {
+            auth_status: if scan.dir.join(auth).is_file() {
                 "credentials_present"
             } else {
                 "not_detected"
@@ -141,99 +205,18 @@ pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
             all_time: TokenTotals::default(),
             quotas: Vec::new(),
             files: 0,
-            skipped: 0,
+            skipped: problems,
             warnings: Vec::new(),
             dir: scan.dir.clone(),
             claude_env: scan.claude_env.clone(),
         };
-        let mut paths = Vec::new();
-        for folder in folders {
-            super::disk::walk(&root.join(folder), &mut paths, &mut provider.skipped, 0);
-        }
-        if paths.len() >= MAX_FILES {
+        if truncated {
             provider.warnings.push("file_limit");
         }
-        paths.sort_by_cached_key(|path| {
-            std::cmp::Reverse(fs::metadata(path).ok().and_then(|m| m.modified().ok()))
-        });
-        for path in paths {
-            let Ok(meta) = fs::metadata(&path) else {
-                provider.skipped += 1;
-                continue;
-            };
-            if meta.len() > MAX_FILE_BYTES || meta.len() > budget {
-                provider.skipped += 1;
-                continue;
-            }
-            budget -= meta.len();
-            seen.insert(path.clone());
-            let modified = meta.modified().ok();
-            let unchanged = cache
-                .get(&path)
-                .is_some_and(|c| c.len == meta.len() && c.modified == modified);
-            let over = cache.get(&path).and_then(|c| c.over_budget);
-            if unchanged && over.is_some_and(|n| n > event_budget) {
-                provider.skipped += 1;
-                continue;
-            }
-            if !unchanged || over.is_some() {
-                let fallback = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown");
-                match super::disk::parse_file(&path, id, fallback, meta.len()) {
-                    Ok(parsed) => {
-                        cache.insert(
-                            path.clone(),
-                            Cached {
-                                len: meta.len(),
-                                modified,
-                                parsed,
-                                over_budget: None,
-                            },
-                        );
-                    }
-                    Err(_) => {
-                        provider.skipped += 1;
-                        cache.remove(&path);
-                        continue;
-                    }
-                }
-            }
-            let Some(cached) = cache.get(&path) else {
-                continue;
-            };
-            if cached.parsed.events.len() > event_budget {
-                provider.skipped += 1;
-                let n = cached.parsed.events.len();
-                cache.insert(
-                    path.clone(),
-                    Cached {
-                        len: meta.len(),
-                        modified,
-                        parsed: Parsed::default(),
-                        over_budget: Some(n),
-                    },
-                );
-                continue;
-            }
-            event_budget -= cached.parsed.events.len();
+        for file in index.root_files(id, &scan.dir) {
             provider.files += 1;
-            provider.skipped += cached.parsed.skipped;
-            for event in &cached.parsed.events {
-                events.push(super::model::Event {
-                    account,
-                    provider: event.provider,
-                    session: event.session.clone(),
-                    id: event.id.clone(),
-                    timestamp: event.timestamp,
-                    model: event.model.clone(),
-                    project: event.project.clone(),
-                    tokens: event.tokens,
-                });
-            }
-            let latest = cached
-                .parsed
+            provider.skipped += file.skipped;
+            let latest = file
                 .quotas
                 .iter()
                 .filter(|q| q.observed_at <= now)
@@ -245,21 +228,48 @@ pub fn collect_from_roots(roots: &[ScanRoot], now: u64) -> TokenSnapshot {
                     .first()
                     .map_or(true, |p| time > p.observed_at)
             }) {
-                provider.quotas = cached
-                    .parsed
+                provider.quotas = file
                     .quotas
                     .iter()
                     .filter(|q| Some(q.observed_at) == latest)
                     .cloned()
                     .collect();
             }
+            views.push(FileView {
+                account,
+                provider: id,
+                file,
+            });
         }
         if provider.skipped > 0 {
             provider.warnings.push("partial");
         }
         snapshot.providers.push(provider);
     }
-    cache.retain(|path, _| seen.contains(path));
-    aggregate(&mut snapshot, events, &accounts);
+    // Files of a root nobody lists any more that still exist: still counted,
+    // after every configured root so those win the dedup.
+    for file in index.unconfigured_files() {
+        let Some(id) = static_provider(&file.provider) else {
+            continue;
+        };
+        let account = accounts
+            .iter()
+            .position(|a| *a == file.owner)
+            .unwrap_or_else(|| {
+                accounts.push(file.owner.clone());
+                accounts.len() - 1
+            });
+        views.push(FileView {
+            account,
+            provider: id,
+            file,
+        });
+    }
+    aggregate(&mut snapshot, &views, &accounts, index.retired());
     snapshot
+}
+
+#[cfg(test)]
+pub(super) fn now_for_tests() -> u64 {
+    now_secs()
 }

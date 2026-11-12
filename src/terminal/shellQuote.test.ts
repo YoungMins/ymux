@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { quotePathForShell, shellFamilyFromExecutable } from "./shellQuote";
+import {
+  isWslExecutable,
+  quotePathForShell,
+  shellFamilyFromExecutable,
+  windowsPathToWsl,
+} from "./shellQuote";
 
 describe("shellFamilyFromExecutable", () => {
   it("classifies by file stem like the backend's ShellFamily (plus fish)", () => {
@@ -149,5 +154,25 @@ describe("quotePathForShell", () => {
       expect(quotePathForShell("/tmp/x\ry", family)).toBeNull();
       expect(quotePathForShell("/tmp/\x1b[201~", family)).toBeNull();
     }
+  });
+});
+
+describe("WSL path translation", () => {
+  it("recognises wsl.exe by stem only", () => {
+    expect(isWslExecutable("C:\\Windows\\System32\\wsl.exe")).toBe(true);
+    expect(isWslExecutable("wsl")).toBe(true);
+    expect(isWslExecutable("bash.exe")).toBe(false);
+    expect(isWslExecutable(undefined)).toBe(false);
+  });
+
+  it("maps a drive path to /mnt/<lowercase drive>", () => {
+    expect(windowsPathToWsl("C:\\a\\b.png")).toBe("/mnt/c/a/b.png");
+    expect(windowsPathToWsl("d:/x/y z.png")).toBe("/mnt/d/x/y z.png");
+  });
+
+  it("has no mapping for UNC, verbatim or relative paths", () => {
+    expect(windowsPathToWsl("\\\\server\\share\\a.png")).toBeNull();
+    expect(windowsPathToWsl("\\\\?\\C:\\a.png")).toBeNull();
+    expect(windowsPathToWsl("a\\b.png")).toBeNull();
   });
 });

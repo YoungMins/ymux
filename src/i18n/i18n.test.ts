@@ -69,4 +69,16 @@ describe("no hard-coded shortcuts in translations", () => {
     expect(translationGaps("browser.zoom")).toEqual([]);
     expect(translationGaps("notes.buttonTitle")).toEqual([]);
   });
+
+  it("has every terminal exit / restart / spawn / paste message in all 13 languages", () => {
+    for (const k of [
+      "terminal.processExited",
+      "terminal.restartHint",
+      "terminal.spawnFailed",
+      "terminal.pasteImageFailed",
+      "terminal.pastePathUnsupported",
+    ]) {
+      expect(translationGaps(k)).toEqual([]);
+    }
+  });
 });

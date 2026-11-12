@@ -12,6 +12,8 @@ import {
   normalizeColor,
   agentUsesAccounts,
   isManagedAccount,
+  managedAccountRoot,
+  countLiveOnAccount,
   ACCOUNT_COLORS,
 } from "./accountModel";
 
@@ -168,5 +170,34 @@ describe("isManagedAccount", () => {
   });
   it("requires a whole path segment before accounts/", () => {
     expect(isManagedAccount(prof("ab12cd34", "/c/myaccounts/ab12cd34/claude", "/c/myaccounts/ab12cd34/codex"))).toBe(false);
+  });
+});
+
+describe("managed account helpers", () => {
+  const prof = (claude: string, codex: string): AccountProfile => ({
+    id: "ab12cd34",
+    name: "x",
+    claude_config_dir: claude,
+    codex_home: codex,
+    color: "",
+  });
+
+  it("managedAccountRoot gives the account folder for either base", () => {
+    expect(
+      managedAccountRoot(
+        prof("C:\\Users\\a\\.ymux\\accounts\\ab12cd34\\claude", "C:\\Users\\a\\.ymux\\accounts\\ab12cd34\\codex"),
+      ),
+    ).toBe("C:\\Users\\a\\.ymux\\accounts\\ab12cd34");
+    expect(
+      managedAccountRoot(
+        prof("/home/a/.config/ymux/accounts/ab12cd34/claude/", "/home/a/.config/ymux/accounts/ab12cd34/codex"),
+      ),
+    ).toBe("/home/a/.config/ymux/accounts/ab12cd34");
+    expect(managedAccountRoot(prof("~/.claude", "~/.codex"))).toBe("");
+  });
+
+  it("countLiveOnAccount counts running panes of that account only", () => {
+    expect(countLiveOnAccount(["a", null, "b", "a"], "a")).toBe(2);
+    expect(countLiveOnAccount([null, "b"], "a")).toBe(0);
   });
 });

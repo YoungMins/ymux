@@ -11,6 +11,9 @@ use std::process::Command;
 
 use crate::error::{YmuxError, YmuxResult};
 
+mod keep;
+pub use keep::{keep_lane, KeepReport, KeepRequest};
+
 /// A single entry from `git worktree list --porcelain`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct WorktreeEntry {
@@ -65,13 +68,109 @@ fn git_command(cwd: &Path) -> Command {
     cmd
 }
 
+/// How long a read-only git query may run before it is killed. A repository
+/// on a dead network share would otherwise hang its worker thread forever.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `Command::output` with a deadline of [`GIT_TIMEOUT`]: on expiry the child is
+/// killed and the call fails with `ErrorKind::TimedOut`.
+trait OutputTimeout {
+    fn output_timeout(&mut self) -> std::io::Result<std::process::Output>;
+}
+
+impl OutputTimeout for Command {
+    fn output_timeout(&mut self) -> std::io::Result<std::process::Output> {
+        output_within(self, GIT_TIMEOUT)
+    }
+}
+
+fn output_within(
+    cmd: &mut Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    // Readers stream chunks over a channel instead of being joined: a
+    // grandchild (ssh, a credential helper) can inherit the pipes and keep
+    // them open after git exits, and a join would then outlast the deadline.
+    fn drain<R: Read + Send + 'static>(r: Option<R>) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Some(mut r) = r else { return };
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = r.read(&mut chunk) {
+                if n == 0 || tx.send(chunk[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    }
+    /// Everything the reader sent until it hit EOF or `deadline` passed.
+    fn collect(rx: &std::sync::mpsc::Receiver<Vec<u8>>, deadline: std::time::Instant) -> Vec<u8> {
+        let mut buf = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(chunk) => buf.extend_from_slice(&chunk),
+                Err(_) => break,
+            }
+        }
+        buf
+    }
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            // Killing the child closes its pipes, which ends the drain threads.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("git did not finish within {}s", timeout.as_secs()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    // What the child wrote is at most a pipe buffer from being read, so a
+    // short grace covers a reader still catching up. A grandchild holding the
+    // pipes open must not stretch that past the overall deadline.
+    let now = std::time::Instant::now();
+    let left = deadline.saturating_duration_since(now);
+    let end = now
+        + left
+            .min(std::time::Duration::from_secs(1))
+            .max(std::time::Duration::from_millis(100));
+    Ok(std::process::Output {
+        status,
+        stdout: collect(&out, end),
+        stderr: collect(&err, end),
+    })
+}
+
 /// Run a git subcommand in `cwd`, returning stdout on success or a
-/// `YmuxError::Git` wrapping stderr on failure.
+/// `YmuxError::Git` wrapping stderr on failure. Killed after [`GIT_TIMEOUT`].
 fn run_git(cwd: &Path, args: &[&str]) -> YmuxResult<String> {
-    let out = git_command(cwd)
-        .args(args)
-        .output()
-        .map_err(YmuxError::Io)?;
+    run_git_out(args, git_command(cwd).args(args).output_timeout())
+}
+
+/// [`run_git`] without a deadline, for operations the user started that can
+/// legitimately run long (worktree add/remove: a whole checkout; checkout).
+fn run_git_untimed(cwd: &Path, args: &[&str]) -> YmuxResult<String> {
+    run_git_out(args, git_command(cwd).args(args).output())
+}
+
+fn run_git_out(args: &[&str], out: std::io::Result<std::process::Output>) -> YmuxResult<String> {
+    let out = out.map_err(YmuxError::Io)?;
     if !out.status.success() {
         return Err(YmuxError::Git(format!(
             "git {}: {}",
@@ -86,7 +185,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> YmuxResult<String> {
 pub fn is_git_repo(cwd: &Path) -> bool {
     git_command(cwd)
         .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
+        .output_timeout()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -98,7 +197,7 @@ pub fn is_git_repo(cwd: &Path) -> bool {
 pub fn has_local_filter_drivers(cwd: &Path) -> bool {
     match git_command(cwd)
         .args(["config", "--local", "--get-regexp", r"^filter\."])
-        .output()
+        .output_timeout()
     {
         Ok(o) if o.status.code() == Some(1) => false,
         Ok(o) if o.status.success() => !o.stdout.iter().all(u8::is_ascii_whitespace),
@@ -130,9 +229,9 @@ pub fn worktree_add(repo: &Path, branch: &str, path: &Path) -> YmuxResult<()> {
     let branch_exists =
         run_git(repo, &["show-ref", "--verify", "--quiet", "--", &heads_ref]).is_ok();
     if branch_exists {
-        run_git(repo, &["worktree", "add", "--", &path_s, branch])?;
+        run_git_untimed(repo, &["worktree", "add", "--", &path_s, branch])?;
     } else {
-        run_git(repo, &["worktree", "add", "-b", branch, "--", &path_s])?;
+        run_git_untimed(repo, &["worktree", "add", "-b", branch, "--", &path_s])?;
     }
     Ok(())
 }
@@ -149,7 +248,7 @@ pub fn worktree_add_new(repo: &Path, branch: &str, path: &Path, start: &str) -> 
         return Err(YmuxError::Git(format!("branch already exists: {branch}")));
     }
     let path_s = path.to_string_lossy();
-    run_git(
+    run_git_untimed(
         repo,
         &["worktree", "add", "-b", branch, "--", &path_s, start],
     )
@@ -214,7 +313,7 @@ pub fn lane_meta(cwd: &Path) -> YmuxResult<LaneMeta> {
     let get = |key: &str| -> String {
         git_command(cwd)
             .args(["config", "--get", &format!("branch.{branch}.{key}")])
-            .output()
+            .output_timeout()
             .ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -230,7 +329,7 @@ pub fn lane_meta(cwd: &Path) -> YmuxResult<LaneMeta> {
 pub fn current_branch(cwd: &Path) -> Option<String> {
     let out = git_command(cwd)
         .args(["symbolic-ref", "-q", "--short", "HEAD"])
-        .output()
+        .output_timeout()
         .ok()
         .filter(|o| o.status.success())?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -330,7 +429,7 @@ pub fn worktree_remove(path: &Path, force: bool) -> YmuxResult<()> {
     }
     args.push("--");
     args.push(&path_s);
-    run_git(&main_worktree, &args)?;
+    run_git_untimed(&main_worktree, &args)?;
     Ok(())
 }
 
@@ -647,7 +746,7 @@ pub const MAX_LOG_LIMIT: u32 = 2000;
 fn has_commits(cwd: &Path) -> bool {
     git_command(cwd)
         .args(["rev-parse", "--quiet", "--verify", "HEAD"])
-        .output()
+        .output_timeout()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -716,7 +815,7 @@ pub fn checkout(cwd: &Path, branch: &str) -> YmuxResult<()> {
     // The trailing `--` is the retired `ygit` TUI's: it ends the
     // revision list, so a branch whose name is also a file in the tree is
     // still read as the branch, never as "restore this file".
-    run_git(cwd, &["checkout", branch, "--"]).map(|_| ())
+    run_git_untimed(cwd, &["checkout", branch, "--"]).map(|_| ())
 }
 
 /// Create a local branch tracking the remote-tracking `remote_branch`
@@ -730,7 +829,7 @@ pub fn checkout_track(cwd: &Path, remote_branch: &str) -> YmuxResult<()> {
     if !is_git_repo(cwd) {
         return Err(YmuxError::NotARepo(cwd.to_string_lossy().into_owned()));
     }
-    run_git(cwd, &["checkout", "--track", remote_branch, "--"]).map(|_| ())
+    run_git_untimed(cwd, &["checkout", "--track", remote_branch, "--"]).map(|_| ())
 }
 
 /// One changed path from `git status`.
@@ -803,7 +902,7 @@ pub fn parse_status_z(out: &str) -> Vec<StatusEntry> {
 fn head_detached(cwd: &Path) -> bool {
     git_command(cwd)
         .args(["symbolic-ref", "-q", "HEAD"])
-        .output()
+        .output_timeout()
         .map(|o| !o.status.success())
         .unwrap_or(false)
 }
@@ -1379,7 +1478,7 @@ fn empty_tree(cwd: &Path) -> YmuxResult<String> {
     let out = git_command(cwd)
         .args(["hash-object", "-t", "tree", "--stdin"])
         .stdin(std::process::Stdio::null())
-        .output()
+        .output_timeout()
         .map_err(YmuxError::Io)?;
     if !out.status.success() {
         return Err(YmuxError::Git(format!(
@@ -1581,6 +1680,29 @@ pub fn pick_agent_panes(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn output_within_kills_a_child_that_outlives_the_deadline() {
+        let mut slow = if cfg!(windows) {
+            let mut c = Command::new("ping");
+            c.args(["-n", "11", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("10");
+            c
+        };
+        let start = std::time::Instant::now();
+        let err = output_within(&mut slow, std::time::Duration::from_millis(200)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+
+        let mut fast = Command::new("git");
+        fast.arg("--version");
+        let out = output_within(&mut fast, std::time::Duration::from_secs(20)).unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("git version"));
+    }
 
     /// Captured from `git log --format=`[`LOG_FORMAT`] on git 2.52.0 (the
     /// version the `ygit` fixtures were taken on), then hand-extended with

@@ -14,6 +14,8 @@ import { t, onLangChange } from "../i18n/i18n";
 import { askConfirm } from "../ui/Dialog";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { describeAge } from "../terminal/resumePlan";
+import { agentDisplayName } from "./closeConfirm";
+import { fill } from "../git/worktreeFlow";
 import { inboxSummary, type InboxItem } from "./inbox";
 import { describeError } from "../ipc/bridge";
 import type { Uuid } from "../types";
@@ -29,6 +31,7 @@ import {
   type TabRow,
   type TreeLabels,
 } from "./agentTree";
+import { agentBadges } from "./agentTiming";
 
 const COLLAPSE_KEY = "ymux:workspace-panel:collapsed";
 
@@ -132,15 +135,17 @@ export function mountWorkspacePanel(
 
   function renderBell(): void {
     const items = manager.inboxItems();
-    badge.textContent = String(items.length);
-    badge.classList.toggle("workspace-panel__bell-badge--hidden", items.length === 0);
+    const quota = manager.quotaInboxItems().length;
+    badge.textContent = String(items.length + quota);
+    badge.classList.toggle("workspace-panel__bell-badge--hidden", items.length + quota === 0);
     badge.classList.toggle(
       "workspace-panel__bell-badge--attention",
-      items.some((i) => i.status === "attention"),
+      quota > 0 || items.some((i) => i.status === "attention"),
     );
-    const attention = items.filter((i) => i.status === "attention").length;
+    // A quota alert needs the user like an attention item does.
+    const attention = items.filter((i) => i.status === "attention").length + quota;
     const label = inboxSummary(
-      { attention, done: items.length - attention },
+      { attention, done: items.length + quota - attention },
       { none: t("inbox.title"), summary: t("inbox.summary") },
     );
     bell.title = label;
@@ -151,8 +156,20 @@ export function mountWorkspacePanel(
     const items = manager.inboxItems();
     const read = manager.readHistory();
     const entries: ContextMenuEntry[] = [{ header: t("inbox.title") }];
-    if (items.length === 0) {
+    const quotaItems = manager.quotaInboxItems();
+    if (items.length === 0 && quotaItems.length === 0) {
       entries.push({ label: t("inbox.empty"), disabled: true, onSelect: () => {} });
+    }
+    for (const q of quotaItems) {
+      const what = fill(t(q.level === "limit" ? "quota.inboxLimit" : "quota.inboxNear"), {
+        agent: agentDisplayName(q.agentKind),
+        n: String(Math.round(q.used)),
+      });
+      entries.push({
+        label: `${q.wsLabel} › ${q.paneLabel} — ${what} · ${t("quota.switchAction")}`,
+        className: "context-menu__item--strong",
+        onSelect: () => void manager.switchAccountFor(q.paneId),
+      });
     }
     for (const i of items) {
       entries.push({
@@ -602,26 +619,81 @@ export function mountWorkspacePanel(
     const btn = treeRow(`a:${paneId}:${agent.key}`, paneId);
     btn.className = `workspace-panel__agent workspace-panel__agent--depth${agent.depth}`;
     btn.dataset.status = agent.status;
-    if (btn.childElementCount !== 3) {
-      const dot = document.createElement("span");
-      dot.className = "workspace-panel__agent-dot";
-      const name = document.createElement("span");
-      name.className = "workspace-panel__agent-name";
-      const state = document.createElement("span");
-      state.className = "workspace-panel__agent-state";
-      btn.replaceChildren(dot, name, state);
+    btn.dataset.pane = paneId;
+    if (agent.lead) btn.dataset.lead = "1";
+    else delete btn.dataset.lead;
+    if (agent.tool) btn.dataset.tool = agent.tool;
+    else delete btn.dataset.tool;
+    if (btn.childElementCount !== 6) {
+      const mk = (cls: string): HTMLSpanElement => {
+        const el = document.createElement("span");
+        el.className = `workspace-panel__agent-${cls}`;
+        return el;
+      };
+      btn.replaceChildren(mk("dot"), mk("name"), mk("tool"), mk("stuck"), mk("elapsed"), mk("state"));
     }
-    const [dot, name, state] = btn.children as unknown as HTMLElement[];
+    const [dot, name, , , , state] = btn.children as unknown as HTMLElement[];
     const glyph = agent.status === "done" ? "✓" : "●";
     if (dot.textContent !== glyph) dot.textContent = glyph;
-    if (name.textContent !== agent.label) name.textContent = agent.label;
+    // A lead agent with prompts lined up for it says so on its row.
+    const queued = agent.lead ? manager.queuedCount(paneId) : 0;
+    const nameText = queued > 0 ? `${agent.label} · ${t("queue.badge").replace("{n}", String(queued))}` : agent.label;
+    if (name.textContent !== nameText) name.textContent = nameText;
     const stateText = t(`agent.status.${agent.status}`);
     if (state.textContent !== stateText) state.textContent = stateText;
     const base = statusTitle(agent.label, `agent.status.${agent.status}`);
     const title = agent.tool ? `${base} (${agent.tool})` : base;
     if (btn.title !== title) btn.title = title;
+    patchTiming(btn);
+    syncTimingTimer();
     return btn;
   }
+
+  /// Patch the tool / stuck / elapsed text of one lead-agent row in place.
+  /// Subagent rows carry no timing and stay blank.
+  function patchTiming(btn: HTMLElement): void {
+    const [, , toolEl, stuckEl, elapsedEl] = btn.children as unknown as HTMLElement[];
+    if (!toolEl || !elapsedEl || !stuckEl) return;
+    const set = (el: HTMLElement, text: string): void => {
+      if (el.textContent !== text) el.textContent = text;
+    };
+    if (btn.dataset.lead !== "1" || !btn.dataset.pane) {
+      set(toolEl, "");
+      set(stuckEl, "");
+      set(elapsedEl, "");
+      return;
+    }
+    const status = (btn.dataset.status ?? "idle") as AgentRow["status"];
+    const b = agentBadges(status, btn.dataset.tool ?? null, manager.agentClock(btn.dataset.pane), Date.now());
+    set(toolEl, b.tool ?? "");
+    set(elapsedEl, b.elapsed ?? "");
+    set(stuckEl, b.stuck ? t("agent.stuck") : "");
+    const why = b.stuck ? t(b.stuck === "silent" ? "agent.stuckSilent" : "agent.stuckTool") : "";
+    if (stuckEl.title !== why) stuckEl.title = why;
+  }
+
+  /// One shared low-frequency timer for every row's elapsed text. It runs only
+  /// while there are lead-agent rows, the panel is shown and the window is
+  /// visible, and patches text nodes in place (no re-render).
+  const TIMING_TICK_MS = 5000;
+  let timingTimer: number | undefined;
+  function syncTimingTimer(): void {
+    const wanted =
+      !panel.classList.contains(COLLAPSED_CLASS) &&
+      !document.hidden &&
+      [...treeRows.values()].some((b) => b.dataset.lead === "1");
+    if (wanted && timingTimer === undefined) {
+      const tick = (): void => {
+        for (const btn of treeRows.values()) if (btn.dataset.lead === "1") patchTiming(btn);
+      };
+      timingTimer = window.setInterval(tick, TIMING_TICK_MS);
+      tick();
+    } else if (!wanted && timingTimer !== undefined) {
+      window.clearInterval(timingTimer);
+      timingTimer = undefined;
+    }
+  }
+  document.addEventListener("visibilitychange", syncTimingTimer);
 
   /// Several tree changes in one frame (agent events, statuses, saves) are
   /// one render.
@@ -680,6 +752,7 @@ export function mountWorkspacePanel(
     // next time.
     for (const [key, el] of treeRows) if (!used.has(el)) treeRows.delete(key);
     for (const ws of manager.workspaces) if (!isExpanded(expanded, ws.id)) childHosts.get(ws.id)?.replaceChildren();
+    syncTimingTimer();
   }
 
   function rebuild(): void {
@@ -730,6 +803,8 @@ export function mountWorkspacePanel(
       btn.textContent = formatWorkspaceLabel(id, manager.getWorkspaceName(id), manager.workspacePosition(id));
       // The whole row is tinted by status (idle = no tint); CSS keys off this.
       btn.dataset.status = status;
+      if (manager.isBroadcasting(id)) btn.dataset.broadcast = "1";
+      else delete btn.dataset.broadcast;
       // "idle" has no i18n key — it's the resting state, so no status suffix.
       btn.title =
         status === "idle"
@@ -743,9 +818,13 @@ export function mountWorkspacePanel(
       noteBtn.classList.toggle("workspace-panel__note-btn--has-notes", hasNotes(id));
     }
     renderHint();
+    // Runs on every panel collapse/expand: stops the elapsed-time timer while
+    // the panel is hidden.
+    syncTimingTimer();
   }
 
   manager.onWorkspacesChange(rebuild);
+  const cleanupBroadcast = manager.onBroadcastChange(highlight);
   manager.onPaneStatusChange = () => {
     highlight();
     scheduleTree();
@@ -772,8 +851,12 @@ export function mountWorkspacePanel(
   (panel as unknown as { __ymuxHighlight: () => void }).__ymuxHighlight = highlight;
 
   return () => {
+    window.clearInterval(timingTimer);
+    timingTimer = undefined;
+    document.removeEventListener("visibilitychange", syncTimingTimer);
     cleanupTree();
     cleanupInbox();
+    cleanupBroadcast();
     cleanupLang();
     cleanupNotesSub();
     window.removeEventListener("pointermove", onDragMove);

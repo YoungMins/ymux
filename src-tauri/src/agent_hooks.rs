@@ -61,6 +61,7 @@ pub const HOOK_EVENTS: &[(&str, Option<&str>)] = &[
     ("UserPromptSubmit", None),
     ("PreToolUse", Some("*")),
     ("PostToolUse", Some("*")),
+    ("PostToolUseFailure", Some("*")),
     ("PermissionRequest", Some("*")),
     ("Stop", None),
     ("StopFailure", None),
@@ -230,18 +231,28 @@ pub fn install_hooks(settings: &mut Value, port: u16) -> Result<(), String> {
             .or_insert_with(|| Value::Array(Vec::new()))
             .as_array_mut()
             .ok_or_else(|| format!("\"hooks.{event}\" is not an array"))?;
+        // Refresh the first ymux entry in place and drop any later one, or
+        // the same hook would be delivered twice. A group that held only a
+        // duplicate goes with it; foreign entries and order are untouched.
         let mut found = false;
-        for group in groups.iter_mut() {
+        groups.retain_mut(|group| {
             let Some(entries) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
-                continue;
+                return true;
             };
-            for e in entries.iter_mut() {
-                if is_ours_http(e) {
-                    *e = entry.clone();
-                    found = true;
+            let before = entries.len();
+            entries.retain_mut(|e| {
+                if !is_ours_http(e) {
+                    return true;
                 }
-            }
-        }
+                if found {
+                    return false;
+                }
+                *e = entry.clone();
+                found = true;
+                true
+            });
+            before == entries.len() || !entries.is_empty()
+        });
         if !found {
             let mut group = Map::new();
             if let Some(m) = matcher {
@@ -629,6 +640,139 @@ pub fn apply_plan(plan: &HookPlan, port: u16, may_create: impl Fn(&str) -> bool)
     outcome
 }
 
+/// What a read-only look at one `settings.json` found (the hook self-test).
+/// Every list holds event names or short plain-English notes, never values
+/// from the file beyond ports.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookInspection {
+    /// Events with no ymux http entry.
+    pub missing: Vec<String>,
+    /// Events whose ymux entry points at another port.
+    pub stale_port: Vec<String>,
+    /// Events with more than one ymux entry (delivered twice).
+    pub duplicated: Vec<String>,
+    /// Retired `y` command entries are still present.
+    pub legacy: bool,
+    /// User-level settings that would stop Claude Code from posting.
+    pub blockers: Vec<String>,
+}
+
+impl HookInspection {
+    /// Nothing wrong at all.
+    pub fn is_clean(&self) -> bool {
+        self.missing.is_empty()
+            && self.stale_port.is_empty()
+            && self.duplicated.is_empty()
+            && !self.legacy
+            && self.blockers.is_empty()
+    }
+}
+
+/// `*` wildcard match, as Claude Code's `allowedHttpHookUrls` patterns use it.
+fn url_pattern_matches(pattern: &str, url: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if parts.len() == 1 {
+        return pattern == url;
+    }
+    if !url.starts_with(first) || !url[first.len()..].ends_with(last) {
+        return false;
+    }
+    let mut rest = &url[first.len()..url.len() - last.len()];
+    for mid in &parts[1..parts.len() - 1] {
+        match rest.find(mid) {
+            Some(i) => rest = &rest[i + mid.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Inspect parsed `settings.json` content for the receiver on `port`. Pure
+/// and read-only: never mutates, and reports only what [`install_hooks`]
+/// would have to fix plus restrictions it cannot fix (rule 13, "restriction
+/// knobs").
+pub fn inspect_hooks(settings: &Value, port: u16) -> HookInspection {
+    let mut out = HookInspection::default();
+    let hooks = settings.get("hooks").and_then(Value::as_object);
+    for (event, _) in HOOK_EVENTS {
+        let (mut found, mut right) = (0usize, 0usize);
+        let groups = hooks
+            .and_then(|h| h.get(*event))
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for group in groups {
+            let entries = group
+                .get("hooks")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            for e in entries.iter().filter(|e| is_ours_http(e)) {
+                found += 1;
+                let url = e.get("url").and_then(Value::as_str).unwrap_or("");
+                if url == hook_url(port) {
+                    right += 1;
+                }
+            }
+        }
+        match (found, right) {
+            (0, _) => out.missing.push((*event).to_string()),
+            (n, _) if n > 1 => out.duplicated.push((*event).to_string()),
+            (_, 0) => out.stale_port.push((*event).to_string()),
+            _ => {}
+        }
+    }
+    if let Some(h) = hooks {
+        out.legacy = h
+            .values()
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(|g| g.get("hooks").and_then(Value::as_array))
+            .flatten()
+            .any(is_legacy);
+    }
+    if settings.get("disableAllHooks").and_then(Value::as_bool) == Some(true) {
+        out.blockers.push("disableAllHooks is true".into());
+    }
+    if let Some(list) = settings.get(ALLOW_URLS_KEY).and_then(Value::as_array) {
+        let url = hook_url(port);
+        let allowed = list
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|p| url_pattern_matches(p, &url));
+        if !allowed {
+            out.blockers
+                .push(format!("{ALLOW_URLS_KEY} does not allow the receiver URL"));
+        }
+    }
+    if let Some(list) = settings.get(ALLOW_ENV_KEY).and_then(Value::as_array) {
+        let missing: Vec<&str> = OUR_ENV_VARS
+            .iter()
+            .copied()
+            .filter(|v| !list.iter().any(|i| i.as_str() == Some(v)))
+            .collect();
+        if !missing.is_empty() {
+            out.blockers
+                .push(format!("{ALLOW_ENV_KEY} lacks {}", missing.join(", ")));
+        }
+    }
+    out
+}
+
+/// [`inspect_hooks`] over `<dir>/settings.json`, read-only. `Ok(None)` when
+/// the file does not exist; `Err` carries a short reason (unreadable or not
+/// JSON), never file content.
+pub fn inspect_dir(dir: &str, port: u16) -> Result<Option<HookInspection>, String> {
+    match read_settings(&settings_file(dir)) {
+        Ok(None) => Ok(None),
+        Ok(Some(v)) if v.is_object() => Ok(Some(inspect_hooks(&v, port))),
+        Ok(Some(_)) => Err("settings.json is not a JSON object".into()),
+        Err(YmuxError::Config(_)) => Err("settings.json is not valid JSON".into()),
+        Err(e) => Err(format!("cannot read settings.json: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,6 +883,30 @@ mod tests {
             );
             assert_eq!(ours_in(&v, event), vec![hook_entry(PORT)], "{event}");
         }
+    }
+
+    #[test]
+    fn install_dedupes_duplicate_ymux_entries_per_event() {
+        let foreign_hook = json!({ "type": "http", "url": "http://127.0.0.1:9999/audit" });
+        let mut v = json!({ "hooks": { "Stop": [
+            { "hooks": [hook_entry(1111), foreign_hook.clone(), hook_entry(2222)] },
+            { "hooks": [hook_entry(3333)] },
+            { "matcher": "x", "hooks": [foreign_hook.clone()] }
+        ] } });
+        install_hooks(&mut v, PORT).unwrap();
+        assert_eq!(ours_in(&v, "Stop"), vec![hook_entry(PORT)]);
+        assert_eq!(
+            v["hooks"]["Stop"],
+            json!([
+                { "hooks": [hook_entry(PORT), foreign_hook.clone()] },
+                { "matcher": "x", "hooks": [foreign_hook] }
+            ]),
+            "first entry refreshed in place, the group left empty is dropped"
+        );
+        // Idempotent.
+        let once = v.clone();
+        install_hooks(&mut v, PORT).unwrap();
+        assert_eq!(v, once);
     }
 
     #[test]
@@ -1385,5 +1553,79 @@ mod tests {
         assert!(settings_file(&s(&good)).exists());
         assert_eq!(next_installed(&[], &out), vec![s(&good)]);
         assert_eq!(out.issues().len(), 1);
+    }
+
+    #[test]
+    fn inspect_clean_after_install_and_read_only() {
+        let mut v = json!({"model": "x"});
+        install_hooks(&mut v, 4100).unwrap();
+        let before = v.clone();
+        let i = inspect_hooks(&v, 4100);
+        assert!(i.is_clean(), "{i:?}");
+        assert_eq!(v, before, "inspection never mutates");
+    }
+
+    #[test]
+    fn inspect_reports_missing_stale_and_duplicate() {
+        let mut v = json!({});
+        install_hooks(&mut v, 4100).unwrap();
+        // Another port for Stop, a second entry for PostToolUse, none for SessionEnd.
+        v["hooks"]["Stop"][0]["hooks"][0] = hook_entry(4200);
+        let dup = v["hooks"]["PostToolUse"][0]["hooks"][0].clone();
+        v["hooks"]["PostToolUse"][0]["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .push(dup);
+        v["hooks"].as_object_mut().unwrap().remove("SessionEnd");
+        let i = inspect_hooks(&v, 4100);
+        assert_eq!(i.stale_port, vec!["Stop".to_string()]);
+        assert_eq!(i.duplicated, vec!["PostToolUse".to_string()]);
+        assert_eq!(i.missing, vec!["SessionEnd".to_string()]);
+        assert!(!i.is_clean());
+    }
+
+    #[test]
+    fn inspect_flags_restrictions_that_block_the_receiver() {
+        let mut v = json!({"allowedHttpHookUrls": ["https://example.com/*"],
+                           "httpHookAllowedEnvVars": ["HOME"]});
+        install_hooks(&mut v, 4100).unwrap();
+        assert!(inspect_hooks(&v, 4100).is_clean(), "install added both");
+        let mut blocked = v.clone();
+        blocked["allowedHttpHookUrls"] = json!(["https://example.com/*"]);
+        blocked["httpHookAllowedEnvVars"] = json!(["HOME"]);
+        let i = inspect_hooks(&blocked, 4100);
+        assert_eq!(i.blockers.len(), 2, "{i:?}");
+        // A user wildcard that covers the URL is fine.
+        blocked["allowedHttpHookUrls"] = json!(["http://127.0.0.1:*/ymux-agent-hook"]);
+        assert_eq!(inspect_hooks(&blocked, 4100).blockers.len(), 1);
+        let off = json!({"disableAllHooks": true});
+        assert!(inspect_hooks(&off, 1).blockers[0].contains("disableAllHooks"));
+    }
+
+    #[test]
+    fn inspect_sees_retired_command_entries() {
+        let mut v = json!({"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": "\"y\" agent-hook claude --ymux-agent-hook"}]}]}});
+        assert!(inspect_hooks(&v, 1).legacy);
+        install_hooks(&mut v, 1).unwrap();
+        assert!(!inspect_hooks(&v, 1).legacy);
+    }
+
+    #[test]
+    fn inspect_dir_reads_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().to_str().unwrap().to_string();
+        assert_eq!(inspect_dir(&d, 1), Ok(None));
+        std::fs::write(settings_file(&d), "{ not json").unwrap();
+        assert!(inspect_dir(&d, 1).is_err());
+        assert_eq!(
+            std::fs::read_to_string(settings_file(&d)).unwrap(),
+            "{ not json"
+        );
+        std::fs::write(settings_file(&d), "[]").unwrap();
+        assert!(inspect_dir(&d, 1).is_err());
+        std::fs::write(settings_file(&d), "{}").unwrap();
+        let i = inspect_dir(&d, 1).unwrap().unwrap();
+        assert_eq!(i.missing.len(), HOOK_EVENTS.len());
     }
 }

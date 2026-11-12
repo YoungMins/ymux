@@ -199,8 +199,34 @@ describe("decideImagePaste", () => {
     });
   });
 
-  it("falls through to text for a path that cannot be typed safely", () => {
-    expect(decideImagePaste("/tmp/a\nb.png", "posix")).toEqual({ kind: "text" });
+  it("reports a path that cannot be typed safely instead of falling back silently", () => {
+    expect(decideImagePaste("/tmp/a\nb.png", "posix")).toEqual({
+      kind: "refused",
+      path: "/tmp/a\nb.png",
+    });
+  });
+
+  it("translates a drive path for a WSL pane and quotes it POSIX-style", () => {
+    expect(decideImagePaste("C:\\Users\\John Smith\\clip-1.png", "unknown", true)).toEqual({
+      kind: "image",
+      write: "'/mnt/c/Users/John Smith/clip-1.png'",
+    });
+    // A quote in the path still works through the double-quote form.
+    expect(decideImagePaste("D:\\O'Brien\\clip.png", "unknown", true)).toEqual({
+      kind: "image",
+      write: `"/mnt/d/O'Brien/clip.png"`,
+    });
+  });
+
+  it("refuses a WSL path with no drive letter, and a backslash path for an unknown shell", () => {
+    expect(decideImagePaste("\\\\server\\share\\a.png", "unknown", true)).toEqual({
+      kind: "refused",
+      path: "\\\\server\\share\\a.png",
+    });
+    expect(decideImagePaste("C:\\a\\b.png", "unknown")).toEqual({
+      kind: "refused",
+      path: "C:\\a\\b.png",
+    });
   });
 
   // Claude Code strips one outer '…' or "…" from a pasted path and does not
@@ -242,7 +268,7 @@ describe("decideImagePaste", () => {
       ["/Users/me/a\\b.png", "fish"],
       ["/Users/o'brien/clip.png", "unknown"],
     ] as const) {
-      expect(decideImagePaste(path, family), `${family} ${path}`).toEqual({ kind: "text" });
+      expect(decideImagePaste(path, family), `${family} ${path}`).toEqual({ kind: "refused", path });
     }
   });
 });
@@ -357,6 +383,29 @@ describe("runPaste", () => {
     await runPaste(run);
     expect(writes).toEqual([]);
     expect(errors).toEqual([boom]);
+  });
+
+  it("reports a refused image path, then still pastes the clipboard text", async () => {
+    const refused: string[] = [];
+    const { run, writes } = fakeRun({
+      family: "unknown",
+      readImage: async () => "C:\\a\\b.png",
+      readText: async () => "hello",
+      reportPathRefused: (p) => refused.push(p),
+    });
+    await runPaste(run);
+    expect(refused).toEqual(["C:\\a\\b.png"]);
+    expect(writes).toEqual(["hello"]);
+  });
+
+  it("types the /mnt path for a WSL pane", async () => {
+    const { run, writes } = fakeRun({
+      family: "unknown",
+      wsl: true,
+      readImage: async () => "C:\\a\\b.png",
+    });
+    await runPaste(run);
+    expect(writes).toEqual(["'/mnt/c/a/b.png'"]);
   });
 
   it("writes nothing before the PTY is up", async () => {

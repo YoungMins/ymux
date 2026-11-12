@@ -126,6 +126,14 @@ export class FunStore {
     this.changed();
   }
 
+  /// Write any pending change now (the page is going away).
+  flush(): void {
+    if (this.saveTimer === null) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    save(this.stats);
+  }
+
   private changed(notify = true): void {
     if (this.saveTimer === null) {
       this.saveTimer = setTimeout(() => {
@@ -184,3 +192,13 @@ export function saveFunSettings(s: FunSettings): void {
 
 /// The app's one store.
 export const funStore = new FunStore();
+
+/// Save what the 500 ms debounce is still holding; a quit guard can call it.
+export function flushFunStore(): void {
+  funStore.flush();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushFunStore);
+  window.addEventListener("beforeunload", flushFunStore);
+}

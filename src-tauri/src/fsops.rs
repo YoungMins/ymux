@@ -224,6 +224,45 @@ fn copy_tree(from: &Path, to: &Path, overwrite: bool) -> YmuxResult<()> {
     }
 }
 
+/// Fail, before anything is copied, if `from` or anything under it is a
+/// symbolic link: `copy_tree` would refuse it midway and leave a half-built
+/// destination (and a move must not start what it cannot finish).
+fn reject_symlinks(from: &Path) -> YmuxResult<()> {
+    let from_s = from.to_string_lossy().into_owned();
+    let md = fs::symlink_metadata(from).map_err(|e| YmuxError::from_io(&e, &from_s))?;
+    if md.file_type().is_symlink() {
+        return Err(YmuxError::Other(format!(
+            "{from_s}: refusing to copy a symbolic link (copy its target instead)"
+        )));
+    }
+    if md.is_dir() {
+        for entry in fs::read_dir(from).map_err(|e| YmuxError::from_io(&e, &from_s))? {
+            let entry = entry.map_err(|e| YmuxError::from_io(&e, &from_s))?;
+            reject_symlinks(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// Pass `result` through; on failure remove `to` if (and only if) it did not
+/// exist before the call (`existed` false), so a failed copy leaves no
+/// half-built destination and never deletes something that was already there.
+fn discard_partial<T>(to: &Path, existed: bool, result: YmuxResult<T>) -> YmuxResult<T> {
+    if result.is_err() && !existed {
+        let _ = delete_one(to);
+    }
+    result
+}
+
+/// Move across volumes: copy then delete the source. Symlinks are rejected
+/// up front and a failed copy removes the destination this call created.
+fn move_by_copy(from: &Path, to: &Path, overwrite: bool) -> YmuxResult<()> {
+    reject_symlinks(from)?;
+    let existed = fs::symlink_metadata(to).is_ok();
+    discard_partial(to, existed, copy_tree(from, to, overwrite))?;
+    delete_one(from)
+}
+
 /// Remove one path. A symlink loses the link, never the target.
 fn delete_one(path: &Path) -> YmuxResult<()> {
     let p = path.to_string_lossy().into_owned();
@@ -359,8 +398,7 @@ pub(crate) mod imp {
             // A rename cannot cross a volume; fall back to copy + delete,
             // which is what every file manager does.
             Err(e) if is_cross_device(&e) => {
-                copy_tree(Path::new(from), Path::new(to), overwrite)?;
-                delete_one(Path::new(from))
+                move_by_copy(Path::new(from), Path::new(to), overwrite)
             }
             Err(e) => Err(YmuxError::from_io(&e, to)),
         }
@@ -1236,6 +1274,59 @@ mod tests {
         super::copy_tree(&src, &link, true).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"do not touch");
         assert_eq!(std::fs::read(&link).unwrap(), b"new content");
+    }
+
+    #[test]
+    fn move_by_copy_moves_a_tree_and_removes_the_source() {
+        let d = tmp();
+        let src = d.path().join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("sub").join("a.txt"), b"a").unwrap();
+        let dst = d.path().join("dst");
+        super::move_by_copy(&src, &dst, false).unwrap();
+        assert_eq!(std::fs::read(dst.join("sub").join("a.txt")).unwrap(), b"a");
+        assert!(!src.exists());
+    }
+
+    #[test]
+    fn move_by_copy_rejects_a_nested_symlink_before_copying_anything() {
+        let d = tmp();
+        let src = d.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        let target = d.path().join("t.txt");
+        std::fs::write(&target, b"t").unwrap();
+        let link = src.join("zlink");
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&target, &link).is_ok();
+        if !made {
+            eprintln!("skipped: cannot create a file symlink here (Developer Mode off?)");
+            return;
+        }
+        let dst = d.path().join("dst");
+        assert!(super::move_by_copy(&src, &dst, false).is_err());
+        assert!(!dst.exists(), "nothing may be copied");
+        assert!(src.join("a.txt").exists(), "source untouched");
+    }
+
+    #[test]
+    fn discard_partial_removes_only_a_destination_this_call_created() {
+        let d = tmp();
+        let made = d.path().join("made");
+        std::fs::create_dir_all(made.join("half")).unwrap();
+        let err: YmuxResult<()> = Err(YmuxError::Other("boom".into()));
+        assert!(super::discard_partial(&made, false, err).is_err());
+        assert!(!made.exists());
+
+        let old = d.path().join("old");
+        std::fs::create_dir_all(&old).unwrap();
+        let err: YmuxResult<()> = Err(YmuxError::Other("boom".into()));
+        assert!(super::discard_partial(&old, true, err).is_err());
+        assert!(old.exists());
+        assert!(super::discard_partial(&old, false, Ok(())).is_ok());
+        assert!(old.exists());
     }
 
     #[test]

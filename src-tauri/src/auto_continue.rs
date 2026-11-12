@@ -9,6 +9,10 @@
 //! The `tool_input` shape and the `answers` format are taken from Claude
 //! Code's docs, not yet confirmed against a live payload; the one place that
 //! encodes how several selected labels become one value is [`join_labels`].
+//! The Agent SDK user-input page says a multi-select answer may be an array
+//! of labels or the labels joined with a comma and space: both are
+//! documented, so the joined string is kept. Neither form has been run
+//! against a live `PreToolUse` hook.
 
 use std::collections::HashSet;
 
@@ -45,7 +49,8 @@ pub fn clip_for_log(s: &str) -> String {
 }
 
 /// How the labels chosen for a `multiSelect` question become its one answer
-/// string. Change here if a live check shows another separator.
+/// string. The docs allow this (`", "`-joined) or an array of labels; neither
+/// is live-verified, so change here if a live check shows a problem.
 pub fn join_labels(labels: &[&str]) -> String {
     labels.join(", ")
 }

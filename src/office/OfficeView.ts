@@ -274,6 +274,8 @@ export class OfficeView {
   private effects!: FloorEffects;
   private readonly buildingEl: HTMLElement;
   private readonly ambienceEl: HTMLElement;
+  /// When the day/night look was last refreshed (the tick skips in mini mode).
+  private lastAmbienceAt = 0;
   private readonly bosses = new Map<Uuid, HTMLElement>();
   private nextEvent = Date.now() + 40_000;
   private nextChat = Date.now() + 15_000;
@@ -1074,9 +1076,13 @@ export class OfficeView {
     const live = new Set<Uuid>();
     for (const w of this.waitingNow) {
       live.add(w.paneId);
-      const at = this.source.outputAt(w.paneId) ?? 0;
+      const at = this.source.outputAt(w.paneId);
       let hit = this.yesCache.get(w.paneId);
-      if (!hit || hit.at !== at) {
+      if (at === null) {
+        // No output seen yet: nothing to key a cache on, read it fresh.
+        hit = { at: 0, yes: approveOption(this.source.screen(w.paneId)) !== null };
+        this.yesCache.delete(w.paneId);
+      } else if (!hit || hit.at !== at) {
         hit = { at, yes: approveOption(this.source.screen(w.paneId)) !== null };
         this.yesCache.set(w.paneId, hit);
       }
@@ -1164,7 +1170,10 @@ export class OfficeView {
       this.busyErrand(actor, now);
     }
     this.funTick(now);
-    if (now % 60_000 < TICK_MS) this.applyAmbience();
+    if (now - this.lastAmbienceAt >= 60_000) {
+      this.lastAmbienceAt = now;
+      this.applyAmbience();
+    }
   }
 
   /// A busy agent runs to the shelf, the machines or the window now and
@@ -1465,7 +1474,7 @@ export class OfficeView {
     const st = funStore.get();
     // Bought furniture: where the user put it in the lobby, else the lobby
     // pieces in their slots.
-    const placed = st.owned.filter((id) => st.places[id]?.room === null);
+    const placed = st.owned.filter((id) => Object.hasOwn(st.places, id) && st.places[id]?.room === null);
     const slotted = st.owned.filter((id) => shopItem(id)?.place === "lobby" && !st.places[id]);
     let html =
       placed.map((id) => funProp(id, `office-prop office-prop--fun office-prop--placed fun-item fun-item--${id}`)).join("") +
@@ -2571,7 +2580,7 @@ function noteText(e: LogEntry): string {
 function placeFurniture(root: HTMLElement, places: Readonly<Record<string, { x: number; y: number }>>): void {
   for (const el of root.querySelectorAll<HTMLElement>(".office-prop--placed")) {
     const id = [...el.classList].find((c) => c.startsWith("fun-item--"))?.slice("fun-item--".length);
-    const p = id ? places[id] : undefined;
+    const p = id && Object.hasOwn(places, id) ? places[id] : undefined;
     if (!p) continue;
     el.style.left = `${p.x * 100}%`;
     el.style.top = `${p.y * 100}%`;

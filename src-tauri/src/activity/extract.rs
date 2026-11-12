@@ -3,7 +3,7 @@
 //! Field names follow the official hooks reference
 //! (<https://code.claude.com/docs/en/hooks>): common fields `session_id`,
 //! `transcript_path`, `cwd`, `hook_event_name`, `agent_id`; `UserPromptSubmit`
-//! `prompt`; `PreToolUse`/`PostToolUse`/`PermissionRequest` `tool_name` +
+//! `prompt`; `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`PermissionRequest` `tool_name` +
 //! `tool_input` (`file_path` for Write/Edit, `command` for Bash,
 //! `notebook_path` for NotebookEdit, `edits[].file_path` for MultiEdit);
 //! `PostToolUse` `tool_response` (Bash: `stdout`/`stderr`/`interrupted`; Write:
@@ -133,6 +133,17 @@ fn bash_result(resp: &Value) -> (Option<i64>, bool, Option<String>) {
     (exit, interrupted, out)
 }
 
+/// N from a failed Bash/PowerShell call's `Exit code N` first line.
+fn exit_code_of(error: &str) -> Option<i64> {
+    error
+        .lines()
+        .next()?
+        .strip_prefix("Exit code ")?
+        .trim()
+        .parse()
+        .ok()
+}
+
 /// `None` for any event the log does not record (or a non-object body).
 pub fn from_hook(body: &Value) -> Option<ActivityRaw> {
     if !body.is_object() {
@@ -142,7 +153,7 @@ pub fn from_hook(body: &Value) -> Option<ActivityRaw> {
     let kind = match event {
         "UserPromptSubmit" => RawKind::Prompt,
         "PreToolUse" => RawKind::ToolStart,
-        "PostToolUse" => RawKind::ToolEnd,
+        "PostToolUse" | "PostToolUseFailure" => RawKind::ToolEnd,
         "PermissionRequest" => RawKind::Permission,
         "Stop" => RawKind::Stop,
         "StopFailure" => RawKind::StopFailure,
@@ -186,6 +197,19 @@ pub fn from_hook(body: &Value) -> Option<ActivityRaw> {
                 if let Some(resp) = response {
                     (raw.exit_code, raw.interrupted, raw.output_tail) = bash_result(resp);
                 }
+            }
+            if event == "PostToolUseFailure" {
+                // A failed call has no `tool_response`; the text is `error`
+                // (Bash: first line `Exit code N`, then the output).
+                if let Some(e) = str_at(body, "error").filter(|e| !e.is_empty()) {
+                    raw.exit_code = exit_code_of(e);
+                    raw.output_tail = Some(tail(e, MAX_OUTPUT_TAIL_CHARS * WINDOW));
+                    raw.error = Some(first_line_clipped(e, 80));
+                }
+                raw.interrupted = body
+                    .get("is_interrupt")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
             }
         }
         RawKind::Stop | RawKind::StopFailure => {
@@ -291,6 +315,37 @@ mod tests {
         .unwrap();
         assert_eq!(raw.exit_code, None);
         assert_eq!(raw.output_tail.as_deref(), Some("a\nb"));
+    }
+
+    #[test]
+    fn post_tool_use_failure_records_error_and_exit_code() {
+        let raw = from_hook(&json!({
+            "hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": {"command": "npm test"},
+            "error": "Exit code 1\nError: Cannot find module 'express'",
+            "is_interrupt": true,
+        }))
+        .unwrap();
+        assert_eq!(raw.kind, RawKind::ToolEnd);
+        assert_eq!(raw.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(raw.command.as_deref(), Some("npm test"));
+        assert_eq!(raw.exit_code, Some(1));
+        assert!(raw.interrupted);
+        assert!(raw.output_tail.as_deref().unwrap().contains("express"));
+        assert_eq!(raw.error.as_deref(), Some("Exit code 1"));
+        // Clipped like the other free text; a bare message has no exit code.
+        let long = from_hook(&json!({
+            "hook_event_name": "PostToolUseFailure", "tool_name": "Read",
+            "error": "e".repeat(5000),
+        }))
+        .unwrap();
+        assert_eq!(long.exit_code, None);
+        assert!(!long.interrupted);
+        assert_eq!(
+            long.output_tail.unwrap().chars().count(),
+            MAX_OUTPUT_TAIL_CHARS * WINDOW
+        );
+        assert_eq!(long.error.unwrap().chars().count(), 80);
     }
 
     #[test]

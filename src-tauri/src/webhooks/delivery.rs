@@ -373,10 +373,7 @@ impl Dispatcher {
         let at = self.inner.opts.clock.now_ms();
         let dests = self.inner.destinations.read().clone();
         let workers = self.inner.workers.lock();
-        for d in dests
-            .iter()
-            .filter(|d| d.enabled && d.events.iter().any(|k| k == &ev.kind))
-        {
+        for d in dests.iter().filter(|d| d.enabled && d.wants(&ev.kind)) {
             let Some(w) = workers.get(&d.id) else {
                 continue;
             };
@@ -576,10 +573,8 @@ impl Inner {
         status: &Mutex<DestStatus>,
         events: Vec<DeliveryEvent>,
     ) {
-        let events: Vec<DeliveryEvent> = events
-            .into_iter()
-            .filter(|e| cfg.events.iter().any(|k| k == &e.kind))
-            .collect();
+        let events: Vec<DeliveryEvent> =
+            events.into_iter().filter(|e| cfg.wants(&e.kind)).collect();
         for chunk in events.chunks(MAX_BATCH) {
             let mut stored = Stored {
                 events: chunk.to_vec(),
@@ -589,7 +584,12 @@ impl Inner {
                 for e in chunk {
                     let (refs, lst) = (self.opts.planner)(e, cfg);
                     for r in refs {
-                        if stored.files.iter().any(|f| f.meta.path == r.path) {
+                        // Rule 15: two spellings of one path are one file.
+                        if stored
+                            .files
+                            .iter()
+                            .any(|f| ypath::same_path(&f.meta.path, &r.path))
+                        {
                             continue;
                         }
                         match record_file(r) {
@@ -627,14 +627,6 @@ impl Inner {
     ) -> Step {
         let now = self.opts.clock.now_ms();
         let Some(item) = queue.next_due(now) else {
-            eprintln!(
-                "DBG idle now={now} {:?}",
-                queue
-                    .list()
-                    .iter()
-                    .map(|i| i.not_before_ms)
-                    .collect::<Vec<_>>()
-            );
             return Step::Idle;
         };
         let stored: Stored = match serde_json::from_value(item.payload.clone()) {
@@ -922,6 +914,37 @@ mod tests {
         at.kind = "attention".into();
         d.publish(&at);
         wait_until("attention sent", || r.calls_to("a.test").len() == 1);
+        d.shutdown();
+    }
+
+    #[test]
+    fn the_digest_goes_only_to_destinations_that_ask_for_it() {
+        let r = rig(&["a", "b"]);
+        r.dests.write()[1].daily_digest = true;
+        r.dests.write()[1].events = Vec::new();
+        // Not even listing `digest` in `events` matters: the switch decides.
+        r.dests.write()[0].events = vec!["turn_end".into(), "digest".into()];
+        let d = r.start(r.opts(), |_, _| SendOutcome::status(200));
+        let mut dg = ev(1);
+        dg.kind = "digest".into();
+        dg.headline = "2026-11-12".into();
+        dg.digest = Some(crate::webhooks::digest::Digest {
+            date: "2026-11-12".into(),
+            turns: 3,
+            ..Default::default()
+        });
+        d.publish(&dg);
+        wait_until("b gets the digest", || r.calls_to("b.test").len() == 1);
+        settle();
+        assert!(r.calls_to("a.test").is_empty());
+        let body: Value = serde_json::from_slice(&r.calls_to("b.test")[0].body).unwrap();
+        assert_eq!(body["events"][0]["kind"], "digest");
+        assert_eq!(body["events"][0]["digest"]["turns"], 3);
+        // A per-turn event still reaches `a` only.
+        d.publish(&ev(2));
+        wait_until("a gets the turn", || r.calls_to("a.test").len() == 1);
+        settle();
+        assert_eq!(r.calls_to("b.test").len(), 1);
         d.shutdown();
     }
 
@@ -1229,11 +1252,6 @@ mod tests {
         assert_eq!(d.status(&uid("a")).queued, 1);
         r.clock.advance(6);
         std::thread::sleep(Duration::from_millis(300));
-        eprintln!(
-            "DBG calls={} status={:?}",
-            r.calls_to("a.test").len(),
-            d.status(&uid("a"))
-        );
         wait_until("retried ok", || {
             r.calls_to("a.test").len() == 2 && d.status(&uid("a")).queued == 0
         });
@@ -1288,6 +1306,35 @@ mod tests {
             b.content_type
         );
         assert!(String::from_utf8_lossy(&b.body).contains("hello"));
+        d.shutdown();
+    }
+
+    /// The same file planned under two spellings (drive-letter case) is
+    /// attached once. Windows only: elsewhere those are two files.
+    #[cfg(windows)]
+    #[test]
+    fn one_file_under_two_spellings_is_attached_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("report.txt");
+        std::fs::write(&f, b"hello").unwrap();
+        let first = planned(&f);
+        let mut second = first.clone();
+        let mut chars = second.path.chars();
+        let drive = chars.next().unwrap();
+        second.path = format!("{}{}", drive.to_ascii_lowercase(), chars.as_str());
+        let r = rig(&["a"]);
+        {
+            let mut ds = r.dests.write();
+            ds[0].attach = true;
+            ds[0].format = "json".into();
+        }
+        let mut o = r.opts();
+        o.planner = Arc::new(move |_, _| (vec![first.clone(), second.clone()], Vec::new()));
+        let d = r.start(o, |_, _| SendOutcome::status(200));
+        d.publish(&ev(1));
+        wait_until("sent", || r.calls_to("a.test").len() == 1);
+        let body = String::from_utf8_lossy(&r.calls_to("a.test")[0].body).into_owned();
+        assert_eq!(body.matches("hello").count(), 1, "{body}");
         d.shutdown();
     }
 

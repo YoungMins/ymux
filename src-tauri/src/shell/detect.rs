@@ -210,7 +210,7 @@ esac
 "#;
 
     /// Write (or refresh) the bash rcfile next to the main config and return
-    /// its absolute path. Errors are logged and swallowed — Git Bash just
+    /// its absolute, real (see `fspath::real_path`) path. Errors are logged and swallowed — Git Bash just
     /// won't have cwd tracking in that case.
     pub(super) fn ensure_bash_rcfile() -> Option<PathBuf> {
         let dir = dirs::config_dir()?.join("ymux");
@@ -223,7 +223,9 @@ esac
             tracing::warn!(error = %e, "failed to write bash rcfile");
             return None;
         }
-        Some(path)
+        // Git Bash is a child outside the Store package: hand it the real
+        // location, not the virtualised AppData spelling (rule 18).
+        Some(crate::fspath::real_path(path))
     }
 
     pub fn run() -> Vec<ShellProfile> {

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write as IoWrite;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -60,6 +60,10 @@ const EOF_EXIT_GRACE: Duration = Duration::from_secs(1);
 struct ExitOnce {
     id: Uuid,
     done: AtomicBool,
+    /// Set by `disarm` (kill / drop) and never cleared. The detached reader
+    /// checks it before touching `cwds` or sending events, so a killed
+    /// pane's late output cannot leak under an id that was since respawned.
+    killed: AtomicBool,
     tx: SyncSender<PaneEvent>,
 }
 
@@ -72,7 +76,12 @@ impl ExitOnce {
     }
 
     fn disarm(&self) {
+        self.killed.store(true, Ordering::SeqCst);
         self.done.store(true, Ordering::SeqCst);
+    }
+
+    fn is_killed(&self) -> bool {
+        self.killed.load(Ordering::SeqCst)
     }
 
     fn is_done(&self) -> bool {
@@ -190,6 +199,10 @@ pub struct PtySession {
     /// the UI, because `write_pane` must stay a main-thread command to keep
     /// keystrokes in order (async commands run concurrently and can reorder).
     input: std::sync::mpsc::Sender<Vec<u8>>,
+    /// Bytes queued in `input` and not yet written; bounded by
+    /// [`INPUT_QUEUE_MAX_BYTES`] so a child that never reads cannot make the
+    /// queue grow without limit.
+    pending_input: Arc<AtomicUsize>,
     /// Owned here. The reader and exit watcher only hold `Weak` references,
     /// so dropping the session still releases the child's handle.
     child: SharedChild,
@@ -210,6 +223,10 @@ pub enum PaneEvent {
     /// one (OSC 7). Forwarded to the frontend as `pty:cwd:{id}`.
     Cwd(Uuid, String),
 }
+
+/// Most bytes that may sit in a pane's input queue unwritten. Generous (the
+/// frontend sends pastes as sequential 64 KB chunks) but finite.
+pub const INPUT_QUEUE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 /// Most bytes [`merge_queued`] puts into one `Data` event.
 pub const MERGE_MAX: usize = 64 * 1024;
@@ -337,6 +354,7 @@ impl PtySession {
         let exit = Arc::new(ExitOnce {
             id: spec.id,
             done: AtomicBool::new(false),
+            killed: AtomicBool::new(false),
             tx: events.clone(),
         });
 
@@ -345,6 +363,8 @@ impl PtySession {
             .take_writer()
             .map_err(|e| YmuxError::Pty(format!("take_writer: {e}")))?;
         let (input, input_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let pending_input = Arc::new(AtomicUsize::new(0));
+        let pending_for_writer = Arc::clone(&pending_input);
 
         let mut reader = pair
             .master
@@ -362,7 +382,9 @@ impl PtySession {
             .name(format!("ymux-pty-writer-{id}"))
             .spawn(move || {
                 while let Ok(chunk) = input_rx.recv() {
-                    if let Err(e) = writer.write_all(&chunk).and_then(|()| writer.flush()) {
+                    let res = writer.write_all(&chunk).and_then(|()| writer.flush());
+                    pending_for_writer.fetch_sub(chunk.len(), Ordering::SeqCst);
+                    if let Err(e) = res {
                         tracing::debug!(pane = %id, error = %e, "pty write failed");
                         break;
                     }
@@ -391,10 +413,22 @@ impl PtySession {
                             // wins — that's the "current" cwd as far as the
                             // shell is concerned.
                             for cwd in osc7.feed(chunk) {
-                                cwds_for_reader.lock().insert(id, cwd.clone());
+                                {
+                                    // Checked under the map lock: `kill`
+                                    // disarms before it clears the entry,
+                                    // so a killed pane cannot re-insert.
+                                    let mut map = cwds_for_reader.lock();
+                                    if exit_for_reader.is_killed() {
+                                        break;
+                                    }
+                                    map.insert(id, cwd.clone());
+                                }
                                 if cwd_change.is_new(&cwd) {
                                     let _ = tx.send(PaneEvent::Cwd(id, cwd));
                                 }
+                            }
+                            if exit_for_reader.is_killed() {
+                                break;
                             }
                             if tx.send(PaneEvent::Data(id, chunk.to_vec())).is_err() {
                                 break;
@@ -463,6 +497,7 @@ impl PtySession {
             id,
             master: Mutex::new(pair.master),
             input,
+            pending_input,
             child,
             exit,
             pid,
@@ -471,14 +506,24 @@ impl PtySession {
 
     /// Queue `data` for the child's stdin. Never blocks: the bytes are
     /// written, in call order, by the session's writer thread. `Err` only
-    /// once that thread has stopped (an earlier write failed).
+    /// once that thread has stopped (an earlier write failed), or when more
+    /// than [`INPUT_QUEUE_MAX_BYTES`] are already waiting (the child is not
+    /// reading); nothing is queued in that case.
     pub fn write(&self, data: &[u8]) -> YmuxResult<()> {
         if data.is_empty() {
             return Ok(());
         }
-        self.input
-            .send(data.to_vec())
-            .map_err(|_| YmuxError::Pty("write: pane input is closed".into()))
+        let queued = self.pending_input.fetch_add(data.len(), Ordering::SeqCst);
+        if queued + data.len() > INPUT_QUEUE_MAX_BYTES {
+            self.pending_input.fetch_sub(data.len(), Ordering::SeqCst);
+            return Err(YmuxError::Pty(
+                "write: pane input queue is full (the program is not reading)".into(),
+            ));
+        }
+        self.input.send(data.to_vec()).map_err(|_| {
+            self.pending_input.fetch_sub(data.len(), Ordering::SeqCst);
+            YmuxError::Pty("write: pane input is closed".into())
+        })
     }
 
     pub fn resize(&self, size: PtySize) -> YmuxResult<()> {
@@ -1181,6 +1226,44 @@ mod tests {
             start.elapsed()
         );
         session.kill().expect("kill");
+    }
+
+    /// A child that never reads must not let the input queue grow without
+    /// limit: past the byte budget `write` reports an error.
+    #[test]
+    fn write_errors_once_the_input_queue_budget_is_spent() {
+        let profile = one_shot_profile("sleep 5", "ping -n 6 127.0.0.1 >NUL");
+        let spec = PaneSpec::new_default();
+        let (tx, _rx) = mpsc::sync_channel(EVENT_QUEUE);
+        let cwds: CwdMap = Arc::new(Mutex::new(HashMap::new()));
+        let session =
+            PtySession::spawn(&spec, &profile, size_24x80(), tx, cwds, &[], &[]).expect("spawn");
+        let chunk = vec![b'x'; 64 * 1024];
+        let mut failed = false;
+        for _ in 0..(INPUT_QUEUE_MAX_BYTES / chunk.len() + 64) {
+            if session.write(&chunk).is_err() {
+                failed = true;
+                break;
+            }
+        }
+        session.kill().expect("kill");
+        assert!(failed, "the queue never reported full");
+    }
+
+    #[test]
+    fn killed_flag_is_set_by_disarm_but_exit_still_fires_once() {
+        let (tx, rx) = mpsc::sync_channel(4);
+        let once = ExitOnce {
+            id: Uuid::new_v4(),
+            done: AtomicBool::new(false),
+            killed: AtomicBool::new(false),
+            tx,
+        };
+        once.fire(3);
+        assert!(!once.is_killed(), "a normal exit is not a kill");
+        assert!(matches!(rx.try_recv(), Ok(PaneEvent::Exit(_, 3))));
+        once.disarm();
+        assert!(once.is_killed());
     }
 
     /// Queued writes reach the child in call order.

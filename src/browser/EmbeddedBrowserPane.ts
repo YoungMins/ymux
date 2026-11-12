@@ -135,7 +135,6 @@ export class EmbeddedBrowserPane implements Pane {
     }
 
     const bounds = this.getPhysicalBounds();
-    console.log("[EmbeddedBrowserPane] spawn", { url: initial, ...bounds, dpr: window.devicePixelRatio });
 
     this.spawned = true;
     this.urlInput.value = initial;

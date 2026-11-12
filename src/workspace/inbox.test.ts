@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInbox,
+  buildQuotaInbox,
   inboxSummary,
   nextAttention,
   ReadHistory,
@@ -135,5 +136,15 @@ describe("inboxSummary", () => {
   });
   it("includes both counts", () => {
     expect(inboxSummary({ attention: 2, done: 3 }, text)).toBe("Inbox: 2 need attention, 3 done");
+  });
+});
+
+describe("buildQuotaInbox", () => {
+  const item = (paneId: string, level: "near" | "limit", used: number) => ({
+    paneId, wsId: 1, wsLabel: "1", paneLabel: paneId, agentKind: "claude", level, used,
+  });
+  it("lists at-limit panes first, then by usage", () => {
+    const out = buildQuotaInbox([item("a", "near", 91), item("b", "limit", 100), item("c", "near", 97)]);
+    expect(out.map((i) => i.paneId)).toEqual(["b", "c", "a"]);
   });
 });

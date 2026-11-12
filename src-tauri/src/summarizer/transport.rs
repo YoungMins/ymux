@@ -178,11 +178,25 @@ fn builder() -> reqwest::blocking::ClientBuilder {
         .user_agent(concat!("ymux/", env!("CARGO_PKG_VERSION")))
 }
 
+/// The client for `allow_remote` endpoints: honours the system proxy
+/// settings (HTTP(S)_PROXY / ALL_PROXY), as a remote LLM host may need.
 #[cfg(feature = "desktop")]
 fn client() -> Option<&'static reqwest::blocking::Client> {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
     CLIENT.get_or_init(|| builder().build().ok()).as_ref()
+}
+
+/// The client for loopback endpoints: never proxied, or a proxy env var
+/// would receive a request meant for this machine only (and the address pin
+/// would not apply to it).
+#[cfg(feature = "desktop")]
+fn loopback_client() -> Option<&'static reqwest::blocking::Client> {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| builder().no_proxy().build().ok())
+        .as_ref()
 }
 
 /// The real executor: 2 s connect, caller's total timeout, no redirects,
@@ -195,13 +209,23 @@ pub fn http_executor() -> Executor {
         // answers the vetted addresses for the URL's host, and nothing else.
         let pinned;
         let client = if pin.is_empty() {
-            client()
+            // `vet` lets only a loopback endpoint through without
+            // `allow_remote`; those are never proxied.
+            if super::is_loopback_endpoint(&req.url) {
+                loopback_client()
+            } else {
+                client()
+            }
         } else {
             let host = url::Url::parse(req.url.trim())
                 .ok()
                 .and_then(|u| u.host_str().map(str::to_string))
                 .ok_or(TransportError::Refused)?;
-            pinned = builder().resolve_to_addrs(&host, pin).build().ok();
+            pinned = builder()
+                .no_proxy()
+                .resolve_to_addrs(&host, pin)
+                .build()
+                .ok();
             pinned.as_ref()
         };
         let Some(client) = client else {

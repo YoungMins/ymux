@@ -94,20 +94,30 @@ pub fn warn_insecure(url: &str) -> bool {
 }
 
 #[cfg(feature = "desktop")]
-fn client() -> Option<&'static reqwest::blocking::Client> {
+fn build_client(no_proxy: bool) -> Option<reqwest::blocking::Client> {
+    let mut b = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(TOTAL_TIMEOUT)
+        .user_agent(concat!("ymux/", env!("CARGO_PKG_VERSION")));
+    if no_proxy {
+        b = b.no_proxy();
+    }
+    b.build().ok()
+}
+
+/// Remote destinations keep the system proxy settings (a corporate proxy
+/// may be the only way out); loopback ones are never proxied.
+#[cfg(feature = "desktop")]
+fn client(loopback: bool) -> Option<&'static reqwest::blocking::Client> {
     use std::sync::OnceLock;
-    static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::blocking::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(TOTAL_TIMEOUT)
-                .user_agent(concat!("ymux/", env!("CARGO_PKG_VERSION")))
-                .build()
-                .ok()
-        })
-        .as_ref()
+    static REMOTE: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
+    static LOOPBACK: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
+    if loopback {
+        LOOPBACK.get_or_init(|| build_client(true)).as_ref()
+    } else {
+        REMOTE.get_or_init(|| build_client(false)).as_ref()
+    }
 }
 
 /// POSTs `built` to `url`. Never panics, never returns the URL.
@@ -122,7 +132,7 @@ pub fn send(url: &str, built: &Built) -> SendOutcome {
     if built.body.len() > MAX_BODY_BYTES {
         return SendOutcome::failed(ErrorKind::TooLarge);
     }
-    let Some(client) = client() else {
+    let Some(client) = client(crate::summarizer::is_loopback_endpoint(url)) else {
         return SendOutcome::failed(ErrorKind::Build);
     };
     let mut headers = HeaderMap::new();

@@ -21,7 +21,11 @@ import { quotePathForShell, type ShellFamily } from "../terminal/shellQuote";
 /// A `.ps1`-only agent is offered to PowerShell alone: cmd does not resolve
 /// a `.ps1` by bare name, and a typed `.ps1` path opens through its file
 /// association and exits without running anything.
-export function agentCommand(agent: DetectedAgent, family: ShellFamily): string | null {
+export function agentCommand(
+  agent: DetectedAgent,
+  family: ShellFamily,
+  withBypass = true,
+): string | null {
   if (agent.powershell_only && family !== "powershell") return null;
   let program = agent.program;
   if (agent.path) {
@@ -29,7 +33,7 @@ export function agentCommand(agent: DetectedAgent, family: ShellFamily): string 
     if (quoted === null) return null;
     program = family === "powershell" ? `& ${quoted}` : quoted;
   }
-  return [program, ...agent.bypass_args].join(" ");
+  return [program, ...(withBypass ? agent.bypass_args : [])].join(" ");
 }
 
 /// The agents the launcher can offer for `family`, in the backend's order.
@@ -43,4 +47,24 @@ export function launchableAgents(
     if (command !== null) out.push({ agent, command });
   }
   return out;
+}
+
+/// Whether a pane's saved startup command already carries all of `agent`'s
+/// permission-bypass arguments, i.e. the user (or the "+" launcher) started it
+/// that way.
+export function startedWithBypass(agent: DetectedAgent, startupCmd: string | null | undefined): boolean {
+  if (!startupCmd || agent.bypass_args.length === 0) return false;
+  const words = startupCmd.split(/\s+/);
+  return agent.bypass_args.every((a) => words.includes(a));
+}
+
+/// The command "Switch account" types into the respawned shell: the bare agent
+/// unless the pane's own startup command shows it ran with the bypass
+/// arguments. A plain `claude` must never come back in bypass mode.
+export function switchAccountCommand(
+  agent: DetectedAgent,
+  family: ShellFamily,
+  startupCmd: string | null | undefined,
+): string | null {
+  return agentCommand(agent, family, startedWithBypass(agent, startupCmd));
 }

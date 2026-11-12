@@ -138,7 +138,7 @@ export class HeroPanel {
     xp.className = "office-hero__xp";
     const next = nextTierLevel(lv.level);
     xp.textContent = [
-      `${compact(lv.xp)} / ${compact(TOKENS_PER_LEVEL)} XP`,
+      `${compact(lv.xp)} / ${compact(lv.need)} XP`,
       fill(t("office.heroes.total"), { n: compact(Math.max(0, r.tokens - r.tasks * TASK_XP)) }),
       ...(r.tasks > 0 ? [fill(t("office.heroes.tasks"), { n: String(r.tasks) })] : []),
       next === null ? t("office.heroes.max") : fill(t("office.heroes.next"), { n: String(next) }),

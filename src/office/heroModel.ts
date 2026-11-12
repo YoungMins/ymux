@@ -17,16 +17,42 @@ export { TIER, TIER_LEVELS, type Tier } from "./heroTiers";
 
 export interface Level {
   level: number;
-  /// Tokens into the current level, and the share of it done (0..1).
+  /// Tokens into the current level, what the level takes in all, and the
+  /// share of it done (0..1).
   xp: number;
+  need: number;
   progress: number;
+}
+
+/// Levels up to here cost `TOKENS_PER_LEVEL` each (the top tier starts here).
+/// Beyond it the price of level L is `TOKENS_PER_LEVEL * L / 100`, so the
+/// numbers keep meaning something once a whole history is counted (tens of
+/// billions of tokens) while every level and tier below 100 stays as it was.
+export const LINEAR_LEVELS = 100;
+
+/// Tokens that reach level `100 + k` (k >= 0): the linear part plus
+/// sum(n = 101..100+k) of TPL * n / 100, which is exact in integers.
+function tokensAtBeyond(k: number): number {
+  return LINEAR_LEVELS * TOKENS_PER_LEVEL + TOKENS_PER_LEVEL * k + (TOKENS_PER_LEVEL / 200) * k * (k + 1);
 }
 
 export function levelOf(tokens: number): Level {
   const t = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
-  const level = Math.floor(t / TOKENS_PER_LEVEL);
-  const xp = t - level * TOKENS_PER_LEVEL;
-  return { level, xp, progress: xp / TOKENS_PER_LEVEL };
+  if (t < LINEAR_LEVELS * TOKENS_PER_LEVEL) {
+    const level = Math.floor(t / TOKENS_PER_LEVEL);
+    const xp = t - level * TOKENS_PER_LEVEL;
+    return { level, xp, need: TOKENS_PER_LEVEL, progress: xp / TOKENS_PER_LEVEL };
+  }
+  // Solve k + k(k+1)/200 = (t - 100 TPL) / TPL for the largest whole k, then
+  // nudge for float error against the exact integer cost.
+  const rem = (t - LINEAR_LEVELS * TOKENS_PER_LEVEL) / TOKENS_PER_LEVEL;
+  let k = Math.max(0, Math.floor((-201 + Math.sqrt(201 * 201 + 800 * rem)) / 2));
+  while (tokensAtBeyond(k + 1) <= t) k++;
+  while (k > 0 && tokensAtBeyond(k) > t) k--;
+  const level = LINEAR_LEVELS + k;
+  const need = (TOKENS_PER_LEVEL / 100) * (level + 1);
+  const xp = Math.min(need, t - tokensAtBeyond(k));
+  return { level, xp, need, progress: xp / need };
 }
 
 export function tierOf(level: number): Tier {
@@ -66,15 +92,19 @@ export function isHeroClass(v: unknown): v is HeroClass {
   return typeof v === "string" && (HERO_CLASSES as readonly string[]).includes(v);
 }
 
-/// Accounts whose level went up since `seen` (the levels last shown). An
-/// account seen for the first time is not a level-up.
+/// Accounts whose level went up since `seen` (the levels last shown), highest
+/// level first, so a caller that announces one (the office shows a single
+/// banner) names the biggest jump however far it is: the first run over a
+/// complete history lifts a level by hundreds at once, and that is one
+/// announcement, not one per level. An account seen for the first time is not
+/// a level-up.
 export function levelUps(seen: Readonly<Record<string, number>>, now: ReadonlyMap<string, number>): { account: string; level: number }[] {
   const out: { account: string; level: number }[] = [];
   for (const [account, level] of now) {
     const before = seen[account];
     if (before !== undefined && level > before) out.push({ account, level });
   }
-  return out;
+  return out.sort((a, b) => b.level - a.level);
 }
 
 // ── Saved picks and last-seen levels ─────────────────────────────────────

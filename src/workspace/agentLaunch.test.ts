@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { agentCommand, launchableAgents } from "./agentLaunch";
+import { agentCommand, launchableAgents, startedWithBypass, switchAccountCommand } from "./agentLaunch";
 import type { DetectedAgent } from "../types";
 
 const onPath = (over: Partial<DetectedAgent> = {}): DetectedAgent => ({
@@ -71,5 +71,33 @@ describe("launchableAgents", () => {
       ["claude", "claude --dangerously-skip-permissions"],
       ["gemini", "gemini --yolo"],
     ]);
+  });
+});
+
+describe("switchAccountCommand", () => {
+  it("relaunches bare when the pane did not run with the bypass flag", () => {
+    for (const startup of [null, undefined, "", "claude", "claude --model opus"]) {
+      expect(switchAccountCommand(onPath(), "posix", startup)).toBe("claude");
+    }
+  });
+
+  it("keeps the bypass flag when the pane's startup command had it", () => {
+    expect(switchAccountCommand(onPath(), "cmd", "claude --dangerously-skip-permissions")).toBe(
+      "claude --dangerously-skip-permissions",
+    );
+  });
+
+  it("matches whole words only and needs every bypass argument", () => {
+    expect(startedWithBypass(onPath(), "claude --dangerously-skip-permissionsX")).toBe(false);
+    const two = onPath({ bypass_args: ["--a", "--b"] });
+    expect(startedWithBypass(two, "claude --a")).toBe(false);
+    expect(startedWithBypass(two, "claude --b --a")).toBe(true);
+    expect(startedWithBypass(onPath({ bypass_args: [] }), "claude")).toBe(false);
+  });
+
+  it("still quotes an off-PATH path and refuses an unsafe one", () => {
+    const mac = onPath({ path: "/opt/homebrew/bin/claude" });
+    expect(switchAccountCommand(mac, "posix", null)).toBe("'/opt/homebrew/bin/claude'");
+    expect(switchAccountCommand(onPath({ powershell_only: true }), "cmd", null)).toBeNull();
   });
 });

@@ -158,6 +158,23 @@ describe("quests and the weekly report", () => {
     expect(reportDue(s, at(2026, 10, 29, 17))).toBeNull();
   });
 
+  it("drops owned and placed ids the shop does not sell", () => {
+    const real = SHOP[0].id;
+    const raw = JSON.parse(
+      JSON.stringify({
+        owned: [real, real, "constructor", "toString", "__proto__"],
+        places: {
+          [real]: { room: null, x: 0.5, y: 0.5 },
+          constructor: { room: null, x: 0, y: 0 },
+          toString: { room: "a", x: 0, y: 0 },
+        },
+      }).replace('"toString":{', '"__proto__":{"room":null,"x":1,"y":1},"toString":{'),
+    );
+    const s = normalizeStats(raw);
+    expect(s.owned).toEqual([real]);
+    expect(Object.keys(s.places)).toEqual([real]);
+  });
+
   it("survives whatever is in storage", () => {
     expect(normalizeStats(null).coins).toBe(0);
     expect(normalizeStats({ coins: -5, counters: { a: "x", b: 2 } }).counters).toEqual({ b: 2 });

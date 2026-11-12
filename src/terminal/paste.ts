@@ -24,7 +24,7 @@
 //     length, so nothing else shifts.
 //   * Chunking, so a multi-megabyte paste does not sit in one IPC message.
 
-import { quotePathForPaste, type ShellFamily } from "./shellQuote";
+import { quotePathForPaste, windowsPathToWsl, type ShellFamily } from "./shellQuote";
 
 /// Start of a bracketed paste (DECSET 2004).
 const PASTE_START = "\x1b[200~";
@@ -120,7 +120,11 @@ export type ImagePasteDecision =
   /// is now a file on disk.
   | { kind: "image"; write: string }
   /// No image. The caller falls through to the ordinary text paste.
-  | { kind: "text" };
+  | { kind: "text" }
+  /// An image was saved but its path cannot be typed into this shell (or, for
+  /// WSL, has no `/mnt` translation). The caller says so rather than leaving
+  /// the user with a paste that silently did nothing.
+  | { kind: "refused"; path: string };
 
 /// Decide from `path`, the reply of the `paste_clipboard_image` command.
 ///
@@ -135,13 +139,19 @@ export type ImagePasteDecision =
 /// backtick in it must never expand, and the quoting must be one Claude Code
 /// can undo. A path that cannot be typed that way falls through to text as
 /// well. There is no trailing newline: the user presses Enter.
+///
+/// `wsl`: the pane runs `wsl.exe`, so the typed path must be the Linux view of
+/// the Windows file (`/mnt/c/...`), POSIX-quoted. A path with no such view is
+/// `refused`, as is any path the family cannot quote.
 export function decideImagePaste(
   path: string | null | undefined,
   family: ShellFamily,
+  wsl = false,
 ): ImagePasteDecision {
   if (!path || !path.trim()) return { kind: "text" };
-  const write = quotePathForPaste(path, family);
-  if (write === null) return { kind: "text" };
+  const typed = wsl ? windowsPathToWsl(path) : path;
+  const write = typed === null ? null : quotePathForPaste(typed, wsl ? "posix" : family);
+  if (write === null) return { kind: "refused", path };
   return { kind: "image", write };
 }
 
@@ -198,7 +208,14 @@ export interface PasteRun {
   /// False until the PTY exists.
   canWrite: () => boolean;
   write: (data: string) => Promise<void>;
+  /// Write all of a paste's chunks as one uninterruptible unit; when absent
+  /// `write` is called per chunk.
+  writeAll?: (chunks: string[]) => Promise<void>;
   reportImageError: (e: unknown) => void;
+  /// The pane's shell is `wsl.exe` (see `decideImagePaste`).
+  wsl?: boolean;
+  /// An image was saved but its path cannot be typed into this shell.
+  reportPathRefused?: (path: string) => void;
 }
 
 /// Paste the clipboard: an image as its saved file's quoted path, otherwise
@@ -214,11 +231,13 @@ export interface PasteRun {
 /// them in sequence, and a reordered chunk is a scrambled paste.
 export async function runPaste(r: PasteRun): Promise<void> {
   try {
-    const decision = decideImagePaste(await r.readImage(), r.family);
+    const decision = decideImagePaste(await r.readImage(), r.family, r.wsl ?? false);
     if (decision.kind === "image") {
       if (r.canWrite()) await r.write(decision.write);
       return;
     }
+    // Say so, then still try the clipboard's text (the old behaviour).
+    if (decision.kind === "refused") r.reportPathRefused?.(decision.path);
   } catch (e) {
     r.reportImageError(e);
     return;
@@ -226,9 +245,9 @@ export async function runPaste(r: PasteRun): Promise<void> {
   try {
     const text = await r.readText();
     if (!text || !r.canWrite()) return;
-    for (const chunk of preparePaste(text, { bracketed: r.bracketed() })) {
-      await r.write(chunk);
-    }
+    const chunks = preparePaste(text, { bracketed: r.bracketed() });
+    if (r.writeAll) await r.writeAll(chunks);
+    else for (const chunk of chunks) await r.write(chunk);
   } catch {
     // Clipboard access denied — silent fail.
   }

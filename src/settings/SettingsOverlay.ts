@@ -18,6 +18,7 @@ import { nextAccountName, normalizeColor } from "../accounts/accountModel";
 import { managedAccount } from "../accounts/createAccount";
 import type { AccountProfile } from "../types";
 import { renderActivitySection } from "./ActivitySection";
+import { renderSelfTest } from "./selfTestView";
 
 interface SyntaxField {
   key: keyof YTheme["syntax"];
@@ -355,13 +356,21 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     const shellSel = document.createElement("select");
     shellSel.className = "settings-hex-input";
     shellSel.style.width = "auto";
-    for (const s of manager.allShells) {
-      const opt = document.createElement("option");
-      opt.value = s.name;
-      opt.textContent = s.name;
-      shellSel.appendChild(opt);
-    }
-    shellSel.value = manager.defaultShell;
+    const fillShells = (): void => {
+      shellSel.replaceChildren();
+      for (const s of manager.allShells) {
+        const opt = document.createElement("option");
+        opt.value = s.name;
+        opt.textContent = s.name;
+        shellSel.appendChild(opt);
+      }
+      shellSel.value = manager.defaultShell;
+    };
+    fillShells();
+    // Opening Settings picks up shells installed since startup.
+    void manager.refreshShells().then((grew) => {
+      if (grew) fillShells();
+    });
     shellSel.addEventListener("change", () => {
       manager.setDefaultShell(shellSel.value);
     });
@@ -483,6 +492,7 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
     agentRow.appendChild(agentError);
     agentRow.appendChild(agentNote);
     host.appendChild(agentRow);
+    host.appendChild(renderSelfTest());
 
     const anchorRow = document.createElement("div");
     anchorRow.className = "settings-row";

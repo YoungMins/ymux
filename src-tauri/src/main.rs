@@ -49,6 +49,7 @@ fn final_flush(app_handle: &AppHandle) {
     if let Err(e) = state.config.flush() {
         tracing::warn!(error = %e, "final config flush failed");
     }
+    ymux_lib::token_usage::shutdown_background();
 }
 
 /// Tauri's default macOS menu (`Menu::default`), minus the two items that end
@@ -65,7 +66,11 @@ fn final_flush(app_handle: &AppHandle) {
 ///   other key.
 ///
 /// Edit keeps the predefined items: WKWebView's copy/paste/undo key
-/// equivalents only work through them.
+/// equivalents only work through them. **Redo is left out on purpose**: its
+/// key equivalent is Cmd+Shift+Z, and AppKit hands a key equivalent to the
+/// menu before the webview sees a keydown, so the item swallowed ymux's
+/// zoom shortcut (Cmd+Shift+Z). The editor's redo is Cmd+Y
+/// (`src/editor/editorKeymap.ts`).
 #[cfg(target_os = "macos")]
 fn macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -109,7 +114,6 @@ fn macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
                 true,
                 &[
                     &PredefinedMenuItem::undo(app, None)?,
-                    &PredefinedMenuItem::redo(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::cut(app, None)?,
                     &PredefinedMenuItem::copy(app, None)?,
@@ -257,9 +261,11 @@ fn main() {
             ymux_lib::activity::runtime::activity_read,
             ymux_lib::activity::runtime::activity_clear,
             ymux_lib::activity::runtime::activity_open_dir,
+            ymux_lib::activity::runtime::agent_tracking_selftest,
             ymux_lib::webhooks::runtime::webhook_set_secret,
             ymux_lib::webhooks::runtime::webhook_secret_status,
             ymux_lib::webhooks::runtime::webhook_test,
+            ymux_lib::webhooks::runtime::webhook_send_digest_test,
             ymux_lib::webhooks::runtime::webhook_preview,
             ymux_lib::webhooks::runtime::webhook_status,
             ymux_lib::webhooks::runtime::summarizer_list_models,
@@ -316,6 +322,7 @@ fn main() {
             ymux_lib::commands::git_commits_ahead,
             ymux_lib::commands::git_branch_delete,
             ymux_lib::commands::git_worktree_remove,
+            ymux_lib::commands::git_keep_lane,
             ymux_lib::commands::git_worktree_list,
             ymux_lib::commands::git_diff_files,
             ymux_lib::commands::git_diff_file,
@@ -443,9 +450,27 @@ fn main() {
                 );
             }
             start_pty_event_pump(app.handle().clone());
-            start_update_checker(app.handle().clone());
+            // The Store updates a packaged build itself; the GitHub checker
+            // would tell those users to download the MSI.
+            if !ymux_lib::fspath::is_packaged() {
+                start_update_checker(app.handle().clone());
+            }
+            ymux_lib::commands::start_shell_rescan(app.handle().clone());
             start_sysmonitor(app.handle().clone());
             start_agent_scan(app.handle().clone());
+            // Keep the usage index current with no window open: Claude Code
+            // deletes old transcripts, and one no refresh has seen is lost.
+            // Debug builds stay out of a release build's index unless asked.
+            {
+                use ymux_lib::token_usage::{
+                    background_allowed, start_background, BACKGROUND_DEV_ENV,
+                };
+                let opt_in = std::env::var(BACKGROUND_DEV_ENV).ok();
+                if background_allowed(cfg!(debug_assertions), opt_in.as_deref()) {
+                    let handle = app.handle().clone();
+                    start_background(move || handle.state::<AppState>().config.snapshot().accounts);
+                }
+            }
             ymux_lib::tray::build_tray(app.handle());
             Ok(())
         })

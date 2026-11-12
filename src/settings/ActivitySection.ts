@@ -23,6 +23,7 @@ import type {
 import {
   ATTACH_LIMITS,
   ATTACH_GROUPS,
+  DEFAULT_DIGEST_HOUR,
   WEBHOOK_EVENTS,
   WEBHOOK_FORMATS,
   clampInt,
@@ -181,7 +182,9 @@ export function renderActivitySection(
     const act: ActivityConfig = { ...manager.activityConfig };
     const commit = (): void => {
       act.language = getLang();
-      manager.setActivityConfig({ ...act });
+      // `digest_hour` is edited in the destinations block: never overwrite it
+      // with this block's older copy.
+      manager.setActivityConfig({ ...act, digest_hour: manager.activityConfig.digest_hour });
     };
 
     const enable = checkbox(act.enabled, t("settings.activity.logEnable"));
@@ -500,6 +503,52 @@ export function renderActivitySection(
     const cards = el("div");
     block.appendChild(cards);
 
+    // Daily digest: one hour for every destination that has it on, and a
+    // clearly labelled test send.
+    const digestBox = el("div", "act-card");
+    const hourSel = select(
+      Array.from({ length: 24 }, (_, h) => ({
+        value: String(h),
+        label: `${String(h).padStart(2, "0")}:00`,
+      })),
+      String(manager.activityConfig.digest_hour ?? DEFAULT_DIGEST_HOUR),
+    );
+    hourSel.addEventListener("change", () => {
+      manager.setActivityConfig({
+        ...manager.activityConfig,
+        digest_hour: clampInt(hourSel.value, 0, 23, DEFAULT_DIGEST_HOUR),
+        language: getLang(),
+      });
+    });
+    digestBox.appendChild(field(t("settings.activity.digestHour"), hourSel));
+    const digestBtn = button(t("settings.activity.digestSendNow"));
+    const digestMsg = note("");
+    digestBtn.addEventListener("click", async () => {
+      digestBtn.disabled = true;
+      setNote(digestMsg, t("settings.activity.testing"));
+      try {
+        await saved();
+        const r = await webhookApi.sendDigestTest();
+        if (r.destinations === 0) {
+          setNote(digestMsg, t("settings.activity.digestNoDest"), "warn");
+        } else {
+          const queued = t("settings.activity.digestQueued").replace("{n}", String(r.destinations));
+          setNote(
+            digestMsg,
+            r.empty ? `${queued} ${t("settings.activity.digestEmptyToday")}` : queued,
+            r.empty ? "warn" : "ok",
+          );
+        }
+      } catch (e) {
+        setNote(digestMsg, describeError(e), "error");
+      } finally {
+        digestBtn.disabled = false;
+      }
+    });
+    digestBox.append(
+      field("", digestBtn, note(t("settings.activity.digestSendNowHint")), digestMsg),
+    );
+
     const rebuild = (): void => {
       statusEls.clear();
       cards.replaceChildren();
@@ -571,6 +620,16 @@ export function renderActivitySection(
         eventsBox.appendChild(c.wrap);
       }
       card.appendChild(field(t("settings.activity.events"), eventsBox));
+
+      // Daily digest (its hour is shared; see the block below the cards).
+      const digest = checkbox(d.daily_digest ?? false, t("settings.activity.digestCheck"));
+      digest.box.addEventListener("change", () => {
+        d.daily_digest = digest.box.checked;
+        commit();
+      });
+      card.appendChild(
+        field(t("settings.activity.digestLabel"), digest.wrap, note(t("settings.activity.digestHint"))),
+      );
 
       // Detail + prompts.
       const detailSel = select(
@@ -807,6 +866,7 @@ export function renderActivitySection(
       rebuild();
     });
     block.appendChild(add);
+    block.appendChild(digestBox);
     rebuild();
     return block;
   }

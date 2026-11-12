@@ -50,7 +50,7 @@ export function agentUsesAccounts(agentId: string): boolean {
 }
 
 /// Whether both of `profile`'s folders are the ones ymux made for it
-/// (`<config>/accounts/<id>/claude` and `.../codex`, from
+/// (`<base>/accounts/<id>/claude` and `.../codex` with base `~/.ymux` or the config dir, from
 /// `prepare_account_dirs`), so deleting the account may delete them too. A
 /// hand-entered folder is someone's real login and must never qualify, so
 /// both must match, under this profile's own id. Separators are compared
@@ -64,6 +64,21 @@ export function isManagedAccount(profile: AccountProfile): boolean {
     return norm.endsWith(`/accounts/${profile.id}/${leaf}`);
   };
   return tail(profile.claude_config_dir, "claude") && tail(profile.codex_home, "codex");
+}
+
+/// The folder ymux made for a managed account (`.../accounts/<id>`): the
+/// parent of its claude folder, in the spelling the profile stores. "" when
+/// the profile is not managed.
+export function managedAccountRoot(profile: AccountProfile): string {
+  if (!isManagedAccount(profile)) return "";
+  const dir = profile.claude_config_dir.trim().replace(/[\\/]+$/, "");
+  return dir.replace(/[\\/]claude$/, "");
+}
+
+/// How many running terminals were started under account `id`, given each
+/// pane's `liveAccountId()` (null = no running PTY).
+export function countLiveOnAccount(liveIds: readonly (string | null)[], id: string): number {
+  return liveIds.filter((x) => x === id).length;
 }
 
 /// Same resolution as the backend: the pane's own non-empty choice wins over

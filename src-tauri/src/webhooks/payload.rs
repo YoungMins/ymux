@@ -204,6 +204,7 @@ fn kind_label(kind: &str) -> String {
     match kind {
         "turn_end" => "Turn finished".to_string(),
         "attention" => "Needs attention".to_string(),
+        "digest" => "Daily digest".to_string(),
         other => line(other, 40),
     }
 }
@@ -291,7 +292,7 @@ fn view(dest: &WebhookDestination, e: &DeliveryEvent) -> View {
 fn selected<'a>(dest: &WebhookDestination, events: &'a [DeliveryEvent]) -> Vec<&'a DeliveryEvent> {
     events
         .iter()
-        .filter(|e| dest.events.iter().any(|k| k == &e.kind))
+        .filter(|e| dest.wants(&e.kind))
         .take(MAX_BATCH)
         .collect()
 }
@@ -378,6 +379,9 @@ fn build_json(
                     .take(8)
                     .collect::<Vec<_>>()),
             );
+            if let Some(d) = &e.digest {
+                m.insert("digest".into(), digest_json(d));
+            }
             if full(dest) {
                 m.insert("pane".into(), json!(line(&e.pane_title, 100)));
                 m.insert("account".into(), json!(line(&e.account_name, 60)));
@@ -480,6 +484,40 @@ fn build_json(
         headers,
         body,
     }
+}
+
+/// The numbers of a digest event, names cleaned and clipped like every other
+/// event string. Carries no prompt or message text by construction.
+fn digest_json(d: &super::digest::Digest) -> Value {
+    let counted = |v: &[super::digest::Counted]| {
+        v.iter()
+            .take(5)
+            .map(|c| json!({"name": line(&c.name, 60), "count": c.count}))
+            .collect::<Vec<_>>()
+    };
+    json!({
+        "date": line(&d.date, 20),
+        "from": line(&d.from, 20),
+        "to": line(&d.to, 20),
+        "partial": d.partial,
+        "turns": d.turns,
+        "failed_turns": d.failed_turns,
+        "sessions": d.sessions,
+        "agents": counted(&d.agents),
+        "workspaces": counted(&d.projects),
+        "tool_calls": d.tool_calls,
+        "tool_failures": d.tool_failures,
+        "files_changed": d.files_changed,
+        "insertions": d.insertions,
+        "deletions": d.deletions,
+        "tokens_total": d.tokens_total,
+        "tokens_unavailable": d.tokens_unavailable,
+        "tokens": d.tokens.iter().take(5).map(|t| json!({
+            "account": line(&t.account, 60),
+            "provider": line(&t.provider, 40),
+            "total": t.total,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 fn non_empty_mime(m: &str) -> String {
@@ -821,6 +859,7 @@ mod tests {
             }),
             duration_ms: Some(125_000),
             prompt: Some("secret prompt".into()),
+            digest: None,
             plan: None,
         }
     }
@@ -856,6 +895,28 @@ mod tests {
 
     fn json_of(b: &Built) -> Value {
         serde_json::from_slice(&b.body).unwrap()
+    }
+
+    #[test]
+    fn a_digest_event_renders_in_every_format_and_only_for_daily_digest() {
+        let mut e = ev("digest");
+        e.prompt = None;
+        e.headline = "2026-11-12".into();
+        e.bullets = vec!["3 turns in 2 sessions".into()];
+        for f in ["json", "slack", "discord", "teams"] {
+            let mut d = dest(f);
+            assert!(build(&d, &ctx(""), &[e.clone()], &[], &[]).is_none(), "{f}");
+            d.daily_digest = true;
+            let b = build(&d, &ctx(""), &[e.clone()], &[], &[]).expect(f);
+            let text = String::from_utf8(b.body).unwrap();
+            let label = if f == "json" {
+                "\"kind\":\"digest\""
+            } else {
+                "Daily digest"
+            };
+            assert!(text.contains(label), "{f}: {text}");
+            assert!(text.contains("3 turns in 2 sessions"), "{f}");
+        }
     }
 
     #[test]

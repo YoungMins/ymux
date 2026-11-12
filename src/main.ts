@@ -23,8 +23,11 @@ import { isDiffReviewOpen, mountDiffReview } from "./diff/DiffReview";
 import { isFanoutCompareOpen, mountFanoutCompare } from "./fanout/FanoutCompare";
 import { askText } from "./ui/Dialog";
 import { hasMod, isWorkspaceSwitch } from "./platform";
+import { isModalOverlayOpen } from "./ui/modalOpen";
 import { mountSidePanel, toggleFileDock } from "./sidepanel/SidePanel";
 import { runQuitGuard } from "./tray/quitGuard";
+import { flushFunStore } from "./office/funStore";
+import { flushAllScrollback } from "./terminal/scrollbackRegistry";
 
 async function main(): Promise<void> {
   initLang();
@@ -136,6 +139,22 @@ async function main(): Promise<void> {
     // Primary modifier: Cmd on macOS, Ctrl elsewhere. See src/platform.ts.
     const mod = hasMod(ev);
 
+    // Notes, Settings and the palette are modal too: typing in Notes must not
+    // split or close a pane behind it. Only the two shortcuts that toggle
+    // those overlays stay live (Escape is handled by each overlay itself).
+    if (isModalOverlayOpen()) {
+      const togglesPalette = mod && ev.shiftKey && (key === "P" || key === "p");
+      const togglesNotes = mod && ev.altKey && !ev.shiftKey && ev.code === "KeyN";
+      if (!togglesPalette && !togglesNotes) return;
+    }
+
+    // The full-size office covers the panes: split, close, new tab and
+    // reopen would act on terminals the user cannot see; so would the queue
+    // prompt (K) and the broadcast toggle (B, no badge shows while covered).
+    if (manager.isOfficeFull() && mod && ev.shiftKey && (key === "H" || key === "h" || key === "V" || key === "v" || key === "W" || key === "w" || key === "T" || key === "t" || key === "Y" || key === "y" || key === "K" || key === "k" || key === "B" || key === "b")) {
+      return;
+    }
+
     // Switch workspaces: Ctrl+Alt+1..9 on Windows (Ctrl+Shift+digit is
     // intercepted at the OS level by some apps), plain Cmd+1..9 on macOS.
     // Either way the digit comes from `ev.code`, which is layout-independent
@@ -180,6 +199,13 @@ async function main(): Promise<void> {
     if (mod && ev.shiftKey && (key === "W" || key === "w")) {
       ev.preventDefault();
       void manager.closeFocused();
+      return;
+    }
+
+    // Ctrl+Shift+Y reopens the most recently closed pane.
+    if (mod && ev.shiftKey && !ev.altKey && (key === "Y" || key === "y")) {
+      ev.preventDefault();
+      void manager.reopenClosedPane();
       return;
     }
 
@@ -242,6 +268,20 @@ async function main(): Promise<void> {
     if (mod && ev.shiftKey && !ev.altKey && (key === "O" || key === "o")) {
       ev.preventDefault();
       manager.toggleOffice();
+      return;
+    }
+
+    // Ctrl+Shift+K queues a prompt for the focused pane's agent.
+    if (mod && ev.shiftKey && !ev.altKey && (key === "K" || key === "k")) {
+      ev.preventDefault();
+      manager.queuePromptFocused();
+      return;
+    }
+
+    // Ctrl+Shift+B toggles broadcast input for the active workspace.
+    if (mod && ev.shiftKey && !ev.altKey && (key === "B" || key === "b")) {
+      ev.preventDefault();
+      manager.toggleBroadcast();
       return;
     }
 
@@ -369,6 +409,8 @@ async function main(): Promise<void> {
         confirmCloseAll: () => manager.confirmCloseAll(),
         flushDrafts: () => manager.flushDrafts(),
         flushLayout: () => manager.flush(),
+        flushScrollback: () => flushAllScrollback(),
+        flushFun: flushFunStore,
       });
       if (ok) windowClosing = true;
     } finally {

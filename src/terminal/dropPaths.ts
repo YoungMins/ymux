@@ -9,14 +9,40 @@
 /// path that cannot be typed safely (a control character in its name, or a
 /// character the pane's unknown shell might interpret) is
 /// left out rather than typed.
-import { quotePathForShell, type ShellFamily } from "./shellQuote";
+///
+/// `wsl`: the pane runs `wsl.exe`, whose shell is a Linux one, so a Windows
+/// path is typed as its `/mnt/<drive>/...` view, POSIX-quoted. A path with no
+/// such view (UNC, relative) is left out like any other untypeable path.
+import { quotePathForShell, windowsPathToWsl, type ShellFamily } from "./shellQuote";
+
+export interface DroppedPaths {
+  /// What to type: the typeable paths, quoted and space-separated.
+  text: string;
+  /// Paths that were left out because they cannot be typed into this shell.
+  refused: string[];
+}
+
+export function formatDroppedPathsChecked(
+  paths: readonly string[],
+  family: ShellFamily,
+  wsl = false,
+): DroppedPaths {
+  const typed: string[] = [];
+  const refused: string[] = [];
+  for (const p of paths) {
+    if (!p) continue;
+    const linux = wsl ? windowsPathToWsl(p) : p;
+    const q = linux === null ? null : quotePathForShell(linux, wsl ? "posix" : family);
+    if (q === null) refused.push(p);
+    else typed.push(q);
+  }
+  return { text: typed.join(" "), refused };
+}
 
 export function formatDroppedPaths(
   paths: readonly string[],
   family: ShellFamily,
+  wsl = false,
 ): string {
-  return paths
-    .map((p) => quotePathForShell(p, family))
-    .filter((q): q is string => q !== null)
-    .join(" ");
+  return formatDroppedPathsChecked(paths, family, wsl).text;
 }

@@ -53,4 +53,51 @@ describe("runQuitGuard", () => {
     const d = deps({ flushLayout: () => new Promise<void>(() => {}) });
     expect(await runQuitGuard(d, 10)).toBe(true);
   });
+
+  it("flushes scrollback with the layout on a go-ahead", async () => {
+    const flushScrollback = vi.fn(async () => {});
+    const d = deps({ flushScrollback });
+    expect(await runQuitGuard(d)).toBe(true);
+    expect(flushScrollback).toHaveBeenCalledOnce();
+  });
+
+  it("does not flush scrollback when the quit is cancelled", async () => {
+    const flushScrollback = vi.fn(async () => {});
+    const d = deps({ hasUnsavedEditors: () => true, confirmCloseAll: async () => false, flushScrollback });
+    expect(await runQuitGuard(d)).toBe(false);
+    expect(flushScrollback).not.toHaveBeenCalled();
+  });
+
+  it("a hung or throwing scrollback flush cannot block or veto the quit", async () => {
+    const hung = deps({ flushScrollback: () => new Promise<void>(() => {}) });
+    expect(await runQuitGuard(hung, 10)).toBe(true);
+    const thrown = deps({
+      flushScrollback: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(await runQuitGuard(thrown, 10)).toBe(true);
+    expect(thrown.flushLayout).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runQuitGuard fun-store flush", () => {
+  it("flushes the fun store on a go-ahead", async () => {
+    const flushFun = vi.fn();
+    expect(await runQuitGuard(deps({ flushFun }))).toBe(true);
+    expect(flushFun).toHaveBeenCalledOnce();
+  });
+
+  it("a throwing flush never blocks the quit", async () => {
+    const flushFun = vi.fn(() => {
+      throw new Error("boom");
+    });
+    expect(await runQuitGuard(deps({ flushFun }))).toBe(true);
+  });
+
+  it("does not flush when the quit is cancelled", async () => {
+    const flushFun = vi.fn();
+    expect(await runQuitGuard(deps({ flushFun, confirmCloseAll: async () => false }))).toBe(false);
+    expect(flushFun).not.toHaveBeenCalled();
+  });
 });

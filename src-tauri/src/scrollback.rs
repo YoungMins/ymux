@@ -57,16 +57,27 @@ const SCROLLBACK_CAP_BYTES: usize = 256 * 1024;
 fn save_blob_under(base: &Path, pane_id: &str, blob: &str) -> std::io::Result<()> {
     let path = scrollback_file_under(base, pane_id)?;
     std::fs::create_dir_all(base)?;
-    let out = if blob.len() > SCROLLBACK_CAP_BYTES {
-        let mut start = blob.len() - SCROLLBACK_CAP_BYTES;
-        while !blob.is_char_boundary(start) {
-            start += 1;
-        }
-        &blob[start..]
-    } else {
-        blob
-    };
+    let out = cap_tail(blob);
     crate::durable::write_atomic(&path, out.as_bytes())
+}
+
+/// Keep at most the last `SCROLLBACK_CAP_BYTES` of `blob`. A cut tail can
+/// start mid-line (or mid-escape-sequence), so it is advanced to just past the
+/// next newline and prefixed with an SGR reset; with no newline in the tail it
+/// keeps the plain UTF-8-boundary cut.
+fn cap_tail(blob: &str) -> std::borrow::Cow<'_, str> {
+    if blob.len() <= SCROLLBACK_CAP_BYTES {
+        return std::borrow::Cow::Borrowed(blob);
+    }
+    let mut start = blob.len() - SCROLLBACK_CAP_BYTES;
+    while !blob.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &blob[start..];
+    match tail.find('\n') {
+        Some(i) => std::borrow::Cow::Owned(format!("\x1b[0m{}", &tail[i + 1..])),
+        None => std::borrow::Cow::Borrowed(tail),
+    }
 }
 
 /// Save `blob` for `pane_id` under the real, OS-resolved scrollback
@@ -242,6 +253,19 @@ mod tests {
 
         delete_blob_under(&base, pane_id).expect("cleanup delete should succeed");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cap_tail_starts_on_a_line_boundary_with_sgr_reset() {
+        let head = "x".repeat(1000);
+        // The cut lands inside the first line, which carries an escape.
+        let line1 = format!("{}\x1b[31mred\n", "a".repeat(SCROLLBACK_CAP_BYTES - 100));
+        let blob = format!("{head}{line1}second\nthird");
+        let out = cap_tail(&blob);
+        assert_eq!(out, "\x1b[0msecond\nthird");
+        // No newline in the tail: plain tail kept.
+        let blob = "y".repeat(SCROLLBACK_CAP_BYTES + 10);
+        assert_eq!(cap_tail(&blob).len(), SCROLLBACK_CAP_BYTES);
     }
 
     /// An id with nothing left after sanitising must not map to a shared

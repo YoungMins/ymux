@@ -68,6 +68,12 @@ pub fn open_config_path(
     }
     .context("config directory unavailable on this platform")
     .map_err(|e| e.to_string())?;
+    // The opener hands the path to Explorer / the default editor, which run
+    // outside a Store (MSIX) package: give them the real location (rule 18).
+    let path = match kind {
+        ConfigPathKind::Theme => crate::fspath::real_path(path),
+        ConfigPathKind::Folder => crate::fspath::real_dir(&path),
+    };
 
     opener::open(&path).map_err(|e| format!("opener failed for {}: {e}", path.display()))?;
     Ok(())
@@ -81,7 +87,12 @@ pub struct ManagedAccountDirs {
 }
 
 /// Pick (and create) the login folders for a new account, so adding one
-/// never asks the user for a path: `<config_dir>/accounts/<id>/{claude,codex}`.
+/// never asks the user for a path: `~/.ymux/accounts/<id>/{claude,codex}`.
+/// In the user profile rather than the config dir, because under the
+/// Microsoft Store (MSIX) package ymux's own `%APPDATA%` writes are
+/// virtualised and the agent CLIs would be handed a folder they cannot see
+/// (CLAUDE.md rule 18). Accounts made by older versions keep the
+/// `<config_dir>/accounts/<id>` path their profile saved.
 /// Claude Code / Codex find no credentials there and ask the user to log in
 /// on first start, which is how a new account gets its login.
 #[tauri::command]
@@ -91,7 +102,8 @@ pub fn prepare_account_dirs(
     id: String,
 ) -> Result<ManagedAccountDirs, String> {
     guard_local(&webview, &request, "prepare_account_dirs").map_err(|e| e.to_string())?;
-    let base = ytheme::ensure_config_dir().map_err(|e| format!("create config dir failed: {e}"))?;
+    let base = crate::accounts::managed_base(dirs::home_dir().as_deref())
+        .ok_or_else(|| "home directory unavailable".to_string())?;
     let (claude, codex) = crate::accounts::managed_dirs(&base, &id)
         .ok_or_else(|| "invalid account id".to_string())?;
     for dir in [&claude, &codex] {
@@ -104,17 +116,21 @@ pub fn prepare_account_dirs(
     })
 }
 
-/// Delete a managed account's login folders (`<config_dir>/accounts/<id>`)
-/// after the user removed the account. The frontend deletes the profile and
+/// Move a managed account's login folders to the OS trash after the user
+/// removed the account: `~/.ymux/accounts/<id>`, or `<config_dir>/accounts/<id>`
+/// for an account made by an older version, and nothing else
+/// (`accounts::managed_bases`). The trash, not a delete: the folder holds
+/// Claude transcripts and credentials. The frontend deletes the profile and
 /// saves first; an id still in the saved account list is refused, so a
-/// stale or forged call cannot wipe a live account's logins.
+/// stale or forged call cannot wipe a live account's logins, and so is an
+/// account a live pane was started with (its CLI is still writing there).
 ///
 /// Holds `commands::HOOK_WRITES`, the lock every hook-file write takes: the
 /// save that dropped the profile uninstalls the hooks from this folder on a
 /// worker thread (`HookTrigger::AccountsChanged`), and that rewrite must
-/// not interleave with the delete (its `create_dir_all` would resurrect part
+/// not interleave with the move (its `create_dir_all` would resurrect part
 /// of the tree). Whichever runs second sees a consistent state: the
-/// uninstall finds no file, or the delete removes an unhooked folder.
+/// uninstall finds no file, or the move takes an unhooked folder.
 ///
 /// On macOS it also deletes, best-effort and in the background, the
 /// keychain item Claude Code kept for that folder. `async`: the folder can
@@ -127,32 +143,72 @@ pub fn remove_account_dirs(
     id: String,
 ) -> Result<(), String> {
     guard_local(&webview, &request, "remove_account_dirs").map_err(|e| e.to_string())?;
-    let base = ytheme::config_dir().ok_or_else(|| "config directory unavailable".to_string())?;
-    if crate::accounts::managed_root(&base, &id).is_none() {
+    let home = dirs::home_dir();
+    let bases = crate::accounts::managed_bases(home.as_deref(), ytheme::config_dir().as_deref());
+    if bases.is_empty() || crate::accounts::managed_root(&bases[0], &id).is_none() {
         return Err("invalid account id".into());
     }
     if state.config.snapshot().accounts.iter().any(|a| a.id == id) {
         return Err("account is still configured; remove it and save first".into());
     }
-    // Before the folder goes: what Claude was told its config dir is.
+    let roots = crate::accounts::existing_managed_roots(&bases, &id)
+        .map_err(|e| format!("remove account folder failed: {e}"))?;
+    let live = state.pty.agent_dirs_snapshot();
+    if roots
+        .iter()
+        .any(|root| crate::accounts::root_in_use(root, live.values()))
+    {
+        return Err("a terminal is still using this account; close it and try again".into());
+    }
+    // Every root is attempted; one failing does not strand the others.
+    let mut moved: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
     #[cfg(target_os = "macos")]
-    let claude_env = crate::accounts::managed_claude_env(&base, &id, dirs::home_dir().as_deref());
+    let mut services: Vec<String> = Vec::new();
     {
         let _hooks = crate::commands::HOOK_WRITES.lock();
-        crate::accounts::remove_managed_root(&base, &id)
-            .map_err(|e| format!("remove account folder failed: {e}"))?;
+        for root in &roots {
+            // Before the folder goes: what Claude was told its config dir is.
+            #[cfg(target_os = "macos")]
+            let claude_env = crate::accounts::injected_value(
+                &root.join("claude").display().to_string(),
+                home.as_deref(),
+            );
+            match trash::delete(root) {
+                Ok(()) => {
+                    moved.push(root.display().to_string());
+                    #[cfg(target_os = "macos")]
+                    if let Some(dir) = claude_env {
+                        services.push(crate::accounts::claude_keychain_service(Some(&dir)));
+                    }
+                }
+                Err(e) => failed.push(format!("{}: {e}", root.display())),
+            }
+        }
     }
     #[cfg(target_os = "macos")]
-    if let Some(dir) = claude_env {
-        let service = crate::accounts::claude_keychain_service(Some(&dir));
+    if !services.is_empty() {
         std::thread::spawn(move || {
-            let _ = std::process::Command::new("/usr/bin/security")
-                .args(["delete-generic-password", "-s", &service])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            for service in services {
+                let _ = std::process::Command::new("/usr/bin/security")
+                    .args(["delete-generic-password", "-s", &service])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
         });
+    }
+    if !failed.is_empty() {
+        return Err(format!(
+            "move account folder to trash failed for {}; moved: {}",
+            failed.join("; "),
+            if moved.is_empty() {
+                "none".to_string()
+            } else {
+                moved.join(", ")
+            }
+        ));
     }
     Ok(())
 }

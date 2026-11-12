@@ -19,6 +19,65 @@ import type { ProviderUsage } from "../tokenmonitor/model";
 
 const w = (paneId: string, since: number | null): Waiting => ({ paneId, ws: 1, label: paneId, since });
 
+describe("approve-all only picks plain approvals", () => {
+  const menu = (first: string): string[] => ["Do you want to proceed?", `❯ 1. ${first}`, "  2. No, and tell Claude what to do differently (esc)"];
+  it.each([
+    "Yes",
+    "Yes, proceed (y)",
+    "Yes, allow Claude to run this once",
+    "Allow",
+    "Run",
+    "Yes, continue",
+    "예",
+    "はい",
+    "是",
+    "Sí",
+    "Oui",
+    "Ja",
+    "Да",
+    "Sim",
+    "Yes, allow Claude to read this file",
+  ])("approves %s", (label) => {
+    expect(approveOption(menu(label))?.n).toBe("1");
+  });
+  it.each([
+    "Yes, and bypass permissions",
+    "Yes, auto-accept edits",
+    "Yes, allow all edits during this session (shift+tab)",
+    "Yes, I trust this folder",
+    "Yes, and don't ask again for npm run commands",
+    "Yes, and do not ask again for this command in this session (p)",
+    "Yes, always allow access to src/ from this project",
+    "Allow always",
+    "Yes, permanently",
+    "Yes, for this session",
+    "Yes, accept edits",
+    "Yes, and don’t ask again for npm run commands",
+    "Yes, remember this choice",
+    "Yes, and persist this rule",
+    "Yes, for this project",
+    "Yes, allow all",
+    "Yes, grant permission for the session",
+    "예, 이 세션에서는 다시 묻지 않음",
+    "はい、今後は確認しない",
+    "はい、このセッションでは常に許可",
+    "是，本会话不再询问",
+    "是，记住此选择",
+    "Sí, y no volver a preguntar en esta sesión",
+    "Sí, para este proyecto",
+    "Oui, et ne plus me demander pour cette session",
+    "Oui, toujours pour ce projet",
+    "Ja, für diese Sitzung nicht mehr fragen",
+    "Ja, dauerhaft merken",
+    "Да, больше не спрашивать в этой сессии",
+    "Да, запомнить для этого проекта",
+    "Sim, e não perguntar novamente nesta sessão",
+    "Sim, lembrar para este projeto",
+  ])("refuses %s", (label) => {
+    expect(approveOption(menu(label))).toBeNull();
+  });
+});
+
 describe("wait queue", () => {
   it("puts the longest wait first and unknown starts last", () => {
     expect(waitQueue([w("a", 300), w("b", null), w("c", 100), w("d", 200)]).map((x) => x.paneId)).toEqual(["c", "d", "a", "b"]);

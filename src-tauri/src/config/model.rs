@@ -41,7 +41,12 @@ use uuid::Uuid;
 ///       fallback, which the zsh shim would take as the user's own ZDOTDIR
 ///       and then miss their `.zprofile`/`.zshrc` (and every `PATH` edit in
 ///       them) when their `.zshenv` points ZDOTDIR elsewhere.
-pub const CONFIG_VERSION: u32 = 9;
+///  10 — Git Bash's `--rcfile` path is now the real path
+///       (`fspath::real_path`), not the virtualised AppData spelling a
+///       Microsoft Store (MSIX) ymux would otherwise cache: bash runs
+///       outside the package and cannot see the redirected file. A v9
+///       cache carries the old spelling, so re-detect.
+pub const CONFIG_VERSION: u32 = 10;
 
 /// Maximum number of workspaces the UI exposes through `Ctrl+1..9`.
 pub const MAX_WORKSPACES: u32 = 9;
@@ -144,6 +149,9 @@ pub struct ActivityConfig {
     /// App language code (the frontend mirrors its UI language here) for the
     /// rule-based summary. Anything unknown falls back to English.
     pub language: String,
+    /// Local hour (0-23) at or after which the daily webhook digest is sent,
+    /// for destinations with `daily_digest` on. Clamped on save.
+    pub digest_hour: u8,
 }
 
 impl Default for ActivityConfig {
@@ -155,6 +163,7 @@ impl Default for ActivityConfig {
             record_prompts: false,
             report_dir: ".ymux/report".to_owned(),
             language: "en".to_owned(),
+            digest_hour: 18,
         }
     }
 }
@@ -295,6 +304,26 @@ impl Config {
             .map(|s| s.name.as_str())
     }
 
+    /// Append every profile in `detected` whose name is not cached yet and
+    /// report whether any was. Existing entries keep their place and content,
+    /// so `shells[0]` (the fallback default) and every pane's pinned shell
+    /// name stay valid. Nothing is ever removed: a cached profile cannot be
+    /// told from a hand-edited one, and a pane may be pinned to it. A no-op
+    /// while `shells` is empty (the bootstrap detection owns that case).
+    pub fn add_detected_shells(&mut self, detected: Vec<ShellProfile>) -> bool {
+        if self.shells.is_empty() {
+            return false;
+        }
+        let mut added = false;
+        for profile in detected {
+            if !self.shells.iter().any(|s| s.name == profile.name) {
+                self.shells.push(profile);
+                added = true;
+            }
+        }
+        added
+    }
+
     /// Replace the `""` shell sentinel on every terminal pane with
     /// [`Self::resolved_default_shell`], so a pane keeps the shell it first
     /// opened with instead of following a later `default_shell` change.
@@ -318,9 +347,9 @@ impl Config {
     }
 
     /// Apply layout / workspace updates from `incoming` onto `self`, treating
-    /// `shells` as a backend-owned detection cache: it is only overwritten
-    /// when the incoming config carries a non-empty list. This stops a stale
-    /// frontend snapshot (e.g. one captured before shell detection finished)
+    /// `shells` as a backend-owned detection cache that `incoming` never
+    /// touches. This stops a stale frontend snapshot (e.g. one captured before
+    /// shell detection finished, or before the startup rescan added a shell)
     /// from clobbering the cache and breaking subsequent `spawn_pane` calls.
     pub fn merge_layouts_from(&mut self, incoming: Config) {
         self.version = incoming.version;
@@ -340,6 +369,7 @@ impl Config {
         self.default_shell = incoming.default_shell;
         self.accounts = incoming.accounts;
         self.activity = incoming.activity;
+        self.activity.digest_hour = self.activity.digest_hour.min(23);
         self.summarizer = incoming.summarizer;
         // Sanitized: invalid/duplicate ids dropped, and `url_hint` is never
         // taken from the frontend (the backend derives it from the secret URL).
@@ -352,9 +382,11 @@ impl Config {
         // turn tracking off while the hooks stay installed.
         // `agent_hook_port` likewise: the installed hooks' URL carries it.
         // `agent_hook_dirs` likewise: it records where the hooks really are.
-        if !incoming.shells.is_empty() {
-            self.shells = incoming.shells;
-        }
+        // `shells` likewise: backend-owned. The frontend only reads the list
+        // (bootstrap / `detect_shells_cmd`) and never edits it, and the
+        // startup rescan (`add_detected_shells`) grows it behind the
+        // frontend's back, so adopting the frontend's older copy here would
+        // silently drop a shell the rescan just found.
     }
 
     /// Overwrite each pane's `cwd` with the matching entry from `cwds`
@@ -1108,6 +1140,7 @@ mod tests {
                 record_prompts: true,
                 report_dir: "out/report".into(),
                 language: "ko".into(),
+                digest_hour: 7,
             },
             summarizer: SummarizerConfig {
                 provider: "ollama".into(),
@@ -1122,6 +1155,7 @@ mod tests {
         let s = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&s).expect("parse");
         assert_eq!(loaded.activity, config.activity);
+        assert_eq!(loaded.activity.digest_hour, 7);
         assert_eq!(loaded.summarizer, config.summarizer);
     }
 
@@ -1180,6 +1214,32 @@ mod tests {
         let s = toml::to_string_pretty(&c).expect("serialize");
         let loaded: Config = toml::from_str(&s).expect("parse");
         assert_eq!(loaded.webhooks, c.webhooks);
+    }
+
+    #[test]
+    fn digest_settings_default_round_trip_and_merge() {
+        use crate::webhooks::WebhookDestination;
+        // An old config.toml has neither: off, 18:00.
+        let old: Config = toml::from_str("version = 9\n").expect("parse");
+        assert_eq!(old.activity.digest_hour, 18);
+        let d: WebhookDestination = toml::from_str("id = \"x\"\n").expect("parse");
+        assert!(!d.daily_digest);
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut incoming = Config::default();
+        incoming.activity.digest_hour = 99;
+        incoming.webhooks = vec![WebhookDestination {
+            id: id.clone(),
+            daily_digest: true,
+            ..Default::default()
+        }];
+        let mut backend = Config::default();
+        backend.merge_layouts_from(incoming);
+        assert_eq!(backend.activity.digest_hour, 23, "clamped");
+        assert!(backend.webhooks[0].daily_digest, "a save must stick");
+        let s = toml::to_string_pretty(&backend).expect("serialize");
+        let loaded: Config = toml::from_str(&s).expect("parse");
+        assert!(loaded.webhooks[0].daily_digest);
+        assert_eq!(loaded.activity.digest_hour, 23);
     }
 
     #[test]
@@ -1261,6 +1321,42 @@ mod tests {
     #[test]
     fn max_workspaces_is_nine() {
         assert_eq!(MAX_WORKSPACES, 9);
+    }
+
+    fn shell_named(name: &str) -> ShellProfile {
+        ShellProfile {
+            name: name.into(),
+            executable: format!("/bin/{name}"),
+            args: vec![],
+            icon: None,
+            color: None,
+            env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn add_detected_shells_appends_only_new_names_and_keeps_order() {
+        let mut cfg = Config {
+            shells: vec![shell_named("b"), shell_named("a")],
+            ..Config::default()
+        };
+        let mut edited = shell_named("a");
+        edited.args = vec!["--mine".into()];
+        assert!(cfg.add_detected_shells(vec![edited, shell_named("c"), shell_named("b")]));
+        let names: Vec<_> = cfg.shells.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["b", "a", "c"]);
+        // An existing entry is not overwritten by the detected one.
+        assert_eq!(cfg.shells[1], shell_named("a"));
+        // Nothing new: reports false and changes nothing.
+        assert!(!cfg.add_detected_shells(vec![shell_named("c")]));
+        assert_eq!(cfg.shells.len(), 3);
+    }
+
+    #[test]
+    fn add_detected_shells_leaves_an_empty_cache_to_bootstrap() {
+        let mut cfg = Config::default();
+        assert!(!cfg.add_detected_shells(vec![shell_named("a")]));
+        assert!(cfg.shells.is_empty());
     }
 
     #[test]
@@ -1541,7 +1637,7 @@ shell = "PowerShell 7"
     }
 
     #[test]
-    fn merge_layouts_replaces_shells_when_incoming_is_nonempty() {
+    fn merge_layouts_never_adopts_the_frontends_shells() {
         let mut backend = Config {
             version: CONFIG_VERSION,
             active_workspace: 1,
@@ -1607,9 +1703,9 @@ shell = "PowerShell 7"
             webhooks: Vec::new(),
         };
         backend.merge_layouts_from(frontend_save);
-        assert_eq!(backend.shells.len(), 2);
-        assert_eq!(backend.shells[0].name, "new-a");
-        assert_eq!(backend.shells[1].name, "new-b");
+        // Backend-owned: a stale frontend copy must not clobber it.
+        assert_eq!(backend.shells.len(), 1);
+        assert_eq!(backend.shells[0].name, "old");
     }
 
     /// Regression: bg_color must survive a full Config → TOML → Config round-trip.
@@ -2313,12 +2409,13 @@ shell = "cmd"
     }
 
     /// v9 exists to re-detect the zsh profile (whose cached
-    /// `YMUX_USER_ZDOTDIR` changed meaning), so migrating a v8 config must
+    /// `YMUX_USER_ZDOTDIR` changed meaning) and v10 to re-detect Git Bash's
+    /// real rcfile path, so migrating a v8 config must
     /// drop the shell cache — but leave every pane's pinned shell name alone,
     /// so the names still resolve once detection repopulates the cache.
     #[test]
     fn migrate_v8_to_v9_clears_shells() {
-        assert_eq!(CONFIG_VERSION, 9);
+        assert_eq!(CONFIG_VERSION, 10);
         for names in [&MAC_SHELLS[..], &WIN_SHELLS[..]] {
             let mut cfg = mixed_config(names);
             cfg.pin_pane_shells();
@@ -2326,7 +2423,7 @@ shell = "cmd"
             let before = shells_by_kind(&cfg);
 
             cfg.migrate();
-            assert_eq!(cfg.version, 9, "{names:?}");
+            assert_eq!(cfg.version, CONFIG_VERSION, "{names:?}");
             assert!(cfg.shells.is_empty(), "{names:?}: v8 shells cleared");
             assert_eq!(shells_by_kind(&cfg), before, "{names:?}: panes untouched");
 

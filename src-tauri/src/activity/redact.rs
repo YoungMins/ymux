@@ -41,6 +41,12 @@ const PATTERNS: &[(&str, &str)] = &[
     (r"\bxox[abprs]-[A-Za-z0-9-]{10,}", REDACTED),
     (r"\bAKIA[0-9A-Z]{16}\b", REDACTED),
     (r"\bAIza[0-9A-Za-z_-]{35}", REDACTED),
+    // Stripe secret / restricted keys, GitLab PAT, HuggingFace, npm, Google OAuth.
+    (r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{8,}", REDACTED),
+    (r"\bglpat-[A-Za-z0-9_-]{16,}", REDACTED),
+    (r"\bhf_[A-Za-z0-9]{20,}", REDACTED),
+    (r"\bnpm_[A-Za-z0-9]{30,}", REDACTED),
+    (r"\bya29\.[A-Za-z0-9_-]{20,}", REDACTED),
     // JWT.
     (
         r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}",
@@ -71,6 +77,25 @@ const PATTERNS: &[(&str, &str)] = &[
     (
         r#"(?i)([\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)[\w.-]*)(["']?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|\S+)"#,
         "${1}${2}[REDACTED]",
+    ),
+    // Short key names that only count when assigned: `DB_PWD=...`, `PASS=...`,
+    // `AUTH=...`, `"auth": "..."`. A bare `:` after an unquoted word is prose
+    // ("Auth: failed"), and `bypass=`/`compass=` have no separator before the
+    // keyword, so neither is touched.
+    (
+        r#"(?i)(\b(?:[\w.-]*[_.-])?(?:pwd|pass|auth|cookie)(?:["']\s*[:=]\s*|\s*=\s*))("[^"\n]*"|'[^'\n]*'|\S+)"#,
+        "${1}[REDACTED]",
+    ),
+    // `Cookie: ...` / `Set-Cookie: ...` header lines (up to a closing quote).
+    (
+        r#"(?i)(\b(?:set-)?cookie\s*:\s*)[^\r\n"']+"#,
+        "${1}[REDACTED]",
+    ),
+    // `mysql -u root -pHunter2 db`: `-p` glued to its value, for the MySQL
+    // family only (`-p` means other things elsewhere, e.g. `cargo test -p x`).
+    (
+        r#"\b((?i:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)(?:\.exe)?\b[^\n|;&]*?\s-p)("[^"\n]*"|'[^'\n]*'|[^\s'"]\S*)"#,
+        "${1}[REDACTED]",
     ),
 ];
 
@@ -120,6 +145,57 @@ fn aws_secret_shaped(run: &str) -> bool {
         && run.bytes().any(|b| b.is_ascii_digit())
 }
 
+/// Maximal `[A-Za-z0-9+/]` runs with up to two `=` of padding: base64 keys,
+/// which (unlike the generic rule's class) may contain `/`.
+fn base64_runs() -> Option<&'static Regex> {
+    static CELL: OnceLock<Option<Regex>> = OnceLock::new();
+    CELL.get_or_init(|| Regex::new(r"[A-Za-z0-9+/]{40,}={0,2}").ok())
+        .as_ref()
+}
+
+/// A base64 key that contains `/` (Azure storage keys and the like), which
+/// the generic rule would split at the slash. Kept narrow so paths are left
+/// alone: mixed case plus a digit, no leading `/` or `//`, at most one `/`
+/// per eight characters, and no run of 10+ lowercase letters (a word).
+fn base64_slash_key_shaped(run: &str) -> bool {
+    let body = run.trim_end_matches('=');
+    let b = body.as_bytes();
+    b.len() >= 40
+        && b.contains(&b'/')
+        && b[0] != b'/'
+        && !body.contains("//")
+        && b.iter().filter(|c| **c == b'/').count() * 8 <= b.len()
+        && b.iter().any(u8::is_ascii_uppercase)
+        && b.iter().any(u8::is_ascii_lowercase)
+        && b.iter().any(u8::is_ascii_digit)
+        && !b.split(|c| !c.is_ascii_lowercase()).any(|w| w.len() >= 10)
+}
+
+/// Redact [`base64_slash_key_shaped`] runs that stand alone (not glued to a
+/// longer `.`/`_`/`-` token).
+fn redact_base64_slash_keys(s: &str) -> String {
+    let Some(re) = base64_runs() else {
+        return s.to_owned();
+    };
+    let glued = |c: Option<u8>| c.is_some_and(|c| matches!(c, b'.' | b'_' | b'-'));
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    for m in re.find_iter(s) {
+        let before = m.start().checked_sub(1).map(|i| bytes[i]);
+        if base64_slash_key_shaped(m.as_str())
+            && !glued(before)
+            && !glued(bytes.get(m.end()).copied())
+        {
+            out.push_str(&s[last..m.start()]);
+            out.push_str(REDACTED);
+            last = m.end();
+        }
+    }
+    out.push_str(&s[last..]);
+    out
+}
+
 /// Does `s` contain something that is almost certainly a secret: a PEM block,
 /// a vendor-prefixed token, a JWT, a `key=value` credential, an AWS secret key
 /// shape, or a Bearer/Basic credential? Unlike `redact(s) != s` this ignores
@@ -134,7 +210,14 @@ pub fn contains_high_confidence_secret(s: &str) -> bool {
 /// Replace every secret-looking span in `s` with [`REDACTED`].
 pub fn redact(s: &str) -> String {
     let mut out = s.to_owned();
-    for (re, rep) in high_confidence().iter().chain(generic()) {
+    for (re, rep) in high_confidence() {
+        if let std::borrow::Cow::Owned(next) = re.replace_all(&out, *rep) {
+            out = next;
+        }
+    }
+    // Before the generic rules, which would split such a key at its `/`.
+    out = redact_base64_slash_keys(&out);
+    for (re, rep) in generic() {
         if let std::borrow::Cow::Owned(next) = re.replace_all(&out, *rep) {
             out = next;
         }
@@ -467,5 +550,108 @@ abc",
         // Idempotent.
         let once = redact(secret);
         assert_eq!(redact(&once), once);
+    }
+
+    #[test]
+    fn redacts_more_vendor_tokens() {
+        // Prefix and body are joined at run time: a literal that has a real
+        // vendor token's shape trips GitHub's push protection, fake or not.
+        for (prefix, body) in [
+            ("sk_live_", "51HabcdefGhijklMNOP"),
+            ("sk_test_", "51HabcdefGhijklMNOPqrstuv"),
+            ("rk_live_", "51HabcdefGhijklMNOP"),
+            ("glpat-", "xxxxxxxxxxxxxxxxxxxx"),
+            ("hf_", "abcdefghijklmnopqrstuvwxyzABCDEFGH"),
+            ("npm_", "abcdefghijklmnopqrstuvwxyz0123456789"),
+            ("ya29.", "a0AfH6SMBabcdefghijklmnop_qrstuv"),
+            ("xoxp-", "1234567890-abcdefghij"),
+            ("github_pat_", "11ABCDEFG0abcdefghijklmn_opqrstuv"),
+        ] {
+            let s = &format!("{prefix}{body}");
+            assert_eq!(
+                redact(&format!("use {s} now")),
+                format!("use {REDACTED} now"),
+                "{s}"
+            );
+            assert!(contains_high_confidence_secret(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn redacts_short_secret_key_names_and_cookies() {
+        assert_eq!(redact("DB_PWD=hunter2 run"), "DB_PWD=[REDACTED] run");
+        assert_eq!(redact("PASS=hunter2"), "PASS=[REDACTED]");
+        assert_eq!(redact("export AUTH=abc123"), "export AUTH=[REDACTED]");
+        assert_eq!(redact("x?auth=abc&y=1"), "x?auth=[REDACTED]");
+        assert_eq!(redact(r#"{"auth": "abc def"}"#), r#"{"auth": [REDACTED]}"#);
+        assert_eq!(redact("Cookie: sid=abc; theme=dark"), "Cookie: [REDACTED]");
+        assert_eq!(
+            redact("Set-Cookie: sid=abc; HttpOnly\nnext"),
+            "Set-Cookie: [REDACTED]\nnext"
+        );
+        assert_eq!(
+            redact("curl -H 'Cookie: sid=abc' x"),
+            "curl -H 'Cookie: [REDACTED]' x"
+        );
+        assert_eq!(redact("COOKIE=abc"), "COOKIE=[REDACTED]");
+        let once = redact("PASS=x Cookie: a=b");
+        assert_eq!(redact(&once), once);
+    }
+
+    #[test]
+    fn redacts_mysql_glued_password_only() {
+        assert_eq!(
+            redact("mysql -u root -pHunter2 db"),
+            "mysql -u root -p[REDACTED] db"
+        );
+        assert_eq!(
+            redact("mysqldump -h x -p'two words' db"),
+            "mysqldump -h x -p[REDACTED] db"
+        );
+        assert_eq!(redact("mariadb -pS3cret"), "mariadb -p[REDACTED]");
+        // Prompting form, other tools and the uppercase port flag stay.
+        assert_eq!(redact("mysql -u root -p db"), "mysql -u root -p db");
+        assert_eq!(redact("mysql -P3306 -h x"), "mysql -P3306 -h x");
+        assert_eq!(redact("cargo test -pymux"), "cargo test -pymux");
+        assert_eq!(redact("pip install -pfoo"), "pip install -pfoo");
+    }
+
+    #[test]
+    fn redacts_base64_keys_with_slashes_but_not_paths() {
+        let azure = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
+        assert_eq!(
+            redact(&format!("AccountKey={azure};")),
+            format!("AccountKey={REDACTED};")
+        );
+        assert_eq!(
+            redact(&format!("key {azure} end")),
+            format!("key {REDACTED} end")
+        );
+        let once = redact(azure);
+        assert_eq!(redact(&once), once);
+        for path in [
+            "/home/user/projects/some-long-directory/another-long-directory/src/main.rs",
+            "src/features/authentication/components/LoginForm2/useLoginFormState",
+            "node_modules/@types/react-dom/Something/AnotherLongSegmentName1/index",
+            "Users/Alice/Documents2/Projects/MyApplication/src/components/App",
+        ] {
+            assert_eq!(redact(path), path, "{path}");
+        }
+    }
+
+    #[test]
+    fn ordinary_text_is_not_over_redacted() {
+        for s in [
+            "Please reset your password later",
+            "bypass the auth layer, then compass=north",
+            "Auth: failed for user bob",
+            "the cookie jar is empty",
+            "pass --verbose; passthrough=1",
+            "git log 0123456789abcdef0123456789abcdef0123456 -n 3",
+            "hf_model and npm_config are names",
+            "ya29 is a prefix, sk_live_ too",
+        ] {
+            assert_eq!(redact(s), s, "{s}");
+        }
     }
 }

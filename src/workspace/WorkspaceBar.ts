@@ -151,6 +151,9 @@ function accountEntries(
   return entries;
 }
 
+/// Delay of the one-off shell list refresh after startup.
+const SHELL_REFRESH_DELAY_MS = 5000;
+
 export function mountWorkspaceBar(
   host: HTMLElement,
   manager: WorkspaceManager,
@@ -184,6 +187,22 @@ export function mountWorkspaceBar(
   document.addEventListener(PANEL_TOGGLED_EVENT, refreshToggleBadge);
   bar.appendChild(toggleBtn);
 
+  // Broadcast input badge: shown while the active workspace mirrors typing to
+  // its other terminals; a click turns it off.
+  const broadcastBadge = document.createElement("button");
+  broadcastBadge.type = "button";
+  broadcastBadge.className = "workspace-bar__broadcast";
+  broadcastBadge.hidden = true;
+  broadcastBadge.addEventListener("click", () => manager.toggleBroadcast());
+  const refreshBroadcast = (): void => {
+    broadcastBadge.hidden = !manager.isBroadcasting();
+    broadcastBadge.textContent = t("broadcast.badge");
+    broadcastBadge.title = t("broadcast.badgeTitle");
+  };
+  const cleanupBroadcast = manager.onBroadcastChange(refreshBroadcast);
+  refreshBroadcast();
+  bar.appendChild(broadcastBadge);
+
   const spacer = document.createElement("div");
   spacer.className = "workspace-bar__spacer";
   bar.appendChild(spacer);
@@ -197,7 +216,7 @@ export function mountWorkspaceBar(
   launchBtn.setAttribute("aria-label", t("launcher.button"));
   launchBtn.setAttribute("aria-haspopup", "menu");
   const openLauncher = async (): Promise<void> => {
-    const agents = await scanAgents();
+    const [agents] = await Promise.all([scanAgents(), manager.refreshShells()]);
     // Measured after the await: the bar may have moved while detecting.
     const r = launchBtn.getBoundingClientRect();
     const detectFailed = agentScanFailed;
@@ -209,7 +228,7 @@ export function mountWorkspaceBar(
     showContextMenu(
       r.left,
       r.bottom + 2,
-      launcherEntries(manager, shells, agents, detectFailed, openLauncherSoon, pickAccount),
+      launcherEntries(manager, manager.allShells, agents, detectFailed, openLauncherSoon, pickAccount),
     );
   };
   const openLauncherSoon = (): void => void openLauncher();
@@ -236,12 +255,23 @@ export function mountWorkspaceBar(
   const shellPicker = document.createElement("select");
   shellPicker.className = "workspace-bar__shell";
   shellPicker.title = t("workspace.shellTitle");
-  for (const s of shells) {
-    const opt = document.createElement("option");
-    opt.value = s.name;
-    opt.textContent = s.name;
-    shellPicker.appendChild(opt);
-  }
+  const fillShellPicker = (): void => {
+    shellPicker.replaceChildren();
+    for (const s of manager.allShells) {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      opt.textContent = s.name;
+      shellPicker.appendChild(opt);
+    }
+    if (manager.allShells.length > 0) shellPicker.value = manager.defaultShell;
+  };
+  fillShellPicker();
+  // A shell installed after startup shows up when the picker is touched, and
+  // once shortly after boot (the backend rescans in the background).
+  manager.onShellsChange = fillShellPicker;
+  shellPicker.addEventListener("pointerdown", () => void manager.refreshShells());
+  shellPicker.addEventListener("focus", () => void manager.refreshShells());
+  window.setTimeout(() => void manager.refreshShells(), SHELL_REFRESH_DELAY_MS);
   shellPicker.addEventListener("change", () => {
     manager.setDefaultShell(shellPicker.value);
   });
@@ -303,6 +333,7 @@ export function mountWorkspaceBar(
   host.appendChild(bar);
 
   const cleanupLang = onLangChange(() => {
+    refreshBroadcast();
     toggleBtn.title = t("workspace.togglePanel");
     toggleBtn.setAttribute("aria-label", t("workspace.togglePanel"));
     officeBtn.title = officeTitle();
@@ -320,6 +351,7 @@ export function mountWorkspaceBar(
   return () => {
     cleanupLang();
     cleanupBadge();
+    cleanupBroadcast();
     cleanupOffice();
     document.removeEventListener(PANEL_TOGGLED_EVENT, refreshToggleBadge);
     cleanupHelp();

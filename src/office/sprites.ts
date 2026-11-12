@@ -196,7 +196,7 @@ export function corkSvg(w: number, h: number): string {
 /// A piece of the office games' art (`funArt`): shop furniture, the
 /// seasons' and events' props. "" for an unknown id.
 export function funProp(id: string, cls: string): string {
-  const rows = FUN_ART[id];
+  const rows = Object.hasOwn(FUN_ART, id) ? FUN_ART[id] : undefined;
   return rows ? hi(rows, FUN_PAL, cls) : "";
 }
 

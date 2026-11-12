@@ -3,7 +3,7 @@ import { t, getLang, onLangChange } from "../i18n/i18n";
 import type { Pane } from "../layout/Pane";
 import type { Uuid } from "../types";
 import { getAccounts, normalizeColor, ACCOUNT_NONE } from "../accounts/accountModel";
-import { aggregateUsage, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type UsageGroup, type TokenTotals } from "./model";
+import { aggregateUsage, indexingPercent, pollIntervalMs, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, remainingQuota, usageNotices, type HourBucket, type ProviderUsage, type TokenUsage, type UsageWindow, type UsageGroup, type TokenTotals } from "./model";
 import "./tokenmonitor.css";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = ""): HTMLElementTagNameMap[K] {
@@ -99,7 +99,8 @@ export class TokenMonitorPane implements Pane {
   private display: "used" | "remaining" = "remaining";
   private readonly refreshButton = el("button", "↻");
   private readonly cleanupLang: () => void;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private polledFast = false;
   private disposed = false;
   private heatWeeksShown = 0;
   private resizeObserver: ResizeObserver | null = null;
@@ -159,15 +160,22 @@ export class TokenMonitorPane implements Pane {
   focus(): void { this.element.focus(); this.options.onFocus?.(); }
   scheduleFit(): void { if (this.timer !== null && this.visible()) { this.render(); void this.refreshIfOld(); } }
   private visible(): boolean { return !document.hidden && this.element.isConnected && !this.element.closest(".pane--tab-hidden") && this.element.getClientRects().length > 0; }
-  private async refreshIfOld(): Promise<void> { if (performance.now() - this.lastRefresh >= 10_000) await this.refresh(); }
+  private async refreshIfOld(): Promise<void> { if (performance.now() - this.lastRefresh >= pollIntervalMs(this.polledFast)) await this.refresh(); }
+  /** Next poll: every 2 s while history is being indexed, else every 10 s. */
+  private schedulePoll(): void {
+    if (this.disposed) return;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.polledFast = this.data?.indexing === true;
+    this.timer = setTimeout(() => { if (this.visible()) void this.refresh(); this.schedulePoll(); }, pollIntervalMs(this.polledFast));
+  }
   async spawn(): Promise<void> {
     if (this.disposed || this.timer !== null) return;
     // refresh() renders when the numbers land (relative reset times too).
-    this.timer = setInterval(() => { if (this.visible()) void this.refresh(); }, 10_000);
+    this.schedulePoll();
     if (this.visible()) await this.refresh();
   }
   dispose(): void {
-    this.disposed = true; if (this.timer !== null) clearInterval(this.timer);
+    this.disposed = true; if (this.timer !== null) clearTimeout(this.timer);
     document.removeEventListener("visibilitychange", this.regainVisibility);
     window.removeEventListener("focus", this.regainVisibility);
     this.resizeObserver?.disconnect(); this.cleanupLang(); this.element.remove();
@@ -260,12 +268,27 @@ export class TokenMonitorPane implements Pane {
       for (const provider of group.providers) cards.append(this.providerCard(provider, now));
     }
     this.content.append(cards);
+    const indexing = indexingPercent(this.data);
+    if (indexing !== null) {
+      const note = el("div", `${t("usage.indexing")} ${indexing}%`, "usage-indexing");
+      note.title = t("usage.indexing_tip"); note.setAttribute("role", "status"); this.content.append(note);
+    }
+    const usageWarn = usageNotices(this.data);
+    if (usageWarn.historyUnreadable) {
+      const note = el("div", t("usage.history_unreadable"), "usage-indexing");
+      note.title = usageWarn.historyReason || t("usage.history_unreadable"); note.setAttribute("role", "status"); this.content.append(note);
+    }
+    if (usageWarn.logsIncomplete) {
+      const note = el("div", t("usage.logs_incomplete"), "usage-indexing");
+      note.setAttribute("role", "status"); this.content.append(note);
+    }
     let heat: HTMLElement | null = null;
     if (this.data.hourly.length > 0) { this.heatWeeksShown = heatWeeks(this.contentWidth()); heat = heatmap(this.data.hourly, this.heatWeeksShown); this.content.append(heat); }
     const rows = aggregateUsage(this.data.rows, this.group, this.period).filter(row => row.tokens.total > 0);
     if (rows.length > 0) {
       const sum = sumTotals(rows);
-      const line = el("div", "", "usage-sum"); line.title = breakdown(sum);
+      const line = el("div", "", "usage-sum"); line.title = breakdown(sum) + (indexing !== null ? `
+${t("usage.indexing_tip")}` : "");
       const value = el("strong", `${sum.total.toLocaleString(getLang())} ${t("usage.tokens_unit")}`);
       line.append(el("span", `${t("usage.sum")} · ${t(`usage.${this.period}`)}`), value);
       if (sum.total >= 10_000) line.append(el("span", `(${compact(sum.total)})`, "usage-sum-compact"));
@@ -304,8 +327,10 @@ export class TokenMonitorPane implements Pane {
     if (this.busy || this.disposed || (refreshQuota && performance.now() - this.lastManualRefresh < 10_000)) return;
     this.lastRefresh = performance.now(); if (refreshQuota) this.lastManualRefresh = this.lastRefresh;
     this.busy = true; this.refreshButton.disabled = true;
-    this.phase = "loading"; this.renderState();
-    try { const next = await api.getTokenUsage(refreshQuota); if (!this.disposed) { this.data = next; this.refreshFailed = false; this.phase = "ready"; this.render(); } }
+    // Only a first load shows "Loading": later polls refresh silently so the
+    // numbers on screen are not covered every 10 s.
+    if (!this.data) { this.phase = "loading"; this.renderState(); }
+    try { const next = await api.getTokenUsage(refreshQuota); if (!this.disposed) { this.data = next; this.refreshFailed = false; this.phase = "ready"; this.render(); if ((next.indexing === true) !== this.polledFast) this.schedulePoll(); } }
     catch (error: unknown) { if (!this.disposed) { this.refreshFailed = true; this.phase = "error"; this.render(); } console.warn("Token usage read failed", error); }
     finally { this.busy = false; this.refreshButton.disabled = false; }
   }

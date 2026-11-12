@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aggregateUsage, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, type ProviderUsage, type TokenUsage, type UsageRow } from "./model";
+import { aggregateUsage, indexingPercent, pollIntervalMs, sumTotals, dailyTotals, groupProvidersByAccount, heatmapGrid, usageNotices, type ProviderUsage, type TokenUsage, type UsageRow } from "./model";
 import { TokenMonitorPane } from "./TokenMonitor";
 import { api } from "../ipc/bridge";
 import { setLang, translationGaps } from "../i18n/i18n";
@@ -272,5 +272,38 @@ describe("accounts on the panel", () => {
     expect(cards.length).toBe(2);
     expect(cards[0]?.querySelector(".usage-stale")).toBeNull();
     expect(cards[1]?.querySelector(".usage-stale")).not.toBeNull();
+  });
+});
+
+describe("indexing progress", () => {
+  it("is null unless indexing, and a clamped whole percent otherwise", () => {
+    expect(indexingPercent(null)).toBeNull();
+    expect(indexingPercent({})).toBeNull();
+    expect(indexingPercent({ indexing: false, indexed_bytes: 5, total_bytes: 10 })).toBeNull();
+    expect(indexingPercent({ indexing: true, indexed_bytes: 43, total_bytes: 100 })).toBe(43);
+    expect(indexingPercent({ indexing: true, indexed_bytes: 0, total_bytes: 0 })).toBe(0);
+    expect(indexingPercent({ indexing: true, indexed_bytes: 999, total_bytes: 1000 })).toBe(99);
+    expect(indexingPercent({ indexing: true, indexed_bytes: 2000, total_bytes: 1000 })).toBe(99);
+  });
+  it("polls every 2 s while indexing, else every 10 s", () => {
+    expect(pollIntervalMs(true)).toBe(2_000);
+    expect(pollIntervalMs(false)).toBe(10_000);
+  });
+});
+
+describe("usage notices", () => {
+  const base = { collected_at: 0, providers: [], rows: [], hourly: [], warnings: [] } as const;
+  it("shows nothing for a clean or missing snapshot", () => {
+    expect(usageNotices(null)).toEqual({ historyUnreadable: false, historyReason: "", logsIncomplete: false });
+    expect(usageNotices({ ...base, unreadable_files: 0, file_limit_hit: false, listing_incomplete: false })).toEqual({ historyUnreadable: false, historyReason: "", logsIncomplete: false });
+  });
+  it("flags unreadable saved history with its reason", () => {
+    const n = usageNotices({ ...base, retired_unavailable: true, retired_unavailable_reason: "locked" });
+    expect(n).toEqual({ historyUnreadable: true, historyReason: "locked", logsIncomplete: false });
+  });
+  it("flags incomplete logs for each cause", () => {
+    expect(usageNotices({ ...base, unreadable_files: 2 }).logsIncomplete).toBe(true);
+    expect(usageNotices({ ...base, file_limit_hit: true }).logsIncomplete).toBe(true);
+    expect(usageNotices({ ...base, listing_incomplete: true }).logsIncomplete).toBe(true);
   });
 });

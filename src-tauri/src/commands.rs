@@ -137,6 +137,30 @@ pub fn load_bootstrap(
     })
 }
 
+/// Startup rescan: detection otherwise runs only while the cache is empty, so
+/// a shell installed after the first launch (pwsh, Git Bash, a WSL distro)
+/// would never appear. Runs on its own thread (probe processes), then adds
+/// what is new under the config lock (`Config::add_detected_shells`).
+/// Additive only, and `shells` is backend-owned (`merge_layouts_from` never
+/// copies it), so a concurrent `save_config` can neither undo the addition nor
+/// be undone by it; the frontend sees the new profile at its next bootstrap.
+pub fn start_shell_rescan(app: AppHandle) {
+    let _ = std::thread::Builder::new()
+        .name("ymux-shell-rescan".into())
+        .spawn(move || {
+            let state = app.state::<AppState>();
+            if state.config.snapshot().shells.is_empty() {
+                return; // bootstrap detects
+            }
+            let detected = shell::detect_shells();
+            let added = state.config.update(|c| c.add_detected_shells(detected));
+            if added {
+                tracing::info!("shell rescan added newly installed shells");
+                let _ = state.config.flush_if_dirty();
+            }
+        });
+}
+
 /// `async`: shell detection runs probe processes and stats many paths.
 #[tauri::command(async)]
 pub fn detect_shells_cmd(
@@ -1282,12 +1306,16 @@ pub fn delete_scrollback(
 }
 
 /// Persist an editor pane's draft of unsaved content (spec §3.5). The blob
-/// is opaque here; see [`crate::drafts`].
-#[tauri::command]
+/// is opaque here; see [`crate::drafts`]. `seq` is the frontend's call-order
+/// stamp: a save older than a later save/delete of the pane is dropped.
+/// `async`: up to a 32 MB write + fsync
+/// stays off the main thread.
+#[tauri::command(async)]
 pub fn save_editor_draft(
     webview: Webview,
     request: Request<'_>,
     pane_id: String,
+    seq: u64,
     blob: String,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "save_editor_draft")?;
@@ -1300,7 +1328,7 @@ pub fn save_editor_draft(
             crate::drafts::MAX_DRAFT_BYTES
         )));
     }
-    crate::drafts::save(&pane_id, &blob).map_err(YmuxError::Io)
+    crate::drafts::save(&pane_id, seq, &blob).map_err(YmuxError::Io)
 }
 
 /// An editor pane's draft, or an empty string if it has none.
@@ -1330,9 +1358,10 @@ pub fn delete_editor_draft(
     webview: Webview,
     request: Request<'_>,
     pane_id: String,
+    seq: u64,
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "delete_editor_draft")?;
-    crate::drafts::delete(&pane_id).map_err(YmuxError::Io)
+    crate::drafts::delete(&pane_id, seq).map_err(YmuxError::Io)
 }
 
 /// If the system clipboard holds an image, save it to the paste-images dir as
@@ -1547,6 +1576,19 @@ pub fn git_worktree_remove(
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "git_worktree_remove")?;
     git::worktree_remove(Path::new(&path), force)
+}
+
+/// Fan-out "keep this lane": precheck, merge the lane into the base branch
+/// (`--no-ff`), then remove the other lanes. See [`git::keep_lane`]. With
+/// `dry_run` only the preconditions are checked.
+#[tauri::command(async)]
+pub fn git_keep_lane(
+    webview: Webview,
+    request: Request<'_>,
+    keep: git::KeepRequest,
+) -> YmuxResult<git::KeepReport> {
+    guard_local(&webview, &request, "git_keep_lane")?;
+    git::keep_lane(&keep)
 }
 
 /// List all worktrees (main + linked) for the repository containing `cwd`,

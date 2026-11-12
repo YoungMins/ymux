@@ -47,27 +47,7 @@ fn save_under(base: &Path, millis: u128, bytes: &[u8]) -> std::io::Result<PathBu
     let tmp = path.with_extension("png.tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, &path)?;
-    Ok(real_path(path))
-}
-
-/// The path other processes must use to reach `path`.
-///
-/// The Microsoft Store (MSIX) build runs with file-system virtualisation:
-/// a write to `%LOCALAPPDATA%\ymux\…` lands in
-/// `%LOCALAPPDATA%\Packages\<family>\LocalCache\Local\ymux\…`, and only
-/// processes inside the package see the redirected spelling. The path
-/// typed into the terminal is read by an agent CLI that may not share that
-/// view, so it got a path to a file that, for it, does not exist (while the
-/// path-link tooltip, which canonicalises, showed the real one).
-/// `canonicalize` asks the file system for the final path of the handle,
-/// which is the real location; the verbatim `\\?\` prefix is dropped
-/// again. Unpackaged builds get their own path back unchanged; any failure
-/// falls back to `path`.
-fn real_path(path: PathBuf) -> PathBuf {
-    match std::fs::canonicalize(&path) {
-        Ok(canon) => crate::fspath::strip_verbatim(&canon),
-        Err(_) => path,
-    }
+    Ok(crate::fspath::real_path(path))
 }
 
 /// Delete every `clip-<millis>.png` in `base` whose embedded timestamp is

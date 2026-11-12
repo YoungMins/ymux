@@ -83,3 +83,23 @@ export function inboxSummary(
   if (counts.attention + counts.done === 0) return text.none;
   return text.summary.replace("{attention}", String(counts.attention)).replace("{done}", String(counts.done));
 }
+
+/// A pane whose agent's account is near / at its usage limit while another
+/// account has room (see `accounts/quotaModel.quotaAlert`). Not a pane status:
+/// it stays until the quota or the pane changes, and acting on it is "Switch
+/// account…", so it is listed beside the attention/done items, not in them.
+export interface QuotaInboxItem {
+  paneId: string;
+  wsId: number;
+  wsLabel: string;
+  paneLabel: string;
+  agentKind: string;
+  level: "near" | "limit";
+  used: number;
+}
+
+/// At-limit panes first, then the most used.
+export function buildQuotaInbox(input: readonly QuotaInboxItem[]): QuotaInboxItem[] {
+  const rank = (l: QuotaInboxItem["level"]): number => (l === "limit" ? 0 : 1);
+  return input.map((i) => ({ ...i })).sort((a, b) => rank(a.level) - rank(b.level) || b.used - a.used);
+}

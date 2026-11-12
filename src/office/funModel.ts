@@ -119,7 +119,7 @@ export function normalizeStats(v: unknown): FunStats {
     d.unlocked = strs(d.unlocked) ? d.unlocked : [];
   }
   s.coins = num(o.coins) ? Math.max(0, o.coins) : 0;
-  s.owned = strs(o.owned) ? o.owned : [];
+  s.owned = strs(o.owned) ? [...new Set(o.owned.filter((id) => shopItem(id) !== undefined))] : [];
   s.title = typeof o.title === "string" ? o.title : "";
   const q = o.quests;
   if (q && typeof q.day === "string" && strs(q.ids) && strs(q.done)) s.quests = { day: q.day, ids: q.ids, done: q.done };
@@ -129,6 +129,9 @@ export function normalizeStats(v: unknown): FunStats {
     const p = y as Place;
     return !!p && typeof p === "object" && (p.room === null || typeof p.room === "string") && num(p.x) && num(p.y);
   });
+  // Only pieces the shop sells: an imported id like "constructor" must never
+  // reach an art lookup.
+  for (const id of Object.keys(s.places)) if (shopItem(id) === undefined) delete s.places[id];
   return s;
 }
 

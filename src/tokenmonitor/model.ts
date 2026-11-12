@@ -43,7 +43,47 @@ export interface TokenUsage {
   readonly hourly: readonly HourBucket[];
   /** Global notices only (collector_unavailable). */
   readonly warnings: readonly string[];
+  /** True while some transcript bytes are not indexed yet: the figures cover what is. */
+  readonly indexing?: boolean;
+  readonly indexed_bytes?: number;
+  readonly total_bytes?: number;
+  readonly unreadable_files?: number;
+  readonly skipped_entries?: number;
+  readonly file_limit_hit?: boolean;
+  readonly listing_incomplete?: boolean;
+  readonly retired_unavailable?: boolean;
+  readonly retired_unavailable_reason?: string;
 }
+
+export interface UsageNotices {
+  /** Saved history unusable: totals cover current files only. */
+  readonly historyUnreadable: boolean;
+  /** Backend's reason, for the tooltip ("" when none). */
+  readonly historyReason: string;
+  /** Some session logs were not read: totals may be incomplete. */
+  readonly logsIncomplete: boolean;
+}
+
+/** Which unobtrusive warning lines the usage view shows for a snapshot. */
+export function usageNotices(usage: TokenUsage | null): UsageNotices {
+  return {
+    historyUnreadable: usage?.retired_unavailable === true,
+    historyReason: usage?.retired_unavailable_reason ?? "",
+    logsIncomplete: (usage?.unreadable_files ?? 0) > 0 || usage?.file_limit_hit === true || usage?.listing_incomplete === true,
+  };
+}
+
+/** Whole-number share (0-99) of transcript bytes indexed while `usage.indexing`, else null. */
+export function indexingPercent(usage: Pick<TokenUsage, "indexing" | "indexed_bytes" | "total_bytes"> | null): number | null {
+  if (!usage?.indexing) return null;
+  const total = usage.total_bytes ?? 0;
+  if (!(total > 0)) return 0;
+  const done = Math.min(total, Math.max(0, usage.indexed_bytes ?? 0));
+  return Math.min(99, Math.floor((done / total) * 100));
+}
+
+/** Poll interval (ms) of the usage view: fast while history is being indexed. */
+export function pollIntervalMs(indexing: boolean): number { return indexing ? 2_000 : 10_000; }
 export interface AccountGroup {
   readonly account: string;
   /** Every other account that shares a folder with one of this group's cards. */

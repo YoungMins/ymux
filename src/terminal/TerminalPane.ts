@@ -28,17 +28,19 @@ import {
 } from "./restoreGuard";
 import { resyncNudge } from "./viewportSync";
 import { anchorTransform, bufferAnchorOffset } from "./bottomAnchor";
-import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
+import { shouldSaveScrollback, isUserActivity, scrollbackSaveDelay } from "./scrollbackPersist";
+import { registerScrollbackFlusher } from "./scrollbackRegistry";
 import { spawnAction, describeAge, type ResumePlan } from "./resumePlan";
 import { hasMod, isWorkspaceSwitch, IS_MAC, IS_WINDOWS } from "../platform";
 import { ImeBridge, isCompositionKey } from "./ime";
 import { claimPasteEvent, pasteKeyOwner, preparePaste, runPaste } from "./paste";
-import { formatDroppedPaths } from "./dropPaths";
+import { formatDroppedPathsChecked } from "./dropPaths";
 import { MONO_FONT_STACK } from "../ui/fonts";
-import { shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
+import { isWslExecutable, shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
 import { PathLinks } from "./pathLinks";
 import { pathOpenTarget } from "./pathOpen";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
+import { mirrorableInput } from "../workspace/broadcast";
 import { paintPaneTitle } from "../accounts/badge";
 import { isAccountPending, type AccountBadge } from "../accounts/accountModel";
 
@@ -109,6 +111,13 @@ export interface TerminalPaneOptions {
   /// viewer, in this pane's group. Absent means every path goes to the OS
   /// opener (`pathOpen.ts` decides which paths qualify).
   openInViewer?: (path: string) => Promise<void>;
+  /// Something the user typed (or an IME committed) in this pane, as sent to
+  /// the PTY. Not fired for terminal auto-replies or for programmatic writes
+  /// (sendToPane, fan-out, queued prompts, office typing). Broadcast input
+  /// mirrors it.
+  onUserInput?: (data: string) => void;
+  /// Text the user pasted into this pane (Ctrl+V, the menu's Paste).
+  onUserPaste?: (text: string) => void;
 }
 
 /// Encodes a JS string into UTF-8 bytes for the PTY write pipe. ConPTY expects
@@ -131,6 +140,12 @@ export type PendingPromptState =
 
 /// Scrollback is saved once the output has been quiet this long.
 const SCROLLBACK_QUIET_MS = 2000;
+/// ...but never later than this after output first arrived since the last
+/// save, so a pane with endless output still persists.
+const SCROLLBACK_MAX_WAIT_MS = 30000;
+/// How long a startup command waits for the shell's first prompt before it is
+/// typed anyway (`waitForFirstPrompt`'s cap).
+const STARTUP_PROMPT_CAP_MS = 5000;
 
 export class TerminalPane implements Pane {
   readonly id: Uuid;
@@ -149,6 +164,21 @@ export class TerminalPane implements Pane {
   private searchInput: HTMLInputElement | null = null;
   private unlisteners: UnlistenFn[] = [];
   private spawned = false;
+  /// A PTY has started for this pane at least once. Until then a failed start
+  /// retries the first-spawn path (scrollback restore, agent resume) and no
+  /// scrollback is saved, so the saved blob cannot be overwritten by a pane
+  /// that never ran.
+  private everSpawned = false;
+  /// A command typed once after the next spawn (`respawn`), instead of the
+  /// spec's startup command.
+  private oneShotStartup: string | null = null;
+  /// When the user last typed into this pane (epoch ms; null = never).
+  userInputAt: number | null = null;
+  /// The in-flight `spawn()`, so a second caller (a split during workspace
+  /// hydration, say) shares it instead of starting a second shell on this id.
+  private spawnInFlight: Promise<void> | null = null;
+  /// The shell exited and the pane is waiting for Enter to restart it.
+  private exited = false;
   /// `dispose()` ran. `spawn()` awaits several round trips before the PTY
   /// exists, and the pane can be closed during any of them; it re-checks
   /// this after each await so a closed pane neither orphans a PTY nor
@@ -221,6 +251,12 @@ export class TerminalPane implements Pane {
   private statusTimer: number | undefined;
   private scrollbackSaveTimer: number | undefined;
   private lastOutputSaveAt = 0;
+  /// When output first arrived since the last save.
+  private scrollbackBurstStartedAt = 0;
+  /// Tail of the save chain: saves run one at a time, each serializing when
+  /// its turn comes, so an older blob can never land after a newer one.
+  private scrollbackSaveTail: Promise<void> = Promise.resolve();
+  private unregisterScrollbackFlusher: (() => void) | null = null;
   /// Owns IME input instead of xterm, which drops the in-place syllable
   /// revisions a Hangul IME is built out of. Created in `open()`, once the
   /// helper textarea exists. See `ime.ts`.
@@ -236,11 +272,11 @@ export class TerminalPane implements Pane {
   private flushScrollbackOnUnload = (): void => {
     if (
       shouldSaveScrollback({
-        persistEnabled: this.opts.persistScrollback?.() ?? false,
+        persistEnabled: this.everSpawned && (this.opts.persistScrollback?.() ?? false),
         hadUserActivity: this.hadUserActivity,
       })
     ) {
-      void api.saveScrollback(this.id, this.serializeAddon.serialize());
+      void this.saveScrollbackNow();
     }
   };
 
@@ -359,7 +395,7 @@ export class TerminalPane implements Pane {
           return false;
         }
         if (!ev.shiftKey && k === "f") return false;
-        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t" || k === "u" || k === "o")) return false;
+        if (ev.shiftKey && (k === "h" || k === "v" || k === "w" || k === "z" || k === "r" || k === "p" || k === "e" || k === "t" || k === "u" || k === "o" || k === "y" || k === "k" || k === "b")) return false;
         // Ctrl/Cmd+Shift+[ / ] → previous / next tab, handled at window level.
         // On `code`, because Shift+bracket is layout-dependent.
         if (ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight")) return false;
@@ -476,6 +512,10 @@ export class TerminalPane implements Pane {
     // which is only invoked from explicit user-close paths (kill pane /
     // delete workspace) and therefore deletes instead.
     window.addEventListener("beforeunload", this.flushScrollbackOnUnload);
+    // A real quit (`tray/quitGuard.ts`) awaits this, bounded, before exiting.
+    this.unregisterScrollbackFlusher = registerScrollbackFlusher(() =>
+      this.flushScrollbackIfNeeded(),
+    );
 
     // Drive the derived idle/running/done/attention status from a 1s
     // ticker so `running` decays back to `idle` after a quiet period even
@@ -513,17 +553,21 @@ export class TerminalPane implements Pane {
       // history across open/close cycles.
       if (!this.hadUserActivity && isUserActivity(data)) {
         this.hadUserActivity = true;
-        // TEMPORARY diagnostic — remove once idle no-save is confirmed. Shows
-        // exactly what first tripped the activity flag, so if an idle pane
-        // still saves we can see whether typing or a stray sequence did it.
-        console.log(
-          `[scrollback-diag] activity set by onData: ${JSON.stringify(data)}`,
-        );
+      }
+      // The shell is gone: Enter restarts it, every other key is swallowed
+      // rather than sent to a PTY that no longer exists.
+      if (this.exited) {
+        if (data === "\r") this.restartShell();
+        return;
       }
       if (data.includes("\r")) this.markSubmit();
       if (!this.spawned) return;
       const bytes = ENCODER.encode(data);
       void api.writePane(this.id, bytes);
+      if (mirrorableInput(data)) {
+        this.userInputAt = Date.now();
+        this.opts.onUserInput?.(data);
+      }
     });
 
     this.term.onResize(({ cols, rows }) => {
@@ -562,8 +606,74 @@ export class TerminalPane implements Pane {
     }
   }
 
-  async spawn(): Promise<void> {
-    if (this.spawned || this.disposed) return;
+  spawn(): Promise<void> {
+    if (this.spawned || this.disposed) return Promise.resolve();
+    if (this.spawnInFlight) return this.spawnInFlight;
+    const p = this.doSpawn(false).finally(() => {
+      if (this.spawnInFlight === p) this.spawnInFlight = null;
+    });
+    this.spawnInFlight = p;
+    return p;
+  }
+
+  /// Enter after the shell exited: start a fresh shell under the same pane id.
+  /// The backend still holds the dead session (and dropped our data route on
+  /// kill), so kill first, then run the spawn path again as a restart.
+  private restartShell(): void {
+    if (!this.exited || this.disposed || this.spawnInFlight) return;
+    for (const u of this.unlisteners) u();
+    this.unlisteners = [];
+    // Never started: this is still the first spawn, so take the normal path.
+    // The failed attempt may already have replayed the saved scrollback, so
+    // start from a clean screen to avoid showing it twice.
+    const restart = this.everSpawned;
+    if (!restart) this.term.reset();
+    const p: Promise<void> = (async () => {
+      await api.killPane(this.id).catch(() => {});
+      if (this.disposed) return;
+      await this.doSpawn(restart);
+    })()
+      .catch((e) => console.error("restart failed", e))
+      .finally(() => {
+        if (this.spawnInFlight === p) this.spawnInFlight = null;
+      });
+    this.spawnInFlight = p;
+  }
+
+  /// Replace the running shell with a fresh one that picks up the pane's
+  /// current account, typing `startupCmd` (the agent to start again) once it
+  /// prompts. Same path as the restart after an exit, but the shell is still
+  /// alive, so it is killed first. Used by "Switch account…".
+  /// Resolves true when the new shell is running, false when nothing ran (the
+  /// pane is closed or a spawn is already in flight) or the spawn failed.
+  respawn(startupCmd: string | null): Promise<boolean> {
+    if (this.disposed || this.spawnInFlight) return Promise.resolve(false);
+    // Typed once, never stored in the pane's own spec: its saved startup
+    // command (and so every later restart) stays as the user set it.
+    this.oneShotStartup = startupCmd;
+    for (const u of this.unlisteners) u();
+    this.unlisteners = [];
+    this.spawned = false;
+    let ok = false;
+    const p: Promise<void> = (async () => {
+      await api.killPane(this.id).catch(() => {});
+      if (this.disposed) return;
+      await this.doSpawn(true);
+      ok = this.spawned && !this.disposed;
+    })()
+      .catch((e) => console.error("respawn failed", e))
+      .finally(() => {
+        if (this.spawnInFlight === p) this.spawnInFlight = null;
+      });
+    this.spawnInFlight = p;
+    return p.then(() => ok);
+  }
+
+  /// `restart`: a fresh shell after an exit. No agent-session lookup, no
+  /// scrollback replay (the old output is still on screen) and no resume of
+  /// an agent session (the user exited that process on purpose); the pane's
+  /// own startup command does run again.
+  private async doSpawn(restart: boolean): Promise<void> {
     // Fit *synchronously* before reading dims so the PTY is spawned with the
     // actual rendered size instead of xterm.js's default 80×24. `scheduleFit`
     // (which queues a RAF) would race against `currentDims()` below and
@@ -594,6 +704,7 @@ export class TerminalPane implements Pane {
     await this.opts.beforeSpawn?.();
     if (this.disposed) return;
     try {
+      if (restart) throw new Error("restart: no agent session lookup");
       const accounts = this.opts.spawnAccounts?.();
       outcome =
         (await api.getAgentSession(
@@ -610,7 +721,7 @@ export class TerminalPane implements Pane {
     if (this.disposed) return;
     const action = spawnAction({
       outcome,
-      persistEnabled: this.opts.persistScrollback?.() ?? false,
+      persistEnabled: !restart && (this.opts.persistScrollback?.() ?? false),
     });
     this.resumePlan = action.kind === "resume" ? action.plan : null;
     this.missingAgent = action.kind === "resume" ? null : action.missingAgent;
@@ -667,38 +778,53 @@ export class TerminalPane implements Pane {
     // shell in disagreement about screen state and shows up as garbled,
     // overlapping output ("화면이 깨진다") that never recovers until a
     // full redraw.
-    const dataUnlisten = await onPaneData(this.id, (bytes) => {
-      // The write callback fires once xterm has parsed this chunk, so a reveal
-      // scheduled here happens strictly after the shell's opening burst (with
-      // its `\x1b[2J` clear) has been applied — scrolling any earlier would be
-      // undone by that clear.
-      this.term.write(bytes, () => this.revealRestored());
-      this.statusMachine.onOutput(Date.now());
-      this.lastOutputAt = Date.now();
-      this.scheduleScrollbackSave();
-    });
-    const exitUnlisten = await onPaneExit(this.id, (code) => {
-      this.term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`);
-      this.opts.onExit?.(code);
-    });
-    // Keep the path linkifier's idea of the cwd current. Registered with
-    // the other listeners (and before the spawn) so a failed spawn tears it
-    // down along with them.
-    const noop = (): void => {};
-    const cwdUnlisten = await onPaneCwd(this.id, (cwd) => {
-      this.cwdEvents++;
-      this.lastCwdAt = Date.now();
-      if (cwd) this.liveCwd = cwd;
-    }).catch(() => noop);
-    if (this.disposed) {
-      dataUnlisten();
-      exitUnlisten();
-      cwdUnlisten();
-      return;
-    }
-    this.unlisteners.push(dataUnlisten, exitUnlisten, cwdUnlisten);
-
+    // Inside the `try` so a rejected subscription lands in the same failure
+    // path as a failed spawn (restart hint, Enter retries). Each unsubscribe
+    // is pushed as soon as it exists, so the catch tears down whatever was
+    // registered before the failure and a retry never double-subscribes.
     try {
+      this.unlisteners.push(
+        await onPaneData(this.id, (bytes) => {
+          // The write callback fires once xterm has parsed this chunk, so a reveal
+          // scheduled here happens strictly after the shell's opening burst (with
+          // its `\x1b[2J` clear) has been applied — scrolling any earlier would be
+          // undone by that clear.
+          this.term.write(bytes, () => this.revealRestored());
+          this.statusMachine.onOutput(Date.now());
+          this.lastOutputAt = Date.now();
+          this.scheduleScrollbackSave();
+        }),
+      );
+      this.unlisteners.push(
+        await onPaneExit(this.id, (code) => {
+          this.term.writeln(
+            `\r\n\x1b[2m${t("terminal.processExited").replace("{code}", String(code))}\x1b[0m`,
+          );
+          this.term.writeln(`\x1b[2m${t("terminal.restartHint")}\x1b[0m`);
+          // Writes stop here (`spawned` gates every PTY write); Enter restarts.
+          this.spawned = false;
+          this.exited = true;
+          this.opts.onExit?.(code);
+        }),
+      );
+      // Keep the path linkifier's idea of the cwd current. Registered with
+      // the other listeners (and before the spawn) so a failed spawn tears it
+      // down along with them.
+      const noop = (): void => {};
+      this.unlisteners.push(
+        await onPaneCwd(this.id, (cwd) => {
+          this.cwdEvents++;
+          this.lastCwdAt = Date.now();
+          if (cwd) this.liveCwd = cwd;
+        }).catch(() => noop),
+      );
+      if (this.disposed) {
+        // `dispose()` ran while subscribing and missed these.
+        for (const u of this.unlisteners) u();
+        this.unlisteners = [];
+        return;
+      }
+
       await api.spawnPane({
         id: this.id,
         shell: this.spec.shell,
@@ -715,6 +841,7 @@ export class TerminalPane implements Pane {
         env: this.spec.env,
         ...this.opts.spawnAccounts?.(),
       });
+      this.everSpawned = true;
       if (this.disposed) {
         // Closed while the spawn was in flight: `dispose()` saw no PTY to
         // kill (and already dropped the listeners), so kill it here and
@@ -723,6 +850,7 @@ export class TerminalPane implements Pane {
         return;
       }
       this.spawned = true;
+      this.exited = false;
       this.ranAccountId = this.opts.accountBadge?.()?.id ?? "";
       this.paintTitle();
 
@@ -753,17 +881,22 @@ export class TerminalPane implements Pane {
       // A recent session whose transcript is gone gets said out loud, even
       // though the pane then starts exactly as it always would (spec §4.3).
       if (this.missingAgent) this.writeMissingBanner();
-      const startup = this.resumePlan?.command ?? this.spec.startup_cmd;
+      // A restart re-runs the pane's own startup command but never a resume.
+      const once = this.oneShotStartup;
+      this.oneShotStartup = null;
+      const startup = once ?? (restart ? this.spec.startup_cmd : (this.resumePlan?.command ?? this.spec.startup_cmd));
       if (startup) {
         if (this.resumePlan) this.writeResumeBanner(this.resumePlan);
-        setTimeout(() => {
-          if (this.disposed) return;
+        // Typed once the shell shows its first prompt (a slow profile would
+        // otherwise lose or duplicate it); the cap is the fallback timeout.
+        void this.waitForFirstPrompt(STARTUP_PROMPT_CAP_MS).then(() => {
+          if (this.disposed || !this.spawned) return;
           // Same reason as the HotKeyBar's onSubmit: this write bypasses
           // xterm's onData, so tell the status machine a command started or
           // the pane would sit at `idle` while the command runs.
           this.markSubmit();
           void api.writePane(this.id, ENCODER.encode(`${startup}\r`));
-        }, 200);
+        });
       }
     } catch (e) {
       // Spawn failed — tear down the listeners we registered above so they
@@ -779,7 +912,15 @@ export class TerminalPane implements Pane {
       // rejection), or even `undefined` if a permission was denied silently.
       // Render *something* useful in every case.
       const msg = describeError(e);
-      this.term.writeln(`\x1b[31mfailed to start shell: ${msg}\x1b[0m`);
+      this.term.writeln(
+        `\x1b[31m${t("terminal.spawnFailed").replace("{error}", msg)}\x1b[0m`,
+      );
+      this.term.writeln(`\x1b[2m${t("terminal.restartHint")}\x1b[0m`);
+      // Same state as an exited shell, so Enter retries; a one-shot startup
+      // command must not leak into that retry.
+      this.spawned = false;
+      this.exited = true;
+      this.oneShotStartup = null;
       throw e;
     }
   }
@@ -1279,6 +1420,12 @@ export class TerminalPane implements Pane {
     this.hotkeyBar?.setAccount(account);
   }
 
+  /// The account id this pane's running PTY was started under, or null when
+  /// no PTY is running (not spawned yet, or the shell exited).
+  liveAccountId(): string | null {
+    return this.spawned ? this.ranAccountId : null;
+  }
+
   /// The configured account differs from the one this PTY was started under.
   isAccountPending(): boolean {
     return isAccountPending(this.opts.accountBadge?.()?.id ?? null, this.ranAccountId);
@@ -1348,10 +1495,39 @@ export class TerminalPane implements Pane {
     void api.writePane(this.id, ENCODER.encode(text));
   }
 
+  /// Write what the user typed in another pane (broadcast input). Goes behind
+  /// the pending pastes, and never back through `onData`, so it is not
+  /// mirrored again.
+  mirrorInput(data: string): void {
+    if (!this.spawned || this.exited || !data) return;
+    if (data.includes("\r")) this.markSubmit();
+    void this.queueWrite([data]).catch(() => {});
+  }
+
+  /// Paste what the user pasted in another pane (broadcast input), framed for
+  /// this pane's own paste mode.
+  mirrorPaste(text: string): void {
+    if (!this.spawned || this.exited || !text) return;
+    const chunks = preparePaste(text, { bracketed: this.term.modes.bracketedPasteMode });
+    if (chunks.length > 0) void this.queueWrite(chunks).catch(() => {});
+  }
+
   /// Type `paths`, each quoted for this pane's shell, space-separated and
   /// without a newline — what a file drop onto the pane does.
   typePaths(paths: readonly string[]): void {
-    this.typeText(formatDroppedPaths(paths, this.shellFamily));
+    const { text, refused } = formatDroppedPathsChecked(
+      paths,
+      this.shellFamily,
+      isWslExecutable(this.opts.shellExecutable),
+    );
+    // Said in the pane (like a refused image paste) instead of dropping the
+    // file silently.
+    for (const path of refused) {
+      this.term.writeln(
+        `\x1b[31m${t("terminal.dropPathUnsupported").replace("{path}", path)}\x1b[0m`,
+      );
+    }
+    this.typeText(text);
   }
 
   /// How paths typed into this pane must be quoted.
@@ -1486,16 +1662,39 @@ export class TerminalPane implements Pane {
   ): Promise<void> {
     await runPaste({
       readImage: () => api.pasteClipboardImage(),
-      readText,
+      readText: async () => {
+        const text = await readText();
+        if (text && this.spawned) this.opts.onUserPaste?.(text);
+        return text;
+      },
       family: this.shellFamily,
       bracketed: () => this.term.modes.bracketedPasteMode,
       canWrite: () => this.spawned,
-      write: (data) => api.writePane(this.id, ENCODER.encode(data)),
+      wsl: isWslExecutable(this.opts.shellExecutable),
+      // Through `pasteTail`, like sendToPane / fan-out pastes, so a long user
+      // paste and a queued agent paste never interleave their chunks.
+      write: (data) => this.queueWrite([data]),
+      writeAll: (chunks) => this.queueWrite(chunks),
       reportImageError: (e) =>
         this.term.writeln(
-          `\x1b[31mcould not paste the clipboard image: ${describeError(e)}\x1b[0m`,
+          `\x1b[31m${t("terminal.pasteImageFailed").replace("{error}", describeError(e))}\x1b[0m`,
+        ),
+      reportPathRefused: (path) =>
+        this.term.writeln(
+          `\x1b[31m${t("terminal.pastePathUnsupported").replace("{path}", path)}\x1b[0m`,
         ),
     });
+  }
+
+  /// Write `chunks` in order as one unit behind everything already on
+  /// `pasteTail`. A failure rejects for the caller but does not poison the
+  /// queue (or set `pasteFailed`, which belongs to agent pastes).
+  private queueWrite(chunks: readonly string[]): Promise<void> {
+    const run = this.pasteTail.then(async () => {
+      for (const chunk of chunks) await api.writePane(this.id, ENCODER.encode(chunk));
+    });
+    this.pasteTail = run.catch(() => {});
+    return run;
   }
 
   /// One dim line above the resumed conversation, e.g.
@@ -1544,26 +1743,62 @@ export class TerminalPane implements Pane {
         // Agent panes are not special-cased here: `save_scrollback` decides
         // per pane whether to write, skip (a resume still in flight) or drop
         // (a live agent) the blob (spec §5).
-        persistEnabled: this.opts.persistScrollback?.() ?? false,
+        persistEnabled: this.everSpawned && (this.opts.persistScrollback?.() ?? false),
         hadUserActivity: this.hadUserActivity,
       })
     ) {
       return;
     }
     // One timer for a burst of output, not one per chunk: it re-arms itself
-    // until the output has been quiet for SCROLLBACK_QUIET_MS.
+    // until the output has been quiet for SCROLLBACK_QUIET_MS, but saves
+    // regardless once SCROLLBACK_MAX_WAIT_MS has passed since the burst began.
     this.lastOutputSaveAt = Date.now();
     if (this.scrollbackSaveTimer !== undefined) return;
+    this.scrollbackBurstStartedAt = this.lastOutputSaveAt;
     const check = (): void => {
-      const quiet = Date.now() - this.lastOutputSaveAt;
-      if (quiet < SCROLLBACK_QUIET_MS) {
-        this.scrollbackSaveTimer = window.setTimeout(check, SCROLLBACK_QUIET_MS - quiet);
+      const wait = scrollbackSaveDelay({
+        now: Date.now(),
+        burstStartedAt: this.scrollbackBurstStartedAt,
+        lastOutputAt: this.lastOutputSaveAt,
+        quietMs: SCROLLBACK_QUIET_MS,
+        maxWaitMs: SCROLLBACK_MAX_WAIT_MS,
+      });
+      if (wait > 0) {
+        this.scrollbackSaveTimer = window.setTimeout(check, wait);
         return;
       }
       this.scrollbackSaveTimer = undefined;
-      void api.saveScrollback(this.id, this.serializeAddon.serialize());
+      void this.saveScrollbackNow();
     };
     this.scrollbackSaveTimer = window.setTimeout(check, SCROLLBACK_QUIET_MS);
+  }
+
+  /// Serialize and save the buffer, after any save already in flight: the
+  /// serialization happens when this save's turn comes, so the last save to
+  /// run always carries the newest buffer.
+  private saveScrollbackNow(): Promise<void> {
+    this.scrollbackSaveTail = this.scrollbackSaveTail.then(async () => {
+      try {
+        await api.saveScrollback(this.id, this.serializeAddon.serialize());
+      } catch (e) {
+        console.warn("save scrollback failed:", e);
+      }
+    });
+    return this.scrollbackSaveTail;
+  }
+
+  /// Quit-time flush (`scrollbackRegistry`): the same gate as the unload save.
+  flushScrollbackIfNeeded(): Promise<void> {
+    if (
+      this.disposed ||
+      !shouldSaveScrollback({
+        persistEnabled: this.everSpawned && (this.opts.persistScrollback?.() ?? false),
+        hadUserActivity: this.hadUserActivity,
+      })
+    ) {
+      return Promise.resolve();
+    }
+    return this.saveScrollbackNow();
   }
 
   /// Tear down this pane. `permanent` distinguishes the two callers:
@@ -1587,13 +1822,15 @@ export class TerminalPane implements Pane {
       window.clearTimeout(this.scrollbackSaveTimer);
     }
     window.removeEventListener("beforeunload", this.flushScrollbackOnUnload);
+    this.unregisterScrollbackFlusher?.();
+    this.unregisterScrollbackFlusher = null;
     if (this.pendingAnchorRaf) cancelAnimationFrame(this.pendingAnchorRaf);
     for (const u of this.unlisteners) u();
     this.unlisteners = [];
     this.ime?.dispose();
     this.termHost.removeEventListener("paste", this.onPasteEvent, { capture: true });
     this.pathLinks?.dispose();
-    if (this.spawned) {
+    if (this.spawned || this.exited) {
       void api.killPane(this.id).catch(() => {});
     }
     if (permanent) {

@@ -90,6 +90,13 @@ export function menuOptions(lines: readonly string[]): MenuOption[] {
   return best;
 }
 
+/// The choice `o` as the screen shows it now: same number and label, or null
+/// when the menu changed under the user (answered elsewhere, a new prompt).
+export function sameOption(lines: readonly string[] | null, o: MenuOption): MenuOption | null {
+  if (!lines) return null;
+  return menuOptions(lines).find((x) => x.n === o.n && x.label === o.label) ?? null;
+}
+
 /// What a key pressed with the peek's screen focused sends to the terminal,
 /// or null for keys it leaves alone (modifiers, function keys, a key in the
 /// middle of an IME composition). Typed characters go as themselves, Ctrl+A…Z

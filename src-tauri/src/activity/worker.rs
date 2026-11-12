@@ -99,6 +99,9 @@ pub trait Env {
     fn branch(&mut self, cwd: &str) -> String;
     fn baseline(&mut self, cwd: &str) -> Option<GitBaseline>;
     fn stat(&mut self, baseline: &GitBaseline) -> Option<DiffStat>;
+    /// About once a minute, after housekeeping (the daily webhook digest
+    /// checks whether it is due here instead of owning a thread).
+    fn on_tick(&mut self, _now_ms: u64) {}
 }
 
 /// Which agent produced an event and how its session id was learned.
@@ -273,19 +276,53 @@ fn event_data(ev: &TurnEvent, hint: &Hint, record_prompts: bool) -> Option<(&'st
     })
 }
 
+/// `p` without a `\\?\` verbatim prefix and without `.` segments, so the
+/// cwd and a file path spell a shared prefix with the same components.
+fn plain_path(p: &str) -> String {
+    let stripped = crate::fspath::strip_verbatim(std::path::Path::new(p));
+    stripped
+        .to_string_lossy()
+        .split_inclusive(['/', '\\'])
+        .filter(|seg| seg.trim_end_matches(['/', '\\']) != ".")
+        .collect()
+}
+
 /// Most-touched directories, relative to `cwd` when under it.
 fn top_dirs(files: &[String], cwd: &str) -> Vec<String> {
-    let cwd = cwd.replace('\\', "/");
-    let cwd = cwd.trim_end_matches('/');
+    // Display strings stay raw-ish; whether a file is under `cwd` is decided by
+    // `fsx::is_within` (CLAUDE.md rule 15), so `C:\Repo` vs `c:epo` or an
+    // NFD vs NFC spelling still counts as inside. Both sides go through
+    // `plain_path` first so the components drained below line up. A `..`
+    // segment is not resolved: such a path counts as outside.
+    let parts = |p: &str| -> Vec<String> {
+        p.replace('\\', "/")
+            .split('/')
+            .filter(|c| !c.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    let cwd = plain_path(cwd);
+    let cwd_parts = parts(&cwd);
+    let climbs = |v: &[String]| v.iter().any(|c| c == "..");
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for f in files.iter().filter(|f| f.as_str() != REDACTED) {
-        let f = f.replace('\\', "/");
-        let rel = match f.strip_prefix(cwd) {
-            Some(r) if !cwd.is_empty() && r.starts_with('/') => r.trim_start_matches('/'),
-            _ => f.as_str(),
+        let f = plain_path(f);
+        let mut comps = parts(&f);
+        if !cwd_parts.is_empty()
+            && comps.len() > cwd_parts.len()
+            && !climbs(&cwd_parts)
+            && !climbs(&comps)
+            && crate::fsx::is_within(&cwd, &f)
+        {
+            comps.drain(..cwd_parts.len());
+        }
+        comps.pop();
+        let dir = if comps.is_empty() {
+            ".".to_owned()
+        } else {
+            comps.join("/")
         };
-        let dir = rel.rsplit_once('/').map_or(".", |(d, _)| d);
-        *counts.entry(dir.to_owned()).or_insert(0) += 1;
+        *counts.entry(dir).or_insert(0) += 1;
     }
     let mut v: Vec<(String, usize)> = counts.into_iter().collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -393,6 +430,7 @@ impl<E: Env> Worker<E> {
     pub fn tick(&mut self) {
         let now = self.env.now_ms();
         self.last_tick_ms = now;
+        self.env.on_tick(now);
         if now.saturating_sub(self.last_prune_ms) >= DAY_MS {
             self.last_prune_ms = now;
             if let Err(e) = self.store().prune(now) {
@@ -999,6 +1037,34 @@ mod tests {
             .collect();
         assert_eq!(top_dirs(&files, "/r"), ["src", "docs"]);
         assert_eq!(top_dirs(&["C:\\r\\a.rs".into()], "C:\\r"), ["."]);
+    }
+
+    #[test]
+    fn top_dirs_normalise_verbatim_and_dot_segments() {
+        assert_eq!(
+            top_dirs(&[r"C:\repo\src\a.rs".into()], r"\\?\C:\repo"),
+            ["src"]
+        );
+        assert_eq!(
+            top_dirs(&[r"\\?\C:\repo\src\a.rs".into()], r"C:\repo"),
+            ["src"]
+        );
+        assert_eq!(top_dirs(&["/r/./src/a.rs".into()], "/r/."), ["src"]);
+        // `..` is not resolved: outside, shown as spelled.
+        assert_eq!(top_dirs(&["/r/../x/a.rs".into()], "/r"), ["r/../x"]);
+    }
+
+    #[test]
+    fn top_dirs_compare_paths_by_ypath_not_text() {
+        // Drive-letter case differs between the shell's cwd and the tool path.
+        assert_eq!(
+            top_dirs(&["c:\\repo\\src\\a.rs".into()], "C:\\Repo"),
+            ["src"]
+        );
+        // POSIX is case-sensitive: a different-case sibling is not inside.
+        assert_eq!(top_dirs(&["/R/src/a.rs".into()], "/r"), ["R/src"]);
+        // A prefix that is not a whole component is not inside either.
+        assert_eq!(top_dirs(&["/rx/a.rs".into()], "/r"), ["rx"]);
     }
 
     fn codex_msg(source: IdSource, item: CodexItem) -> ActivityMsg {

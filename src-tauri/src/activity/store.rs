@@ -142,7 +142,21 @@ impl ActivityStore {
         if (rec.kind == kind::TOOL && after > self.day_cap) || after > hard {
             return Ok(Appended::Dropped);
         }
-        let mut f = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).append(true);
+        // The day files hold prompts and commands: owner-only on Unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(path)?;
+        // The mode above only applies at creation; tighten an older file.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+        }
         f.write_all(line.as_bytes())?;
         Ok(Appended::Written)
     }
@@ -201,6 +215,27 @@ impl ActivityStore {
             .count()
     }
 
+    /// Records with a timestamp in `[start_ms, end_ms)`, oldest first, read
+    /// from the (UTC) day files that overlap the range.
+    pub fn read_range(&self, start_ms: u64, end_ms: u64) -> Vec<Record> {
+        let (first, last) = (day_string(start_ms), day_string(end_ms.saturating_sub(1)));
+        let mut out = Vec::new();
+        for (day, path, _) in self.files() {
+            if day < first || day > last {
+                continue;
+            }
+            let Ok(f) = File::open(&path) else { continue };
+            out.extend(
+                BufReader::new(f)
+                    .lines()
+                    .map_while(Result::ok)
+                    .filter_map(|l| serde_json::from_str::<Record>(&l).ok())
+                    .filter(|r| r.ts >= start_ms && r.ts < end_ms),
+            );
+        }
+        out
+    }
+
     /// The newest `n` records, oldest first. Unparseable lines are skipped.
     pub fn read_recent(&self, n: usize) -> Vec<Record> {
         let mut out: Vec<Record> = Vec::new();
@@ -241,7 +276,7 @@ pub fn day_string(ts_ms: u64) -> String {
 }
 
 /// Days since the Unix epoch for a strict `YYYY-MM-DD`, else `None`.
-fn day_number(day: &str) -> Option<i64> {
+pub fn day_number(day: &str) -> Option<i64> {
     let b = day.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
         return None;
@@ -324,6 +359,36 @@ mod tests {
         assert_eq!(last3[0].v, SCHEMA_VERSION);
         assert_eq!(last3[0].data["x"], 1);
         assert!(s.read_recent(0).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn day_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let s = store(&tmp);
+        s.append(&rec(D0, kind::PROMPT)).unwrap();
+        let p = tmp.path().join("activity/2026-10-16.jsonl");
+        let mode = fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode & 0o077, 0);
+    }
+
+    #[test]
+    fn read_range_cuts_a_local_day_across_two_utc_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = store(&tmp);
+        for ts in [D0 - 1, D0, D0 + DAY - 1, D0 + DAY, D0 + 2 * DAY] {
+            s.append(&rec(ts, kind::TURN_END)).unwrap();
+        }
+        // A +09:00 local day: 15:00 UTC the day before to 15:00 UTC.
+        let h = 3_600_000;
+        let got = s.read_range(D0 - 9 * h, D0 + 15 * h);
+        assert_eq!(
+            got.iter().map(|r| r.ts).collect::<Vec<_>>(),
+            vec![D0 - 1, D0]
+        );
+        assert!(s.read_range(D0 + 3 * DAY, D0 + 4 * DAY).is_empty());
+        assert!(s.read_range(0, 0).is_empty());
     }
 
     #[test]

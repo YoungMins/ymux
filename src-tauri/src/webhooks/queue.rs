@@ -90,7 +90,7 @@ impl Queue {
         }
         let tmp = self.path.with_extension("jsonl.tmp");
         {
-            let mut f = File::create(&tmp)?;
+            let mut f = open_private(private_options().write(true).truncate(true), &tmp)?;
             for it in items {
                 f.write_all(line_of(it)?.as_bytes())?;
             }
@@ -119,10 +119,7 @@ impl Queue {
                 }
             }
         }
-        let mut f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut f = open_private(private_options().append(true), &self.path)?;
         f.write_all(line.as_bytes())?;
         f.sync_all()
     }
@@ -247,6 +244,31 @@ impl Queue {
     }
 }
 
+/// Create-if-missing options; a new file is owner-only (0600) on Unix, since
+/// queued payloads can hold prompts and diff stats. Windows is unchanged.
+fn private_options() -> OpenOptions {
+    let mut o = OpenOptions::new();
+    o.create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o
+}
+
+/// Open with `opts`, and on Unix tighten a file an older version created
+/// world-readable (the mode in `private_options` only applies at creation).
+fn open_private(opts: &OpenOptions, path: &Path) -> io::Result<File> {
+    let f = opts.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+    }
+    Ok(f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +367,21 @@ mod tests {
         it.payload = json!("y".repeat(MAX_BYTES + 1));
         assert!(q.push(&it).is_err());
         assert!(q.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queue_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let q = open(d.path());
+        q.push(&item("a")).unwrap();
+        let p = d.path().join(format!("{DEST}.jsonl"));
+        let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&p) & 0o077, 0, "append creates it owner-only");
+        fs::remove_file(&p).unwrap();
+        q.rewrite(&[item("b")]).unwrap();
+        assert_eq!(mode(&p) & 0o077, 0, "rewrite creates it owner-only");
     }
 
     #[test]

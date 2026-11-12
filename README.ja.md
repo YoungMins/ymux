@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.0-7fdbca?style=flat-square" alt="version 0.14.0" />
+  <img src="https://img.shields.io/badge/version-0.15.0-7fdbca?style=flat-square" alt="version 0.15.0" />
 </p>
 
 <p align="center">
@@ -485,9 +485,12 @@ macOS では以下の `Ctrl` はすべて `Cmd` になります。そうする�
 | `Ctrl+Shift+V`              | `Cmd+Shift+V`      | ペインを垂直分割                     |
 | `Ctrl+Shift+W`              | `Cmd+Shift+W`      | フォーカス中のペインを閉じる         |
 | `Ctrl+Shift+T`              | `Cmd+Shift+T`      | フォーカス中のペインに新しいタブ     |
+| `Ctrl+Shift+Y`              | `Cmd+Shift+Y`      | 最後に閉じたペインを再度開く         |
 | `Ctrl+Shift+[` / `]`        | `Cmd+Shift+[` / `]` | ペイン内で前 / 次のタブ             |
 | `Ctrl+Shift+Z`              | `Cmd+Shift+Z`      | フォーカス中のペインをズーム / 解除  |
 | `Ctrl+Shift+U`              | `Cmd+Shift+U`      | 対応が必要な次のペインへ移動         |
+| `Ctrl+Shift+K`              | `Cmd+Shift+K`      | フォーカス中のペインのエージェントにプロンプトをキュー (ターン終了時に送信) |
+| `Ctrl+Shift+B`              | `Cmd+Shift+B`      | このワークスペースの表示中ターミナルへの入力ブロードキャスト切替 |
 | `Ctrl+Shift+O`              | `Cmd+Shift+O`      | オフィス表示の切替                   |
 | `Tab` / `N`（オフィス）     | `Tab` / `N`        | オフィス: 待っている次のエージェント |
 | `Alt+N`（のぞき窓）         | `Opt+N`            | のぞき窓: 次の待機へ                 |

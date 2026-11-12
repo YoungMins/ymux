@@ -6157,3 +6157,172 @@ body,
 @media (max-width: 820px) {
   .office__kinds { display: none; }
 }
+
+/* Toast (ui/Toast.ts): short, non-blocking, bottom-right. */
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.toast-stack > .toast { pointer-events: auto; }
+.toast {
+  max-width: 360px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+button.toast { cursor: pointer; }
+button.toast:hover { border-color: var(--accent); }
+
+/* Agent rows: last tool, elapsed time in status, stuck badge. */
+.workspace-panel__agent-tool {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 70px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 9.5px;
+  color: var(--fg-muted);
+}
+.workspace-panel__agent-elapsed {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+.workspace-panel__agent-stuck {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 15px;
+  background: var(--status-attention);
+  color: var(--bg);
+}
+.workspace-panel__agent-tool:empty,
+.workspace-panel__agent-elapsed:empty,
+.workspace-panel__agent-stuck:empty { display: none; }
+
+/* ── Prompt queue + broadcast input (workspace/promptQueue.ts, broadcast.ts) ── */
+/* Anchor for the badges below; a zoomed pane is already absolute (!important). */
+.pane { position: relative; }
+
+.pane-flags {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+.pane-flag {
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #111;
+  background: var(--accent);
+}
+.pane-flag--broadcast { background: #f5a524; }
+
+/* Every terminal that receives broadcast input. */
+.pane--broadcast {
+  outline: 2px solid #f5a524;
+  outline-offset: -2px;
+}
+
+.workspace-bar__broadcast {
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  letter-spacing: 0.05em;
+  color: #111;
+  background: #f5a524;
+  cursor: pointer;
+}
+.workspace-bar__broadcast[hidden] { display: none; }
+
+.workspace-panel__ws[data-broadcast="1"]::after {
+  content: "BC";
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #111;
+  background: #f5a524;
+}
+
+.queue-dialog { width: 520px; }
+.queue-dialog__hint { color: var(--fg-dim, var(--fg)); opacity: 0.75; font-size: 12px; line-height: 1.4; }
+.queue-dialog__input { resize: vertical; min-height: 72px; }
+.queue-dialog__list {
+  margin: 0;
+  padding: 0;
+  list-style: decimal inside;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.queue-dialog__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.queue-dialog__item::marker { color: var(--fg); opacity: 0.6; }
+.queue-dialog__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-dialog__empty { opacity: 0.6; list-style: none; padding: 3px 0; }
+.queue-dialog__remove {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.queue-dialog__remove:hover { color: var(--accent); }
+
+/* Quota-aware account switching: title chip, switch dialog */
+.quota-chip { margin-left: 6px; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; background: transparent; font: inherit; font-size: 10px; font-weight: 700; line-height: 14px; cursor: pointer; color: var(--status-warn, #d9a441); }
+.quota-chip--limit { color: var(--status-critical, #e5484d); }
+.quota-chip:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+.quota-dialog { min-width: 360px; max-width: 520px; }
+.quota-dialog__list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.quota-dialog__option { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+.quota-dialog__option:hover { background: var(--bg-alt, rgba(128, 128, 128, 0.12)); }
+.quota-dialog__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quota-dialog__room { font-variant-numeric: tabular-nums; opacity: 0.85; }
+.quota-dialog__room--near { color: var(--status-warn, #d9a441); }
+.quota-dialog__room--limit { color: var(--status-critical, #e5484d); }
+.quota-dialog__hint { margin-top: 6px; font-size: 12px; opacity: 0.75; }
+.quota-dialog__note { resize: vertical; min-height: 80px; }

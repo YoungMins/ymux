@@ -1,20 +1,21 @@
 // Fan-out compare overlay: one row per lane of a fan-out run (status, diff
-// size, commits ahead), with Review / Focus / Keep. Runtime-only; rebuilt on
-// every open. "Keep" never merges: it types the merge command for the user
-// and offers lane cleanup through the existing removal flow.
+// size, commits ahead), with Review / Focus / Keep this one / Merge by hand.
+// Runtime-only; rebuilt on every open. "Keep this one" asks the backend
+// (git_keep_lane) to merge and clean up after a confirm dialog; "Merge by
+// hand" only types the merge command and offers the existing removal flow.
 //
 // Everything from git (branch names, paths, commit subjects) reaches the DOM
 // through textContent only.
 
 import type { Uuid } from "../types";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
-import { api, gitApi, type CommitInfo, type WorktreeEntry } from "../ipc/bridge";
+import { api, gitApi, type CommitInfo, type KeepReport, type WorktreeEntry } from "../ipc/bridge";
 import { t, onLangChange } from "../i18n/i18n";
 import { pushPopup, popPopup } from "../browser/popupBlur";
-import { askChoice, askConfirm } from "../ui/Dialog";
+import { askChoice, askConfirm, open as openDialog } from "../ui/Dialog";
 import { trapTab } from "../ui/trapTab";
 import { openDiffReview } from "../diff/DiffReview";
-import { commitLines, fill, gitErrorText, removeWorktreeFlow } from "../git/worktreeFlow";
+import { commitLines, fill, gitErrorText, removeWorktreeFlow, showGitError } from "../git/worktreeFlow";
 import {
   cleanupTargets,
   commitsAhead,
@@ -25,6 +26,20 @@ import {
   type DiffStat,
   type LaneRef,
 } from "./compareModel";
+import {
+  DEFAULT_CHOICE,
+  cleanupRequest,
+  combineReports,
+  hasCleanup,
+  keepPlan,
+  keepRequest,
+  mergeRequest,
+  openSkips,
+  pathsToVacate,
+  refusal,
+  reportLines,
+  type KeepChoice,
+} from "./keepModel";
 
 /// Commits read per lane to list the ones above its base (the count itself
 /// comes from the backend, exactly).
@@ -137,6 +152,7 @@ class Overlay {
   private visible = false;
   private tok = 0;
   private main = "";
+  private mainBranch = "";
   private refs: LaneRef[] = [];
   private runId = "";
   private rows: Row[] = [];
@@ -246,6 +262,7 @@ class Overlay {
       const entries = await gitApi.worktrees(this.repo);
       if (tok !== this.tok) return;
       this.main = entries.find((e) => e.main)?.path ?? this.repo;
+      this.mainBranch = entries.find((e) => e.main)?.branch ?? "";
       const refs: LaneRef[] = [];
       const metas = await Promise.all(
         entries.map((e) =>
@@ -362,7 +379,8 @@ class Overlay {
       this.hide(false);
       void this.mgr.focusPane(id);
     }, false, r.paneId === null);
-    btn(t("fanoutCmp.keep"), () => void this.keep(r), true);
+    btn(t("fanoutKeep.btn"), () => void this.keepThis(r), true);
+    btn(t("fanoutCmp.keep"), () => void this.keep(r));
     row.append(name, meta, actions);
     return row;
   }
@@ -373,7 +391,164 @@ class Overlay {
     return r.agent ? `${r.agent} · ${st}` : st;
   }
 
-  // ── Keep ─────────────────────────────────────────────────────────────────
+  // ── Keep this one: merge + clean up (backend: git_keep_lane) ─────────────
+
+  private async keepThis(r: Row): Promise<void> {
+    const lanes = this.refs.filter((l) => l.runId === r.ref.runId);
+    // The base is whatever the base checkout has out right now; the backend
+    // refuses if that has moved by the time it runs.
+    const base = this.mainBranch;
+    if (!base) {
+      await this.showReport(refusal("base-branch"), this.main);
+      return;
+    }
+    const choice = await this.askKeep(r, lanes, base);
+    if (!choice || !this.visible) return;
+    this.say(t("fanoutKeep.checking"));
+    let pre: KeepReport;
+    try {
+      pre = await gitApi.keepLane(keepRequest(this.repo, base, lanes, r.ref, choice, true));
+    } catch (e) {
+      this.say("");
+      await showGitError(t("fanoutKeep.title2"), e);
+      return;
+    }
+    this.say("");
+    if (pre.outcome !== "ok") {
+      if (pre.outcome === "refused" && pre.reason === "lane-dirty" && r.paneId) {
+        // The existing way out: ask the lane's agent to commit.
+        const a = await askChoice(
+          t("fanoutKeep.title2"),
+          reportLines(pre, base).map((l) => fill(t(l.key), l.vars)).join("\n"),
+          [
+            { id: "commit", label: t("fanoutCmp.askCommit"), primary: true },
+            { id: "close", label: t("diff.close") },
+          ],
+        );
+        if (a?.id === "commit") await this.askCommit(r);
+        return;
+      }
+      await this.showReport(pre, base);
+      return;
+    }
+    // Step 1: the merge alone. If it fails nothing has been closed or removed.
+    this.say(t("fanoutKeep.merging"));
+    let merge: KeepReport;
+    try {
+      merge = await gitApi.keepLane(mergeRequest(this.repo, base, lanes, r.ref, choice));
+    } catch (e) {
+      this.say("");
+      await showGitError(t("fanoutKeep.title2"), e);
+      return;
+    }
+    this.say("");
+    if (merge.outcome !== "merged") {
+      await this.showReport(merge, base);
+      if (this.visible) void this.load();
+      return;
+    }
+    // Step 2: close the terminals in the worktrees about to go (quietly: the
+    // keep dialog already confirmed everything), then remove what is merged.
+    // A terminal that stays open keeps its lane; the merge stands. None of
+    // this needs the overlay: if it was closed meanwhile the merge has still
+    // happened, so the steps and the report (its own dialog) still run.
+    const open: string[] = [];
+    for (const dir of pathsToVacate(lanes, r.ref, choice)) {
+      if (!(await this.closeTerminalsIn(dir))) open.push(dir);
+    }
+    let cleanup: KeepReport | null = null;
+    const creq = cleanupRequest(this.repo, base, lanes, r.ref, choice, open);
+    if (hasCleanup(creq)) {
+      this.say(t("fanoutKeep.cleaning"));
+      try {
+        cleanup = await gitApi.keepLane(creq);
+      } catch (e) {
+        cleanup = { ...refusal(""), outcome: "failed", detail: gitErrorText(e) };
+      }
+      this.say("");
+    }
+    await this.showReport(
+      combineReports(merge, cleanup, openSkips(lanes, r.ref, choice, open), pre.conflict_check_unavailable),
+      base,
+    );
+    if (this.visible) void this.load();
+  }
+
+  /// Closes every terminal working inside `dir`. False when one stayed open.
+  private async closeTerminalsIn(dir: string): Promise<boolean> {
+    for (const p of await this.mgr.terminalPanesWithin(dir)) {
+      if (!(await this.mgr.closePaneQuietly(p.id))) return false;
+    }
+    return (await this.mgr.terminalPanesWithin(dir)).length === 0;
+  }
+
+  /// The "what will happen" dialog. Null when cancelled.
+  private askKeep(r: Row, lanes: LaneRef[], base: string): Promise<KeepChoice | null> {
+    const plan = keepPlan(lanes, r.ref, base, this.main, DEFAULT_CHOICE);
+    let picked: KeepChoice | null = null;
+    return openDialog((card, done) => {
+      const msg = el("div", "dialog__message", fill(t("fanoutKeep.title"), { branch: plan.branch }));
+      const lines = [
+        fill(t("fanoutKeep.step1"), { branch: plan.branch, base: plan.base, path: plan.keptPath }),
+        "",
+      ];
+      if (plan.removals.length > 0) {
+        lines.push(t("fanoutKeep.step2"));
+        for (const x of plan.removals) lines.push(`  ${x.branch}  (${x.path})`);
+      } else {
+        lines.push(t("fanoutKeep.noOthers"));
+      }
+      card.append(msg, el("div", "dialog__detail", lines.join("\n")));
+
+      const check = (label: string, on: boolean): HTMLInputElement => {
+        const wrap = el("label", "dialog__check");
+        const box = el("input");
+        box.type = "checkbox";
+        box.checked = on;
+        wrap.append(box, document.createTextNode(label));
+        card.appendChild(wrap);
+        return box;
+      };
+      const removeKept = check(t("fanoutKeep.removeKept"), DEFAULT_CHOICE.removeKept);
+      const discard =
+        plan.removals.length > 0 ? check(t("fanoutKeep.discard"), DEFAULT_CHOICE.discardDirty) : null;
+      card.appendChild(el("div", "dialog__detail", t("fanoutKeep.closeNote")));
+
+      const row = el("div", "dialog__buttons");
+      const btn = (label: string, primary: boolean, fn: () => void): HTMLButtonElement => {
+        const b = el("button", primary ? "dialog__btn dialog__btn--primary" : "dialog__btn", label);
+        b.addEventListener("click", fn);
+        row.appendChild(b);
+        return b;
+      };
+      btn(t("dialog.cancel"), false, () => done(null));
+      btn(t("fanoutKeep.goMerge"), false, () => {
+        picked = { mode: "merge-only", removeKept: false, discardDirty: false };
+        done("go");
+      });
+      const go = btn(t("fanoutKeep.goClean"), true, () => {
+        picked = {
+          mode: "cleanup",
+          removeKept: removeKept.checked,
+          discardDirty: discard?.checked ?? false,
+        };
+        done("go");
+      });
+      card.appendChild(row);
+      return go;
+    }).then((a) => (a === "go" ? picked : null));
+  }
+
+  private async showReport(rep: KeepReport, base: string): Promise<void> {
+    const lines = reportLines(rep, base).map((l) => {
+      const mark = l.tone === "ok" ? "✓" : l.tone === "warn" ? "–" : "✗";
+      return `${mark} ${fill(t(l.key), l.vars)}`;
+    });
+    const title = rep.outcome === "merged" || rep.outcome === "cleaned" ? t("fanoutKeep.doneTitle") : t("fanoutKeep.title2");
+    await askChoice(title, lines.join("\n"), [{ id: "ok", label: t("dialog.ok"), primary: true }]);
+  }
+
+  // ── Keep (by hand) ───────────────────────────────────────────────────────
 
   /// Guidance only: nothing here merges or deletes without the user pressing
   /// Enter in a terminal or confirming a dialog.

@@ -131,6 +131,8 @@ export interface ActivityConfig {
   report_dir: string;
   /// UI language code; the backend uses it for the rule-based summary.
   language: string;
+  /// Local hour (0-23) the daily webhook digest goes out; absent in older configs (18).
+  digest_hour?: number;
 }
 
 /// One line of the activity log (`activity::store::Record`). `kind` is
@@ -173,6 +175,15 @@ export interface WebhookDestination {
   max_file_mb: number;
   max_total_mb: number;
   max_files: number;
+  /// Also receive the daily digest; absent in older configs (false).
+  daily_digest?: boolean;
+}
+
+/// Mirror of `runtime::DigestTestResult` (the "Send digest now" test send).
+export interface DigestTestResult {
+  destinations: number;
+  turns: number;
+  empty: boolean;
 }
 
 /// Mirror of `delivery::DestStatus`: kinds and counts only.

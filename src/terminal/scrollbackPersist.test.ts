@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldSaveScrollback, isUserActivity } from "./scrollbackPersist";
+import { shouldSaveScrollback, isUserActivity, scrollbackSaveDelay } from "./scrollbackPersist";
 
 describe("isUserActivity", () => {
   it("counts typed printable characters and Enter as activity", () => {
@@ -43,5 +43,20 @@ describe("shouldSaveScrollback", () => {
   it("never saves when persistence is disabled, regardless of activity", () => {
     expect(shouldSaveScrollback({ persistEnabled: false, hadUserActivity: true })).toBe(false);
     expect(shouldSaveScrollback({ persistEnabled: false, hadUserActivity: false })).toBe(false);
+  });
+});
+
+describe("scrollbackSaveDelay", () => {
+  const base = { quietMs: 2000, maxWaitMs: 30000 };
+  it("waits out the quiet period after a short burst", () => {
+    expect(scrollbackSaveDelay({ ...base, now: 1500, burstStartedAt: 1000, lastOutputAt: 1400 })).toBe(1900);
+  });
+  it("saves as soon as the output has been quiet long enough", () => {
+    expect(scrollbackSaveDelay({ ...base, now: 3500, burstStartedAt: 1000, lastOutputAt: 1400 })).toBe(0);
+  });
+  it("caps the wait for output that never goes quiet", () => {
+    // Output arrived a moment ago, but the burst began 30 s ago.
+    expect(scrollbackSaveDelay({ ...base, now: 31000, burstStartedAt: 1000, lastOutputAt: 30990 })).toBe(0);
+    expect(scrollbackSaveDelay({ ...base, now: 30500, burstStartedAt: 1000, lastOutputAt: 30490 })).toBe(500);
   });
 });

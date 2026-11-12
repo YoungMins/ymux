@@ -75,6 +75,8 @@ export class FunPanel {
   private settings: FunSettings | null = null;
   private filter: AchFilter = "all";
   private query = "";
+  /// An IME composition is running in the search box.
+  private composing = false;
 
   constructor(private readonly actions: FunActions) {
     this.element = document.createElement("div");
@@ -113,12 +115,14 @@ export class FunPanel {
 
   show(tab: FunTab): void {
     this.tab = tab;
+    this.composing = false;
     this.element.hidden = false;
     this.paint();
     if (tab === "report") this.actions.readReport();
   }
 
   hide(): void {
+    this.composing = false;
     this.element.hidden = true;
   }
 
@@ -130,7 +134,7 @@ export class FunPanel {
 
   private paint(): void {
     const s = this.stats;
-    if (!s || !this.settings) return;
+    if (!s || !this.settings || this.composing) return;
     // A repaint (a keystroke, or a turn finishing meanwhile) keeps typing in
     // the search box going.
     const typing = document.activeElement instanceof HTMLInputElement && document.activeElement.classList.contains("office-fun__search") ? document.activeElement.selectionStart : null;
@@ -212,8 +216,19 @@ export class FunPanel {
     search.placeholder = t("fun.search");
     search.value = this.query;
     search.addEventListener("keydown", (ev) => ev.stopPropagation());
-    search.addEventListener("input", () => {
+    // No repaint mid-composition (IME): it would replace this very input and
+    // drop the pending text. compositionend repaints with the final text.
+    search.addEventListener("compositionstart", () => {
+      this.composing = true;
+    });
+    search.addEventListener("compositionend", () => {
+      this.composing = false;
       this.query = search.value;
+      this.paint();
+    });
+    search.addEventListener("input", (ev) => {
+      this.query = search.value;
+      if (this.composing || (ev as InputEvent).isComposing) return;
       this.paint();
     });
     tools.appendChild(search);

@@ -10,7 +10,7 @@ export function followPointer(move: (ev: PointerEvent) => void, end: (ev: Pointe
   const stop = (ev: PointerEvent | null): void => {
     if (done) return;
     done = true;
-    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", cancel);
     window.removeEventListener("blur", cancel);
@@ -18,7 +18,13 @@ export function followPointer(move: (ev: PointerEvent) => void, end: (ev: Pointe
   };
   const up = (ev: PointerEvent): void => stop(ev);
   const cancel = (): void => stop(null);
-  window.addEventListener("pointermove", move);
+  // A release over an OS-level child webview never reaches this window as a
+  // pointerup; the next move with no button down tells us it happened.
+  const onMove = (ev: PointerEvent): void => {
+    if (ev.buttons === 0) stop(null);
+    else move(ev);
+  };
+  window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", up);
   window.addEventListener("pointercancel", cancel);
   window.addEventListener("blur", cancel);

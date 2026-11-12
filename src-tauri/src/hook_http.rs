@@ -548,6 +548,7 @@ pub fn serve(
     auto: AutoContinue,
     tap: ActivityTap,
 ) -> io::Result<std::thread::JoinHandle<()>> {
+    selftest::remember_token(&token);
     serve_with(listener, token, known_pane, on_event, auto, tap, LIMITS)
 }
 
@@ -645,7 +646,10 @@ fn handle(
     let Some(head) = parse_head(&buf[..head_end]) else {
         return reply(&mut stream, 400, deadline);
     };
-    let (pane, len) = match authorize(&head, token, known_pane) {
+    // A self-test pane id is known only while armed (see `selftest`); the
+    // token is still checked first by `authorize`.
+    let known = |p: Uuid| selftest::is_armed(p) || known_pane(p);
+    let (pane, len) = match authorize(&head, token, known) {
         Verdict::Accept { pane, len } => (pane, len),
         Verdict::Ignore => {
             reply(&mut stream, 204, deadline)?;
@@ -678,11 +682,18 @@ fn handle(
         }
     }
     body.truncate(len);
+    // The self-test round trip stops here: acknowledged, never parsed,
+    // queued, tapped or answered with a decision.
+    if selftest::fire(pane) {
+        return reply(&mut stream, 204, deadline);
+    }
+    // An authenticated body that isn't a hook event is dropped with the
+    // quiet 204: a non-2xx would show as a hook error in Claude every turn.
     let Ok(input) = serde_json::from_slice::<Value>(&body) else {
-        return reply(&mut stream, 400, deadline);
+        return reply(&mut stream, 204, deadline);
     };
     let Some(event) = event_of(&input, pane) else {
-        return reply(&mut stream, 400, deadline);
+        return reply(&mut stream, 204, deadline);
     };
     // Auto-continue: the only 2xx with a body. Decided from the parsed body
     // alone (token and pane were checked by `authorize`), before the registry
@@ -732,6 +743,451 @@ fn drain(stream: &mut TcpStream, deadline: Instant) {
             Ok(0) | Err(_) => return,
             Ok(n) => left = left.saturating_sub(n as u64),
         }
+    }
+}
+
+/// The hook self-test (Settings -> "Test agent tracking"): a checklist of
+/// what must hold for Claude Code's hooks to reach this ymux.
+///
+/// **Isolation.** The authenticated round trip must not touch the agent
+/// tree, the activity log, webhooks or auto-continue. It uses a *reserved
+/// pane id*: the command mints a fresh random UUID, [`arm`]s it, and the
+/// receiver treats that id as a known pane only for that one request and
+/// only after the token check has passed. `handle` then calls [`fire`]
+/// before anything is parsed or queued: `fire` disarms the id (one shot),
+/// signals the waiting command, and the reply is the usual empty 204. A
+/// request with the wrong token, an `Origin` header or an unarmed pane id
+/// takes the normal 403 path.
+///
+/// The report carries ports, directory paths, ymux's own event names and
+/// short fixed phrases: never the token, never a prompt, never a settings
+/// value other than a port.
+pub mod selftest {
+    use super::*;
+    use serde::Serialize;
+    use std::sync::mpsc::{sync_channel, Receiver as Rx, SyncSender as Tx};
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<Vec<(Uuid, Tx<()>)>> = Mutex::new(Vec::new());
+    static LIVE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+    /// Remember this run's token (set by [`serve`]) so the command can
+    /// authenticate as a pane would. Never leaves the process.
+    pub(super) fn remember_token(token: &str) {
+        if let Ok(mut t) = LIVE_TOKEN.lock() {
+            *t = Some(token.to_string());
+        }
+    }
+
+    /// The token of the running receiver, if [`serve`] started one.
+    pub fn live_token() -> Option<String> {
+        LIVE_TOKEN.lock().ok().and_then(|t| t.clone())
+    }
+
+    /// Let the receiver accept one authenticated request for `pane`. The
+    /// returned end is signalled when it did.
+    pub fn arm(pane: Uuid) -> Rx<()> {
+        let (tx, rx) = sync_channel(1);
+        if let Ok(mut a) = ARMED.lock() {
+            a.push((pane, tx));
+        }
+        rx
+    }
+
+    /// Withdraw an armed id that was never used.
+    pub fn disarm(pane: Uuid) {
+        if let Ok(mut a) = ARMED.lock() {
+            a.retain(|(p, _)| *p != pane);
+        }
+    }
+
+    pub(super) fn is_armed(pane: Uuid) -> bool {
+        ARMED
+            .lock()
+            .map(|a| a.iter().any(|(p, _)| *p == pane))
+            .unwrap_or(false)
+    }
+
+    /// Consume an armed id: signal the waiter and report whether `pane` was
+    /// one. One shot, so a replay of the same id is a 403.
+    pub(super) fn fire(pane: Uuid) -> bool {
+        let Ok(mut a) = ARMED.lock() else {
+            return false;
+        };
+        let Some(i) = a.iter().position(|(p, _)| *p == pane) else {
+            return false;
+        };
+        let (_, tx) = a.remove(i);
+        let _ = tx.try_send(());
+        true
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Status {
+        Ok,
+        Warn,
+        Fail,
+        /// Not applicable (tracking is off).
+        Skip,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+    pub struct Item {
+        /// Stable key the UI maps to a label: `tracking`, `receiver`,
+        /// `ping`, `roundtrip`, `wrong_token`, `origin`, `hooks_dir`,
+        /// `claude`.
+        pub id: &'static str,
+        pub status: Status,
+        /// Short English detail: ports, paths, fixed phrases.
+        pub detail: String,
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+    pub struct Report {
+        pub items: Vec<Item>,
+        /// The same checklist as plain text, for the "copy report" button.
+        pub text: String,
+    }
+
+    impl Report {
+        pub fn push(&mut self, id: &'static str, status: Status, detail: impl Into<String>) {
+            self.items.push(Item {
+                id,
+                status,
+                detail: detail.into(),
+            });
+        }
+
+        /// Fill `text` (call once, last).
+        pub fn finish(mut self, version: &str) -> Self {
+            self.text = self.to_text(version);
+            self
+        }
+
+        /// Worst status present (`Skip` counts as fine).
+        pub fn worst(&self) -> Status {
+            let mut w = Status::Ok;
+            for i in &self.items {
+                w = match (w, i.status) {
+                    (Status::Fail, _) | (_, Status::Fail) => Status::Fail,
+                    (Status::Warn, _) | (_, Status::Warn) => Status::Warn,
+                    _ => Status::Ok,
+                };
+            }
+            w
+        }
+
+        /// Plain text of the checklist.
+        pub fn to_text(&self, version: &str) -> String {
+            let mut s = format!("ymux {version} agent tracking self-test\n");
+            for i in &self.items {
+                let tag = match i.status {
+                    Status::Ok => "OK  ",
+                    Status::Warn => "WARN",
+                    Status::Fail => "FAIL",
+                    Status::Skip => "N/A ",
+                };
+                s.push_str(&format!("[{tag}] {}: {}\n", label(i.id), i.detail));
+            }
+            s
+        }
+    }
+
+    fn label(id: &str) -> &'static str {
+        match id {
+            "tracking" => "Agent tracking",
+            "receiver" => "Receiver",
+            "ping" => "Ping",
+            "roundtrip" => "Authenticated round trip",
+            "wrong_token" => "Wrong token refused",
+            "origin" => "Origin header refused",
+            "hooks_dir" => "Claude settings",
+            "claude" => "Claude Code",
+            _ => "Check",
+        }
+    }
+
+    /// What the network probes saw. `Err` is a short reason.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Net {
+        pub ping: Result<String, String>,
+        /// Status of the authenticated POST, and whether the receiver
+        /// signalled that it took the reserved pane.
+        pub roundtrip: Result<(u16, bool), String>,
+        pub wrong_token: Result<u16, String>,
+        pub origin: Result<u16, String>,
+    }
+
+    const IO_TIMEOUT: Duration = Duration::from_millis(1500);
+
+    /// One request to `127.0.0.1:port` over a plain socket (no proxy by
+    /// construction); returns `(status, body)`.
+    fn request(port: u16, head: &str, body: &str) -> Result<(u16, String), String> {
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let mut s = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
+            .map_err(|e| format!("cannot connect: {}", e.kind()))?;
+        let _ = s.set_write_timeout(Some(IO_TIMEOUT));
+        let raw = format!(
+            "{head}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        s.write_all(raw.as_bytes())
+            .map_err(|e| format!("cannot send: {}", e.kind()))?;
+        let _ = s.shutdown(std::net::Shutdown::Write);
+        let deadline = Instant::now() + IO_TIMEOUT;
+        let mut got = Vec::new();
+        let mut chunk = [0u8; 512];
+        loop {
+            match read_by(&mut s, &mut chunk, deadline) {
+                Ok(0) => break,
+                Ok(n) => {
+                    got.extend_from_slice(&chunk[..n]);
+                    if got.len() > 4096 {
+                        break;
+                    }
+                }
+                Err(e) if got.is_empty() => return Err(format!("no answer: {}", e.kind())),
+                Err(_) => break,
+            }
+        }
+        let text = String::from_utf8_lossy(&got);
+        let status = text
+            .strip_prefix("HTTP/1.1 ")
+            .or_else(|| text.strip_prefix("HTTP/1.0 "))
+            .and_then(|r| r.get(..3))
+            .and_then(|c| c.parse::<u16>().ok())
+            .ok_or_else(|| "not an HTTP answer".to_string())?;
+        let body = text
+            .split_once("\r\n\r\n")
+            .map_or("", |(_, b)| b)
+            .to_string();
+        Ok((status, body))
+    }
+
+    fn post_head(port: u16, pane: &str, token: &str, origin: bool) -> String {
+        let mut h = format!(
+            "POST {HOOK_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+             Content-Type: application/json\r\n{PANE_HEADER}: {pane}\r\n{TOKEN_HEADER}: {token}\r\n"
+        );
+        if origin {
+            h.push_str("Origin: http://example.invalid\r\n");
+        }
+        h
+    }
+
+    /// Run the probes against the receiver on `port`, authenticating with
+    /// `token`. The negative probes run first and use the armed pane too, so
+    /// a receiver that wrongly accepted them would consume it and fail the
+    /// round trip.
+    pub fn probe(port: u16, token: &str) -> Net {
+        const BODY: &str = r#"{"hook_event_name":"Notification","session_id":"ymux-selftest"}"#;
+        let ping = request(
+            port,
+            &format!("GET {PING_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"),
+            "",
+        )
+        .and_then(|(status, body)| {
+            if status == 200 {
+                Ok(body)
+            } else {
+                Err(format!("HTTP {status}"))
+            }
+        });
+        let pane = Uuid::new_v4();
+        let signal = arm(pane);
+        let wrong = request(
+            port,
+            &post_head(port, &pane.to_string(), "wrong", false),
+            BODY,
+        )
+        .map(|(s, _)| s);
+        let origin =
+            request(port, &post_head(port, &pane.to_string(), token, true), BODY).map(|(s, _)| s);
+        let round = request(
+            port,
+            &post_head(port, &pane.to_string(), token, false),
+            BODY,
+        )
+        .map(|(s, _)| (s, signal.recv_timeout(Duration::from_millis(500)).is_ok()));
+        disarm(pane);
+        Net {
+            ping,
+            roundtrip: round,
+            wrong_token: wrong,
+            origin,
+        }
+    }
+
+    /// Items b and c.
+    pub fn net_items(report: &mut Report, net: &Net) {
+        match &net.ping {
+            Ok(b) if b == PING_BODY => report.push("ping", Status::Ok, PING_BODY),
+            Ok(_) => report.push(
+                "ping",
+                Status::Fail,
+                "the port answers, but not as a ymux hook receiver",
+            ),
+            Err(e) => report.push("ping", Status::Fail, e.clone()),
+        }
+        match &net.roundtrip {
+            Ok((204, true)) => report.push("roundtrip", Status::Ok, "accepted with 204"),
+            Ok((204, false)) => report.push(
+                "roundtrip",
+                Status::Fail,
+                "204, but the receiver did not take the request as its own",
+            ),
+            Ok((s, _)) => report.push("roundtrip", Status::Fail, format!("HTTP {s}, expected 204")),
+            Err(e) => report.push("roundtrip", Status::Fail, e.clone()),
+        }
+        for (id, r) in [("wrong_token", &net.wrong_token), ("origin", &net.origin)] {
+            match r {
+                Ok(403) => report.push(id, Status::Ok, "403"),
+                Ok(s) => report.push(id, Status::Fail, format!("HTTP {s}, expected 403")),
+                Err(e) => report.push(id, Status::Fail, e.clone()),
+            }
+        }
+    }
+
+    /// Item a.
+    pub fn receiver_item(
+        report: &mut Report,
+        port: Option<u16>,
+        persisted: u16,
+        another_ymux: bool,
+    ) {
+        match port {
+            Some(p) => report.push(
+                "receiver",
+                Status::Ok,
+                format!("listening on 127.0.0.1:{p}"),
+            ),
+            None if another_ymux => report.push(
+                "receiver",
+                Status::Warn,
+                format!(
+                    "stood down: another ymux owns port {persisted}; \
+                     this instance gets no hook events"
+                ),
+            ),
+            None => report.push(
+                "receiver",
+                Status::Fail,
+                "no receiver is running in this instance",
+            ),
+        }
+    }
+
+    /// Item d for one Claude config dir.
+    pub fn dir_item(
+        report: &mut Report,
+        dir: &str,
+        found: &Result<Option<crate::agent_hooks::HookInspection>, String>,
+    ) {
+        let (status, detail) = match found {
+            Err(e) => (Status::Fail, format!("{dir}: {e}")),
+            Ok(None) => (Status::Fail, format!("{dir}: settings.json does not exist")),
+            Ok(Some(i)) => {
+                let mut bad: Vec<String> = Vec::new();
+                if !i.missing.is_empty() {
+                    bad.push(format!("no hook for {}", i.missing.join(", ")));
+                }
+                if !i.stale_port.is_empty() {
+                    bad.push(format!("old port for {}", i.stale_port.join(", ")));
+                }
+                if !i.duplicated.is_empty() {
+                    bad.push(format!("duplicate hook for {}", i.duplicated.join(", ")));
+                }
+                bad.extend(i.blockers.iter().cloned());
+                if !bad.is_empty() {
+                    (Status::Fail, format!("{dir}: {}", bad.join("; ")))
+                } else if i.legacy {
+                    (
+                        Status::Warn,
+                        format!("{dir}: hooks are current, a retired `y` command entry remains"),
+                    )
+                } else {
+                    (
+                        Status::Ok,
+                        format!(
+                            "{dir}: {} hooks installed",
+                            crate::agent_hooks::HOOK_EVENTS.len()
+                        ),
+                    )
+                }
+            }
+        };
+        report.push("hooks_dir", status, detail);
+    }
+
+    /// Item e: `None` = no `claude` on the login-shell PATH.
+    pub fn claude_item(report: &mut Report, found: Option<Result<String, String>>) {
+        match found {
+            None => report.push("claude", Status::Warn, "`claude` was not found on the PATH"),
+            Some(Ok(v)) => report.push("claude", Status::Ok, v),
+            Some(Err(e)) => report.push("claude", Status::Warn, e),
+        }
+    }
+
+    /// Item f: the checks that do not apply while tracking is off.
+    pub fn skipped_items(report: &mut Report) {
+        for id in ["ping", "roundtrip", "wrong_token", "origin", "hooks_dir"] {
+            report.push(id, Status::Skip, "not applicable: agent tracking is off");
+        }
+    }
+
+    /// Run `<program> --version` with no console window and a hard 4 s
+    /// limit; `path` is the absolute path when the agent is not on `PATH`.
+    /// On Windows a bare name goes through `cmd /C` so `.cmd` shims resolve.
+    /// `program` is a constant from the agent table, never user input.
+    pub fn run_version(program: &str, path: Option<&str>) -> Result<String, String> {
+        use std::process::{Command, Stdio};
+        let mut cmd = match path {
+            Some(p) => Command::new(p),
+            None if cfg!(windows) => {
+                let mut c = Command::new("cmd");
+                c.args(["/C", program]);
+                c
+            }
+            None => Command::new(program),
+        };
+        cmd.arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("could not run `{program} --version`: {}", e.kind()))?;
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("`{program} --version` did not finish in 4 s"));
+                }
+            }
+        }
+        let mut out = String::new();
+        if let Some(so) = child.stdout.take() {
+            let _ = so.take(4096).read_to_string(&mut out);
+        }
+        version_line(&out).ok_or_else(|| format!("`{program} --version` printed nothing"))
+    }
+
+    /// First line of `claude --version` output, short and printable.
+    pub fn version_line(out: &str) -> Option<String> {
+        let line = out.lines().map(str::trim).find(|l| !l.is_empty())?;
+        Some(line.chars().filter(|c| !c.is_control()).take(80).collect())
     }
 }
 
@@ -924,6 +1380,15 @@ mod tests {
         assert_eq!(ev.session_id, "s1");
         assert_eq!(ev.agent_id.as_deref(), Some("a1"));
         assert_eq!(ev.agent_type.as_deref(), Some("Explore"));
+        assert_eq!(ev.tool_name.as_deref(), Some("Bash"));
+    }
+
+    #[test]
+    fn hook_event_accepts_post_tool_use_failure() {
+        let body = br#"{"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+                        "error":"Exit code 1","is_interrupt":false}"#;
+        let ev = hook_event(body, pane()).unwrap();
+        assert_eq!(ev.event, "PostToolUseFailure");
         assert_eq!(ev.tool_name.as_deref(), Some("Bash"));
     }
 
@@ -1725,7 +2190,11 @@ mod tests {
         );
         assert_eq!(
             send(port, &request(port, &p, TOKEN, "", "{nope")),
-            response(400)
+            response(204)
+        );
+        assert_eq!(
+            send(port, &request(port, &p, TOKEN, "", r#"{"no_event":1}"#)),
+            response(204)
         );
         assert!(arx.recv_timeout(Duration::from_millis(300)).is_err());
         assert_eq!(tap.stats.pending.load(Ordering::SeqCst), 0);
@@ -1789,5 +2258,207 @@ mod tests {
         // PreToolUse is recorded as a tool start.
         let (_, msg) = arx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(matches!(msg, ActivityMsg::Hook(_)));
+    }
+}
+
+#[cfg(test)]
+mod selftest_tests {
+    use super::selftest::*;
+    use super::*;
+    use std::sync::mpsc;
+
+    const TOKEN: &str = "feedfacefeedfacefeedfacefeedface";
+
+    /// A real receiver whose event queue, activity tap and auto-continue
+    /// are all live, so anything the self-test leaked would show.
+    struct Rig {
+        port: u16,
+        events: mpsc::Receiver<HookEvent>,
+        activity: Receiver<(Uuid, ActivityMsg)>,
+        answered: Arc<AtomicUsize>,
+    }
+
+    fn rig() -> Rig {
+        let listener = bind_loopback(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, events) = mpsc::channel();
+        let tx = parking_lot::Mutex::new(tx);
+        let (tap, activity) = ActivityTap::new(16);
+        tap.enabled.store(true, Ordering::Relaxed);
+        let answered = Arc::new(AtomicUsize::new(0));
+        let counted = answered.clone();
+        serve_with(
+            listener,
+            TOKEN.into(),
+            Arc::new(|_| false),
+            Arc::new(move |ev| {
+                let _ = tx.lock().send(ev);
+            }),
+            AutoContinue {
+                enabled: Arc::new(|_| true),
+                on_answer: Arc::new(move |_, _| {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                }),
+            },
+            tap,
+            LIMITS,
+        )
+        .unwrap();
+        Rig {
+            port,
+            events,
+            activity,
+            answered,
+        }
+    }
+
+    #[test]
+    fn probe_passes_and_leaves_no_trace() {
+        let r = rig();
+        let net = probe(r.port, TOKEN);
+        assert_eq!(net.ping.as_deref(), Ok(PING_BODY));
+        assert_eq!(net.roundtrip, Ok((204, true)));
+        assert_eq!(net.wrong_token, Ok(403));
+        assert_eq!(net.origin, Ok(403));
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(r.events.try_recv().is_err(), "nothing reached the registry");
+        assert!(
+            r.activity.try_recv().is_err(),
+            "nothing reached the activity tap"
+        );
+        assert_eq!(r.answered.load(Ordering::SeqCst), 0);
+        let mut rep = Report::default();
+        net_items(&mut rep, &net);
+        assert_eq!(rep.worst(), Status::Ok);
+        assert_eq!(rep.items.len(), 4);
+    }
+
+    #[test]
+    fn a_wrong_token_fails_the_round_trip_and_leaves_nothing_armed() {
+        let r = rig();
+        let net = probe(r.port, "not-the-token");
+        assert_eq!(net.roundtrip, Ok((403, false)));
+        let mut rep = Report::default();
+        net_items(&mut rep, &net);
+        assert_eq!(rep.worst(), Status::Fail);
+    }
+
+    #[test]
+    fn an_armed_pane_is_a_single_use_and_needs_the_token() {
+        let r = rig();
+        let pane = Uuid::new_v4();
+        let signal = arm(pane);
+        let raw = |token: &str| {
+            format!(
+                "POST {HOOK_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{PANE_HEADER}: {pane}\r\n\
+                 {TOKEN_HEADER}: {token}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}",
+                r.port
+            )
+        };
+        let status = |token: &str| {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, r.port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            s.write_all(raw(token).as_bytes()).unwrap();
+            let mut out = String::new();
+            s.read_to_string(&mut out).unwrap();
+            out.split(' ').nth(1).unwrap().to_string()
+        };
+        assert_eq!(status("wrong"), "403");
+        assert!(signal.try_recv().is_err(), "a bad token does not fire it");
+        assert_eq!(status(TOKEN), "204");
+        assert!(signal.recv_timeout(Duration::from_secs(1)).is_ok());
+        assert_eq!(status(TOKEN), "403", "replaying the id is refused");
+        assert!(!is_armed(pane));
+    }
+
+    #[test]
+    fn nothing_listening_is_a_clean_failure() {
+        let port = {
+            let l = bind_loopback(0).unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let net = probe(port, TOKEN);
+        assert!(net.ping.is_err() && net.roundtrip.is_err());
+        let mut rep = Report::default();
+        net_items(&mut rep, &net);
+        assert_eq!(rep.worst(), Status::Fail);
+    }
+
+    #[test]
+    fn the_report_names_the_checks_and_never_the_token() {
+        let mut rep = Report::default();
+        receiver_item(&mut rep, Some(4242), 4242, false);
+        net_items(
+            &mut rep,
+            &Net {
+                ping: Ok(PING_BODY.into()),
+                roundtrip: Ok((204, true)),
+                wrong_token: Ok(403),
+                origin: Ok(403),
+            },
+        );
+        claude_item(&mut rep, Some(Ok("2.1.0 (Claude Code)".into())));
+        let text = rep.finish("0.0.0").text;
+        assert!(text.contains("4242") && text.contains("Claude Code"));
+        assert!(!text.contains(TOKEN));
+        assert!(text.lines().all(|l| !l.contains("FAIL")));
+    }
+
+    #[test]
+    fn receiver_states() {
+        let one = |port, held| {
+            let mut r = Report::default();
+            receiver_item(&mut r, port, 7000, held);
+            r.items[0].status
+        };
+        assert_eq!(one(Some(7000), false), Status::Ok);
+        assert_eq!(one(None, true), Status::Warn);
+        assert_eq!(one(None, false), Status::Fail);
+    }
+
+    #[test]
+    fn tracking_off_skips_the_receiver_dependent_checks() {
+        let mut r = Report::default();
+        skipped_items(&mut r);
+        assert_eq!(r.items.len(), 5);
+        assert!(r.items.iter().all(|i| i.status == Status::Skip));
+        assert_eq!(r.worst(), Status::Ok);
+    }
+
+    #[test]
+    fn claude_version_is_optional_and_trimmed() {
+        let mut r = Report::default();
+        claude_item(&mut r, None);
+        assert_eq!(r.items[0].status, Status::Warn);
+        assert_eq!(
+            version_line("\n  2.1.4 (Claude Code)\nmore"),
+            Some("2.1.4 (Claude Code)".into())
+        );
+        assert_eq!(version_line("  \n"), None);
+    }
+
+    #[test]
+    fn dir_items_map_inspections_to_statuses() {
+        use crate::agent_hooks::HookInspection;
+        let item = |f: Result<Option<HookInspection>, String>| {
+            let mut r = Report::default();
+            dir_item(&mut r, "/home/u/.claude", &f);
+            r.items[0].clone()
+        };
+        assert_eq!(item(Ok(Some(HookInspection::default()))).status, Status::Ok);
+        assert_eq!(item(Ok(None)).status, Status::Fail);
+        assert_eq!(item(Err("bad".into())).status, Status::Fail);
+        let legacy = HookInspection {
+            legacy: true,
+            ..HookInspection::default()
+        };
+        assert_eq!(item(Ok(Some(legacy))).status, Status::Warn);
+        let stale = HookInspection {
+            stale_port: vec!["Stop".into()],
+            ..HookInspection::default()
+        };
+        let i = item(Ok(Some(stale)));
+        assert_eq!(i.status, Status::Fail);
+        assert!(i.detail.contains("Stop"));
     }
 }

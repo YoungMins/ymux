@@ -76,7 +76,7 @@ impl ActivityRuntime {
         self.tap.enabled.store(c.enabled, Ordering::Relaxed);
     }
 
-    fn store(&self) -> ActivityStore {
+    pub(crate) fn store(&self) -> ActivityStore {
         let s = self.settings.lock();
         ActivityStore::new(self.dir.clone(), s.retention_days, s.max_total_mb)
     }
@@ -158,6 +158,11 @@ impl Env for AppEnv {
 
     fn stat(&mut self, baseline: &GitBaseline) -> Option<DiffStat> {
         gitstat::stat(baseline)
+    }
+
+    fn on_tick(&mut self, now_ms: u64) {
+        let now = i64::try_from(now_ms).unwrap_or(i64::MAX);
+        crate::webhooks::runtime::digest_tick(&self.app, now);
     }
 }
 
@@ -312,5 +317,80 @@ pub fn activity_open_dir(
 ) -> YmuxResult<()> {
     guard_local(&webview, &request, "activity_open_dir")?;
     std::fs::create_dir_all(&rt.dir)?;
-    opener::open(&rt.dir).map_err(|e| crate::YmuxError::Other(format!("activity_open_dir: {e}")))
+    // Explorer runs outside a Store (MSIX) package (rule 18).
+    let dir = crate::fspath::real_dir(&rt.dir);
+    opener::open(&dir).map_err(|e| crate::YmuxError::Other(format!("activity_open_dir: {e}")))
+}
+
+/// The hook self-test (Settings -> "Test agent tracking"): a checklist of
+/// whether Claude Code's hooks can reach this ymux. Read-only for
+/// `settings.json`; the authenticated round trip uses a reserved, one-shot
+/// pane id and touches no registry, log or webhook (`hook_http::selftest`).
+#[tauri::command(async)]
+pub async fn agent_tracking_selftest(
+    webview: Webview,
+    request: Request<'_>,
+    app: AppHandle,
+) -> YmuxResult<crate::hook_http::selftest::Report> {
+    guard_local(&webview, &request, "agent_tracking_selftest")?;
+    let config = app.state::<AppState>().config.snapshot();
+    let port = app
+        .try_state::<crate::commands::AgentHookPort>()
+        .and_then(|h| h.port);
+    tauri::async_runtime::spawn_blocking(move || selftest_report(&config, port))
+        .await
+        .map_err(|e| crate::YmuxError::Other(format!("agent_tracking_selftest: {e}")))
+}
+
+fn selftest_report(config: &Config, port: Option<u16>) -> crate::hook_http::selftest::Report {
+    use crate::agent_hooks;
+    use crate::hook_http::selftest::{self, Report, Status};
+    let mut r = Report::default();
+    let tracking = config.agent_tracking;
+    r.push(
+        "tracking",
+        if tracking { Status::Ok } else { Status::Warn },
+        if tracking {
+            "on"
+        } else {
+            "off: the checks that need hooks are skipped"
+        },
+    );
+    let persisted = config.agent_hook_port;
+    let another = port.is_none() && persisted != 0 && crate::hook_http::probe_ymux(persisted);
+    selftest::receiver_item(&mut r, port, persisted, another);
+    if tracking {
+        match (port, selftest::live_token()) {
+            (Some(p), Some(token)) => selftest::net_items(&mut r, &selftest::probe(p, &token)),
+            (Some(_), None) => r.push("roundtrip", Status::Fail, "the receiver has no token"),
+            (None, _) => {
+                for id in ["ping", "roundtrip", "wrong_token", "origin"] {
+                    r.push(id, Status::Skip, "no receiver in this instance");
+                }
+            }
+        }
+        let desired = agent_hooks::desired_dirs(
+            &config.accounts,
+            |k| std::env::var(k).ok(),
+            dirs::home_dir().as_deref(),
+        );
+        let mut dirs: Vec<String> = Vec::new();
+        for d in config.agent_hook_dirs.iter().chain(&desired.all) {
+            if !agent_hooks::has_dir(&dirs, d) {
+                dirs.push(d.clone());
+            }
+        }
+        let check_port = port.unwrap_or(persisted);
+        for d in &dirs {
+            selftest::dir_item(&mut r, d, &agent_hooks::inspect_dir(d, check_port));
+        }
+    } else {
+        selftest::skipped_items(&mut r);
+    }
+    let claude = crate::agent_launch::detect_agents(false)
+        .into_iter()
+        .find(|a| a.id == "claude")
+        .map(|a| selftest::run_version(&a.program, a.path.as_deref()));
+    selftest::claude_item(&mut r, claude);
+    r.finish(env!("CARGO_PKG_VERSION"))
 }

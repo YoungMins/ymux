@@ -17,7 +17,7 @@ ymux/
 │       ├── lib.rs              # Library crate (all modules)
 │       ├── commands.rs         # Tauri IPC commands (desktop)
 │       ├── activity/           # Opt-in activity log: hook/Codex events -> worker (redact, git stat, per-day JSONL store, hub); ActivityTap fed by hook_http (pure; runtime.rs is desktop)
-│       ├── accounts.rs         # Per-pane AI-CLI accounts: effective account -> CLAUDE_CONFIG_DIR / CODEX_HOME env at PTY spawn, managed_dirs layout (pure; folder create/delete commands in settings.rs)
+│       ├── accounts.rs         # Per-pane AI-CLI accounts: effective account -> CLAUDE_CONFIG_DIR / CODEX_HOME env at PTY spawn, managed_dirs layout under `~/.ymux` (new) or `<config>/accounts` (old), removal roots + in-use check (pure; folder create/trash commands in settings.rs)
 │       ├── agent_binding.rs    # Which conversation a pane's agent process runs: hook / sessions pid file / argv / transcript sources, most exact first (pure)
 │       ├── agent_launch.rs     # Top-bar "+" launcher: agent CLI table, permission-bypass flags, login-shell PATH detection (detect_agents)
 │       ├── agents.rs           # Agent tree registry state machine (pure, not desktop-gated)
@@ -30,8 +30,9 @@ ymux/
 │       ├── hook_http.rs        # Loopback receiver for those hooks: auth, parsing, port choice, listener (pure std)
 │       ├── config/             # Config model + store
 │       ├── drafts.rs           # Editor pane crash-safety drafts, debounced by pane id (pure)
+│       ├── durable.rs          # Atomic, fsynced replace of small state files (unique sibling temp + rename; config, sessions, scrollback, drafts, settings.json) (pure std + uuid)
 │       ├── error.rs            # Crate-wide YmuxError / YmuxResult
-│       ├── fspath.rs           # Resolve + open a path lifted from terminal output; reveal-vs-run policy (pure)
+│       ├── fspath.rs           # Resolve + open a path lifted from terminal output; reveal-vs-run policy; real_path/real_dir/is_packaged for the Store build (rule 18) (pure)
 │       ├── fsops.rs            # Filesystem #[tauri::command]s: list/create/rename/copy/move/delete (desktop)
 │       ├── fsx.rs              # Pure decisions behind the Files pane: listing, sort, binary sniff, same-file (pure)
 │       ├── git/                # Git pane backend: log/branch/worktree porcelain parsing + commands
@@ -45,14 +46,14 @@ ymux/
 │       ├── shell/              # Shell detection (detect.rs)
 │       ├── summarizer/         # Turn summaries: rule-based, Ollama, OpenAI-compatible request/parse + transport with loopback guard (pure; http executor in transport)
 │       ├── textfile.rs         # EOL/BOM/encoding-safe text read/write (pure)
-│       ├── token_usage/        # Usage view backend: Claude/Codex session-log parse + collect, aggregate (rows, hourly heatmap), disk cache; quota fetch + cache (desktop)
+│       ├── token_usage/        # Usage view backend: Claude/Codex session-log parse, persistent per-file index (index.rs: summaries keyed by path+len+mtime, appended files read from a saved offset, sharded JSON under <config>/ymux/token-index, budgeted newest-first first indexing, no file cap (a 1M-file safety valve only, reported as file_limit_hit)). A file leaves the figures ONLY by RETIREMENT, and only when THAT file is confirmed gone (disk::presence: NotFound while its root is reachable; a truncated/failed listing, an unavailable root, an unusable store all just keep the entry and retry); retired.rs folds it into <config>/ymux/token-index/retired.json (user data, format 2: per-Claude-key record of what was folded and under which account/model/project, so a later LARGER copy upgrades it in place and a retiring loser never depends on a live winner; Codex per-session max cumulative; atomic, previous kept as retired.json.bak; shards of retired files are deleted two refreshes later, only after the store was read back, covers them and .bak was refreshed; an unreadable or newer-format store is NEVER replaced: it turns the store read-only and sets snapshot.retired_unavailable; Index::reset_retired is the only wipe and is unwired). INDEX_VERSION bumps need a migrate_shard arm + fixture, RETIRED_FORMAT bumps a migrate_retired arm + fixture (harden2_tests fails otherwise); a complete summary is never overwritten by an unfinished re-parse. real_tests.rs holds the three #[ignore]d gates for the real deletion (build_real_index_in_place, verify_real_index_covers, simulate_real_deletion)) + collect, aggregate (cross-file dedup: Claude by message id, Codex per-session cumulative; rows, hourly heatmap; retired rows map to a card via the account, its `also`, else the default account); quota fetch + cache (desktop)
 │       ├── tray.rs             # Tray icon, hide-to-tray, quit handshake commands (desktop)
 │       ├── sysmonitor.rs       # System monitor (desktop)
-│       ├── updater.rs          # Update checker (desktop)
+│       ├── updater.rs          # Update checker (desktop; not started in the packaged Store build)
 │       ├── webhooks/           # Webhook destinations: payload builders (json/slack/discord/teams), HMAC, backoff, retry queue, delivery worker (runtime.rs is desktop)
 │       ├── webview.rs          # Native browser (desktop, experimental)
 │       ├── embedded_browser.rs # Child-webview browser panes via Window::add_child (desktop)
-│       └── settings.rs         # Settings panel commands: theme load/save, open config dir, managed account folders <config>/accounts/<id>/{claude,codex} (prepare_account_dirs / remove_account_dirs) (desktop)
+│       └── settings.rs         # Settings panel commands: theme load/save, open config dir, managed account folders ~/.ymux/accounts/<id>/{claude,codex} (prepare_account_dirs; remove_account_dirs moves them to the trash, refused while a pane uses them) (desktop)
 ├── src/                    # Frontend (TypeScript)
 │   ├── main.ts             # App entry point
 │   ├── bootGuard.ts        # Refuse to boot inside a frame; MUST stay main.ts's first import (rule 16)
@@ -93,7 +94,8 @@ ymux/
 ├── scripts/
 │   └── test.sh             # fmt + tsc + vitest + clippy + tests (Linux-safe)
 └── .github/workflows/
-    └── release.yml          # CI: test + build + release
+    ├── ci.yml               # CI on push to main / PRs: Linux (fmt, clippy, tsc, vitest, tests) + Windows tests
+    └── release.yml          # Release: test + build + publish on v* tags
 ```
 
 ## Development Commands
@@ -238,6 +240,7 @@ Two shipping platforms, one codebase. What differs, and where:
 | Concern | Windows | macOS |
 |---------|---------|-------|
 | Bundle | MSI (WiX, vendored template) | `.app` + `.dmg`, arm64 only |
+| Store | MSIX (`packaging/microsoft-store`): AppData virtualised, no GitHub updater (rule 18) | none |
 | Bundle config | `tauri.conf.json` | `+ tauri.macos.conf.json` (auto-merged by Tauri) |
 | Icon | `icons/icon.ico` | `icons/icon.icns` |
 | Shells | cmd / PowerShell / pwsh / Git Bash / WSL | `$SHELL` + zsh / bash / fish |
@@ -376,8 +379,11 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   the full order.
 - **2xx means an empty body.** Answer 204 with no body on success. A 2xx JSON
   body is parsed by Claude Code as hook output (decisions, context) and any
-  other 2xx body is an error. The response goes out before the registry is
-  touched, so Claude never waits on ymux's locks; an oversized authenticated
+  other 2xx body is an error. For the same reason an authenticated request
+  whose body is not JSON or has no `hook_event_name` is dropped with a quiet
+  204, never a 400 (Claude Code would show a hook error every turn); only
+  unauthenticated or malformed *requests* (bad head) get a status. The
+  response goes out before the registry is touched, so Claude never waits on ymux's locks; an oversized authenticated
   body is also a quiet 204 (dropped), never an error.
   **The one exception is auto-continue** (`auto_continue.rs`, runtime-only
   per-pane switch `set_auto_continue`): a `200 application/json` decision, and
@@ -449,6 +455,19 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   activity worker with `try_send`, before the reply. Unauthenticated, 403 and
   quiet-204 requests never reach it, and it may not change the status, body or
   timing of the response.
+- **Self-test pane.** "Test agent tracking" (Settings -> General,
+  `activity::runtime::agent_tracking_selftest`, `hook_http::selftest`) POSTs
+  to this receiver as a pane would. It mints a random UUID, `arm`s it, and
+  `handle` counts that id as a known pane only while armed and only after
+  `authorize` has checked the token; right after the body is read
+  `selftest::fire` disarms it (one shot), signals the waiting command and
+  answers the usual empty 204 — before the event is parsed, queued, tapped or
+  decided on, so the agent tree, activity log, webhooks and auto-continue
+  never see it. A wrong token, an `Origin` header or an unarmed id is the
+  normal 403. The token is kept in a process static (`remember_token`, set by
+  `serve`) for that command only; the report holds ports and dir paths, never
+  a token or a settings value other than a port, and `settings.json` is only
+  ever read (`agent_hooks::inspect_dir`).
 - **Migration.** Install removes every retired `y … --ymux-agent-hook` command
   entry (`agent_hooks::LEGACY_MARKER`), `SessionStart` included; uninstall
   removes both shapes. Keep that until no supported upgrade path can still
@@ -575,10 +594,62 @@ send data to hosts the user names. The rules:
 - **Codex is tailed only for tracker-bound sessions** whose rollout
   `session_meta.cwd` matches the pane's cwd (`ypath::same_path`), from the
   file's current end, with a read cap per poll. A session id alone is not trusted.
+- **The daily digest is counts only.** `webhooks::digest` builds one
+  `kind = "digest"` event per scheduled period from the activity log's counts
+  (turns, sessions, tool calls/failures, diff stats, top workspaces) and
+  `token_usage`'s hourly totals — never a prompt or assistant text,
+  whatever `include_prompts` says; names are redacted and clipped, and the
+  payload builders clean and clip again. A destination gets it by its own
+  `daily_digest` switch (`WebhookDestination::wants`), through the normal
+  queue/retry/HMAC path. It has no thread: `Env::on_tick` on the activity
+  worker's minute tick calls `webhooks::runtime::digest_tick`, which decides
+  with the pure `digest::next_due` and builds on a short-lived thread.
+  `<config>/webhooks/digest_state.json` (`durable::write_atomic`) holds the
+  UTC ms at which the last scheduled period ended (a legacy `last_sent` date
+  reads as that day's digest hour). A scheduled digest covers the period since
+  that end up to now (the first ever: since local midnight), at most 48 h
+  back, at most one send per local day at/after `digest_hour`, labelled with
+  its local start and end; an empty period sends nothing and advances nothing,
+  so no turn is skipped and nothing older than the cap is backfilled. "Send
+  digest now" is a test send of today so far and never moves the period. While
+  `token_usage`'s index is still building (`snapshot.indexing`) the digest
+  omits token figures and says they are unavailable. `ActivityConfig::digest_hour` and `daily_digest` are user settings
+  copied in `merge_layouts_from`.
 - **Unattended git is defanged.** The end-of-turn diff stat runs with
   `core.fsmonitor=false` and is skipped for any repo whose local config defines
   `filter.*` drivers (`git::has_local_filter_drivers`), since diffing would run
   them. Never add a git call here that can execute repo-controlled commands.
+
+### 18. Packaged (Microsoft Store / MSIX) build: AppData is virtualised for ymux alone
+
+The Store build is an MSIX package with default file-system write
+virtualisation. When ymux.exe itself creates `%APPDATA%\ymux` or
+`%LOCALAPPDATA%\ymux` (a fresh Store user), the writes land in
+`%LOCALAPPDATA%\Packages\<family>\LocalCache\{Roaming,Local}\ymux\…`, and only
+ymux and its WebView2 see them. Everything ymux launches (pane shells, agent
+CLIs, Explorer, default programs) sees the real AppData. So:
+
+- **Any AppData path handed to another process goes through
+  `fspath::real_path`** (`real_dir` for a folder: it canonicalises a file
+  inside, since the folder itself may exist in both views). Write the file
+  first; a missing path falls back to itself. Applied today to pasted images
+  (`paste_images`), Git Bash's `--rcfile` (`shell/detect.rs`) and the "open
+  folder / theme.toml / activity log" buttons. A cached shell profile carries
+  the path it was detected with, which is why `CONFIG_VERSION` 10 re-detects.
+- **Managed accounts live under `~/.ymux/accounts/<id>/{claude,codex}`**
+  (`accounts::managed_base`), because their paths become `CLAUDE_CONFIG_DIR` /
+  `CODEX_HOME` for other processes. Accounts made earlier keep the
+  `<config>/accounts/<id>` path their profile saved (never moved); the
+  frontend's `isManagedAccount` matches the `/accounts/<id>/<leaf>` suffix, so
+  both layouts count. `remove_account_dirs` moves to the trash, only under those
+  two bases, and refuses while a live pane's `AgentDirs` point there.
+- **The Store build skips the GitHub update checker** (`fspath::is_packaged()`,
+  `GetCurrentPackageFullName`, cached): the Store updates it.
+- Do not add a manifest opt-out; fix the path instead.
+- `Config::shells` is backend-owned (the startup rescan
+  `commands::start_shell_rescan` adds newly installed shells), so
+  `merge_layouts_from` never copies it. Rescan only adds: a cached profile
+  cannot be told from a hand-edited one, and panes pin shells by name.
 
 ## TDD / Testing
 
@@ -590,18 +661,18 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 870 on Linux + frontend 970)
+### Test count (Rust 852 on Windows + frontend 1091)
 
-Measured 2026-10-21 on Linux with `cargo test --no-default-features --lib -p ymux`,
-`cargo test -p ytheme -p ypath` and `npx vitest run`. The last full Windows run
-(2026-09-24, 460 tests with `desktop`) had the 8 OSC 7 failures noted below.
+Measured 2026-11-12 on Windows with `cargo test --no-default-features --lib -p ymux`
+(852 passed, 8 Windows-only OSC 7 failures noted below, 2 ignored),
+`cargo test -p ytheme -p ypath` and `npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 856 without `desktop` (855 pass, 1 ignored) on Linux; 8 OSC 7 tests fail on Windows | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
-| ytheme | 6 | Theme TOML round-trip, hex parsing, defaults |
-| ypath | 9 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
-| _frontend_ | 970 (67 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
+| ymux_lib | 852 pass + 8 OSC 7 failures + 2 ignored on Windows (without `desktop`) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
+| ytheme | 9 | Theme TOML round-trip, hex parsing, defaults |
+| ypath | 6 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
+| _frontend_ | 1091 (82 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
 
 **The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
 `pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,
@@ -650,6 +721,9 @@ git merge <feature-branch>        # the branch the work landed on
 git tag vX.Y.Z                    # must match the bumped version
 git push origin main vX.Y.Z
 ```
+
+`.github/workflows/ci.yml` runs the Linux and Windows test jobs on every push
+to `main` and every pull request, so a bad commit is caught before tagging.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`. It can also be run
 by hand (Actions → release → Run workflow, i.e. `workflow_dispatch`) with a

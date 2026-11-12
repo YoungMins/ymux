@@ -17,6 +17,12 @@ export interface QuitGuardDeps {
   /// Write the layout now. `app.exit` may tear the page down without a
   /// `beforeunload`, so the debounced save must not be left pending.
   flushLayout(): Promise<void>;
+  /// Write every live terminal pane's scrollback now (its save timer may still
+  /// be waiting out a quiet period). Bounded like the layout flush.
+  flushScrollback?(): Promise<void>;
+  /// Write the office's fun stats now (their save is debounced). Synchronous
+  /// in the app; a throw is tolerated like the other flushes.
+  flushFun?(): void | Promise<void>;
 }
 
 /// Wait for `p`, but never longer than `ms` — a hung IPC cannot hold the quit.
@@ -30,6 +36,11 @@ export function bounded(p: Promise<unknown>, ms: number): Promise<void> {
   ]);
 }
 
+/// Run an optional flush, turning a synchronous throw into a rejection.
+async function safely(fn: (() => void | Promise<void>) | undefined): Promise<void> {
+  await fn?.();
+}
+
 /// Resolves true when the app may exit.
 export async function runQuitGuard(deps: QuitGuardDeps, timeoutMs = 1500): Promise<boolean> {
   let ok: boolean;
@@ -41,6 +52,12 @@ export async function runQuitGuard(deps: QuitGuardDeps, timeoutMs = 1500): Promi
     ok = true;
     await bounded(deps.flushDrafts(), timeoutMs);
   }
-  if (ok) await bounded(deps.flushLayout(), timeoutMs);
+  if (ok) {
+    await Promise.all([
+      bounded(deps.flushLayout(), timeoutMs),
+      bounded(safely(deps.flushScrollback), timeoutMs),
+      bounded(safely(deps.flushFun), timeoutMs),
+    ]);
+  }
   return ok;
 }

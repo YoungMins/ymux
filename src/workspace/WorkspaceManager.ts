@@ -65,11 +65,17 @@ import {
 } from "../layout/tabs";
 import { render, type RenderContext } from "../layout/SplitContainer";
 import { beep } from "../util/beep";
+import { mergeNewShells } from "./shellList";
 import { getLang, t } from "../i18n/i18n";
 import {
+  agentUsesAccounts,
   clearAccountRefs,
+  countLiveOnAccount,
   effectiveAccount,
   isManagedAccount,
+  managedAccountRoot,
+  normalizeColor,
+  ACCOUNT_NONE,
   setAccountsList,
   toBadge,
   type AccountBadge,
@@ -86,7 +92,7 @@ import { fill, gitErrorText } from "../git/worktreeFlow";
 import { shellFamilyFromExecutable, type ShellFamily } from "../terminal/shellQuote";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
-import { newlyWaitingPanes, paneLabel, workspaceIdOfPane } from "./agentTree";
+import { effectiveLeadStatus, newlyWaitingPanes, paneLabel, workspaceIdOfPane } from "./agentTree";
 import {
   buildInbox,
   nextAttention,
@@ -103,13 +109,29 @@ import type { PaneStatus } from "../terminal/paneStatus";
 import { OfficeView } from "../office/OfficeView";
 import { emitOfficeMessage, type OfficeMessageKind } from "../office/officeEvents";
 import { officeLog } from "../office/officeLog";
+import { ClosedPaneStack, PENDING_KEY, parsePending } from "./closedPanes";
+import { agentDisplayName, joinAgentNames, liveAgentNames } from "./closeConfirm";
+import { askSwitchAccount } from "../accounts/switchDialog";
+import { handoffNote, quotaAlert, switchCandidates, type QuotaAlert } from "../accounts/quotaModel";
+import { setQuotaMarks, setQuotaSwitchHandler, type QuotaMark } from "../accounts/quotaMarks";
+import { buildQuotaInbox, type QuotaInboxItem } from "./inbox";
+import type { ProviderUsage } from "../tokenmonitor/model";
+import { shouldFocusAfterSend } from "./backgroundSend";
+import { showToast, STICKY_TOAST } from "../ui/Toast";
+import { PromptQueues, phaseOf, queueSuffix, QUEUE_TICK_MS } from "./promptQueue";
+import { quotaPollWanted } from "../accounts/quotaModel";
+import { BroadcastSwitch, applyZoom, broadcastTargets, broadcastParticipants, type BroadcastPane } from "./broadcast";
+import { paintPaneFlags } from "./paneFlags";
+import { openQueueDialog } from "./queueDialog";
+import type { AgentClock } from "./agentTiming";
 import type { PeekSendResult } from "../office/OfficePeek";
 import { keyBytes } from "../office/peekKeys";
 import { addTask } from "../office/heroModel";
 import { funStore } from "../office/funStore";
 import type { OfficeFloor } from "../office/OfficeView";
 import type { Waiting } from "../office/officeQueue";
-import { launchableAgents } from "./agentLaunch";
+import { launchableAgents, switchAccountCommand } from "./agentLaunch";
+import { handoffStep, type Handoff } from "./handoff";
 import { openDiffReview } from "../diff/DiffReview";
 import { activityApi } from "../ipc/bridge";
 import { pushPopup, popPopup } from "../browser/popupBlur";
@@ -194,11 +216,33 @@ export class WorkspaceManager {
   /// backend's process scan finished (ms). The fan-out gate trusts a lead only
   /// if this is newer than the pane's last output.
   private agentSnapshotAt = 0;
+  /// Recently closed panes, reopenable until their grace period ends. Their
+  /// scrollback file and agent session are deleted only when an entry leaves
+  /// this stack (see `forgetClosed`).
+  private closedStack = new ClosedPaneStack();
+  private closedTimer: number | undefined;
+  /// Prompts lined up per pane for its agent (runtime-only, see promptQueue.ts)
+  /// and the views of them that want to repaint (the open dialog).
+  private promptQueues = new PromptQueues();
+  private queueListeners = new Set<() => void>();
+  /// Broadcast input per workspace (runtime-only: always off after a restart).
+  private broadcast = new BroadcastSwitch();
+  private broadcastListeners = new Set<() => void>();
   /// Panes a fan-out marked as waiting because a dialog blocks them.
   private fanoutBlocked = new Set<Uuid>();
   /// Tree listeners (the workspace panel), fired when agents change or any
   /// layout/pane metadata changes. A set so other views can subscribe too.
   private treeListeners = new Set<() => void>();
+  /// Quota-aware account switching: the latest per-account quota cards, the
+  /// panes whose running account is near / at its limit, and hand-off notes
+  /// waiting for the restarted agent (runtime-only).
+  private quotaProviders: readonly ProviderUsage[] = [];
+  private quotaAlerts = new Map<Uuid, QuotaAlert & { kind: string }>();
+  private quotaTimer: ReturnType<typeof setInterval> | null = null;
+  private handoffs = new Map<Uuid, Handoff>();
+  /// Re-pumps the prompt queues and hand-offs while any exist (a refused
+  /// delivery or the re-arm has no other trigger).
+  private queueTimer: ReturnType<typeof setInterval> | null = null;
   /// Notified when the pane the user works in may have changed: focus moved
   /// to another pane, or a workspace switch. No payload; read
   /// `activePaneId()`. The file dock subscribes.
@@ -216,6 +260,57 @@ export class WorkspaceManager {
     onAutoContinueChange(() => this.refreshAccountTitles());
     this.activeId = config.active_workspace;
     this.orderShellsByDefault();
+    this.sweepClosedLeftovers();
+    setQuotaSwitchHandler((paneId) => void this.switchAccountFor(paneId));
+    this.syncQuotaWatch();
+  }
+
+  /// Ids of closed panes whose files may still be on disk, persisted so a
+  /// quit (or crash) during the grace period cannot strand them: the next
+  /// start deletes whatever the last run left in this list. Reopen does not
+  /// survive a restart, which is the price of never leaking a file.
+  private writePending(): void {
+    try {
+      localStorage.setItem(PENDING_KEY, JSON.stringify(this.closedStack.ids));
+    } catch {
+      /* localStorage unavailable: the files wait for the backend's own sweep */
+    }
+  }
+
+  private sweepClosedLeftovers(): void {
+    let left: Uuid[] = [];
+    try {
+      left = parsePending(localStorage.getItem(PENDING_KEY));
+      localStorage.removeItem(PENDING_KEY);
+    } catch {
+      return;
+    }
+    // A pane still in the loaded layout was closed but the layout save never
+    // landed (a crash in the debounce window): it is alive, keep its files.
+    const live = new Set<Uuid>();
+    for (const ws of this.config.workspaces) for (const p of panes(ws.root)) live.add(p.id);
+    for (const id of left) if (!live.has(id)) this.deleteClosedFiles(id);
+  }
+
+  private deleteClosedFiles(id: Uuid): void {
+    void api.deleteScrollback(id).catch(() => {});
+    void api.clearAgentSession(id).catch(() => {});
+  }
+
+  /// Delete the files of entries that left the stack, and re-arm the expiry
+  /// timer for the next one.
+  private forgetClosed(gone: { spec: PaneSpec }[]): void {
+    for (const e of gone) this.deleteClosedFiles(e.spec.id);
+    this.writePending();
+    window.clearTimeout(this.closedTimer);
+    this.closedTimer = undefined;
+    const next = this.closedStack.nextExpiry();
+    if (next !== null) {
+      this.closedTimer = window.setTimeout(
+        () => this.forgetClosed(this.closedStack.expire(Date.now())),
+        Math.max(1000, next - Date.now() + 100),
+      );
+    }
   }
 
   /// Active pane within the active workspace. Setting this toggles the
@@ -250,6 +345,33 @@ export class WorkspaceManager {
 
   get allShells(): ShellProfile[] {
     return this.shells;
+  }
+
+  /// Called after `refreshShells` adopted newly installed shells.
+  onShellsChange: (() => void) | null = null;
+  private shellRefresh: Promise<boolean> | null = null;
+
+  /// Re-read the shell list from the backend (`load_bootstrap`, which only
+  /// reads once a list is cached; it never re-detects) and adopt shells the
+  /// startup rescan added. Resolves to whether the list grew. Failures are
+  /// swallowed: the list just stays as it was.
+  refreshShells(): Promise<boolean> {
+    if (this.shellRefresh) return this.shellRefresh;
+    const p = api
+      .loadBootstrap()
+      .then((b) => {
+        const next = mergeNewShells(this.shells, b.shells);
+        if (next === this.shells) return false;
+        this.shells = next;
+        this.onShellsChange?.();
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        this.shellRefresh = null;
+      });
+    this.shellRefresh = p;
+    return p;
   }
 
   get active(): Workspace {
@@ -406,6 +528,7 @@ export class WorkspaceManager {
     if (current) current.style.display = "none";
 
     this.activeId = id;
+    this.emitBroadcast();
     this.config.active_workspace = id;
 
     const next = this.workspaceContainers.get(id)!;
@@ -423,6 +546,11 @@ export class WorkspaceManager {
     // Re-fit everything now that the container is visible.
     const cache = this.paneCaches.get(id)!;
     for (const pane of cache.values()) pane.scheduleFit();
+
+    // Move keyboard focus into the workspace now showing, so typing works
+    // right after a keyboard switch. Skipped when a pane there already has it.
+    const activePane = this.activePaneId();
+    if (activePane && this.activeId === id) cache.get(activePane)?.focus();
 
     // A workspace switch changes the active pane even when the focused id
     // (still pointing into the old workspace) does not.
@@ -476,7 +604,19 @@ export class WorkspaceManager {
   /// active, switches to the first remaining one.
   async deleteWorkspace(id: number): Promise<void> {
     if (this.config.workspaces.length <= 1) return;
-    if (this.config.workspaces.findIndex((w) => w.id === id) < 0) return;
+    const target = this.config.workspaces.find((w) => w.id === id);
+    if (!target) return;
+    // One confirm for the whole workspace when any of its panes runs an agent.
+    const running = liveAgentNames(this._agents, panes(target.root).map((p) => p.id));
+    if (
+      running.length &&
+      !(await askConfirm(
+        fill(t("workspace.deleteAgents"), { agents: joinAgentNames(running) }),
+        t("workspace.deleteAgentsOk"),
+      ))
+    ) {
+      return;
+    }
     // The close guard (spec §3.5): one prompt listing every unsaved editor
     // in the workspace. Asked before anything is torn down.
     const editors = [...(this.paneCaches.get(id)?.values() ?? [])].filter(
@@ -496,7 +636,9 @@ export class WorkspaceManager {
     // Capture before the workspace is spliced out below — once it's gone,
     // its layout tree (and every pane's worktree_path) is gone with it.
     const wtPaths = worktreePaths(this.config.workspaces[idx].root);
+    const specIds = panes(this.config.workspaces[idx].root).map((p) => p.id);
 
+    this.broadcast.off(id);
     const cache = this.paneCaches.get(id);
     if (cache) {
       // Permanent: the whole workspace is being deleted, so any persisted
@@ -506,6 +648,14 @@ export class WorkspaceManager {
         this.paneStatus.delete(paneId);
         this.forgetInbox(paneId);
       }
+    }
+    // Panes that were never built (a workspace never opened this session) have
+    // no `dispose(true)` to delete their state: do the same by id, or their
+    // scrollback files and agent sessions are orphaned.
+    for (const paneId of specIds) {
+      if (cache?.has(paneId)) continue;
+      void api.deleteScrollback(paneId).catch(() => {});
+      void api.clearAgentSession(paneId).catch(() => {});
     }
     this.paneCaches.delete(id);
     for (const group of this.groupCaches.get(id)?.values() ?? []) group.dispose();
@@ -544,14 +694,16 @@ export class WorkspaceManager {
     // Re-render now that panes exist in cache.
     this.renderWorkspace(ws);
     // Spawn shells / load iframes sequentially to avoid hammering the system.
-    for (const pane of cache.values()) {
+    // A snapshot: a split during hydration adds to the live map and spawns its
+    // own pane (and `spawn()` is idempotent in flight anyway).
+    for (const pane of [...cache.values()]) {
       try {
         await pane.spawn();
       } catch (e) {
         console.error(`spawn failed`, e);
       }
     }
-    if (!this.focusedPaneId) {
+    if (!this.focusedPaneId && this.activeId === ws.id) {
       const first = visiblePanes(ws.root)[0];
       if (first) cache.get(first.id)?.focus();
     }
@@ -689,6 +841,8 @@ export class WorkspaceManager {
       openInViewer: (path) => this.openFileInViewerTab(path, spec.id),
       isVisible: () => this.isPaneVisible(spec.id),
       onContextMenu: (ev) => this.showPaneContextMenu(spec.id, ev),
+      onUserInput: (data) => this.forBroadcastTargets(spec.id, (p) => p.mirrorInput(data)),
+      onUserPaste: (text) => this.forBroadcastTargets(spec.id, (p) => p.mirrorPaste(text)),
       persistScrollback: () => this.persistScrollback,
       bottomAnchor: () => this.bottomAnchor,
       onAcknowledged: () => {
@@ -735,6 +889,8 @@ export class WorkspaceManager {
   setAccounts(next: AccountProfile[]): void {
     this.config.accounts = next;
     setAccountsList(next);
+    this.recomputeQuota();
+    this.syncQuotaWatch();
     this.refreshAccountTitles();
     this.persistDebounced();
   }
@@ -748,6 +904,18 @@ export class WorkspaceManager {
   async deleteAccount(id: string): Promise<boolean> {
     const profile = this.accounts.find((a) => a.id === id);
     if (!profile) return false;
+    // A running terminal keeps its login folder open; refuse before anything
+    // is removed rather than leave a half-deleted account.
+    const live = countLiveOnAccount(
+      [...this.paneCaches.values()].flatMap((cache) =>
+        [...cache.values()].map((p) => (p instanceof TerminalPane ? p.liveAccountId() : null)),
+      ),
+      id,
+    );
+    if (live > 0 && isManagedAccount(profile)) {
+      this.notify(fill(t("account.deleteInUse"), { n: String(live) }));
+      return false;
+    }
     const ok = await askConfirm(
       fill(t("account.deleteConfirm"), { name: profile.name || profile.id }),
       t("settings.accounts.delete"),
@@ -760,7 +928,12 @@ export class WorkspaceManager {
         await api.removeAccountDirs(id);
       } catch (e) {
         console.error("remove_account_dirs failed:", e);
-        this.notify(fill(t("account.removeDirsFailed"), { error: describeError(e) }));
+        this.notify(
+          fill(t("account.removeDirsFailed"), {
+            error: describeError(e),
+            path: managedAccountRoot(profile),
+          }),
+        );
       }
     }
     return true;
@@ -860,7 +1033,7 @@ export class WorkspaceManager {
   /// new list for the caller to rebind its own UI to, or `null` if no pane is
   /// focused.
   setHotKeysForFocused(hotkeys: HotKeyDef[]): HotKeyDef[] | null {
-    const id = this.focusedPaneId;
+    const id = this.activePaneId();
     if (!id) return null;
     this.updatePaneSpec(id, (p) => {
       p.hotkeys = hotkeys;
@@ -899,7 +1072,7 @@ export class WorkspaceManager {
       groupCache: this.groupsFor(ws.id),
       makeGroup: (groupId) =>
         new PaneGroup(groupId, {
-          labelOf: (paneId) => this.tabLabelFor(paneId),
+          labelOf: (paneId) => this.tabLabelFor(paneId) + queueSuffix(this.promptQueues.count(paneId)),
           onSelectTab: (paneId) => this.selectTab(paneId),
           onNewTab: () => void this.newTabInGroup(groupId),
           onCloseTab: (paneId) => void this.closePane(paneId),
@@ -942,6 +1115,7 @@ export class WorkspaceManager {
     // that zoom depends on while `workspace--zoomed` is still set — which
     // left the whole workspace hidden until the user unzoomed. Re-decide.
     this.applyZoom(ws, container);
+    this.paintAllFlags(ws.id);
   }
 
   /// Re-apply (or drop) this workspace's zoom after a render. The decision is
@@ -1019,11 +1193,23 @@ export class WorkspaceManager {
       },
       { label: t("menu.paste"), onSelect: () => void pane.paste() },
       "separator",
+      { label: t("shortcut.queuePrompt"), onSelect: () => this.openQueueDialogFor(paneId) },
+      {
+        label: this.isBroadcasting() ? t("broadcast.stop") : t("shortcut.broadcast"),
+        onSelect: () => this.toggleBroadcast(),
+      },
+      "separator",
       { label: t("shortcut.splitH"), onSelect: () => void this.splitFocused("horizontal") },
       { label: t("shortcut.splitV"), onSelect: () => void this.splitFocused("vertical") },
       { label: t("files.here"), onSelect: () => void this.splitFocusedFiles("horizontal") },
       { label: t("editor.split"), onSelect: () => void this.splitFocusedEditor("horizontal") },
       { label: t("git.here"), onSelect: () => void this.splitFocusedGit("horizontal") },
+      "separator",
+      {
+        label: t("shortcut.reopenPane"),
+        disabled: !this.canReopenClosedPane(),
+        onSelect: () => void this.reopenClosedPane(),
+      },
     ];
     showContextMenu(ev.clientX, ev.clientY, entries);
   }
@@ -1067,7 +1253,8 @@ export class WorkspaceManager {
     this.renderWorkspace(ws);
     try {
       await pane.spawn();
-      pane.focus();
+      // The user may have switched workspace while the shell started.
+      if (this.activeId === ws.id) pane.focus();
     } catch (e) {
       console.error("split spawn failed", e);
     }
@@ -1743,11 +1930,57 @@ export class WorkspaceManager {
     this.persistDebounced();
   }
 
+  /// Bring back the most recently closed pane (within its grace period) as a
+  /// split beside the focused pane. It keeps its pane id, so `spawn()` finds
+  /// the scrollback file and agent session that `closePane` left in place and
+  /// resumes the agent the way a restart does. Resolves false when there is
+  /// nothing to reopen.
+  async reopenClosedPane(): Promise<boolean> {
+    const now = Date.now();
+    const entry = this.closedStack.pop(now);
+    if (!entry) {
+      // Expired entries still hold files: let them go.
+      this.forgetClosed(this.closedStack.expire(now));
+      showToast(t("pane.reopenNone"));
+      return false;
+    }
+    this.forgetClosed([]);
+    const ws = this.active;
+    const targetId = this.activePaneId() ?? visiblePanes(ws.root)[0]?.id;
+    if (!targetId) {
+      this.deleteClosedFiles(entry.spec.id);
+      return false;
+    }
+    await this.insertSplit(ws, targetId, "horizontal", entry.spec, "reopen spawn failed");
+    if (!findPane(ws.root, entry.spec.id)) {
+      this.deleteClosedFiles(entry.spec.id);
+      return false;
+    }
+    return true;
+  }
+
+  /// Whether "Reopen closed pane" has anything to open (the context menu's
+  /// enabled state).
+  canReopenClosedPane(): boolean {
+    return this.closedStack.canReopen(Date.now());
+  }
+
   /// Close the currently focused pane.
   /// Close the currently focused pane — or, when it is a tab, that tab.
   async closeFocused(): Promise<void> {
-    if (!this.focusedPaneId) return;
-    await this.closePane(this.focusedPaneId);
+    // Not `focusedPaneId`: after a keyboard workspace switch it still names a
+    // pane in the hidden workspace, and closing that kills an unseen shell.
+    const id = this.activePaneId();
+    if (!id) return;
+    await this.closePane(id);
+  }
+
+  /// Close a pane by id without any prompt of its own (see `closePane`'s
+  /// `quiet`). Resolves whether the pane is gone: false when it stayed open.
+  async closePaneQuietly(id: Uuid): Promise<boolean> {
+    if (!this.findPaneById(id)) return true;
+    await this.closePane(id, true);
+    return !this.findPaneById(id);
   }
 
   /// Close one pane. `removePane` unwraps a group down to a plain pane and
@@ -1757,12 +1990,35 @@ export class WorkspaceManager {
   ///
   /// Resolves `false` when the pane stayed open — the unsaved-changes guard
   /// (spec §3.5) said no, or a close of it is already waiting on that guard.
-  private async closePane(id: Uuid): Promise<boolean> {
+  ///
+  /// `quiet` is for a caller that already got the user's go-ahead for the whole
+  /// operation and is about to delete the pane's worktree: no live-agent
+  /// confirm, no worktree-removal offer, and no reopen-stack entry (its
+  /// scrollback and agent session go at once, so it cannot be brought back).
+  private async closePane(id: Uuid, quiet = false): Promise<boolean> {
     // The guard runs first, before anything about the tree is captured: the
     // prompt is async, and the layout (even the active workspace) can change
     // while it is open.
     if (this.closing.has(id)) return false;
     const guarded = this.findPaneById(id);
+    const agents = quiet ? [] : liveAgentNames(this._agents, [id]);
+    // Queued prompts die with the pane (a reopened pane starts with none), so
+    // they are worth a confirm even without a live agent.
+    const queued = quiet ? 0 : this.promptQueues.count(id);
+    if (agents.length || queued > 0) {
+      this.closing.add(id);
+      let ok = false;
+      try {
+        const message = agents.length
+          ? fill(t("pane.closeAgent"), { agent: joinAgentNames(agents) }) +
+            (queued > 0 ? " " + fill(t("pane.queuedNote"), { n: queued }) : "")
+          : fill(t("pane.closeQueued"), { n: queued });
+        ok = await askConfirm(message, t("pane.closeAgentOk"));
+      } finally {
+        this.closing.delete(id);
+      }
+      if (!ok) return false;
+    }
     if (guarded?.canClose) {
       this.closing.add(id);
       let ok = false;
@@ -1775,6 +2031,19 @@ export class WorkspaceManager {
       }
       if (!ok) return false;
     }
+    // Awaited before the tree is touched (the rest of the close is
+    // synchronous on purpose): a terminal's scrollback is written out and its
+    // live cwd read while the PTY still exists, for "Reopen closed pane".
+    let liveCwd: string | null = null;
+    const toClose = this.findPaneById(id);
+    if (toClose instanceof TerminalPane) {
+      await Promise.race([toClose.flushScrollbackIfNeeded(), new Promise((r) => setTimeout(r, 1000))]);
+      try {
+        liveCwd = await api.getPaneCwd(id);
+      } catch {
+        /* the spec's own cwd stands */
+      }
+    }
     const wsId = this.workspaceOfPane(id);
     const ws = this.config.workspaces.find((w) => w.id === wsId);
     if (!ws) return false;
@@ -1782,15 +2051,25 @@ export class WorkspaceManager {
     // Captured before the tree is mutated: once the pane is gone so is its
     // spec, and once the group may have unwrapped there is no other way to
     // know which tab should take focus.
-    const wtPath = findPane(ws.root, id)?.worktree_path ?? "";
+    const closedSpec = findPane(ws.root, id);
+    const wtPath = closedSpec?.worktree_path ?? "";
     const group = groupOfPane(ws.root, id);
     const siblings = group ? tabIds(group).filter((x) => x !== id) : [];
     const newRoot = removePane(ws.root, id);
     const cache = this.paneCaches.get(ws.id)!;
     const pane = cache.get(id);
-    // Permanent: the user explicitly closed this pane (kill_pane), so its
-    // persisted scrollback (if any) should not survive it.
-    pane?.dispose(true);
+    if (pane instanceof TerminalPane && closedSpec && !quiet) {
+      // Kept for "Reopen closed pane": write the scrollback out now, kill the
+      // PTY but leave the scrollback file and agent session for the grace
+      // period. `forgetClosed` deletes them when the entry leaves the stack.
+      pane.dispose(false);
+      this.forgetClosed(
+        this.closedStack.push({ spec: { ...closedSpec, cwd: liveCwd ?? closedSpec.cwd }, closedAt: Date.now() }),
+      );
+    } else {
+      // Permanent: nothing to bring back, so any persisted state goes now.
+      pane?.dispose(true);
+    }
     cache.delete(id);
     this.paneStatus.delete(id);
     this.forgetInbox(id);
@@ -1831,7 +2110,7 @@ export class WorkspaceManager {
     // git worktree now that dispose(true) has released any OS-level lock on
     // the worktree directory (important on Windows). A removal failure here
     // must never be surfaced as a close failure.
-    if (wtPath) {
+    if (wtPath && !quiet) {
       await this.offerWorktreeRemoval(wtPath);
     }
     return true;
@@ -1993,7 +2272,7 @@ export class WorkspaceManager {
     const ws = this.active;
     const container = this.workspaceContainers.get(ws.id);
     if (!container) return;
-    const id = this.focusedPaneId ?? panes(ws.root)[0]?.id;
+    const id = this.activePaneId();
     if (!id) return;
     const cache = this.paneCaches.get(ws.id);
     const pane = cache?.get(id);
@@ -2010,6 +2289,7 @@ export class WorkspaceManager {
         g.element.classList.remove("pane-group--zoomed");
       }
       this.renderWorkspace(ws);
+      this.paintAllFlags(ws.id);
       pane.focus();
       pane.scheduleFit();
       return;
@@ -2020,6 +2300,7 @@ export class WorkspaceManager {
     // because the pane can gain or lose tabs while zoomed.
     this.zoomedPanes.set(ws.id, id);
     this.zoomElementFor(ws, container, id, groupOfPane(ws.root, id)?.id ?? null);
+    this.paintAllFlags(ws.id);
     pane.focus();
     pane.scheduleFit();
   }
@@ -2027,7 +2308,7 @@ export class WorkspaceManager {
   /// Returns the current display title of the focused pane, or null if there
   /// is no focus or no custom title set. Used to pre-fill the rename prompt.
   getFocusedTitle(): string | null {
-    const id = this.focusedPaneId;
+    const id = this.activePaneId();
     if (!id) return null;
     return this.getPaneSpec(id)?.title ?? null;
   }
@@ -2035,7 +2316,7 @@ export class WorkspaceManager {
   /// Rename the focused pane. Passing an empty string clears the title so the
   /// default rendering (shell name) is used.
   renameFocused(title: string): void {
-    const id = this.focusedPaneId;
+    const id = this.activePaneId();
     if (!id) return;
     const trimmed = title.trim();
     this.updatePaneSpec(id, (p) => {
@@ -2065,7 +2346,7 @@ export class WorkspaceManager {
   /// Request the focused pane to toggle its scrollback search bar. Only
   /// TerminalPane exposes this; for non-terminal panes the call is a no-op.
   toggleSearchOnFocused(): void {
-    const id = this.focusedPaneId;
+    const id = this.activePaneId();
     if (!id) return;
     const pane = this.paneCaches.get(this.activeId)?.get(id);
     (pane as { toggleSearch?: () => void } | undefined)?.toggleSearch?.();
@@ -2155,6 +2436,11 @@ export class WorkspaceManager {
     };
   }
 
+  /// The office fills the window (not the mini corner view).
+  isOfficeFull(): boolean {
+    return !!this.office && !this.office.mini;
+  }
+
   toggleOffice(): void {
     // A mini office in the corner grows back first.
     if (this.office?.mini) this.office.setMini(false);
@@ -2226,6 +2512,14 @@ export class WorkspaceManager {
         return pane instanceof TerminalPane ? pane.screenText() : null;
       },
       send: (id, text) => this.sendFromOffice(id, text),
+      paste: (id, text) => {
+        const p = this.findPaneById(id);
+        return p instanceof TerminalPane && p.pasteText(text);
+      },
+      blocked: (id) => {
+        const p = this.findPaneById(id);
+        return p instanceof TerminalPane && p.screenBlock() !== null;
+      },
       // Same resolution as the backend's spawn: the pane's own pick, else
       // the workspace default; "" is the default account.
       accountOf: (id) => this.getPaneSpec(id)?.account || this.workspaceAccountOfPane(id) || "",
@@ -2460,6 +2754,214 @@ export class WorkspaceManager {
     return this._agents;
   }
 
+  // ── Prompt queue ──────────────────────────────────────────────────────────
+  // Prompts lined up for a pane's agent go out one per finished turn. The
+  // decision is promptQueue.ts's; this is the paste, the Enter and the views.
+
+  queuedCount(paneId: Uuid): number {
+    return this.promptQueues.count(paneId);
+  }
+
+  /// Open the queue dialog for the focused terminal pane.
+  queuePromptFocused(): void {
+    const id = this.activePaneId();
+    if (id) this.openQueueDialogFor(id);
+  }
+
+  openQueueDialogFor(paneId: Uuid): void {
+    if (!(this.findPaneById(paneId) instanceof TerminalPane)) return;
+    void openQueueDialog({
+      label: this.tabLabelFor(paneId),
+      hasAgent: () => !!this._agents[paneId]?.lead,
+      list: () => this.promptQueues.list(paneId),
+      add: (text) => {
+        if (this.promptQueues.add(paneId, text) < 0) return false;
+        this.queueChanged(paneId);
+        // An idle agent takes it at once.
+        this.pumpQueue(paneId);
+        return true;
+      },
+      remove: (index) => {
+        if (this.promptQueues.remove(paneId, index)) this.queueChanged(paneId);
+      },
+      clear: () => {
+        this.promptQueues.clear(paneId);
+        this.queueChanged(paneId);
+      },
+      subscribe: (cb) => {
+        this.queueListeners.add(cb);
+        return () => {
+          this.queueListeners.delete(cb);
+        };
+      },
+    });
+  }
+
+  /// The queue of `paneId` changed: repaint its badge, tab label and tree row.
+  private queueChanged(paneId: Uuid): void {
+    this.paintFlags(paneId);
+    const wsId = this.workspaceOfPane(paneId);
+    if (wsId !== null) for (const group of this.groupsFor(wsId).values()) group.refreshLabels();
+    this.notifyTree();
+    for (const cb of this.queueListeners) cb();
+    this.syncQueueTimer();
+  }
+
+  /// Run the timer only while a queue or a hand-off waits. It pumps both: a
+  /// refused delivery (RETRY_MS) and the 20 s re-arm have no other trigger.
+  private syncQueueTimer(): void {
+    const needed = this.promptQueues.queuedPanes().length > 0 || this.handoffs.size > 0;
+    if (!needed) {
+      if (this.queueTimer !== null) clearInterval(this.queueTimer);
+      this.queueTimer = null;
+      return;
+    }
+    if (this.queueTimer !== null) return;
+    this.queueTimer = setInterval(() => {
+      this.pumpHandoffs();
+      for (const id of this.promptQueues.queuedPanes()) this.pumpQueue(id);
+      this.syncQueueTimer();
+    }, QUEUE_TICK_MS);
+  }
+
+  /// Deliver the next queued prompt to `paneId` if its agent is ready for it.
+  private pumpQueue(paneId: Uuid): void {
+    const pane = this.findPaneById(paneId);
+    if (!(pane instanceof TerminalPane)) return;
+    const text = this.promptQueues.claim(
+      paneId,
+      phaseOf(this._agents[paneId]?.lead, this.paneStatus.get(paneId) ?? "idle"),
+      () => pane.screenBlock() !== null,
+      Date.now(),
+      { focused: this.focusedPaneId === paneId, inputAt: pane.userInputAt },
+    );
+    if (text !== null) void this.deliverQueued(paneId, pane, text);
+  }
+
+  /// Paste `text` the way a user paste would, then press Enter once the paste
+  /// is written (the Enter is re-checked against the agent and the screen).
+  private async deliverQueued(paneId: Uuid, pane: TerminalPane, text: string): Promise<void> {
+    const fit = (): boolean => {
+      const lead = this._agents[paneId]?.lead;
+      return !!lead && effectiveLeadStatus(lead, this.paneStatus.get(paneId) ?? "idle") !== "waiting";
+    };
+    let outcome: "delivered" | "retry" = "retry";
+    let entered = false;
+    try {
+      if (pane.pasteText(text)) {
+        // Written (even if only partly): this prompt is spent whatever
+        // follows, or it would be pasted a second time on top of itself.
+        outcome = "delivered";
+        // A torn paste gets no Enter; both cases end as "not sent".
+        if (await pane.pasteFlushed()) {
+          entered = await pane.submitAfterPaste(
+            300,
+            () => fit() && pane.screenBlock(text) === null,
+            () => this.agentSnapshotAt,
+          );
+        }
+      }
+    } finally {
+      this.promptQueues.settle(paneId, outcome, Date.now(), entered);
+      this.queueChanged(paneId);
+    }
+    if (outcome !== "delivered") return;
+    const label = this.tabLabelFor(paneId);
+    if (!entered) {
+      showToast(fill(t("queue.notSent"), { pane: label }), () => void this.focusPane(paneId), STICKY_TOAST);
+    } else if (this.workspaceOfPane(paneId) !== this.activeId) {
+      showToast(fill(t("queue.delivered"), { pane: label }), () => void this.focusPane(paneId));
+    }
+  }
+
+  // ── Broadcast input ───────────────────────────────────────────────────────
+  // While on for a workspace, what the user types or pastes into its focused
+  // terminal is mirrored to the other terminals whose tab is shown there.
+
+  isBroadcasting(wsId: number = this.activeId): boolean {
+    return this.broadcast.isOn(wsId);
+  }
+
+  onBroadcastChange(cb: () => void): () => void {
+    this.broadcastListeners.add(cb);
+    return () => {
+      this.broadcastListeners.delete(cb);
+    };
+  }
+
+  private emitBroadcast(): void {
+    for (const cb of this.broadcastListeners) cb();
+  }
+
+  toggleBroadcast(wsId: number = this.activeId): void {
+    const on = this.broadcast.toggle(wsId);
+    this.paintAllFlags(wsId);
+    this.emitBroadcast();
+    showToast(t(on ? "broadcast.on" : "broadcast.off"));
+  }
+
+  private broadcastPanes(wsId: number): BroadcastPane[] {
+    const ws = this.config.workspaces.find((w) => w.id === wsId);
+    const cache = this.paneCaches.get(wsId);
+    if (!ws || !cache) return [];
+    const shown = new Set(visiblePanes(ws.root).map((p) => p.id));
+    const zoomedId = this.zoomedPanes.get(wsId);
+    const group = zoomedId ? groupOfPane(ws.root, zoomedId) : null;
+    const zoomed = zoomedId ? new Set<Uuid>(group ? tabIds(group) : [zoomedId]) : null;
+    return applyZoom(
+      [...cache].map(([id, pane]) => ({
+        id,
+        terminal: pane instanceof TerminalPane,
+        shown: shown.has(id),
+      })),
+      zoomed,
+    );
+  }
+
+  /// Run `fn` on each terminal that mirrors `sourceId`'s user input: only
+  /// while broadcast is on, and only for the focused pane of its workspace.
+  private forBroadcastTargets(sourceId: Uuid, fn: (pane: TerminalPane) => void): void {
+    if (this.focusedPaneId !== sourceId) return;
+    const wsId = this.workspaceOfPane(sourceId);
+    if (wsId === null || !this.broadcast.isOn(wsId)) return;
+    for (const id of broadcastTargets(sourceId, this.broadcastPanes(wsId))) {
+      const pane = this.findPaneById(id);
+      if (pane instanceof TerminalPane) fn(pane);
+    }
+  }
+
+  // ── Pane badges (queued count, broadcast) ─────────────────────────────────
+
+  private paintFlags(paneId: Uuid): void {
+    const el = this.host.querySelector<HTMLElement>(`.pane[data-pane-id="${paneId}"]`);
+    if (!el) return;
+    const n = this.promptQueues.count(paneId);
+    const wsId = this.workspaceOfPane(paneId);
+    const bc =
+      wsId !== null &&
+      this.broadcast.isOn(wsId) &&
+      broadcastParticipants(this.broadcastPanes(wsId)).includes(paneId);
+    paintPaneFlags(el, {
+      queuedText: n > 0 ? fill(t("queue.badge"), { n }) : null,
+      broadcastText: bc ? t("broadcast.badge") : null,
+    });
+  }
+
+  private paintAllFlags(wsId: number): void {
+    for (const id of this.paneCaches.get(wsId)?.keys() ?? []) this.paintFlags(id);
+  }
+
+  /// The clocks behind a lead agent's elapsed time and stuck badge in the
+  /// workspace panel (epoch ms; null where unknown).
+  agentClock(paneId: Uuid): AgentClock {
+    const pane = this.findPaneById(paneId);
+    return {
+      since: officeLog.statusSince(paneId) ?? this.statusSince.get(paneId) ?? null,
+      outputAt: pane instanceof TerminalPane ? pane.outputAt : null,
+      toolSince: officeLog.toolSince(paneId),
+    };
+  }
+
   /// Subscribe to tree-relevant changes. Returns an unsubscribe function.
   onTreeChange(cb: () => void): () => void {
     this.treeListeners.add(cb);
@@ -2476,6 +2978,9 @@ export class WorkspaceManager {
   // ── Attention inbox ───────────────────────────────────────────────────────
 
   private forgetInbox(paneId: Uuid): void {
+    this.promptQueues.forget(paneId);
+    this.handoffs.delete(paneId);
+    this.syncQueueTimer();
     officeLog.clearMail(paneId);
     this.statusSince.delete(paneId);
     this.readHistoryLog.remove(paneId);
@@ -2528,6 +3033,183 @@ export class WorkspaceManager {
       status,
       since: this.statusSince.get(paneId) ?? Date.now(),
     };
+  }
+
+  // ── Quota-aware account switching ─────────────────────────────────────────
+  // Detection and ranking are accounts/quotaModel.ts; this feeds it the quota
+  // cards the Usage view reads, marks the panes, and runs the switch.
+
+  /// Re-read the per-account quotas every minute, only while a profile
+  /// exists to switch to and some live pane runs an agent that uses accounts
+  /// (see `quotaPollWanted`); the timer is stopped otherwise.
+  private syncQuotaWatch(): void {
+    const wanted = quotaPollWanted(this.accounts.length, this.liveAgentKinds());
+    if (!wanted) {
+      if (this.quotaTimer !== null) clearInterval(this.quotaTimer);
+      this.quotaTimer = null;
+      return;
+    }
+    if (this.quotaTimer !== null) return;
+    const poll = (): void => void this.pollQuota();
+    this.quotaTimer = setInterval(poll, 60_000);
+    window.setTimeout(poll, 5_000);
+  }
+
+  private liveAgentKinds(): string[] {
+    const kinds: string[] = [];
+    for (const [id, agents] of Object.entries(this._agents)) {
+      if (agents.lead && this.findPaneById(id) instanceof TerminalPane) kinds.push(agents.lead.kind);
+    }
+    return kinds;
+  }
+
+  private async pollQuota(): Promise<void> {
+    if (document.hidden || !quotaPollWanted(this.accounts.length, this.liveAgentKinds())) return;
+    try {
+      this.quotaProviders = (await api.getTokenUsage()).providers;
+    } catch {
+      return;
+    }
+    this.recomputeQuota();
+  }
+
+  /// The account `paneId`'s agent really runs under: the PTY's own when it is
+  /// live (a changed setting only applies at the next start), else the
+  /// configured one. "" = default login.
+  private runningAccountOf(paneId: Uuid): string {
+    const pane = this.findPaneById(paneId);
+    const live = pane instanceof TerminalPane ? pane.liveAccountId() : null;
+    return live ?? (this.getPaneSpec(paneId)?.account || this.workspaceAccountOfPane(paneId) || "");
+  }
+
+  private recomputeQuota(): void {
+    const marks = new Map<Uuid, QuotaMark>();
+    this.quotaAlerts.clear();
+    const candidates = switchCandidates(this.accounts.map((a) => a.id));
+    const now = Date.now() / 1000;
+    for (const [id, agents] of Object.entries(this._agents)) {
+      const kind = agents.lead?.kind;
+      if (!kind || !agentUsesAccounts(kind) || !(this.findPaneById(id) instanceof TerminalPane)) continue;
+      const alert = quotaAlert(this.quotaProviders, candidates, this.runningAccountOf(id), kind, now);
+      if (!alert) continue;
+      marks.set(id, { level: alert.level, used: alert.used });
+      this.quotaAlerts.set(id, { ...alert, kind });
+    }
+    if (setQuotaMarks(marks)) {
+      this.refreshAccountTitles();
+      this.scheduleInboxChange();
+    }
+  }
+
+  /// Panes whose agent's account is near / at its limit with another account
+  /// available, listed beside the attention inbox.
+  quotaInboxItems(): QuotaInboxItem[] {
+    const labels = this.inboxLabels();
+    const rows: QuotaInboxItem[] = [];
+    for (const [paneId, a] of this.quotaAlerts) {
+      const wsId = this.workspaceOfPane(paneId);
+      const ws = wsId === null ? null : this.config.workspaces.find((w) => w.id === wsId);
+      const spec = ws ? findPane(ws.root, paneId) : null;
+      if (wsId === null || !ws || !spec) continue;
+      rows.push({
+        paneId,
+        wsId,
+        wsLabel: formatWorkspaceLabel(wsId, ws.name ?? null, this.workspacePosition(wsId)),
+        paneLabel: paneLabel(spec, labels),
+        agentKind: a.kind,
+        level: a.level,
+        used: a.used,
+      });
+    }
+    return buildQuotaInbox(rows);
+  }
+
+  private accountNameOf(id: string): string {
+    if (id === ACCOUNT_NONE) return t("account.none");
+    return this.accounts.find((a) => a.id === id)?.name || id;
+  }
+
+  /// "Switch account...": pick another account, then close the pane's agent,
+  /// respawn the pane's shell under that account (the same `setPaneAccount` +
+  /// `spawn_pane` env path as a manual account change, which also reconciles
+  /// the hooks) and start the same agent CLI as a fresh session. A transcript
+  /// belongs to its account folder, so nothing is copied or resumed.
+  async switchAccountFor(paneId: Uuid): Promise<void> {
+    const pane = this.findPaneById(paneId);
+    const alert = this.quotaAlerts.get(paneId);
+    if (!(pane instanceof TerminalPane) || !alert) return;
+    const agent = agentDisplayName(alert.kind);
+    const detected = await api.detectAgents().catch(() => []);
+    const family = this.paneShellFamily(paneId);
+    const agentInfo = launchableAgents(detected, family).find((l) => l.agent.id === alert.kind)?.agent;
+    // The bare agent, unless the pane's own startup command shows it ran with
+    // the permission-bypass arguments: switching accounts never grants them.
+    const command = agentInfo ? switchAccountCommand(agentInfo, family, this.getPaneSpec(paneId)?.startup_cmd) : null;
+    if (!command) {
+      showToast(fill(t("quota.noLauncher"), { agent }));
+      return;
+    }
+    const cwd = (await api.getPaneCwd(paneId).catch(() => null)) ?? this.getPaneSpec(paneId)?.cwd ?? null;
+    const choice = await askSwitchAccount({
+      pane: this.tabLabelFor(paneId),
+      agent,
+      options: alert.options,
+      nameOf: (id) => this.accountNameOf(id),
+      colorOf: (id) => normalizeColor(this.accounts.find((a) => a.id === id)?.color ?? ""),
+      command,
+      note: handoffNote({ cwd, branch: null }),
+    });
+    if (!choice) return;
+    const lead = this._agents[paneId]?.lead;
+    if (!lead) {
+      showToast(t("quota.noLeadNow"));
+      return;
+    }
+    if (lead.status === "working" || lead.status === "waiting") {
+      const ok = await askConfirm(
+        fill(t("quota.confirmBusy"), { agent, account: this.accountNameOf(choice.account) }),
+        t("quota.ok"),
+      );
+      if (!ok) return;
+    }
+    // The respawn reads the account from the spec, so set it first and put
+    // the previous one back if the shell did not actually restart.
+    const previous = this.getPaneSpec(paneId)?.account ?? "";
+    this.setPaneAccount(paneId, choice.account);
+    const handoff: Handoff | null = choice.handoff
+      ? { text: choice.handoff, startedAt: Date.now(), respawnedAt: null, seenGone: false }
+      : null;
+    if (handoff) {
+      this.handoffs.set(paneId, handoff);
+      this.syncQueueTimer();
+    }
+    // Typed once; the pane's saved startup command is left as it was.
+    const restarted = await pane.respawn(command);
+    if (!restarted) {
+      if (handoff && this.handoffs.get(paneId) === handoff) this.handoffs.delete(paneId);
+      this.setPaneAccount(paneId, previous);
+      this.syncQueueTimer();
+      showToast(fill(t("quota.switchFailed"), { account: this.accountNameOf(choice.account) }));
+      this.recomputeQuota();
+      return;
+    }
+    showToast(fill(t("quota.switched"), { agent, account: this.accountNameOf(choice.account) }));
+    if (handoff) handoff.respawnedAt = Date.now();
+    this.recomputeQuota();
+  }
+
+  /// Move a hand-off note into the pane's prompt queue once the restarted
+  /// agent shows up (see `handoffStep`: never the old lead lingering after
+  /// the kill). The queue then delivers it when the agent is idle.
+  private pumpHandoffs(): void {
+    const now = Date.now();
+    for (const [id, h] of this.handoffs) {
+      const step = handoffStep(h, !!this._agents[id]?.lead, this.agentSnapshotAt, now);
+      if (step === "wait") continue;
+      this.handoffs.delete(id);
+      if (step === "queue" && this.promptQueues.add(id, h.text) >= 0) this.queueChanged(id);
+    }
+    this.syncQueueTimer();
   }
 
   /// Every pane in attention/done across hydrated workspaces, attention first.
@@ -2586,6 +3268,10 @@ export class WorkspaceManager {
     // only the scan heartbeat (`noteAgentScan`) advances `agentSnapshotAt`.
     this._agents = next;
     this.notifyTree();
+    this.recomputeQuota();
+    this.syncQuotaWatch();
+    this.pumpHandoffs();
+    for (const id of this.promptQueues.queuedPanes()) this.pumpQueue(id);
   }
 
   /// The backend finished a process scan (whether or not the agents changed).
@@ -2595,6 +3281,8 @@ export class WorkspaceManager {
   noteAgentScan(sampledAtMs: number): void {
     if (Number.isFinite(sampledAtMs) && sampledAtMs > this.agentSnapshotAt) {
       this.agentSnapshotAt = sampledAtMs;
+      this.pumpHandoffs();
+      for (const id of this.promptQueues.queuedPanes()) this.pumpQueue(id);
     }
   }
 
@@ -2652,6 +3340,10 @@ export class WorkspaceManager {
     submit: boolean,
     expectKind?: string,
     origin?: { from: Uuid | null; kind: OfficeMessageKind },
+    /// Whether to switch to the pane afterwards. Default: only when it is in
+    /// the workspace already on screen; a send to another workspace stays in
+    /// the background and raises a toast that jumps there.
+    focus?: boolean,
   ): Promise<"sent" | "pasted" | "waiting" | "no-paste" | "gone" | "failed"> {
     const pane = this.findPaneById(paneId);
     if (!(pane instanceof TerminalPane)) return "gone";
@@ -2668,7 +3360,11 @@ export class WorkspaceManager {
     if (!pane.pasteText(text)) return "no-paste";
     if (!(await pane.pasteFlushed())) return "failed";
     if (origin) this.deliverToOffice(origin.from, paneId, origin.kind, text);
-    await this.focusPane(paneId);
+    if (shouldFocusAfterSend(focus, this.workspaceOfPane(paneId), this.activeId)) {
+      await this.focusPane(paneId);
+    } else {
+      showToast(fill(t("toast.sentTo"), { pane: this.tabLabelFor(paneId) }), () => void this.focusPane(paneId));
+    }
     if (!submit) return "pasted";
     const entered = await pane.submitAfterPaste(
       300,

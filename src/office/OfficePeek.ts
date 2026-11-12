@@ -7,7 +7,7 @@
 import type { Uuid } from "../types";
 import type { PaneStatus } from "../terminal/paneStatus";
 import { t } from "../i18n/i18n";
-import { PEEK_KEYS, directKey, menuOptions, type MenuOption, type PeekKey } from "./peekKeys";
+import { PEEK_KEYS, directKey, menuOptions, sameOption, type MenuOption, type PeekKey } from "./peekKeys";
 
 export type PeekSendResult = "sent" | "blocked" | "multiline" | "failed" | "gone";
 
@@ -18,6 +18,13 @@ export interface PeekSource {
   key(paneId: Uuid, key: PeekKey): void;
   /// Write raw bytes to the pane, as typing would.
   type(paneId: Uuid, data: string): void;
+  /// Paste text the way Ctrl+V would (bracketed, so newlines do not run or
+  /// submit). `false` when the pane's app takes no bracketed paste or a
+  /// dialog is up: nothing was written.
+  paste?(paneId: Uuid, text: string): boolean;
+  /// The pane's screen shows a dialog that needs the user's keys; text must
+  /// not be typed or pasted over it.
+  blocked?(paneId: Uuid): boolean;
   /// The pane's app wants application cursor keys (DECCKM).
   cursorKeys(paneId: Uuid): boolean;
   /// Leave the office for the pane itself.
@@ -152,7 +159,7 @@ export class OfficePeek {
       const text = ev.clipboardData?.getData("text/plain");
       if (!text) return;
       ev.preventDefault();
-      this.send(text);
+      this.pasteInto(text);
     });
 
     // The choices of a menu on screen, one click each.
@@ -179,13 +186,13 @@ export class OfficePeek {
     answerSend.type = "button";
     answerSend.className = "office-peek__send";
     answerSend.textContent = t("office.peek.send");
-    answerSend.addEventListener("click", () => this.submitAnswer());
+    answerSend.addEventListener("click", () => void this.submitAnswer());
     this.answerInput.addEventListener("keydown", (ev) => {
       ev.stopPropagation();
       if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === "Enter") {
         ev.preventDefault();
-        this.submitAnswer();
+        void this.submitAnswer();
       } else if (ev.key === "Escape") {
         ev.preventDefault();
         this.closeAnswer();
@@ -338,9 +345,17 @@ export class OfficePeek {
       return;
     }
     const pane = this.pane;
+    if (!pane) return;
+    // The screen may have moved on since the buttons were painted: send the
+    // number only if this very choice is still up.
+    if (!sameOption(this.source.screen(pane), o)) {
+      this.shownOptions = "";
+      this.poll(true);
+      return;
+    }
     this.send(o.n);
     this.input.focus();
-    if (pane) this.onAnswered?.(pane);
+    this.onAnswered?.(pane);
   }
 
   close(): void {
@@ -395,6 +410,41 @@ export class OfficePeek {
     setTimeout(() => this.poll(), 60);
   }
 
+  /// A paste on the screen: through the pane's paste path (bracketed), never
+  /// raw. Without bracketed paste a line break would run or submit, so only a
+  /// single line, stripped of control characters, is typed.
+  private pasteInto(text: string): void {
+    if (!this.pane) return;
+    // A dialog is up: a paste (or the typed fallback) could answer it.
+    if (this.source.blocked?.(this.pane)) {
+      this.noteEl.textContent = t("office.peek.blocked");
+      return;
+    }
+    if (this.source.paste?.(this.pane, text)) {
+      setTimeout(() => this.poll(), 60);
+      return;
+    }
+    const line = text.replace(/[\u0000-\u001f\u007f]/g, "");
+    if (/[\r\n]/.test(text.trim())) {
+      this.noteEl.textContent = t("office.peek.multiline");
+      return;
+    }
+    if (line) this.send(line);
+  }
+
+  /// Poll the pane's screen until `ok` holds; false after `timeoutMs`, or if
+  /// the peek moved to another pane meanwhile.
+  private async waitScreen(pane: Uuid, ok: (lines: string[]) => boolean, timeoutMs: number): Promise<boolean> {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      if (this.pane !== pane) return false;
+      const lines = this.source.screen(pane);
+      if (lines && ok(lines)) return true;
+      if (Date.now() >= end) return false;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+  }
+
   private openAnswer(o: MenuOption): void {
     this.answerFor = o;
     const label = this.answerEl.querySelector<HTMLElement>(".office-peek__answer-label");
@@ -415,23 +465,47 @@ export class OfficePeek {
     this.input.focus();
   }
 
-  /// Pick the choice, give the agent's field a moment to open, then type the
-  /// text and press Enter.
-  private submitAnswer(): void {
+  /// Pick the choice, wait until the agent's field shows as open (the
+  /// choice is pointed at), then type the text; press Enter once the text is
+  /// on screen. Gives up without typing if the screen never gets there.
+  private async submitAnswer(): Promise<void> {
     const o = this.answerFor;
     const text = this.answerInput.value.replace(/\r?\n/g, " ").trim();
-    if (!o || !text || !this.pane) return;
+    if (!o || !text || !this.pane || this.sending) return;
     const pane = this.pane;
-    this.source.type(pane, o.n);
-    setTimeout(() => {
-      this.source.type(pane, text);
-      setTimeout(() => {
-        this.source.type(pane, "\r");
-        this.poll();
-        this.onAnswered?.(pane);
-      }, 120);
-    }, 250);
+    this.sending = true;
     this.closeAnswer();
+    try {
+      const before = sameOption(this.source.screen(pane), o);
+      if (!before) {
+        this.noteEl.textContent = t("office.peek.failed");
+        return;
+      }
+      this.source.type(pane, o.n);
+      const t0 = Date.now();
+      // Already pointed at: nothing visible changes, so give the key a beat.
+      const opened = await this.waitScreen(
+        pane,
+        (lines) => sameOption(lines, o)?.selected === true && (!before.selected || Date.now() - t0 >= 200),
+        2000,
+      );
+      if (!opened) {
+        this.noteEl.textContent = t("office.peek.failed");
+        return;
+      }
+      this.source.type(pane, text);
+      const tail = text.slice(-24).replace(/\s+/g, " ");
+      const typed = await this.waitScreen(pane, (lines) => lines.join(" ").replace(/\s+/g, " ").includes(tail), 1500);
+      if (!typed) {
+        this.noteEl.textContent = t("office.peek.failed");
+        return;
+      }
+      this.source.type(pane, "\r");
+      this.onAnswered?.(pane);
+    } finally {
+      this.sending = false;
+      this.poll();
+    }
   }
 
   private renderOptions(options: readonly MenuOption[]): void {

@@ -296,8 +296,41 @@ pub fn distinct(pairs: impl IntoIterator<Item = (String, String)>) -> Vec<DirGro
     out.into_iter().map(|(_, g)| g).collect()
 }
 
-/// Folder name under ymux's config dir that holds managed accounts.
+/// Folder name under a managed-accounts base that holds the accounts.
 pub const MANAGED_SUBDIR: &str = "accounts";
+
+/// Folder in the user's profile that is the base for NEW managed accounts:
+/// `~/.ymux/accounts/<id>/{claude,codex}`. Not the config dir: the Microsoft
+/// Store (MSIX) build virtualises `%APPDATA%` for ymux alone, while the
+/// agent CLIs it launches would use `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the
+/// real one (CLAUDE.md rule 18). The profile root is never virtualised.
+pub const MANAGED_HOME_DIR: &str = ".ymux";
+
+/// Base for new managed accounts: `<home>/.ymux`.
+pub fn managed_base(home: Option<&Path>) -> Option<PathBuf> {
+    home.map(|h| h.join(MANAGED_HOME_DIR))
+}
+
+/// Every base a managed account may live under, newest layout first: the
+/// profile base for accounts made now, then the config dir
+/// (`<config>/accounts`) for accounts made before. Account removal is
+/// confined to exactly these; each account keeps whatever path its profile
+/// saved.
+pub fn managed_bases(home: Option<&Path>, config_dir: Option<&Path>) -> Vec<PathBuf> {
+    managed_base(home)
+        .into_iter()
+        .chain(config_dir.map(Path::to_path_buf))
+        .collect()
+}
+
+/// Whether a live pane was started with `root`'s login folders. `dirs` are
+/// the panes' `AgentDirs`, compared with `ypath` (rule 15).
+pub fn root_in_use<'a>(root: &Path, dirs: impl IntoIterator<Item = &'a AgentDirs>) -> bool {
+    let claude = root.join("claude").display().to_string();
+    let codex = root.join("codex").display().to_string();
+    dirs.into_iter()
+        .any(|d| ypath::same_path(&d.claude, &claude) || ypath::same_path(&d.codex, &codex))
+}
 
 /// The login folders ymux picks for an account the user added from the
 /// launcher or Settings without naming any path:
@@ -332,12 +365,12 @@ pub fn managed_claude_env(base: &Path, id: &str, home: Option<&Path>) -> Option<
     injected_value(&claude.display().to_string(), home)
 }
 
-/// Delete a managed account's folder (`<base>/accounts/<id>`, see
-/// [`managed_root`]). A folder that is already gone is fine. Never leaves
-/// `base`: refused when the id is invalid, or when `<base>/accounts` or the
-/// account folder is a symlink (or Windows junction) or not a directory;
-/// `remove_dir_all` itself does not follow links inside the tree.
-pub fn remove_managed_root(base: &Path, id: &str) -> std::io::Result<()> {
+/// The folder `<base>/accounts/<id>` of a managed account, if it exists, for
+/// the caller to remove (settings moves it to the trash). `Ok(None)` when it
+/// is already gone. Never leaves `base`: refused when the id is invalid, or
+/// when `<base>/accounts` or the account folder is a symlink (or Windows
+/// junction) or not a directory.
+pub fn existing_managed_root(base: &Path, id: &str) -> std::io::Result<Option<PathBuf>> {
     use std::io::{Error, ErrorKind};
     let root = managed_root(base, id)
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid account id"))?;
@@ -346,7 +379,7 @@ pub fn remove_managed_root(base: &Path, id: &str) -> std::io::Result<()> {
             Ok(m) if m.file_type().is_symlink() || is_reparse_point(&m) => {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("{} is a link; refusing to delete through it", dir.display()),
+                    format!("{} is a link; refusing to remove through it", dir.display()),
                 ))
             }
             Ok(m) if !m.is_dir() => {
@@ -356,14 +389,22 @@ pub fn remove_managed_root(base: &Path, id: &str) -> std::io::Result<()> {
                 ))
             }
             Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         }
     }
-    match std::fs::remove_dir_all(&root) {
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        other => other,
+    Ok(Some(root))
+}
+
+/// [`existing_managed_root`] over every base in `bases`: the folders that
+/// exist for `id`. The whole call fails on the first refusal, so nothing is
+/// handed back for a doubtful id.
+pub fn existing_managed_roots(bases: &[PathBuf], id: &str) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for base in bases {
+        out.extend(existing_managed_root(base, id)?);
     }
+    Ok(out)
 }
 
 /// A Windows junction (or other reparse point) is not `is_symlink` but is
@@ -488,37 +529,101 @@ mod tests {
     }
 
     #[test]
-    fn remove_managed_root_deletes_only_that_account() {
+    fn existing_managed_root_finds_only_that_account() {
         let base = scratch();
         for id in ["a1", "b2"] {
             let (claude, codex) = managed_dirs(&base, id).unwrap();
             std::fs::create_dir_all(&claude).unwrap();
             std::fs::create_dir_all(&codex).unwrap();
-            std::fs::write(claude.join(".credentials.json"), b"{}").unwrap();
         }
-        remove_managed_root(&base, "a1").unwrap();
-        assert!(!managed_root(&base, "a1").unwrap().exists());
-        assert!(managed_root(&base, "b2").unwrap().is_dir());
-        // Already gone, or never created: fine.
-        remove_managed_root(&base, "a1").unwrap();
-        remove_managed_root(&base, "zz9").unwrap();
         assert_eq!(
-            remove_managed_root(&base, "../b2").unwrap_err().kind(),
-            std::io::ErrorKind::InvalidInput
+            existing_managed_root(&base, "a1").unwrap(),
+            Some(managed_root(&base, "a1").unwrap())
         );
+        // Never created: nothing to remove.
+        assert_eq!(existing_managed_root(&base, "zz9").unwrap(), None);
+        for bad in ["../b2", "", "A1", "a/b", "none"] {
+            assert_eq!(
+                existing_managed_root(&base, bad).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput,
+                "{bad:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn removal_is_confined_to_the_two_account_roots() {
+        let home = scratch();
+        let cfg = scratch();
+        let bases = managed_bases(Some(&home), Some(&cfg));
+        assert_eq!(bases, vec![home.join(".ymux"), cfg.clone()]);
+        // The same id in both layouts, plus look-alike folders that must stay.
+        for base in &bases {
+            std::fs::create_dir_all(managed_root(base, "a1").unwrap().join("claude")).unwrap();
+        }
+        std::fs::create_dir_all(home.join("accounts").join("a1")).unwrap();
+        std::fs::create_dir_all(home.join(".ymux").join("other").join("a1")).unwrap();
+        let roots = existing_managed_roots(&bases, "a1").unwrap();
+        assert_eq!(
+            roots,
+            vec![
+                home.join(".ymux").join("accounts").join("a1"),
+                cfg.join("accounts").join("a1"),
+            ]
+        );
+        // Ids that could climb out are refused outright.
+        for bad in ["..", "../..", "a1/..", "a1\\.."] {
+            assert!(existing_managed_roots(&bases, bad).is_err(), "{bad:?}");
+        }
+        // No home dir: only the config layout remains.
+        assert_eq!(managed_bases(None, Some(&cfg)), vec![cfg.clone()]);
+        assert!(managed_bases(None, None).is_empty());
+        for d in [home, cfg] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    #[test]
+    fn root_in_use_matches_either_login_folder_of_a_live_pane() {
+        let base = scratch();
+        let root = managed_root(&base, "a1").unwrap();
+        let dirs = |claude: &str, codex: &str| AgentDirs {
+            claude: claude.to_string(),
+            codex: codex.to_string(),
+            claude_env: None,
+        };
+        let theirs = dirs("/home/u/.claude", "/home/u/.codex");
+        let ours_claude = dirs(&root.join("claude").display().to_string(), "/home/u/.codex");
+        let ours_codex = dirs("/home/u/.claude", &root.join("codex").display().to_string());
+        assert!(!root_in_use(&root, [&theirs]));
+        assert!(!root_in_use(&root, std::iter::empty()));
+        assert!(root_in_use(&root, [&theirs, &ours_claude]));
+        assert!(root_in_use(&root, [&ours_codex]));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn managed_base_is_dot_ymux_under_home() {
+        let home = PathBuf::from("/home/u");
+        let base = managed_base(Some(&home)).unwrap();
+        let (claude, codex) = managed_dirs(&base, "a1b2").unwrap();
+        let root = home.join(".ymux").join("accounts").join("a1b2");
+        assert_eq!(claude, root.join("claude"));
+        assert_eq!(codex, root.join("codex"));
+        assert!(managed_base(None).is_none());
     }
 
     #[cfg(unix)]
     #[test]
-    fn remove_managed_root_never_follows_a_symlink_out_of_base() {
+    fn existing_managed_root_never_follows_a_symlink_out_of_base() {
         let base = scratch();
         let outside = scratch();
         std::fs::write(outside.join("precious"), b"x").unwrap();
         std::fs::create_dir_all(base.join("accounts")).unwrap();
         // The account folder itself is a link.
         std::os::unix::fs::symlink(&outside, base.join("accounts").join("a1")).unwrap();
-        assert!(remove_managed_root(&base, "a1").is_err());
+        assert!(existing_managed_root(&base, "a1").is_err());
         assert!(outside.join("precious").is_file());
         // `accounts` is a link.
         let base2 = scratch();
@@ -526,7 +631,7 @@ mod tests {
         std::fs::create_dir_all(fake.join("a1")).unwrap();
         std::fs::write(fake.join("a1").join("precious"), b"x").unwrap();
         std::os::unix::fs::symlink(&fake, base2.join("accounts")).unwrap();
-        assert!(remove_managed_root(&base2, "a1").is_err());
+        assert!(existing_managed_root(&base2, "a1").is_err());
         assert!(fake.join("a1").join("precious").is_file());
         for d in [base, outside, base2, fake] {
             let _ = std::fs::remove_dir_all(d);

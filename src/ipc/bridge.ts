@@ -8,6 +8,7 @@ import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   ActivityRecord,
+  DigestTestResult,
   WebhookDestStatus,
   WebhookPreview,
   AgentSnapshot,
@@ -21,6 +22,7 @@ import type {
   Uuid,
 } from "../types";
 import type { YTheme, ConfigPathKind } from "../settings/types";
+import type { SelfTestReport } from "../settings/selfTestModel";
 import type { ResumeOutcome } from "../terminal/resumePlan";
 import type { FileEntry } from "../files/fileModel";
 import type { Eol } from "../editor/eol";
@@ -101,6 +103,39 @@ export interface StatusEntry {
   orig: string;
 }
 
+/// `git::KeepRequest` (camelCase on the wire).
+export interface KeepRequest {
+  repo: string;
+  baseBranch: string;
+  runId: string;
+  keepBranch: string;
+  others: string[];
+  removeKeptWorktree: boolean;
+  discardDirtyOthers: boolean;
+  dryRun: boolean;
+  /// Skip the merge, run only the cleanup (refused with `not-merged` unless
+  /// the kept branch is already in the base branch).
+  cleanupOnly: boolean;
+}
+
+/// `git::KeepReport`. `outcome`: ok (dry run passed) | would-conflict (dry
+/// run) | merged | cleaned (`cleanupOnly` done) | refused | conflict | failed.
+export interface KeepReport {
+  outcome: "ok" | "would-conflict" | "merged" | "cleaned" | "refused" | "conflict" | "failed";
+  reason: string;
+  files: string[];
+  detail: string;
+  left_mid_merge: boolean;
+  merged_commit: string;
+  removed_worktrees: { branch: string; path: string }[];
+  deleted_branches: string[];
+  kept_worktree_removed: boolean;
+  skipped: { branch: string; path: string; reason: string; files: string[] }[];
+  errors: { step: string; branch: string; detail: string }[];
+  /// Dry run: git is too old to check for conflicts (a warning).
+  conflict_check_unavailable: boolean;
+}
+
 /// `git::WorkStatus`: what a checkout or worktree removal would touch.
 export interface WorkStatus {
   detached: boolean;
@@ -136,6 +171,14 @@ export function describeError(e: unknown): string {
 }
 
 /// Call a Tauri command and surface its error as a plain `Error`.
+/// Call-order stamp for editor draft saves/deletes (see `drafts::DraftOrder`).
+/// Seeded from the clock so a reloaded page never restarts below the backend's
+/// newest stamp.
+let draftSeq = Date.now() * 1000;
+function nextDraftSeq(): number {
+  return ++draftSeq;
+}
+
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return (await tauriInvoke(cmd, args)) as T;
@@ -315,6 +358,8 @@ export const gitApi = {
   /// worktree nested under it).
   agentPanesForRoot: (root: string): Promise<Uuid[]> =>
     callKind("agent_panes_for_root", { root }),
+  /// Fan-out "keep this lane": check, merge into the base branch, clean up.
+  keepLane: (keep: KeepRequest): Promise<KeepReport> => callKind("git_keep_lane", { keep }),
   worktreeRemove: (path: string, force: boolean): Promise<void> =>
     callKind("git_worktree_remove", { path, force }),
 };
@@ -359,6 +404,16 @@ export const webhookApi = {
   /// What the latest turn_end would send (null when there is none yet).
   preview: (id: string): Promise<WebhookPreview | null> => call("webhook_preview", { id }),
   status: (): Promise<Record<string, WebhookDestStatus>> => call("webhook_status"),
+  /// A test send of today's digest so far to every enabled destination with the
+  /// daily digest on. Does not count as the day's digest.
+  sendDigestTest: (): Promise<DigestTestResult> => call("webhook_send_digest_test"),
+};
+
+/// Agent tracking diagnostics (src-tauri/src/activity/runtime.rs).
+export const agentApi = {
+  /// The "Test agent tracking" checklist. Read-only for settings.json; the
+  /// report carries no token, secret or prompt.
+  selfTest: (): Promise<SelfTestReport> => call("agent_tracking_selftest"),
 };
 
 export const summarizerApi = {
@@ -591,12 +646,15 @@ export const api = {
   /// An editor pane's local draft of unsaved content. `src/editor/draft.ts`
   /// owns the format; `src-tauri/src/drafts.rs` stores it opaquely. Rejects
   /// with a `YmuxCallError` so `too_large` (over the cap) is distinguishable.
+  /// Every save/delete carries a call-order stamp so the backend can drop a
+  /// save that an async command start reordered behind a later delete.
   saveEditorDraft: (id: Uuid, blob: string): Promise<void> =>
-    callKind("save_editor_draft", { paneId: id, blob }),
+    callKind("save_editor_draft", { paneId: id, seq: nextDraftSeq(), blob }),
 
   loadEditorDraft: (id: Uuid): Promise<string> => call("load_editor_draft", { paneId: id }),
 
-  deleteEditorDraft: (id: Uuid): Promise<void> => call("delete_editor_draft", { paneId: id }),
+  deleteEditorDraft: (id: Uuid): Promise<void> =>
+    call("delete_editor_draft", { paneId: id, seq: nextDraftSeq() }),
 
   /// Pane ids with a draft on disk (the startup sweep).
   listEditorDrafts: (): Promise<Uuid[]> => call("list_editor_drafts"),

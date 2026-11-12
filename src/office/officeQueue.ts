@@ -55,6 +55,35 @@ export function shortDuration(ms: number, lang = "en"): string {
 /// translations people run them in.
 const YES = /^(yes|y|allow|approve|proceed|accept|ok|continue|run)\b|^(예|네|허용|승인|はい|許可|是|允许|确认|sí|si|oui|sim|да|evet|ja|có)(\b|\s|,|$)/i;
 
+/// Wording of a "yes" that grants more than this one request: standing
+/// permission, a mode switch or trust. Approve-all must never pick these.
+const ESCALATING = new RegExp(
+  [
+    // English
+    "bypass", "auto[- ]?accept", "accept edits", "don't ask", "do not ask", "never ask", "ask(?:ing)? again",
+    "trust", "always", "\\ball\\b", "permanent", "session", "from now on", "remember", "persist",
+    "for this project", "this project",
+    // ko, ja, zh
+    "항상", "다시 묻지", "모든", "신뢰", "세션", "기억", "이 프로젝트", "영구",
+    "常に", "毎回", "すべて", "セッション", "今後", "確認しない", "記憶", "このプロジェクト", "永続",
+    "总是", "始终", "所有", "信任", "会话", "不再询问", "不再提示", "记住", "本项目", "此项目", "永久",
+    // es, fr, de, ru, pt
+    "siempre", "sesión", "no volver a preguntar", "no preguntar más", "recordar", "este proyecto", "permanente",
+    "toujours", "ne plus (?:me )?demander", "mémoriser", "retenir", "ce projet", "définitivement",
+    "immer", "sitzung", "nicht mehr fragen", "nie wieder fragen", "merken", "dieses projekt", "dauerhaft",
+    "всегда", "сесси", "не спрашивать", "запомнить", "проект", "навсегда",
+    "sempre", "sessão", "não perguntar", "lembrar", "este projeto",
+  ].join("|"),
+  "i",
+);
+
+/// True for a plain one-time approval ("Yes", "Allow", "Yes, proceed").
+export function isPlainYes(label: string): boolean {
+  // Curly apostrophes ("don’t ask again") must read like the straight one.
+  const l = label.trim().replace(/[‘’ʼ]/g, "'");
+  return YES.test(l) && !ESCALATING.test(l);
+}
+
 /// The menu choice that approves what a waiting agent asks, if its screen
 /// shows a menu whose first choice is a plain "yes" (not one that opens a
 /// text field).
@@ -62,7 +91,7 @@ export function approveOption(screen: readonly string[] | null): MenuOption | nu
   if (!screen) return null;
   const options = menuOptions(screen);
   const first = options[0];
-  return first && !first.input && YES.test(first.label.trim()) ? first : null;
+  return first && !first.input && isPlainYes(first.label) ? first : null;
 }
 
 /// After this long without output a working agent looks stuck.

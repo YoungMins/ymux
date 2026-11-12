@@ -3,6 +3,7 @@
 
 import type {
   AgentSnapshot,
+  AgentSource,
   AgentStatus,
   PaneAgents,
   PaneSpec,
@@ -30,6 +31,8 @@ export interface AgentRow {
   /// 1 = lead (or a subagent with no lead), 2 = subagent nested under the lead.
   depth: 1 | 2;
   tool: string | null;
+  /// The pane's lead agent (the only row with timing data), not a subagent.
+  lead: boolean;
 }
 
 /// One tab of a multi-tab pane. Spec §4: the tree becomes Workspace › Pane ›
@@ -85,6 +88,15 @@ export function paneStatusToAgentStatus(s: PaneStatus): AgentStatus {
   }
 }
 
+/// A lead's status as the UI and the prompt queue should read it: the
+/// backend's own for a hook-fed lead, the pane's for a process-scan lead.
+export function effectiveLeadStatus(
+  lead: { source: AgentSource; status: AgentStatus },
+  paneStatus: PaneStatus,
+): AgentStatus {
+  return lead.source === "process" ? paneStatusToAgentStatus(paneStatus) : lead.status;
+}
+
 export function paneLabel(spec: PaneSpec, labels: TreeLabels): string {
   if (spec.pane_kind === "token_usage") return spec.title || labels.token_usage || "AI token usage";
   if ((spec.pane_kind ?? "terminal") === "terminal") {
@@ -114,9 +126,10 @@ export function agentRows(
     rows.push({
       key: `${paneId}:lead`,
       label: lead.kind,
-      status: lead.source === "process" ? paneStatusToAgentStatus(paneStatus) : lead.status,
+      status: effectiveLeadStatus(lead, paneStatus),
       depth: 1,
       tool: lead.tool,
+      lead: true,
     });
   }
   const subDepth: 1 | 2 = lead ? 2 : 1;
@@ -127,6 +140,7 @@ export function agentRows(
       status: s.status,
       depth: subDepth,
       tool: null,
+      lead: false,
     });
   }
   return rows;

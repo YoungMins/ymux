@@ -7,6 +7,7 @@
 pub mod backoff;
 pub mod client;
 pub mod delivery;
+pub mod digest;
 pub mod hmac;
 pub mod payload;
 pub mod queue;
@@ -46,6 +47,9 @@ pub struct WebhookDestination {
     pub max_file_mb: u32,
     pub max_total_mb: u32,
     pub max_files: u32,
+    /// Also receive the daily digest (`kind = "digest"`), sent once per local
+    /// day at/after `ActivityConfig::digest_hour`. Independent of `events`.
+    pub daily_digest: bool,
 }
 
 impl WebhookDestination {
@@ -53,6 +57,16 @@ impl WebhookDestination {
     /// [`is_valid_dest_id`]). A destination without one is never delivered to.
     pub fn has_valid_id(&self) -> bool {
         is_valid_dest_id(&self.id)
+    }
+
+    /// Whether an event of `kind` is meant for this destination: the digest
+    /// by its own switch, the per-turn kinds by `events`.
+    pub fn wants(&self, kind: &str) -> bool {
+        if kind == "digest" {
+            self.daily_digest
+        } else {
+            self.events.iter().any(|k| k == kind)
+        }
     }
 }
 
@@ -73,6 +87,7 @@ impl Default for WebhookDestination {
             max_file_mb: 8,
             max_total_mb: 8,
             max_files: 4,
+            daily_digest: false,
         }
     }
 }
@@ -111,6 +126,8 @@ pub struct DeliveryEvent {
     pub tests: Option<TestInfo>,
     pub duration_ms: Option<u64>,
     pub prompt: Option<String>,
+    /// The day's numbers of a `digest` event; `None` for every other kind.
+    pub digest: Option<digest::Digest>,
     /// Backend-side context for the attachment planner. Never serialized
     /// (not in the queue file, not in a payload): the queue stores the
     /// planner's verdict, not its input.

@@ -240,6 +240,16 @@ fn normalize_windows(path: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The expected spelling of a forward-slash path: the parser turns `/`
+    /// into `\` on Windows hosts (see `normalize_windows`).
+    fn host_path(unix: &str) -> String {
+        if cfg!(windows) {
+            unix.replace('/', "\\")
+        } else {
+            unix.to_string()
+        }
+    }
+
     fn parse_all(bytes: &[u8]) -> Vec<String> {
         let mut p = Osc7Parser::new();
         p.feed(bytes)
@@ -249,14 +259,14 @@ mod tests {
     fn parses_st_terminated_sequence() {
         let input = b"\x1b]7;file://host/home/alice\x1b\\";
         let out = parse_all(input);
-        assert_eq!(out, vec!["/home/alice".to_string()]);
+        assert_eq!(out, vec![host_path("/home/alice")]);
     }
 
     #[test]
     fn parses_bel_terminated_sequence() {
         let input = b"\x1b]7;file://host/tmp\x07";
         let out = parse_all(input);
-        assert_eq!(out, vec!["/tmp".to_string()]);
+        assert_eq!(out, vec![host_path("/tmp")]);
     }
 
     #[test]
@@ -264,7 +274,7 @@ mod tests {
         // OSC 0 (window title) should be ignored.
         let input = b"\x1b]0;My Window\x07extra\x1b]7;file://h/foo\x07";
         let out = parse_all(input);
-        assert_eq!(out, vec!["/foo".to_string()]);
+        assert_eq!(out, vec![host_path("/foo")]);
     }
 
     #[test]
@@ -275,21 +285,21 @@ mod tests {
         for chunk in input.chunks(3) {
             collected.extend(p.feed(chunk));
         }
-        assert_eq!(collected, vec!["/home/alice".to_string()]);
+        assert_eq!(collected, vec![host_path("/home/alice")]);
     }
 
     #[test]
     fn decodes_percent_escapes() {
         let input = b"\x1b]7;file://host/path%20with%20spaces\x07";
         let out = parse_all(input);
-        assert_eq!(out, vec!["/path with spaces".to_string()]);
+        assert_eq!(out, vec![host_path("/path with spaces")]);
     }
 
     #[test]
     fn extracts_latest_cwd_when_many_prompts() {
         let input = b"hi\x1b]7;file://h/a\x07more\x1b]7;file://h/b\x07tail";
         let out = parse_all(input);
-        assert_eq!(out, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(out, vec![host_path("/a"), host_path("/b")]);
     }
 
     #[test]
@@ -310,7 +320,7 @@ mod tests {
     fn accepts_empty_hostname() {
         let input = b"\x1b]7;file:///usr/local\x07";
         let out = parse_all(input);
-        assert_eq!(out, vec!["/usr/local".to_string()]);
+        assert_eq!(out, vec![host_path("/usr/local")]);
     }
 
     #[test]
@@ -331,7 +341,7 @@ mod tests {
         let mut p = Osc7Parser::new();
         let _ = p.feed(&input);
         let out = p.feed(b"\x1b]7;file://h/ok\x07");
-        assert_eq!(out, vec!["/ok".to_string()]);
+        assert_eq!(out, vec![host_path("/ok")]);
     }
 
     /// A planted OSC 7 must not be able to make a share the pane's cwd: the

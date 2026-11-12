@@ -8,6 +8,13 @@
 //! (best-effort) so the rename itself survives a crash. The temp file never
 //! outlives a failure.
 //!
+//! There is no directory sync on Windows and the Unix one is best-effort, so
+//! one atomic write cannot make a rename durable. A caller that deletes
+//! something because a file holds it now (the token-usage retirement) must not
+//! rely on this: it writes the new file, keeps the previous one as a backup,
+//! and deletes the source only on a LATER pass, after reading the new file back
+//! and refreshing the backup (see `token_usage/index.rs`).
+//!
 //! Pure `std` (plus `uuid` for the temp name), not behind `desktop`.
 
 use std::fs;
@@ -66,7 +73,7 @@ pub fn write_atomic_with(
             }
         }
         drop(file);
-        fs::rename(&tmp, path)
+        rename_retrying(&tmp, path)
     })();
     if let Err(e) = result {
         let _ = fs::remove_file(&tmp);
@@ -74,6 +81,37 @@ pub fn write_atomic_with(
     }
     sync_parent(path);
     Ok(())
+}
+
+/// `fs::rename`, retried a few times on Windows when the target is briefly
+/// held open by an antivirus scanner or indexer (`PermissionDenied`).
+fn rename_retrying(from: &Path, to: &Path) -> io::Result<()> {
+    retry_denied(
+        cfg!(windows),
+        5,
+        std::time::Duration::from_millis(30),
+        || fs::rename(from, to),
+    )
+}
+
+/// Run `op`, retrying up to `tries` times in total with `pause` between
+/// attempts while it fails with `PermissionDenied` (only when `enabled`).
+fn retry_denied<T>(
+    enabled: bool,
+    tries: u32,
+    pause: std::time::Duration,
+    mut op: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    let mut attempt = 1;
+    loop {
+        match op() {
+            Err(e) if enabled && attempt < tries && e.kind() == io::ErrorKind::PermissionDenied => {
+                attempt += 1;
+                std::thread::sleep(pause);
+            }
+            other => return other,
+        }
+    }
 }
 
 /// Best-effort fsync of `path`'s directory, making a rename into it durable.
@@ -156,6 +194,41 @@ mod tests {
             "{name}"
         );
         assert_ne!(t, temp_path(Path::new("/x/y/draft.json")));
+    }
+
+    #[test]
+    fn retry_denied_retries_only_permission_denied_when_enabled() {
+        let pause = std::time::Duration::from_millis(1);
+        let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
+        let mut n = 0;
+        let r = retry_denied(true, 5, pause, || {
+            n += 1;
+            if n < 3 {
+                Err(denied())
+            } else {
+                Ok(n)
+            }
+        });
+        assert_eq!(r.unwrap(), 3);
+        let mut n = 0;
+        let r: io::Result<()> = retry_denied(true, 5, pause, || {
+            n += 1;
+            Err(denied())
+        });
+        assert!(r.is_err());
+        assert_eq!(n, 5);
+        let mut n = 0;
+        let _: io::Result<()> = retry_denied(false, 5, pause, || {
+            n += 1;
+            Err(denied())
+        });
+        assert_eq!(n, 1);
+        let mut n = 0;
+        let _: io::Result<()> = retry_denied(true, 5, pause, || {
+            n += 1;
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        });
+        assert_eq!(n, 1);
     }
 
     #[cfg(unix)]

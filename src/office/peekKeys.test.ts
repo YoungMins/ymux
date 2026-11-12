@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PEEK_KEYS, directKey, isInputOption, keyBytes, menuOptions, menuQuestion } from "./peekKeys";
+import { PEEK_KEYS, directKey, isInputOption, keyBytes, menuOptions, menuQuestion, sameOption } from "./peekKeys";
 import { peekBox } from "./OfficePeek";
 
 describe("keyBytes", () => {
@@ -120,5 +120,18 @@ describe("menuQuestion", () => {
     const screen = ["older output", "", "╭──────────╮", "│ Bash command │", "│   rm -rf build │", "│ Do you want to proceed? │", "│ ❯ 1. Yes │", "│   2. No │"];
     expect(menuQuestion(screen)).toEqual(["Bash command", "rm -rf build", "Do you want to proceed?"]);
     expect(menuQuestion(["just text"])).toEqual([]);
+  });
+});
+
+describe("sameOption", () => {
+  const menu = ["Question?", "❯ 1. Yes", "  2. No, tell Claude what to do differently"];
+  const two = menuOptions(menu)[1];
+  it("finds the same number and label", () => {
+    expect(sameOption(menu, two)?.n).toBe("2");
+  });
+  it("is null when the menu moved on", () => {
+    expect(sameOption(["Done.", "> "], two)).toBeNull();
+    expect(sameOption(["❯ 1. Yes", "  2. Something else"], two)).toBeNull();
+    expect(sameOption(null, two)).toBeNull();
   });
 });

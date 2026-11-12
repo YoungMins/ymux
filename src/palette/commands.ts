@@ -66,6 +66,24 @@ export function builtinCommands(manager: WorkspaceManager): CommandDef[] {
       action: () => void manager.closeFocused(),
     },
     {
+      id: "pane.reopen",
+      label: () => t("shortcut.reopenPane"),
+      keybinding: "Ctrl+Shift+Y",
+      action: () => void manager.reopenClosedPane(),
+    },
+    {
+      id: "pane.queuePrompt",
+      label: () => t("shortcut.queuePrompt"),
+      keybinding: "Ctrl+Shift+K",
+      action: () => manager.queuePromptFocused(),
+    },
+    {
+      id: "workspace.broadcast",
+      label: () => t(manager.isBroadcasting() ? "broadcast.stop" : "shortcut.broadcast"),
+      keybinding: "Ctrl+Shift+B",
+      action: () => manager.toggleBroadcast(),
+    },
+    {
       id: "pane.autoContinue",
       label: () => t("autoContinue.command"),
       action: async () => {

@@ -108,11 +108,18 @@ impl Parsed {
             ..Self::default()
         }
     }
+    /// The running session/project/model, saved so a later pass can resume.
+    pub fn context(&self) -> (&str, &str, &str) {
+        (&self.session, &self.project, &self.model)
+    }
+
+    pub fn set_context(&mut self, session: &str, project: &str, model: &str) {
+        session.clone_into(&mut self.session);
+        project.clone_into(&mut self.project);
+        model.clone_into(&mut self.model);
+    }
+
     pub fn line(&mut self, bytes: &[u8], provider: &'static str) {
-        if self.events.len() >= 10_000 || self.quotas.len() >= 10_000 {
-            self.skipped += 1;
-            return;
-        }
         let line: Line = match serde_json::from_slice(bytes) {
             Ok(v) => v,
             Err(_) => {
@@ -169,8 +176,6 @@ impl Parsed {
                     return;
                 };
                 self.events.push(Event {
-                    account: 0,
-                    provider,
                     session: self.session.clone(),
                     id,
                     timestamp,
@@ -232,8 +237,6 @@ impl Parsed {
                         };
                         let totals = usage.totals(true);
                         self.events.push(Event {
-                            account: 0,
-                            provider,
                             session: self.session.clone(),
                             id: totals.total.to_string(),
                             timestamp,

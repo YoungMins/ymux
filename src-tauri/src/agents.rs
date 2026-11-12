@@ -164,7 +164,7 @@ impl AgentRegistry {
                 // would otherwise sit at "working" forever.
                 st.agents.subagents.clear();
             }
-            "PreToolUse" | "PostToolUse" => match sub_id {
+            "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => match sub_id {
                 Some(id) => upsert_subagent(st, id, ev.agent_type.as_deref(), AgentStatus::Working),
                 None => set_lead(st, &ev.agent, AgentStatus::Working, ev.tool_name.clone()),
             },
@@ -352,6 +352,19 @@ mod tests {
         assert_eq!(l.tool.as_deref(), Some("Bash"));
         reg.apply_hook(&tool_ev(p, "PostToolUse", "Edit"));
         assert_eq!(lead(&reg, p).tool.as_deref(), Some("Edit"));
+    }
+
+    #[test]
+    fn failed_tool_keeps_lead_working_and_subagent_working() {
+        let p = Uuid::new_v4();
+        let mut reg = AgentRegistry::default();
+        reg.apply_hook(&ev(p, "Stop"));
+        assert!(reg.apply_hook(&tool_ev(p, "PostToolUseFailure", "Bash")));
+        let l = lead(&reg, p);
+        assert_eq!(l.status, AgentStatus::Working);
+        assert_eq!(l.tool.as_deref(), Some("Bash"));
+        reg.apply_hook(&sub_ev(p, "PostToolUseFailure", "a1", "Explore"));
+        assert_eq!(reg.snapshot()[&p].subagents[0].status, AgentStatus::Working);
     }
 
     #[test]

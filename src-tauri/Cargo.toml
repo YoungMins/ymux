@@ -140,6 +140,12 @@ windows = { version = "0.56", features = [
     "Win32_Networking_WinSock",
     # CryptProtectData / CryptUnprotectData: DPAPI seal of secrets.json (secrets).
     "Win32_Security_Cryptography",
+    # GetCurrentPackageFullName: does this process have MSIX identity
+    # (fspath::is_packaged)?
+    "Win32_Storage_Packaging_Appx",
+    # GetTimeZoneInformation: the local calendar day of the daily webhook
+    # digest (webhooks::digest).
+    "Win32_System_Time",
 ] }
 # Creates the hook receiver's socket so SO_EXCLUSIVEADDRUSE can be set before
 # bind. Already in the lock via reqwest/tokio; Windows-only because Unix
