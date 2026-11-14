@@ -118,6 +118,9 @@ import { buildQuotaInbox, type QuotaInboxItem } from "./inbox";
 import type { ProviderUsage } from "../tokenmonitor/model";
 import { shouldFocusAfterSend } from "./backgroundSend";
 import { showToast, STICKY_TOAST } from "../ui/Toast";
+import type { RemoteHost } from "../remote/remoteOps";
+import { MenuIds, agentKey } from "../remote/menuId";
+import { inputGeneration } from "../remote/inputGen";
 import { PromptQueues, phaseOf, queueSuffix, QUEUE_TICK_MS } from "./promptQueue";
 import { quotaPollWanted } from "../accounts/quotaModel";
 import { BroadcastSwitch, applyZoom, broadcastTargets, broadcastParticipants, type BroadcastPane } from "./broadcast";
@@ -212,6 +215,8 @@ export class WorkspaceManager {
   onFontSizeChange?: (px: number) => void;
   /// Latest agent-tree snapshot from the backend (pane id → agents).
   private _agents: AgentSnapshot = {};
+  /// The remote server's menu ids, once `remoteHost()` made them.
+  private remoteMenus: MenuIds | null = null;
   /// When the agent list was last confirmed current: a snapshot arrived or the
   /// backend's process scan finished (ms). The fan-out gate trusts a lead only
   /// if this is newer than the pane's last output.
@@ -2762,6 +2767,49 @@ export class WorkspaceManager {
     return this.promptQueues.count(paneId);
   }
 
+  /// What the remote server's commands may use (`src/remote/remoteOps.ts`).
+  /// Nothing here focuses a pane or switches workspace; a pane of a workspace
+  /// never visited has no TerminalPane (`terminal` is null: the ops answer
+  /// "gone" rather than hydrating it).
+  remoteHost(): RemoteHost {
+    const term = (id: Uuid): TerminalPane | null => {
+      const p = this.findPaneById(id);
+      return p instanceof TerminalPane ? p : null;
+    };
+    const menus = new MenuIds();
+    // Seed the status generations from the snapshot already here, and keep
+    // them current from `applyAgents`.
+    menus.observeAgents(this._agents);
+    this.remoteMenus = menus;
+    return {
+      menus,
+      inputGen: (id) => inputGeneration(id),
+      agentKey: (id) => agentKey(this._agents[id]?.lead),
+      listInput: () => ({
+        workspaces: this.config.workspaces.map((ws) => ({
+          label: formatWorkspaceLabel(ws.id, ws.name ?? null, this.workspacePosition(ws.id)),
+          root: ws.root,
+        })),
+        agents: this._agents,
+        paneStatus: (id) => this.paneStatus.get(id),
+        title: (id) => this.tabLabelFor(id),
+        since: (id) => this.statusSince.get(id) ?? officeLog.statusSince(id),
+        queued: (id) => this.promptQueues.count(id),
+        live: (id) => term(id) !== null,
+      }),
+      terminal: term,
+      phase: (id) => phaseOf(this._agents[id]?.lead, this.paneStatus.get(id) ?? "idle"),
+      queued: (id) => this.promptQueues.count(id),
+      enqueue: (id, text) => {
+        if (this.promptQueues.add(id, text) < 0) return false;
+        this.queueChanged(id);
+        return true;
+      },
+      send: (id, text, notAfterMs) =>
+        this.sendToPane(id, text, true, undefined, { from: null, kind: "prompt" }, false, notAfterMs),
+    };
+  }
+
   /// Open the queue dialog for the focused terminal pane.
   queuePromptFocused(): void {
     const id = this.activePaneId();
@@ -3267,6 +3315,10 @@ export class WorkspaceManager {
     // Arrival time says nothing about when the process list was sampled, so
     // only the scan heartbeat (`noteAgentScan`) advances `agentSnapshotAt`.
     this._agents = next;
+    // The remote menu ids' status generation moves with every snapshot's raw
+    // lead status/tool (not the attention-coerced one, not the coalesced
+    // tree change).
+    this.remoteMenus?.observeAgents(next);
     this.notifyTree();
     this.recomputeQuota();
     this.syncQuotaWatch();
@@ -3344,9 +3396,15 @@ export class WorkspaceManager {
     /// the workspace already on screen; a send to another workspace stays in
     /// the background and raises a toast that jumps there.
     focus?: boolean,
+    /// Epoch ms after which Enter must not be written (a remote command whose
+    /// request the backend has already answered `timeout`): a paste that is
+    /// in by then stays unsubmitted, so a phone told "no answer" cannot find
+    /// the prompt running anyway.
+    notAfterMs?: number,
   ): Promise<"sent" | "pasted" | "waiting" | "no-paste" | "gone" | "failed"> {
     const pane = this.findPaneById(paneId);
     if (!(pane instanceof TerminalPane)) return "gone";
+    const inTime = (): boolean => notAfterMs === undefined || Date.now() < notAfterMs;
     const lead = () => this._agents[paneId]?.lead;
     const fit = (): "gone" | "waiting" | null => {
       const l = lead();
@@ -3368,7 +3426,7 @@ export class WorkspaceManager {
     if (!submit) return "pasted";
     const entered = await pane.submitAfterPaste(
       300,
-      () => fit() === null && pane.screenBlock(text) === null,
+      () => inTime() && fit() === null && pane.screenBlock(text) === null,
       () => this.agentSnapshotAt,
     );
     return entered ? "sent" : "pasted";

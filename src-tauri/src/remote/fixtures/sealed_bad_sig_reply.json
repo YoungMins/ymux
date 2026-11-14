@@ -1,0 +1,12 @@
+{
+  "aad": "ymux-remote-v1|d2p|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "body": "CAgICAgICAgICAgIt1ia6Z584DBbb0B0cpTm-4S5jrqM1JDoO3vJ9GEvWWkXT-9HRel9iY-aqkzn9FLZltxKq13J6FguIJaOtJpyxCeUjEUkvLAH45fYYQWxZANtjha4N5ch-n8KJ1ROJQFh6YgR5bD-z2-Nz_dc",
+  "direction": "d2p",
+  "link_key_hex": "abaa69f263220b94056c1883abf1544bc052736911f1fad02760342e121b0964",
+  "nonce_hex": "080808080808080808080808",
+  "plaintext": "{\"code\":\"bad_sig\",\"k\":\"reply\",\"ok\":false,\"re\":0,\"ref\":\"u4HYA1NIyoZBR3Gv6WCfag\",\"session\":\"\"}",
+  "ref_first16_hex": "bb81d8035348ca86414771afe9609f6a",
+  "ref_sha256_hex": "bb81d8035348ca86414771afe9609f6ac1d5027aff10db7f54a4120ebb8d0507",
+  "ref_sig": "zMjn8haHMZMZ6gWPl9mA9PPjaKjMs6rw1oa3eMY4pdn_NSI--R_LEEkgzq1HkPIK8a5GEUq0v7-sWMRk4DEcsA",
+  "what": "reply (re 0, bad_sig)"
+}

@@ -1,0 +1,11 @@
+{
+  "desktop_id": "0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d",
+  "name": "My PC",
+  "pubkey": "BG_wO5SSQc4drdQ1GeaWDgqFtBppoFwygQOqK84VlMoWPE91OlW_AdxT9sCwx-7ni0DG_30lqW4igrmJzvccFEo",
+  "role": "desktop",
+  "setup_token": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+  "sig": "JIUH-0TMsSd9163_x2uwxN4j3YHn6GLO2SYqS2jBNeUrc1R5kynIyC3LTpLkpqA1pPvlWj5KxFpSX9hlH_g3gg",
+  "signed_for_origin": "https://evil.example",
+  "t": "hello",
+  "v": 1
+}

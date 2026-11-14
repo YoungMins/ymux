@@ -1,0 +1,21 @@
+{
+  "code": "QkJCQkJCQkJCQkJCQkJCQg",
+  "code_hex": "42424242424242424242424242424242",
+  "desktop_id": "0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d",
+  "device_id": "7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "dk": {
+    "private_hex": "0505050505050505050505050505050505050505050505050505050505050505",
+    "public": "BAeBDql0zqV3PmO4l_N-O-mgnnpf6blxpE0QZawqOpMRY35HpPmUZKD9zkSojsfXA6kYPB0GVS2eLWt2BpSBxXc"
+  },
+  "ek": {
+    "private_hex": "0404040404040404040404040404040404040404040404040404040404040404",
+    "public": "BHMQPsMLPM9X2q4I6TU0rvFEo1lAz2u7oSoM98vV1lpk2CyMmenTxF-SRbqbJ5gsmuqOwduUsZxEeVlCwOsiqjI"
+  },
+  "info": "ymux-remote-v1|link|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51|BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY|BHMQPsMLPM9X2q4I6TU0rvFEo1lAz2u7oSoM98vV1lpk2CyMmenTxF-SRbqbJ5gsmuqOwduUsZxEeVlCwOsiqjI|BAeBDql0zqV3PmO4l_N-O-mgnnpf6blxpE0QZawqOpMRY35HpPmUZKD9zkSojsfXA6kYPB0GVS2eLWt2BpSBxXc",
+  "key": "q6pp8mMiC5QFbBiDq_FUS8BSc2kR8frQJ2A0LhIbCWQ",
+  "key_hex": "abaa69f263220b94056c1883abf1544bc052736911f1fad02760342e121b0964",
+  "pubkey": "BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY",
+  "salt_hex": "42424242424242424242424242424242",
+  "shared_secret_hex": "c3a941f043cc44e2f3906bc5b02a09ce92b837c55dd37887e6d7ea7ad51fdacd",
+  "what": "K = HKDF-SHA256(ikm = shared_secret, salt = code, info = info), 32 bytes; used as an AES-256-GCM key. shared_secret = x coordinate of ECDH(ek private, dk public) = ECDH(dk private, ek public)"
+}

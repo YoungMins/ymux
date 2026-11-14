@@ -1,0 +1,9 @@
+{
+  "aad": "ymux-remote-v1|d2p|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "body": "BgYGBgYGBgYGBgYGOO0eijmmUd0rcXdcK4ze-ks-9egGHm-CPRf-HmAtH4CDiDUHBM-InMs4QMUKeQF2xnbFJ_Gun8GuOCj7TPWw_g9g3fT119mUMmXrZMnyiVnJjKiAMIzSUPajhgAG",
+  "direction": "d2p",
+  "link_key_hex": "abaa69f263220b94056c1883abf1544bc052736911f1fad02760342e121b0964",
+  "nonce_hex": "060606060606060606060606",
+  "plaintext": "{\"at_ms\":1731600002000,\"k\":\"reopen\",\"n\":3,\"session\":\"BQUFBQUFBQUFBQUFBQUFBQ\"}",
+  "what": "reopen"
+}

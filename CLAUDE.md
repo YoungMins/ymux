@@ -41,6 +41,7 @@ ymux/
 │       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
 │       ├── pty/                # PTY session management
 │       ├── quit_gate.rs        # Close-to-tray / real-quit handshake state machine (pure)
+│       ├── remote/             # Remote server link (rule 19): proto (frames, signed strings), keys (P-256, pairing proof), session (the §5.1 authorisation), pairing, clip (redact + clip outgoing text), panes (notify transitions, send throttle), engine (protocol state machine), backoff, audit (JSONL), fixtures/ (copied from yMux-Server) (all pure); runtime.rs = socket thread + commands (desktop)
 │       ├── secrets.rs          # Backend-owned secret store (webhook URL / HMAC secret / LLM API key): DPAPI on Windows, 0600 elsewhere; write-only over IPC
 │       ├── scrollback.rs       # Persist/restore per-pane terminal scrollback (pure)
 │       ├── shell/              # Shell detection (detect.rs)
@@ -79,6 +80,7 @@ ymux/
 │   ├── palette/            # Command Palette (Ctrl+Shift+P)
 │   ├── menu/               # Terminal right-click context menu (ContextMenu.ts)
 │   ├── notes/              # Per-workspace notes overlay (NotesOverlay.ts)
+│   ├── remote/             # Remote server page side (rule 19): remoteModel (status/devices), remoteOps (executes the phone's list/peek/answer/interrupt/prompt against the panes), remotePublisher (pane snapshots + notify transitions to the backend), remoteWiring, pairDialog (check-number entry) + qr, menuId (menu id minting), inputGen (PTY write generation)
 │   ├── settings/           # Settings panel (⚙): general, accounts, activity & notifications (ActivitySection.ts: activity log / summarizer / webhooks), syntax colors, shortcuts (shortcutList.ts), config files
 │   ├── hotkey/             # HotKeyManager modal (⚙)
 │   ├── statusbar/          # System monitor status bar
@@ -582,7 +584,8 @@ send data to hosts the user names. The rules:
   and body size caps. The summarizer additionally resolves the host and refuses
   any non-loopback address unless `allow_remote` is set, so a name that points
   elsewhere does not pass on its spelling. A new feature that talks to the
-  network goes through one of them, not a fresh client.
+  network goes through one of them, not a fresh client (the one sanctioned
+  exception is rule 19's WebSocket).
 - **A file is attached only after `attach::eligible`**, and is re-verified at
   send time. The leaf is opened without following links, the handle must be a
   regular file with one hard link and the identity (device + inode, or volume
@@ -651,6 +654,201 @@ CLIs, Explorer, default programs) sees the real AppData. So:
   `merge_layouts_from` never copies it. Rescan only adds: a cached profile
   cannot be told from a hand-edited one, and panes pin shells by name.
 
+### 19. Remote server link: the desktop is the only authoriser
+
+With `remote.enabled`, ymux holds an outbound WebSocket to the user's own
+relay server (protocol: `yMux-Server/PROTOCOL.md`). A paired phone can list
+agent panes, read a pane's screen, answer a menu option, send Escape and send
+a prompt. That is all: there is no op for raw keys, new or closed panes, or
+files, and an unknown op is `unknown_op`. Code is `src-tauri/src/remote/`.
+
+- **The relay is not trusted, even to read.** Every body between a paired
+  device and this desktop is sealed with that device's *link key* (AES-256-GCM,
+  fresh random 96-bit nonce per message, the §1 additional-data strings,
+  `keys::LinkKey`), so the server can neither read nor forge it. A plaintext
+  command is never accepted. Only `notify` (titles) and the pairing frames are
+  readable by the server.
+- **The desktop decides.** The server only relays. `engine::on_cmd` runs, in
+  this order: the device is paired; its signature over `cmd|<body>` verifies
+  against the key *this desktop* stored (never one the server sends); the body
+  opens under that device's link key (no device, bad signature or a body that
+  does not open: dropped and counted, and a known device gets a sealed
+  `re:0 bad_sig`); then `session::Sessions::authorise` runs the rest of §5.1:
+  size and shape, `desktop_id` and `device_id`, the device's current session
+  and a `seq` that is exactly the last accepted one + 1 (consumed here; the
+  first of a session is 1; anything at or below the last is `replay`, anything
+  further ahead means the relay dropped or reordered a command, so the
+  device's session is revoked, `bad_session` answered, the number not
+  consumed, one aggregated `seq_gap` audit line: that makes `prev.seq` exact,
+  every seq up to it was accepted), `ts_ms` within 30 s of
+  this desktop's clock (`expired`), the capability (`view` < `respond` <
+  `prompt`; an unknown capability string runs nothing), the op's fields. Any
+  failure is a sealed `reply ok:false` with a code and an audit line, and
+  nothing reaches the page. Don't add a path that skips `authorise`.
+- **One session per device, opened by the device.** A session exists only
+  because a device sent a valid sealed, signed `open` (`engine::on_open`).
+  Issuing one revokes the device's older one, so a command a relay held back
+  dies when its device opens again. `device_online` / `device_offline` / `conn`
+  are display hints (the online dot): they never create, select or extend a
+  session, though `device_offline` of the last connection may revoke. A
+  desktop reconnect clears every session. At most 5 `open`s per device per
+  10 s; the rest are dropped (a relay replaying old `open`s). A capability
+  change sends `reopen` in the current session, then revokes it. The `session`
+  reply carries `prev` = the session it revoked and the last `seq` accepted in
+  it (`Sessions` keeps that per device across every way a session ends, until
+  the device is removed), so a device can settle commands whose outcome it
+  does not know. Everything sent to a device after its `session` reply carries
+  `session`, a strictly increasing `n` and `at_ms` (this desktop's clock)
+  (`Sessions::stamp`); a reply whose session ended meanwhile is dropped. A
+  `re:0` failure reply has `session:""`, no `n` and no `at_ms` (the server's
+  vectors read 5.1 that way), and `ref` = b64u of the first 16 bytes of
+  SHA-256 of the received `sig` string (on every `re:0` reply, not only
+  `bad_sig`); the `bad_sig` ones have a
+  budget of their own, 20 per device per minute, the rest dropped silently.
+- **Menu ids and the `!` rule.** `answer` needs a `menu_id` and `n` in 1..=9.
+  The page (`src/remote/menuId.ts`) mints a random id for one (fingerprint,
+  input generation, status generation): the options plus every row above them
+  back to two blank rows (at most 60), the pane's input generation, and the
+  agent's status generation. `peek` mints a new id whenever any of the three
+  differs; `answer` recomputes all three, requires equality plus the label
+  rule, retires the id BEFORE typing, and answers `stale` on any doubt (no
+  menu, no generations, terminal not up). The input generation is
+  `src/remote/inputGen.ts`: bumped in `api.writePane` (`ipc/bridge.ts`), the
+  one caller of the PTY write command, so every write from the page counts
+  (keys, paste, queue, Office view, approve-all, broadcast, remote ops), and on
+  every `auto-continue:answered`; `inputGen.test.ts` greps for a second path.
+  The status generation moves with each agent snapshot's raw lead
+  status/tool/kind (`WorkspaceManager.applyAgents`), not the attention-coerced
+  status. `interrupt` goes only to a pane with an agent (`gone` otherwise).
+  A `prompt` loses its control characters
+  (`clip::clean_prompt`) and one whose first non-blank character is `!` is
+  `refused` here, in Rust, without asking the page (an agent CLI may run it as
+  a shell command). The page can never answer `refused`.
+- **Execution is the page's, bounded.** After authorisation the engine emits
+  `remote://request` to the `main` webview (payload carries `deadline_ms`, the
+  epoch time of the 5 s deadline: a `prompt` whose paste is in but whose
+  deadline passed is left unsubmitted, `sendToPane`'s `notAfterMs`) and waits
+  5 s for `remote_reply` (else `timeout`, which a phone treats as "delivered,
+  result unknown" for a write; at most 8 waiting, else `busy`). The reply is rebuilt in
+  `clip::reply_data` field by field, never forwarded as given. `peek` lines
+  are logical lines: only xterm's soft-wrapped rows are joined (in the page);
+  text an agent's own TUI wraps stays split.
+- **Text is cleaned, redacted and clipped in Rust before it leaves**
+  (`clip.rs`: control characters and Unicode format/line/paragraph separators
+  (Cf, Zl, Zp: explicit ranges) out, `activity::redact`, then 2000 chars for
+  lines and 120 for titles, labels and names). That covers `list`, `peek`,
+  `panes` pushes, notifications and the device name taken from a pair request.
+  Notifications carry a pane title and workspace label only, never screen text
+  or a prompt. The audit log (`<config>/remote/audit.jsonl`, 1 MiB then one
+  `.1`) holds time, device id, op, pane id, a decision code and a count, never
+  text. Every rejection a remote party can repeat at will is counted, not
+  logged one by one: one line per (device, or `-` when nobody was
+  authenticated, and code) per minute with a count (`audit::Aggregate`; a
+  claimed device id is never a key before authentication, and the number of
+  open windows is capped). That covers unknown device, bad signature, a body
+  that does not open, replay, `bad_session`, `expired`, `forbidden`,
+  `bad_request`, `unknown_op`, `busy`, `refused`, the `open` flood and every
+  pairing rejection (no window open, invalid proof, budget, ...). Individual
+  lines are only for accepted WRITES (`answer`, `interrupt`, `prompt`) and
+  their timeouts, pairing decisions (the check number never among them),
+  capability changes and removals. Accepted READS (`list`, `peek`) are
+  counted like rejections, one line per (device, op) per minute
+  (`Aggregate::note_op`), so a phone polling `peek` cannot roll the log.
+- **A device name is attacker text.** `pairing::device_name` removes every
+  Unicode digit and all punctuation and symbols except `. - _ '` (letters,
+  marks and spaces stay), collapses whitespace, clips to 40 chars and falls
+  back to `Unnamed device`; the server and the PWA apply the same rule, and
+  the stored name is the cleaned one. The pairing dialog shows it in its own
+  labelled element ("chosen by the device, not verified"), never inside the
+  sentence that asks for the number (that text is fixed, in 13 languages). The
+  PWA service worker shows no push text at all: a fixed string chosen by `kind`.
+- **Secrets stay in the `SecretStore`**, the same instance the webhooks use.
+  Id `remote`: `secret` = the P-256 private key, `api_key` = the server's setup
+  token. Id `remote-dev:<device_id>`: `secret` = that device's link key (the
+  store's field names are fixed, so one id per device). They never reach
+  `config.toml`, a log, `Debug` or an IPC response; `remote_set_token` is
+  write-only and `remote_status` reports only `has_token`/`registered`. A link
+  key is removed with its device and when the server address changes. A device
+  in the config with no stored link key (the store ANSWERED "not present") is
+  dropped (and the server told) at the next `prepare`: it could only talk
+  unsealed. A store that cannot be READ (`get_checked` errs) keeps the device,
+  unused this run, and `on_ready` sends no `device_remove` for it
+  (`Engine::set_unusable`). The identity is loaded with the same checked read:
+  an unreadable store never mints a new key or overwrites the file; the link
+  stays down with status error `secret_store` and retries; only "not present"
+  mints. Every write the remote module makes uses `SecretStore::set_checked`,
+  which writes nothing and errs on an unreadable store (plain `set`, used by
+  webhooks, would replace it with a fresh one). A readable store without the
+  identity key while the config has a registered or device-holding
+  `desktop_id` means the key was lost: `reset_identity_if_lost` starts clean
+  (new `desktop_id`, `registered` false, no devices or link keys; address,
+  name and notify settings kept) and reports `RemoteStatus.notice =
+  "identity_reset"`, because the old id with a new key is `key_mismatch`
+  forever. `Pairing`'s `Debug` redacts the code, and a `ready` from a connection
+  to a server the user has since switched away from does not set `registered`
+  (`mark_registered` compares the connection's URL under the config lock).
+- **`Config::remote` is backend-owned** (rule 11): changed only by the
+  `remote_*` commands, never copied in `merge_layouts_from`. Devices belong to
+  a server, so changing `server_url` clears them, their link keys, the stored
+  setup token and `registered` (the page therefore calls `remote_configure`
+  first and `remote_set_token` after). No `CONFIG_VERSION` bump.
+- **It never connects in a debug build** without `YMUX_DEV_REMOTE=1`, **nor in
+  a stand-down instance** (no hook receiver, rule 13): `tauri dev` shares the
+  live config and would otherwise claim the real desktop id. Status then says
+  `unavailable`; the settings commands still work but no thread starts.
+- **Transport.** `tungstenite` (sync, rustls with the ring provider and
+  webpki roots, no native-tls/OpenSSL) is the one sanctioned network client
+  outside `webhooks::client` and `summarizer::transport`, because a WebSocket
+  needs one long-lived, bidirectional, frame-capped connection that those
+  one-shot clients cannot give. URL rule: `https://host[:port][/base]`; plain
+  `http://` only for `localhost` / `127.0.0.1`; no credentials, query or
+  fragment. No `Origin` header, redirects are not followed (a non-101 answer is
+  an error), frames capped at 256 KiB, error text never shown (fixed codes).
+- **Pairing.** Each window has a fresh code (16 random bytes) and a fresh ECDH
+  P-256 key `dk` (private half in memory only, dropped with the window); the
+  QR link is `<server>/#pair=<desktop_id>.<code>.<dk>`, shown as a QR only
+  (never as text: anyone who sees the link can ask to pair). The proof covers
+  the phone's `ek` too. A request whose HMAC proof fails shows nothing and
+  gets `ok:false`; an `ek` that is not a point is refused; an id already
+  paired cannot be taken over by another key; a window lasts 120 s. The link
+  key is `HKDF-SHA256(x of ECDH(dk, ek), salt = code, info = ...)`
+  (`keys::LinkKey::derive`), so the code and everything the relay sees are
+  not enough to compute it. The six-digit check number is drawn from the OS
+  CSPRNG by rejection sampling (`keys::Check`), sealed to the phone in
+  `pair_challenge` and NEVER put in an event, IPC answer, log or audit line
+  (its `Debug` is redacted); the dialog shows no number, the user TYPES the
+  one the phone shows, and `remote_pair_decide` compares it in constant time.
+  Three wrong tries refuse the request and close the window; only a right
+  number stores the device and its link key. A second request with a valid
+  proof from another (device, key, `ek`) means the code leaked: both are
+  refused, the window closes and the page is told (`remote://pair-conflict`).
+- **The hello is bound to the server address.** The challenge's `origin` must
+  equal the origin of the configured URL (`server_origin`); otherwise the
+  desktop closes without signing and status says `origin_mismatch`. The hello
+  signs `desktop|<id>|<origin>|<nonce>`; `setup_token` goes out only while
+  `registered` is false.
+- **Ordering of settings and the worker (`devset.rs`).** Every change to the
+  paired devices or their capabilities (pair approval, set cap, remove, a
+  server switch) runs in `DeviceSet::mutate`, which bumps one revision under
+  the lock; the worker reads its snapshot at a revision and installs it only
+  if the revision still stands (else it reads again), so an old list never
+  revives a removed device or a higher capability. Lock order: that, the
+  engine, then config. A server switch clears the setup token and the link
+  keys BEFORE the new address is saved (`switch_server`); if one cannot be
+  cleared the address is left as it was and the call fails, so the old
+  server's token never goes to the new one.
+- **Vectors.** `fixture_tests.rs` checks the ECDH + HKDF link key (from either
+  private key), the pairing proof, the sealed `pair_check`, sealing,
+  signatures and the whole recorded conversation (`session` with `prev`,
+  `reply`/`panes`/`reopen` with `n` and `at_ms`, the `re:0` `bad_sig` with its
+  `ref`) against the server repo's `fixtures/`, copied in verbatim; the check
+  number itself is random, so what is checked is its shape. The
+  `#[ignore]`d live tests (`runtime.rs`, `runtime/e2e.rs`) are driven by
+  `yMux-Server/scripts/e2e.ps1`.
+- **Every command starts with its guard** (rule 16). Adding a command: register
+  it in `main.rs` and keep the engine, not the command, as the place decisions
+  are made.
+
 ## TDD / Testing
 
 ### Quick run
@@ -661,26 +859,21 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 852 on Windows + frontend 1091)
+### Test count (Rust 1262 on Windows + frontend 1387)
 
-Measured 2026-11-12 on Windows with `cargo test --no-default-features --lib -p ymux`
-(852 passed, 8 Windows-only OSC 7 failures noted below, 2 ignored),
-`cargo test -p ytheme -p ypath` and `npx vitest run`.
+Measured 2026-11-15 on Windows with `cargo test --no-default-features --lib -p ymux`
+(1262 passed, 0 failed, 8 ignored), `cargo test -p ytheme -p ypath` and
+`npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 852 pass + 8 OSC 7 failures + 2 ignored on Windows (without `desktop`) | Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
+| ymux_lib | 1262 pass + 8 ignored on Windows (without `desktop`) | Remote server link (`remote/`: frames and signed strings, P-256 keys + pairing proof, ECDH/HKDF link key and sealing, session authorisation, clip/redact, audit log, engine, vectors copied from yMux-Server's `fixtures/`), Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
 | ytheme | 9 | Theme TOML round-trip, hex parsing, defaults |
 | ypath | 6 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
-| _frontend_ | 1091 (82 files) | vitest: layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
+| _frontend_ | 1387 (104 files) | vitest: remote server page side (`src/remote/`, `RemoteSection`, `logicalLines`), layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
 
-**The 8 `ymux_lib` failures are Windows-only and pre-existing**, all in
-`pty::osc7::tests`: the OSC 7 parser correctly decodes a `file://` URI's path,
-but the tests assert Unix-style forward-slash paths (`"/tmp"`, `"/home/alice"`)
-while `Path`/`PathBuf` on Windows normalizes them to backslashes (`"\tmp"`).
-Not something introduced by this branch — run the same suite on Linux/macOS to
-get a clean pass, or fix the tests to compare with a platform-appropriate
-separator if you touch `osc7.rs`.
+The 8 Windows-only `pty::osc7::tests` failures noted in earlier versions of
+this section no longer occur: the Windows run is clean.
 
 Counts drift — re-derive with `cargo test -p <crate>` / `npx vitest run`
 rather than trusting this table.

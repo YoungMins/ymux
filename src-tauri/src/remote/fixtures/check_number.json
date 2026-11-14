@@ -1,0 +1,10 @@
+{
+  "desktop_id": "0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d",
+  "device_id": "7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "first4_u32": 1596317579,
+  "message": "ymux-remote-v1|check|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51|BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY",
+  "number": "317579",
+  "pubkey": "BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY",
+  "sha256_hex": "5f25df8b30d43b9cc512acb81a570921b27065cb84df52572f2f2cf2209ee4c2",
+  "what": "first 4 bytes of SHA-256(message), big-endian, modulo 1000000, 6 digits with leading zeros"
+}

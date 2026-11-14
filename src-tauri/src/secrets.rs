@@ -153,11 +153,28 @@ impl SecretStore {
         Ok(())
     }
 
-    /// Store a value; an empty value clears the field.
+    /// Store a value; an empty value clears the field. A store that cannot be
+    /// unsealed or parsed is replaced by a fresh one (the old file is kept as
+    /// a `.corrupt` copy); see [`set_checked`](Self::set_checked) for writers
+    /// that must not do that.
     pub fn set(&self, id: &str, field: &str, value: &str) -> YmuxResult<()> {
+        self.set_inner(id, field, value, false)
+    }
+
+    /// Like [`set`](Self::set), but writes NOTHING (and returns `Err`) when
+    /// the existing store cannot be read: the remote feature's keys are not
+    /// recoverable, so an unreadable store must not be replaced under them.
+    pub fn set_checked(&self, id: &str, field: &str, value: &str) -> YmuxResult<()> {
+        self.set_inner(id, field, value, true)
+    }
+
+    fn set_inner(&self, id: &str, field: &str, value: &str, strict: bool) -> YmuxResult<()> {
         check_field(field)?;
         let _g = self.guard();
         let (mut map, corrupt) = self.load_strict()?;
+        if strict && corrupt {
+            return Err(YmuxError::Config("the secret store is unreadable".into()));
+        }
         if value.is_empty() {
             if let Some(e) = map.get_mut(id) {
                 e.remove(field);
@@ -180,6 +197,20 @@ impl SecretStore {
         }
         let _g = self.guard();
         self.load().0.get(id)?.get(field).cloned()
+    }
+
+    /// Like [`get`](Self::get), but tells "the store answered: not present"
+    /// (`Ok(None)`) apart from "the store could not be read" (`Err`: the file
+    /// exists but cannot be read, or its content does not unseal or parse).
+    /// A caller that would delete something over a missing secret uses this.
+    pub fn get_checked(&self, id: &str, field: &str) -> YmuxResult<Option<String>> {
+        check_field(field)?;
+        let _g = self.guard();
+        let (map, corrupt) = self.load_strict()?;
+        if corrupt {
+            return Err(YmuxError::Config("the secret store is unreadable".into()));
+        }
+        Ok(map.get(id).and_then(|e| e.get(field)).cloned())
     }
 
     pub fn status(&self, id: &str) -> SecretStatus {
@@ -358,6 +389,46 @@ mod tests {
         s2.remove_dest("a").unwrap();
         assert_eq!(s2.get("a", "url"), None);
         assert_eq!(s2.get("b", "url").as_deref(), Some("v"));
+    }
+
+    #[test]
+    fn get_checked_tells_absent_from_unreadable() {
+        let (d, s) = store();
+        // No file at all: the store answered, nothing is there.
+        assert_eq!(s.get_checked("a", "secret").unwrap(), None);
+        s.set("a", "secret", "v").unwrap();
+        assert_eq!(s.get_checked("a", "secret").unwrap().as_deref(), Some("v"));
+        assert_eq!(s.get_checked("b", "secret").unwrap(), None);
+        assert!(s.get_checked("a", "password").is_err());
+        // Content that does not unseal: could not be read (plain `get` says None).
+        let p = d.path().join("secrets.json");
+        std::fs::write(&p, b"\x00not json or dpapi").unwrap();
+        assert!(s.get_checked("a", "secret").is_err());
+        assert_eq!(s.get("a", "secret"), None);
+        // A path that cannot be read as a file at all.
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        assert!(s.get_checked("a", "secret").is_err());
+    }
+
+    #[test]
+    fn set_checked_never_replaces_an_unreadable_store() {
+        let (d, s) = store();
+        let p = d.path().join("secrets.json");
+        // Absent store: a first write works, like `set`.
+        s.set_checked("a", "secret", "v").unwrap();
+        assert_eq!(s.get_checked("a", "secret").unwrap().as_deref(), Some("v"));
+        // Undecryptable content: error, file byte-identical, no backup made.
+        std::fs::write(&p, b"\x00not json or dpapi").unwrap();
+        assert!(s.set_checked("a", "secret", "w").is_err());
+        assert!(s.set_checked("a", "secret", "").is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"\x00not json or dpapi");
+        assert!(!d.path().join("secrets.json.corrupt").exists());
+        // A directory in its place: error, left alone.
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        assert!(s.set_checked("a", "secret", "w").is_err());
+        assert!(p.is_dir());
     }
 
     #[test]

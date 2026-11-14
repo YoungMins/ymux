@@ -16,6 +16,13 @@ import type {
   Config,
   DetectedAgent,
   HookDirIssue,
+  RemoteCap,
+  RemotePairing,
+  RemotePairDecision,
+  RemotePairRequest,
+  RemotePane,
+  RemoteRequest,
+  RemoteStatus,
   ResolvedPath,
   ShellProfile,
   SpawnedPane,
@@ -28,6 +35,7 @@ import type { FileEntry } from "../files/fileModel";
 import type { Eol } from "../editor/eol";
 import type { DiffSummary, FileDiff } from "../diff/types";
 import { forgetPane, type AutoAnswerEvent } from "../autocontinue/model";
+import { bumpInput } from "../remote/inputGen";
 
 export interface SpawnArgs {
   id: Uuid;
@@ -451,6 +459,9 @@ export const api = {
   /// The bytes go as the raw request body (pane id in a header), not as a
   /// JSON number array (`pty::routes::PANE_HEADER` in Rust).
   writePane: async (id: Uuid, data: Uint8Array): Promise<void> => {
+    // The one place every write to a terminal passes through: advance the
+    // pane's input generation first (remote menu ids, src/remote/inputGen.ts).
+    bumpInput(id);
     try {
       await tauriInvoke("write_pane", data, { headers: { [PANE_HEADER]: id } });
     } catch (e) {
@@ -781,4 +792,52 @@ export function onPaneLabels(
   handler: (labels: Record<Uuid, string>) => void,
 ): Promise<UnlistenFn> {
   return safeListen<Record<Uuid, string>>("panes:labels", handler);
+}
+
+/// Remote server (src-tauri remote module). The setup token is write-only.
+export const remoteApi = {
+  status: (): Promise<RemoteStatus> => call("remote_status"),
+  /// Rejects with a message on a bad address.
+  configure: (c: {
+    serverUrl: string;
+    name: string;
+    enabled: boolean;
+    notifyWaiting: boolean;
+    notifyDone: boolean;
+  }): Promise<RemoteStatus> => call("remote_configure", c),
+  /// Empty clears the stored token.
+  setToken: (token: string): Promise<RemoteStatus> => call("remote_set_token", { token }),
+  pairStart: (): Promise<RemotePairing> => call("remote_pair_start"),
+  pairCancel: (): Promise<void> => call("remote_pair_cancel"),
+  /// `check` is the six digits the user typed from the phone's screen.
+  pairDecide: (
+    deviceId: string,
+    approve: boolean,
+    cap: RemoteCap,
+    check: string,
+  ): Promise<RemotePairDecision> => call("remote_pair_decide", { deviceId, approve, cap, check }),
+  deviceSetCap: (deviceId: string, cap: RemoteCap): Promise<RemoteStatus> =>
+    call("remote_device_set_cap", { deviceId, cap }),
+  deviceRemove: (deviceId: string): Promise<RemoteStatus> => call("remote_device_remove", { deviceId }),
+  /// Answer a `remote://request`. `data` is the protocol's reply data for the op.
+  reply: (id: number, data: unknown): Promise<void> => call("remote_reply", { id, data }),
+  publishPanes: (panes: RemotePane[]): Promise<void> => call("remote_publish_panes", { panes }),
+};
+
+export function onRemoteRequest(handler: (req: RemoteRequest) => void): Promise<UnlistenFn> {
+  return safeListen<RemoteRequest>("remote://request", handler);
+}
+
+export function onRemotePairRequest(handler: (req: RemotePairRequest) => void): Promise<UnlistenFn> {
+  return safeListen<RemotePairRequest>("remote://pair-request", handler);
+}
+
+/// Two devices used one pairing code: nothing was paired. No payload.
+export function onRemotePairConflict(handler: () => void): Promise<UnlistenFn> {
+  return safeListen<unknown>("remote://pair-conflict", () => handler());
+}
+
+/// No payload: re-read `remoteApi.status()`.
+export function onRemoteStatus(handler: () => void): Promise<UnlistenFn> {
+  return safeListen<unknown>("remote://status", () => handler());
 }

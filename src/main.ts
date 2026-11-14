@@ -18,6 +18,7 @@ import { getLang, initLang, onLangChange, t } from "./i18n/i18n";
 import { mountCommandPalette, toggle as togglePalette } from "./palette/CommandPalette";
 import { builtinCommands } from "./palette/commands";
 import { listenAutoAnswers } from "./autocontinue/control";
+import { startRemote } from "./remote/remoteWiring";
 import { mountNotesOverlay, toggle as toggleNotes } from "./notes/NotesOverlay";
 import { isDiffReviewOpen, mountDiffReview } from "./diff/DiffReview";
 import { isFanoutCompareOpen, mountFanoutCompare } from "./fanout/FanoutCompare";
@@ -84,6 +85,10 @@ async function main(): Promise<void> {
   );
 
   // Auto-continue answers feed the AUTO badge's tooltip log.
+  // Remote server: commands from a paired phone and pairing requests are
+  // handled here, not in Settings, so they work with Settings closed.
+  startRemote(manager);
+
   void listenAutoAnswers().catch((e) => console.warn("auto-continue listen failed:", e));
 
   // Tab labels: subscribe first, then seed, so no change slips between.

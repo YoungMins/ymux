@@ -55,6 +55,34 @@ describe("i18n completeness (rule 7)", () => {
     }
   });
 
+  it("has every Remote server string in all 13 languages", () => {
+    expect(t("settings.section.remote")).toBe("Remote server");
+    expect(translationGaps("settings.remote.")).toEqual([]);
+    expect(translationGaps("settings.section.remote")).toEqual([]);
+  });
+
+  it("defines every settings.remote key the section and pair dialog use", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const read = (p: string) => readFileSync(fileURLToPath(new URL(p, import.meta.url)), "utf8");
+    const src =
+      read("../settings/RemoteSection.ts") + read("../remote/pairDialog.ts") + read("../remote/remoteWiring.ts");
+    const keys = [...src.matchAll(/t\("(settings\.remote\.[A-Za-z0-9_.]+)"\)/g)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThan(30);
+    expect(keys.filter((k) => t(k) === k)).toEqual([]);
+    // Template keys: capabilities, and every status line the model can pick.
+    for (const k of [
+      ...["view", "respond", "prompt"].flatMap((c) => [`cap.${c}`, `capDesc.${c}`]),
+      ...["off", "connecting", "online", "unavailable"].map((s) => `state.${s}`),
+      ...["bad_token", "key_mismatch", "version", "bad_sig", "limit", "origin_mismatch", "other"].map(
+        (e) => `err.${e}`,
+      ),
+      ...["pairReq.type", "pairReq.wrong", "pairReq.refused", "pairReq.failed", "pairConflict", "pairScan"],
+    ]) {
+      expect(t(`settings.remote.${k}`)).not.toBe(`settings.remote.${k}`);
+    }
+  });
+
   it("has every backend error kind in all 13 languages", () => {
     expect(translationGaps("fsError.")).toEqual([]);
   });

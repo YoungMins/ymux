@@ -3488,6 +3488,104 @@ body,
   gap: 8px;
   margin: 8px 0 4px;
 }
+/* Settings -> Remote server (src/settings/RemoteSection.ts) */
+.remote-wide {
+  width: 100%;
+}
+.remote-pair {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 6px;
+}
+/* The size is the svg's width/height attributes (qr.ts: whole pixels per
+   module, at least 4); a CSS box here would blur the modules. */
+.remote-qr {
+  flex: 0 0 auto;
+  max-width: none;
+  border-radius: 4px;
+}
+.remote-pair {
+  overflow-x: auto;
+}
+.remote-pairreq__device {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0;
+}
+.remote-pairreq__devname {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.remote-pairreq__form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+.remote-pairreq__type {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.remote-pairreq__input {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  letter-spacing: 0.3em;
+  text-align: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+.remote-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.remote-device {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #1e2a38);
+  border-radius: 6px;
+}
+.remote-device__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.remote-device__name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.remote-device__cap {
+  width: auto;
+}
+.remote-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  flex: 0 0 auto;
+}
+.remote-dot--on {
+  background: var(--status-ok);
+}
+.remote-pairreq__cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
 .act-subhead {
   display: flex;
   align-items: center;

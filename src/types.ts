@@ -303,3 +303,90 @@ export interface HookDirIssue {
   dir: string;
   error: string;
 }
+
+// ── Remote server (src-tauri remote module; protocol: yMux-Server PROTOCOL.md) ──
+
+export type RemoteCap = "view" | "respond" | "prompt";
+export type RemoteState = "off" | "connecting" | "online" | "error" | "unavailable";
+
+export interface RemoteDevice {
+  id: string;
+  name: string;
+  cap: RemoteCap;
+  added_ms: number;
+  online: boolean;
+  /** `secret_store` while the device's link key could not be read; "" otherwise. */
+  error?: string;
+}
+
+export interface RemotePairing {
+  url: string;
+  expires_ms: number;
+}
+
+/// `remote_status`. The setup token never comes back: only `has_token`.
+export interface RemoteStatus {
+  enabled: boolean;
+  server_url: string;
+  name: string;
+  registered: boolean;
+  has_token: boolean;
+  state: RemoteState;
+  /// A server error code (`bad_token`, ...) or free text; "" when none.
+  error: string;
+  /// `identity_reset` after the identity key was lost and the pairing state
+  /// started afresh (enter the setup token if asked, pair again); else "".
+  notice: string;
+  notify_waiting: boolean;
+  notify_done: boolean;
+  devices: RemoteDevice[];
+  pairing: RemotePairing | null;
+}
+
+/// `remote://pair-request` payload.
+export interface RemotePairRequest {
+  device_id: string;
+  name: string;
+}
+
+/// `remote_pair_decide`'s answer. The number the user types is the one the
+/// phone shows; it is never sent to the page.
+export interface RemotePairDecision {
+  /// `approved`; `rejected`; `wrong` (try again); `refused` (too many wrong
+  /// numbers: the request is gone and the window closed).
+  result: "approved" | "rejected" | "wrong" | "refused";
+  /// Tries left after a `wrong` one (0 otherwise).
+  tries_left: number;
+  status: RemoteStatus;
+}
+
+export type RemoteOp = "list" | "peek" | "answer" | "interrupt" | "prompt";
+
+/// `remote://request` payload: one authorised command to carry out. It is
+/// answered with `remote_reply({ id, data })`.
+export interface RemoteRequest {
+  id: number;
+  op: RemoteOp;
+  pane?: string;
+  lines?: number;
+  n?: number;
+  label?: string;
+  /// `answer`: the menu id `peek` handed out; the pane's current one or stale.
+  menu_id?: string;
+  text?: string;
+  queue?: boolean;
+  /// Epoch ms at which the backend answers the phone `timeout` and ignores a
+  /// later reply: a `prompt` must not press Enter after it.
+  deadline_ms?: number;
+}
+
+/// A pane as the protocol shows it (PROTOCOL.md 5.2).
+export interface RemotePane {
+  pane: string;
+  ws: string;
+  title: string;
+  kind: string;
+  status: "working" | "waiting" | "done" | "idle" | "none";
+  since_ms: number;
+  queued: number;
+}

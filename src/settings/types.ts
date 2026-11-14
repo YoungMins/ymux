@@ -36,6 +36,7 @@ export type SettingsSection =
   | "general"
   | "accounts"
   | "activity"
+  | "remote"
   | "syntax"
   | "shortcuts"
   | "config";

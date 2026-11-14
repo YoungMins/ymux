@@ -1,0 +1,41 @@
+{
+  "conn": "CQkJCQkJCQk",
+  "desktop": {
+    "desktop_id": "0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d",
+    "private_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "public": "BG_wO5SSQc4drdQ1GeaWDgqFtBppoFwygQOqK84VlMoWPE91OlW_AdxT9sCwx-7ni0DG_30lqW4igrmJzvccFEo"
+  },
+  "device": {
+    "device_id": "7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+    "private_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+    "public": "BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY"
+  },
+  "dk": {
+    "private_hex": "0505050505050505050505050505050505050505050505050505050505050505",
+    "public": "BAeBDql0zqV3PmO4l_N-O-mgnnpf6blxpE0QZawqOpMRY35HpPmUZKD9zkSojsfXA6kYPB0GVS2eLWt2BpSBxXc"
+  },
+  "ek": {
+    "private_hex": "0404040404040404040404040404040404040404040404040404040404040404",
+    "public": "BHMQPsMLPM9X2q4I6TU0rvFEo1lAz2u7oSoM98vV1lpk2CyMmenTxF-SRbqbJ5gsmuqOwduUsZxEeVlCwOsiqjI"
+  },
+  "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "note": "Test keys only. Private keys are 32 identical bytes; signatures are deterministic (RFC 6979). Never use these outside tests.",
+  "now_ms": 1731600000000,
+  "open_nonce": "MTExMTExMTExMTExMTExMQ",
+  "origin": "https://ymux.example.com",
+  "pair_check": "048213",
+  "pair_code": "QkJCQkJCQkJCQkJCQkJCQg",
+  "pair_code_hex": "42424242424242424242424242424242",
+  "pair_proof": "pVujatJvSfP1nggDggAV3B6LqOB8brlcEk20mHxi0_4",
+  "pane": "e3b0c442-98fc-4c14-9afb-f4c8996fb924",
+  "prev_session": "BAQEBAQEBAQEBAQEBAQEBA",
+  "session": "BQUFBQUFBQUFBQUFBQUFBQ",
+  "setup_token": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+  "signed_strings": {
+    "cmd": "ymux-remote-v1|cmd|AwMDAwMDAwMDAwMD9Ht-Y8TTT-RkSGvv2t0q67tTblD-13hbQh6KIvtiyS3-XgjEsIhK_CJUERZn0HvNJNm56_OhLIwYkdh7li38f10w4cWisgTT9k2fb6eYWh2VypMvmkBqdlrchTtzim0jMRjWzkV2tEzDl_swWsZFAUCE92psfhbD5FCGwnezTUzHEZGxgVGmZx4fYF7ElzfQgNsZy4aXKo_bS_FRAfXmNFbC0GF85N9H7I0gTjfWY0YRb2wvrxrBOdpa_kyh5kpn0pZZ6X6jBpRF2P85ObXzXcPzLeSzMClOlz4jGjM18KeR7DDPj3opRUaboU3IEaGesRo7e-D1VbZgymOcZ7v2SOnPUP7PnGkCXQjfFy1UjxAa2PmSZ3ozI-Fx9hIqCLxyhTJzW5uLA2QEcK80fgs",
+    "desktop_hello": "ymux-remote-v1|desktop|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|https://ymux.example.com|AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "device_hello": "ymux-remote-v1|device|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51|AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "pair_proof_message": "ymux-remote-v1|pair|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51|BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY|BHMQPsMLPM9X2q4I6TU0rvFEo1lAz2u7oSoM98vV1lpk2CyMmenTxF-SRbqbJ5gsmuqOwduUsZxEeVlCwOsiqjI",
+    "pair_request": "ymux-remote-v1|pair|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51|AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+  }
+}

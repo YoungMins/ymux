@@ -272,6 +272,16 @@ fn main() {
             ymux_lib::webhooks::runtime::summarizer_test,
             ymux_lib::webhooks::runtime::summarizer_set_api_key,
             ymux_lib::webhooks::runtime::summarizer_key_status,
+            ymux_lib::remote::runtime::remote_status,
+            ymux_lib::remote::runtime::remote_configure,
+            ymux_lib::remote::runtime::remote_set_token,
+            ymux_lib::remote::runtime::remote_pair_start,
+            ymux_lib::remote::runtime::remote_pair_cancel,
+            ymux_lib::remote::runtime::remote_pair_decide,
+            ymux_lib::remote::runtime::remote_device_set_cap,
+            ymux_lib::remote::runtime::remote_device_remove,
+            ymux_lib::remote::runtime::remote_reply,
+            ymux_lib::remote::runtime::remote_publish_panes,
             ymux_lib::commands::set_active_workspace,
             ymux_lib::commands::get_pane_cwd,
             ymux_lib::commands::open_url,
@@ -410,6 +420,10 @@ fn main() {
                 port: hook_port,
                 writes_allowed: refresh_allowed && hook_port.is_some(),
             });
+            // The remote link (rule 19): never in a debug build without
+            // `YMUX_DEV_REMOTE=1`, never in a stand-down instance (no hook
+            // receiver). The state is managed either way so the commands work.
+            ymux_lib::remote::runtime::start(app.handle(), hook_port.is_none());
             // Without a receiver the token is set *empty* rather than left
             // out: a ymux started from another ymux's pane would otherwise
             // hand its panes the parent's token, and their hooks would reach

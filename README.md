@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.16.0-7fdbca?style=flat-square" alt="version 0.16.0" />
+  <img src="https://img.shields.io/badge/version-0.17.0-7fdbca?style=flat-square" alt="version 0.17.0" />
 </p>
 
 <p align="center">
@@ -415,6 +415,43 @@ by name instead; the delivery itself never fails because of it.
 drops the webhook list from `config.toml` (the encrypted secrets stay in
 `secrets.json`), so back up your destinations first.
 
+### Remote server (phone access)
+
+Optional and **off by default**: **Settings → Remote server**. Watch your
+agents and answer them from your phone. ymux connects out to a relay you run
+yourself, [yMux-Server](https://github.com/YoungMins/yMux-Server); your phone
+opens that server's web app, which you can add to the home screen.
+
+**Set it up**
+
+1. Deploy yMux-Server with Docker (default port 11020, behind your own HTTPS
+   domain). See its README.
+2. In ymux, enter the server address and the setup token (`docker compose exec
+   ymux-server ymux-server token`) under **Settings → Remote server**.
+3. Switch the connection on (**Connect to the server**).
+4. Click **Pair a phone** and scan the QR code with the phone's camera. The
+   phone shows a 6-digit number: **type it into ymux**. ymux never displays it.
+5. Use it. Several computers can share one server, and one phone can be paired
+   with each of them.
+
+**What the phone can do.** See every agent pane and its status across all
+workspaces, read a pane's screen, answer a menu or permission question, send
+Stop (Escape), and send a prompt (queued automatically while the agent is
+busy). It gets a notification when an agent is waiting or has finished.
+There is no remote command for raw keys, new panes or files.
+
+**Access levels**, set per phone: **View only**, **View and answer**, or
+**View, answer and prompt**.
+
+**Security.** The computer alone decides whether a command runs: the server
+only relays. Everything between the phone and ymux is end-to-end encrypted, so
+the relay cannot read or change it. Pairing needs the number typed on the
+computer. Every remote action is written to a local audit log
+(`remote/audit.jsonl` in the config folder; it holds no prompt or screen text).
+Two limits: the server serves the phone's web app, so host it yourself, on a
+machine you trust, and keep it updated; and scan a pairing QR only from your
+own screen, never one you received in a message or on a web page.
+
 ### Side panel: Files and Usage
 
 One panel on the right, shared by all workspaces. Icons at the top switch
@@ -565,13 +602,15 @@ are safe to delete.
 
 ## Privacy
 
-ymux has no accounts, analytics or telemetry, and runs no servers. Layouts,
+ymux has no accounts, analytics or telemetry, and runs no servers of its own. Layouts,
 scrollback, notes and settings stay on your PC. The only requests ymux makes on
 its own are the GitHub update check and, if you use the Usage view, quota
 requests to Anthropic and OpenAI that send the token those CLIs already stored
 locally to the provider that issued it. If you turn on the activity log you
 may also point ymux at webhook destinations and a summarizer endpoint; data goes
 only where you send it (see [Activity log & notifications](#activity-log--notifications)).
+If you switch on the remote server, ymux keeps an encrypted connection to the
+server address you entered (see [Remote server](#remote-server-phone-access)).
 See the full [privacy policy](./packaging/microsoft-store/PRIVACY.md).
 
 ## Development

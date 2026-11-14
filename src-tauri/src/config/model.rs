@@ -130,6 +130,78 @@ pub struct Config {
     /// HMAC secret live in the secrets store. Additive, serde default.
     #[serde(default)]
     pub webhooks: Vec<crate::webhooks::WebhookDestination>,
+    /// Remote server link (CLAUDE.md rule 19). Backend-owned like
+    /// `agent_hook_port` (rule 11): changed only by the `remote_*` commands
+    /// and never copied in `merge_layouts_from`, so a stale frontend save
+    /// cannot re-enable the link, drop a paired phone or lift a capability.
+    /// Additive with a serde default, no `CONFIG_VERSION` bump.
+    #[serde(default)]
+    pub remote: RemoteConfig,
+}
+
+/// One paired phone. Plain strings and numbers only (rule 3).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct RemoteDevice {
+    /// Lowercase UUID the phone minted.
+    pub id: String,
+    pub name: String,
+    /// Raw uncompressed SEC1 P-256 public key, base64url. Public, not secret.
+    pub pubkey: String,
+    /// `view` < `respond` < `prompt`.
+    pub cap: String,
+    pub added_ms: u64,
+}
+
+/// Settings of the remote link. The private key and the setup token are NOT
+/// here: they live in the secrets store (id `remote`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RemoteConfig {
+    pub enabled: bool,
+    /// `https://host[:port][/base]` of the user's own relay server.
+    pub server_url: String,
+    /// Minted once; lowercase UUID. Empty until first configured.
+    pub desktop_id: String,
+    /// Shown on the phone. Empty = the host name (see `effective_name`).
+    pub name: String,
+    pub notify_waiting: bool,
+    pub notify_done: bool,
+    /// The server accepted this desktop's key at least once.
+    pub registered: bool,
+    pub devices: Vec<RemoteDevice>,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_url: String::new(),
+            desktop_id: String::new(),
+            name: String::new(),
+            notify_waiting: true,
+            notify_done: false,
+            registered: false,
+            devices: Vec::new(),
+        }
+    }
+}
+
+impl RemoteConfig {
+    /// The name the phone sees: the configured one, else the host name, else
+    /// `yMux`.
+    pub fn effective_name(&self) -> String {
+        let own = self.name.trim();
+        if !own.is_empty() {
+            return own.to_string();
+        }
+        ["COMPUTERNAME", "HOSTNAME"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .map(|v| v.trim().to_string())
+            .find(|v| !v.is_empty())
+            .unwrap_or_else(|| "yMux".to_string())
+    }
 }
 
 /// Activity log settings. Off by default: recording what an agent did is
@@ -265,6 +337,7 @@ impl Default for Config {
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         }
     }
 }
@@ -374,6 +447,8 @@ impl Config {
         // Sanitized: invalid/duplicate ids dropped, and `url_hint` is never
         // taken from the frontend (the backend derives it from the secret URL).
         self.webhooks = crate::webhooks::sanitize_destinations(incoming.webhooks, &self.webhooks);
+        // `remote` likewise (rule 19): enabling it, pairing a phone and
+        // changing a phone's capability each go through a `remote_*` command.
         // `agent_tracking` is deliberately NOT copied, the other exception to
         // the rule above: it is backend-owned. `set_agent_tracking` flips it
         // in the same step that installs/removes the Claude Code hooks, so it
@@ -1295,6 +1370,96 @@ mod tests {
     }
 
     #[test]
+    fn merge_layouts_does_not_carry_remote() {
+        let device = RemoteDevice {
+            id: "11111111-1111-4111-8111-111111111111".into(),
+            name: "Phone".into(),
+            pubkey: "pk".into(),
+            cap: "respond".into(),
+            added_ms: 5,
+        };
+        let mut backend = Config {
+            remote: RemoteConfig {
+                enabled: true,
+                server_url: "https://r.example".into(),
+                devices: vec![device.clone()],
+                ..RemoteConfig::default()
+            },
+            ..Config::default()
+        };
+        // A stale (or hostile) frontend save with every remote field changed.
+        backend.merge_layouts_from(Config {
+            remote: RemoteConfig {
+                enabled: false,
+                server_url: "https://evil.example".into(),
+                devices: vec![RemoteDevice {
+                    cap: "prompt".into(),
+                    ..device.clone()
+                }],
+                ..RemoteConfig::default()
+            },
+            ..Config::default()
+        });
+        assert!(backend.remote.enabled);
+        assert_eq!(backend.remote.server_url, "https://r.example");
+        assert_eq!(backend.remote.devices, vec![device]);
+        // And an empty one cannot enable it either.
+        let mut off = Config::default();
+        off.merge_layouts_from(Config {
+            remote: RemoteConfig {
+                enabled: true,
+                ..RemoteConfig::default()
+            },
+            ..Config::default()
+        });
+        assert!(!off.remote.enabled);
+    }
+
+    #[test]
+    fn remote_config_defaults_and_toml_roundtrip() {
+        let parsed: Config = toml::from_str("version = 7\n").expect("parse");
+        assert!(!parsed.remote.enabled);
+        assert!(parsed.remote.notify_waiting);
+        assert!(!parsed.remote.notify_done);
+        assert!(parsed.remote.devices.is_empty());
+        let config = Config {
+            remote: RemoteConfig {
+                enabled: true,
+                server_url: "https://r.example:8443/base".into(),
+                desktop_id: "22222222-2222-4222-8222-222222222222".into(),
+                name: "Desk".into(),
+                notify_waiting: false,
+                notify_done: true,
+                registered: true,
+                devices: vec![
+                    RemoteDevice {
+                        id: "11111111-1111-4111-8111-111111111111".into(),
+                        name: "Phone".into(),
+                        pubkey: "BAAA".into(),
+                        cap: "prompt".into(),
+                        added_ms: 1_700_000_000_000,
+                    },
+                    RemoteDevice::default(),
+                ],
+            },
+            ..Config::default()
+        };
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(loaded.remote, config.remote);
+    }
+
+    #[test]
+    fn remote_effective_name_prefers_the_configured_one() {
+        let named = RemoteConfig {
+            name: "  Desk ".into(),
+            ..RemoteConfig::default()
+        };
+        assert_eq!(named.effective_name(), "Desk");
+        assert!(!RemoteConfig::default().effective_name().is_empty());
+    }
+
+    #[test]
     fn agent_hook_port_defaults_to_unset_and_roundtrips() {
         let parsed: Config = toml::from_str("version = 7\n").expect("parse");
         assert_eq!(parsed.agent_hook_port, 0);
@@ -1390,6 +1555,7 @@ mod tests {
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1410,6 +1576,7 @@ mod tests {
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         backend.merge_layouts_from(frontend_save);
         assert_eq!(backend.active_workspace, 2);
@@ -1481,6 +1648,7 @@ mod tests {
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         let mut cwds = std::collections::HashMap::new();
         cwds.insert(a, "C:\\Users\\alice\\dev".to_string());
@@ -1521,6 +1689,7 @@ mod tests {
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         cfg.migrate();
         assert_eq!(cfg.version, CONFIG_VERSION);
@@ -1664,6 +1833,7 @@ shell = "PowerShell 7"
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         let frontend_save = Config {
             version: CONFIG_VERSION,
@@ -1701,6 +1871,7 @@ shell = "PowerShell 7"
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         backend.merge_layouts_from(frontend_save);
         // Backend-owned: a stale frontend copy must not clobber it.
@@ -1774,6 +1945,7 @@ shell = "PowerShell 7"
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -2157,6 +2329,7 @@ shell = "PowerShell 7"
             activity: ActivityConfig::default(),
             summarizer: SummarizerConfig::default(),
             webhooks: Vec::new(),
+            remote: RemoteConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");

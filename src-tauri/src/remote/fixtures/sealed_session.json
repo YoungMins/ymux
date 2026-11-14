@@ -1,0 +1,9 @@
+{
+  "aad": "ymux-remote-v1|d2p|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "body": "AgICAgICAgICAgICILYkzBV646v8Xv2iJ-r9cCIvL4s9qo2ho1snObzp5n7Ul5GV0ZCbghHG7cVS5iZE2fYEXTB4sTJp5Ezw8CO3ZOWH54UuMUh4YmbDsXawbNqrPym00ADeLOOvVRkfC38dG9dIpDMMVxx6WQvUsur9cGsscwMxAZGwdlrIcUy31CDxzmu24h6NE2LVFP8ERGfjV3Th_1RKoFs7TjokjFsOJsnk8RkdN2PYMjsHQUy5gZrVjBjo3myMyP97bybuoDMf4U5j2xahkiVbVCgTfCXcgDWI",
+  "direction": "d2p",
+  "link_key_hex": "abaa69f263220b94056c1883abf1544bc052736911f1fad02760342e121b0964",
+  "nonce_hex": "020202020202020202020202",
+  "plaintext": "{\"cap\":\"respond\",\"k\":\"session\",\"name\":\"My PC\",\"now_ms\":1731600000000,\"open\":\"MTExMTExMTExMTExMTExMQ\",\"prev\":{\"seq\":3,\"session\":\"BAQEBAQEBAQEBAQEBAQEBA\"},\"session\":\"BQUFBQUFBQUFBQUFBQUFBQ\",\"v\":1}",
+  "what": "session"
+}

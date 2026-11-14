@@ -1,0 +1,10 @@
+{
+  "sub": {
+    "endpoint": "https://push.example.com/send/abc123",
+    "keys": {
+      "auth": "BwcHBwcHBwcHBwcHBwcHBw",
+      "p256dh": "BFkat3HrvP1tnLkJTRBlKK3Rpp1EwsH2J_CJ7Fi5xhrfn05qvw0EXAxpOjxorXyXynK-ZN70om_s0mPdmKkngPA"
+    }
+  },
+  "t": "push_subscribe"
+}

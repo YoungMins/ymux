@@ -1,0 +1,11 @@
+{
+  "desktop_id": "0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d",
+  "device_id": "7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "ek": "BHMQPsMLPM9X2q4I6TU0rvFEo1lAz2u7oSoM98vV1lpk2CyMmenTxF-SRbqbJ5gsmuqOwduUsZxEeVlCwOsiqjI",
+  "name": "iPhone",
+  "proof": "pVujatJvSfP1nggDggAV3B6LqOB8brlcEk20mHxi0_4",
+  "pubkey": "BFUPRxAD89-Xw99QaseX9nIfsaH7e49vg9IkSYplyI4kE2CT1wEuUJpzcVy9CwCjzA_0tcAbP_oZarH7MnA2uOY",
+  "sig": "ZrpQZG49kMcnTc9MtgDfckeG_6X87ausk0Rd84n52TcIW1jCnImkQdcCQPDUl2czL-AJAllF6ZoXRmQebItifA",
+  "t": "pair_request",
+  "v": 1
+}

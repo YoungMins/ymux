@@ -18,6 +18,7 @@ import { nextAccountName, normalizeColor } from "../accounts/accountModel";
 import { managedAccount } from "../accounts/createAccount";
 import type { AccountProfile } from "../types";
 import { renderActivitySection } from "./ActivitySection";
+import { renderRemoteSection } from "./RemoteSection";
 import { renderSelfTest } from "./selfTestView";
 
 interface SyntaxField {
@@ -40,6 +41,7 @@ const SECTIONS: { id: SettingsSection; tKey: string; icon: string }[] = [
   { id: "general", tKey: "settings.section.general", icon: "⚙" },
   { id: "accounts", tKey: "settings.section.accounts", icon: "👤" },
   { id: "activity", tKey: "settings.section.activity", icon: "🔔" },
+  { id: "remote", tKey: "settings.section.remote", icon: "📱" },
   { id: "syntax", tKey: "settings.section.syntax", icon: "✦" },
   { id: "shortcuts", tKey: "settings.section.shortcuts", icon: "⌨" },
   { id: "config", tKey: "settings.section.config", icon: "📁" },
@@ -153,6 +155,9 @@ export function mountSettings(parent: HTMLElement, manager: WorkspaceManager): (
         disposeSection = renderActivitySection(section, manager, {
           goToGeneral: () => switchSection("general"),
         });
+        break;
+      case "remote":
+        disposeSection = renderRemoteSection(section);
         break;
       case "syntax":
         renderSyntax(section);

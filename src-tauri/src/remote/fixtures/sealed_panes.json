@@ -1,0 +1,9 @@
+{
+  "aad": "ymux-remote-v1|d2p|0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d|7c4e2a10-8b3f-4a6d-b5e1-9d0f2c3b4a51",
+  "body": "BQUFBQUFBQUFBQUFvW6Y0wHOaYArDHGV1ZyQVeoRjd-miiphKEajQtyAVlmGQXCeq41YF-pOML-YDW1NZ1MoaHN0VPiuPmQlpf9sH0pFgah6093cTNEIpb5uAxXE9gHUgEvBUoXNzsNV_5PKxkBGQ-QcudWLeclMrYpv0wx9ZDjGC_tGuwgN0Mog40ghJ9JjykwjnvBvqjIFw_jqbmP3kHZGO6BgkFw5eikpbCnGR8bRfXfFHxTMyhAYqXj64SxUDQ0eBtPdNvBekHUknvTFQTB5KMFKF0q1B7XMBfWR_Lsn65QH3tfp3NcVDE5zs_OeI3jm9jAxWIVKx8mFnKclWpgcfayU",
+  "direction": "d2p",
+  "link_key_hex": "abaa69f263220b94056c1883abf1544bc052736911f1fad02760342e121b0964",
+  "nonce_hex": "050505050505050505050505",
+  "plaintext": "{\"at_ms\":1731600001000,\"k\":\"panes\",\"n\":2,\"panes\":[{\"kind\":\"claude\",\"pane\":\"e3b0c442-98fc-4c14-9afb-f4c8996fb924\",\"queued\":0,\"since_ms\":1731600000000,\"status\":\"waiting\",\"title\":\"build\",\"ws\":\"main\"}],\"session\":\"BQUFBQUFBQUFBQUFBQUFBQ\"}",
+  "what": "panes"
+}

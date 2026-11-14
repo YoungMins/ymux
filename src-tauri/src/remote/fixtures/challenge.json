@@ -1,0 +1,7 @@
+{
+  "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "origin": "https://ymux.example.com",
+  "server": "0.1.0",
+  "t": "challenge",
+  "v": 1
+}

@@ -1,5 +1,6 @@
 import { tokenStrings } from "./tokenStrings";
 import { activityStrings } from "./activityStrings";
+import { remoteStrings } from "./remoteStrings";
 import { funStrings } from "./funStrings";
 import { quotaStrings } from "./quotaStrings";
 export type Lang =
@@ -87,6 +88,7 @@ type Translations = Record<string, Partial<Record<Lang, string>>>;
 const strings: Translations = {
   ...tokenStrings,
   ...activityStrings,
+  ...remoteStrings,
   ...funStrings,
   ...quotaStrings,
   // ── Settings panel (gear icon) ─────────────────────────────────

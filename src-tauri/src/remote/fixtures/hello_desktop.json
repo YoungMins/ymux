@@ -1,0 +1,10 @@
+{
+  "desktop_id": "0b9a7f0e-5c1d-4e55-9f7a-3d2c1b0a9e8d",
+  "name": "My PC",
+  "pubkey": "BG_wO5SSQc4drdQ1GeaWDgqFtBppoFwygQOqK84VlMoWPE91OlW_AdxT9sCwx-7ni0DG_30lqW4igrmJzvccFEo",
+  "role": "desktop",
+  "setup_token": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+  "sig": "nJ50LYbhoNUE9jLwFuzBPLtgVB6kX-hbtmMvVRWilojrpi4d1AMI2N87KUW2jDNwk-936ofyQIczzSe-HAE-mw",
+  "t": "hello",
+  "v": 1
+}

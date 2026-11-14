@@ -39,6 +39,7 @@ import { MONO_FONT_STACK } from "../ui/fonts";
 import { isWslExecutable, shellFamilyFromExecutable, type ShellFamily } from "./shellQuote";
 import { PathLinks } from "./pathLinks";
 import { pathOpenTarget } from "./pathOpen";
+import { logicalLines, type ScreenRow } from "./logicalLines";
 import { DEFAULT_FONT_SIZE } from "../workspace/fontSize";
 import { mirrorableInput } from "../workspace/broadcast";
 import { paintPaneTitle } from "../accounts/badge";
@@ -970,6 +971,22 @@ export class TerminalPane implements Pane {
     }
     while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
     return lines;
+  }
+
+  /// Like `screenText`, but a row that only continues the one above (a soft
+  /// wrap, xterm's `isWrapped`) is joined to it: one string per logical line.
+  /// What the remote server sends out. Only soft-wrapped rows are joined; text
+  /// an agent's own TUI wraps (real line breaks) stays split.
+  screenLogicalText(history = 200): string[] {
+    if (!this.spawned) return [];
+    const buf = this.term.buffer.active;
+    const end = Math.min(buf.length, buf.baseY + this.term.rows);
+    const rows: ScreenRow[] = [];
+    for (let y = Math.max(0, end - this.term.rows - history); y < end; y++) {
+      const line = buf.getLine(y);
+      rows.push({ raw: line?.translateToString(false) ?? "", wrapped: line?.isWrapped ?? false });
+    }
+    return logicalLines(rows);
   }
 
   /// The foreground app turned on application cursor keys (DECCKM).

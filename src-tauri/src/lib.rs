@@ -42,6 +42,9 @@ pub mod paste_images;
 pub mod pty;
 // Close-to-tray / quit handshake state machine (pure; wired in `tray`).
 pub mod quit_gate;
+// Remote server link: protocol, keys, authorisation, pairing (pure); the
+// socket thread and commands are desktop-only (`remote::runtime`).
+pub mod remote;
 pub mod scrollback;
 // Webhook/LLM secret store: DPAPI on Windows, 0600 elsewhere (pure file I/O).
 pub mod secrets;
