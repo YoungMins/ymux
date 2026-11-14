@@ -34,6 +34,8 @@ PRIVATE BY DESIGN yMux has no sign-up, no analytics and no telemetry. Your layou
 
 OFFICE VIEW Press Ctrl+Shift+O to see your workspace as a pixel-art office: each pane is a room and each agent a character that works at its desk, raises a hand when it needs you, celebrates when it finishes and walks over to deliver work to other rooms. Click a room to read and answer its terminal in place, pick one of eight themes, and watch each account level up as an RPG hero with its token usage.
 
+REMOTE CONTROL Remote server (off by default): watch and steer your agents from your phone through a yMux-Server relay that you host yourself on your own HTTPS domain. From the phone's browser (it installs as a web app) you see every agent and its status, read an agent's screen, answer menus and permission questions, stop an agent and send prompts. Each phone gets one of three access levels: view only, view and answer, or view, answer and prompt. This computer alone authorises every command. Everything between phone and computer is end-to-end encrypted, so the relay cannot read it.
+
 yMux is free and open source: https://github.com/YoungMins/ymux","yMux는 tmux에서 영감을 받은 Windows용 경량 터미널 멀티플렉서입니다. 하나의 화면을 필요한 만큼 여러 터미널로 나누고, 그 레이아웃을 저장해 두었다가 중단했던 지점에서 그대로 다시 시작할 수 있습니다.
 
 유지되는 레이아웃 창을 가로 또는 세로로 원하는 만큼 깊게 나눌 수 있습니다. 모든 창은 셸, 작업 디렉터리, 선택적 시작 명령을 기억하며, 각 워크스페이스는 재시작 후에도 자신의 레이아웃을 유지합니다. 터미널 스크롤백도 함께 저장되므로 앱을 다시 열어도 출력 내용이 그대로 남아 있습니다.
@@ -68,6 +70,8 @@ yMux를 다시 시작한 뒤에도 Claude Code와 Codex 세션을 이어서 진�
 설계부터 프라이버시를 우선합니다 yMux에는 가입, 분석, 원격 측정이 없습니다. 레이아웃, 스크롤백, 설정은 모두 내 PC에만 저장됩니다. 선택 사항인 작업 기록은 직접 추가한 웹훅으로만 데이터를 보냅니다.
 
 사무실 보기 Ctrl+Shift+O를 누르면 워크스페이스를 픽셀 아트 사무실로 볼 수 있습니다. 창마다 방이 되고, 에이전트는 캐릭터가 되어 책상에서 일하고, 확인이 필요하면 손을 들고, 일을 마치면 기뻐하며, 다른 방으로 작업을 직접 배달합니다. 방을 누르면 그 자리에서 터미널을 보고 답할 수 있고, 테마 8종 중 하나를 고를 수 있으며, 계정마다 토큰 사용량에 따라 RPG 영웅처럼 레벨이 오릅니다.
+
+원격 제어 원격 서버(기본값은 꺼짐): 직접 운영하는 HTTPS 도메인의 yMux-Server 릴레이를 거쳐, 휴대폰에서 에이전트를 확인하고 조작할 수 있습니다. 휴대폰 브라우저(웹 앱으로 설치 가능)에서 모든 에이전트와 상태를 보고, 에이전트 화면을 읽고, 메뉴와 권한 질문에 답하고, 에이전트를 중지하고, 프롬프트를 보낼 수 있습니다. 휴대폰마다 세 가지 접근 수준(보기만, 보기와 응답, 보기·응답·프롬프트 전송) 중 하나를 정합니다. 모든 명령은 이 컴퓨터만 승인합니다. 휴대폰과 컴퓨터 사이의 내용은 종단 간 암호화되어 릴레이도 읽을 수 없습니다.
 
 yMux는 무료 오픈 소스입니다: https://github.com/YoungMins/ymux","yMuxは、tmuxにインスパイアされた Windows 向けの軽量ターミナルマルチプレクサです。1つのウィンドウを必要なだけ複数のターミナルに分割し、そのレイアウトを保存して、中断したところからそのまま再開できます。
 
@@ -104,6 +108,8 @@ yMuxを再起動したあとも、Claude Code と Codex のセッションを再
 
 オフィス表示 Ctrl+Shift+O でワークスペースをピクセルアートのオフィスとして表示します。ペインごとに部屋ができ、エージェントはキャラクターになって机で作業し、対応が必要なときは手を挙げ、作業を終えると喜び、ほかの部屋へ作業を届けに歩いていきます。部屋をクリックするとその場でターミナルを見て返答でき、8 種類のテーマから選べ、アカウントごとにトークン使用量に応じて RPG の勇者のようにレベルが上がります。
 
+リモート操作 リモートサーバー（初期設定はオフ）: ご自身の HTTPS ドメインで運用する yMux-Server のリレーを通じて、スマートフォンからエージェントを確認・操作できます。 スマートフォンのブラウザー（Web アプリとしてインストール可能）で、すべてのエージェントと状態の確認、エージェント画面の閲覧、メニューや権限の質問への応答、エージェントの停止、プロンプトの送信ができます。 スマートフォンごとに 3 つのアクセスレベル（表示のみ、表示と応答、表示・応答・プロンプト送信）から選べます。すべてのコマンドは、このコンピューターだけが承認します。 スマートフォンとコンピューターの間の内容はエンドツーエンドで暗号化され、リレーは読み取れません。
+
 yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux","yMux 是一款受 tmux 启发、适用于 Windows 的轻量级终端复用器。你可以把一个窗口拆分成任意数量的终端，保存这些布局，下次打开时从上次离开的地方继续。
 
 布局持久保存 窗格可水平或垂直拆分，层数不限。每个窗格都会记住自己的 shell、工作目录和可选的启动命令，每个工作区在重启后也会保留各自的布局。终端滚动缓冲区同样会被保存，重新打开应用后，之前的输出依然都在。
@@ -138,6 +144,8 @@ yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux"
 隐私优先的设计 yMux 没有注册，没有数据分析，也没有遥测。你的布局、滚动缓冲区和设置都只保存在你自己的电脑上。可选的活动日志只会把数据发送到你自己添加的 webhook。
 
 办公室视图 按 Ctrl+Shift+O 可将工作区显示为像素风办公室：每个窗格是一个房间，每个智能体都是一个角色，在办公桌前工作，需要你时举手，完成时欢呼，还会走到其他房间递送工作。点击房间即可就地查看并回复其终端；可从 8 种主题中选择；每个账户还会随 token 用量像 RPG 英雄一样升级。
+
+远程控制 远程服务器（默认关闭）：通过你自己在 HTTPS 域名上运行的 yMux-Server 中继，用手机查看并控制智能体。 在手机浏览器（可安装为网页应用）中，可以查看所有智能体及其状态、阅读智能体的屏幕、回答菜单和权限提问、停止智能体，以及发送提示。 每部手机有三种访问级别：仅查看、查看并回应、查看回应并发送提示。所有命令都只由这台电脑批准。 手机与电脑之间的内容经过端到端加密，中继服务器无法读取。
 
 yMux 免费且开源：https://github.com/YoungMins/ymux","yMux, tmux से प्रेरित Windows के लिए एक हल्का टर्मिनल मल्टीप्लेक्सर है। इससे आप एक विंडो को जितने चाहें उतने टर्मिनलों में बाँट सकते हैं, उन लेआउट को सेव कर सकते हैं, और ठीक वहीं से दोबारा शुरू कर सकते हैं जहाँ आपने छोड़ा था।
 
@@ -174,6 +182,8 @@ yMux रीस्टार्ट करने के बाद Claude Code औ�
 
 ऑफ़िस व्यू Ctrl+Shift+O दबाकर अपने वर्कस्पेस को पिक्सेल-आर्ट ऑफ़िस के रूप में देखें: हर पेन एक कमरा है और हर एजेंट एक किरदार, जो अपनी मेज़ पर काम करता है, ज़रूरत पड़ने पर हाथ उठाता है, काम पूरा होने पर जश्न मनाता है और दूसरे कमरों तक काम पहुँचाने चलकर जाता है। किसी कमरे पर क्लिक करके वहीं उसका टर्मिनल पढ़ें और जवाब दें, आठ थीम में से चुनें, और देखें कि हर खाता अपने टोकन उपयोग से RPG नायक की तरह लेवल अप करता है।
 
+रिमोट कंट्रोल रिमोट सर्वर (डिफ़ॉल्ट रूप से बंद): अपने HTTPS डोमेन पर चलाए गए yMux-Server रिले के ज़रिए अपने फ़ोन से एजेंट देखें और उन्हें नियंत्रित करें। फ़ोन के ब्राउज़र (वेब ऐप के रूप में इंस्टॉल हो सकता है) में सभी एजेंट और उनकी स्थिति देखें, किसी एजेंट की स्क्रीन पढ़ें, मेन्यू और अनुमति के सवालों के जवाब दें, एजेंट रोकें और प्रॉम्प्ट भेजें। हर फ़ोन को तीन पहुँच स्तरों में से एक मिलता है: केवल देखना, देखना और जवाब देना, या देखना, जवाब देना और प्रॉम्प्ट भेजना। हर कमांड को केवल यही कंप्यूटर मंज़ूर करता है। फ़ोन और कंप्यूटर के बीच की सामग्री एंड-टू-एंड एन्क्रिप्टेड है, इसलिए रिले उसे नहीं पढ़ सकता।
+
 yMux मुफ़्त और ओपन सोर्स है: https://github.com/YoungMins/ymux","yMux es un multiplexor de terminal ligero para Windows, inspirado en tmux. Te permite dividir una ventana en tantos terminales como necesites, guardar esas disposiciones y retomar el trabajo exactamente donde lo dejaste.
 
 DISPOSICIONES QUE PERSISTEN Divide cualquier panel en horizontal o en vertical, con tanta profundidad como quieras. Cada panel recuerda su shell, su directorio de trabajo y un comando de inicio opcional, y cada espacio de trabajo conserva su propia disposición entre reinicios. El historial de desplazamiento del terminal también se guarda, así que tu salida sigue ahí al volver a abrir la aplicación.
@@ -208,6 +218,8 @@ Disponible en 13 idiomas
 PRIVADO POR DISEÑO yMux no tiene registro, ni analíticas, ni telemetría. Tus disposiciones, historial de desplazamiento y ajustes se quedan en tu PC. El registro de actividad opcional solo envía datos a los webhooks que añadas tú mismo.
 
 VISTA DE OFICINA Pulsa Ctrl+Shift+O para ver tu espacio de trabajo como una oficina en pixel art: cada panel es una sala y cada agente un personaje que trabaja en su escritorio, levanta la mano cuando te necesita, lo celebra al terminar y lleva el trabajo a otras salas. Haz clic en una sala para leer y responder su terminal ahí mismo, elige uno de ocho temas y mira cómo cada cuenta sube de nivel como un héroe de RPG con su uso de tokens.
+
+CONTROL REMOTO Servidor remoto (desactivado por defecto): mira y controla tus agentes desde el móvil a través de un relé yMux-Server que alojas tú mismo en tu propio dominio HTTPS. Desde el navegador del móvil (se puede instalar como aplicación web) ves todos los agentes y su estado, lees la pantalla de un agente, respondes a menús y preguntas de permisos, detienes un agente y envías prompts. Cada móvil tiene uno de tres niveles de acceso: solo ver, ver y responder, o ver, responder y enviar prompts. Solo este equipo autoriza cada comando. Todo lo que viaja entre el móvil y el equipo está cifrado de extremo a extremo, así que el relé no puede leerlo.
 
 yMux es gratuito y de código abierto: https://github.com/YoungMins/ymux","yMux est un multiplexeur de terminal léger pour Windows, inspiré de tmux. Il vous permet de diviser une fenêtre en autant de terminaux que nécessaire, d'enregistrer ces dispositions et de reprendre exactement là où vous vous étiez arrêté.
 
@@ -244,6 +256,8 @@ CONFIDENTIEL PAR CONCEPTION yMux n'a ni inscription, ni outil d'analyse, ni tél
 
 VUE BUREAU Appuyez sur Ctrl+Shift+O pour voir votre espace de travail comme un bureau en pixel art : chaque volet est une pièce et chaque agent un personnage qui travaille à son bureau, lève la main quand il a besoin de vous, se réjouit quand il a terminé et va livrer le travail dans d'autres pièces. Cliquez sur une pièce pour lire et répondre à son terminal sur place, choisissez parmi huit thèmes et regardez chaque compte gagner des niveaux comme un héros de RPG grâce à son utilisation de jetons.
 
+COMMANDE À DISTANCE Serveur distant (désactivé par défaut) : consultez et pilotez vos agents depuis votre téléphone via un relais yMux-Server que vous hébergez vous-même sur votre propre domaine HTTPS. Depuis le navigateur du téléphone (installable comme application web), vous voyez tous les agents et leur état, lisez l’écran d’un agent, répondez aux menus et aux questions d’autorisation, arrêtez un agent et envoyez des prompts. Chaque téléphone reçoit l’un de trois niveaux d’accès : lecture seule, voir et répondre, ou voir, répondre et envoyer des prompts. Seul cet ordinateur autorise chaque commande. Tout ce qui circule entre le téléphone et l’ordinateur est chiffré de bout en bout : le relais ne peut pas le lire.
+
 yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو مُضاعِف طرفيات خفيف لنظام Windows، مستوحى من tmux. يتيح لك تقسيم نافذة واحدة إلى أي عدد تحتاجه من الطرفيات، وحفظ هذه التخطيطات، والعودة إلى حيث توقفت تمامًا.
 
 تخطيطات تبقى كما هي قسّم أي جزء أفقيًا أو رأسيًا، وبأي عمق تريده. يتذكر كل جزء الـ shell الخاص به ومجلد العمل وأمر بدء اختياريًا، ويحتفظ كل مساحة عمل بتخطيطها الخاص بعد إعادة التشغيل. كما يُحفظ سجل تمرير الطرفية، فيبقى ناتجك موجودًا عند إعادة فتح التطبيق.
@@ -278,6 +292,8 @@ yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو 
 خصوصية بالتصميم لا يتطلب yMux تسجيلًا ولا يجمع تحليلات ولا بيانات قياس عن بُعد. تبقى تخطيطاتك وسجل التمرير وإعداداتك على جهازك. لا يرسل سجل النشاط الاختياري البيانات إلا إلى webhooks التي تضيفها بنفسك.
 
 عرض المكتب اضغط Ctrl+Shift+O لعرض مساحة عملك كمكتب بفن البكسل: كل جزء غرفة، وكل وكيل شخصية تعمل على مكتبها، وترفع يدها عندما تحتاج إليك، وتحتفل عند الانتهاء، وتسير لتسليم العمل إلى الغرف الأخرى. انقر على غرفة لقراءة طرفيتها والرد عليها في مكانها، واختر واحدة من ثماني سمات، وشاهد كل حساب يرتقي في المستويات كبطل ألعاب تقمص الأدوار مع استخدامه للرموز.
+
+التحكم عن بُعد الخادم البعيد (متوقف افتراضيًا): تابع وكلاءك وتحكّم بهم من هاتفك عبر مرحّل yMux-Server تستضيفه بنفسك على نطاق HTTPS خاص بك. من متصفح الهاتف (يمكن تثبيته كتطبيق ويب) يمكنك رؤية كل الوكلاء وحالتهم، وقراءة شاشة أي وكيل، والرد على القوائم وأسئلة الأذونات، وإيقاف وكيل، وإرسال موجّهات. لكل هاتف أحد ثلاثة مستويات وصول: عرض فقط، أو عرض ورد، أو عرض ورد وإرسال موجّهات. وهذا الكمبيوتر وحده هو الذي يسمح بكل أمر. كل ما يجري بين الهاتف والكمبيوتر مشفّر من طرف إلى طرف، فلا يستطيع المرحّل قراءته.
 
 yMux مجاني ومفتوح المصدر: https://github.com/YoungMins/ymux","O yMux é um multiplexador de terminal leve para Windows, inspirado no tmux. Com ele, você divide uma janela em quantos terminais precisar, salva esses layouts e retoma exatamente de onde parou.
 
@@ -314,6 +330,8 @@ PRIVACIDADE POR PROJETO O yMux não exige cadastro, nem tem análises ou telemet
 
 VISÃO DE ESCRITÓRIO Pressione Ctrl+Shift+O para ver seu espaço de trabalho como um escritório em pixel art: cada painel é uma sala e cada agente um personagem que trabalha em sua mesa, levanta a mão quando precisa de você, comemora quando termina e leva o trabalho até outras salas. Clique em uma sala para ler e responder ao terminal ali mesmo, escolha um entre oito temas e veja cada conta subir de nível como um herói de RPG com o uso de tokens.
 
+CONTROLE REMOTO Servidor remoto (desativado por padrão): acompanhe e controle seus agentes pelo celular, através de um relay yMux-Server que você hospeda no seu próprio domínio HTTPS. No navegador do celular (instalável como aplicativo web), você vê todos os agentes e o status deles, lê a tela de um agente, responde a menus e perguntas de permissão, interrompe um agente e envia prompts. Cada celular tem um de três níveis de acesso: somente ver, ver e responder, ou ver, responder e enviar prompts. Só este computador autoriza cada comando. Tudo o que passa entre o celular e o computador é criptografado de ponta a ponta, então o relay não consegue ler.
+
 O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux — лёгкий терминальный мультиплексор для Windows, вдохновлённый tmux. Он позволяет разделить одно окно на нужное число терминалов, сохранить такие раскладки и вернуться ровно туда, где вы остановились.
 
 РАСКЛАДКИ, КОТОРЫЕ СОХРАНЯЮТСЯ Делите любую панель по горизонтали или вертикали на любую глубину. Каждая панель помнит свою оболочку, рабочую папку и необязательную команду запуска, а каждое рабочее пространство сохраняет свою раскладку между перезапусками. История прокрутки терминала тоже сохраняется, поэтому вывод остаётся на месте после повторного открытия приложения.
@@ -348,6 +366,8 @@ O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux
 КОНФИДЕНЦИАЛЬНОСТЬ ПО УМОЛЧАНИЮ В yMux нет регистрации, аналитики и телеметрии. Ваши раскладки, история прокрутки и настройки остаются на вашем ПК. Необязательный журнал активности отправляет данные только на те webhook, которые вы добавите сами.
 
 ВИД «ОФИС» Нажмите Ctrl+Shift+O, чтобы увидеть рабочее пространство как офис в стиле пиксель-арт: каждая панель — комната, каждый агент — персонаж, который работает за столом, поднимает руку, когда нужны вы, радуется, закончив, и сам относит работу в другие комнаты. Щёлкните комнату, чтобы прямо там читать её терминал и отвечать, выберите одну из восьми тем и наблюдайте, как каждый аккаунт растёт в уровнях, словно герой RPG, по мере расхода токенов.
+
+УДАЛЁННОЕ УПРАВЛЕНИЕ Удалённый сервер (по умолчанию выключен): следите за агентами и управляйте ими с телефона через ретранслятор yMux-Server, который вы сами размещаете на своём HTTPS-домене. В браузере телефона (его можно установить как веб-приложение) видны все агенты и их статус, можно читать экран агента, отвечать на меню и вопросы о разрешениях, останавливать агента и отправлять промпты. Каждому телефону даётся один из трёх уровней доступа: только просмотр; просмотр и ответы; просмотр, ответы и промпты. Каждую команду разрешает только этот компьютер. Всё, что передаётся между телефоном и компьютером, сквозно зашифровано, поэтому ретранслятор прочитать это не может.
 
 yMux бесплатен и имеет открытый исходный код: https://github.com/YoungMins/ymux","yMux, tmux'tan esinlenen, Windows için hafif bir terminal çoklayıcısıdır. Tek bir pencereyi istediğiniz sayıda terminale bölmenizi, bu düzenleri kaydetmenizi ve kaldığınız yerden aynen devam etmenizi sağlar.
 
@@ -384,6 +404,8 @@ TASARIMI GEREĞİ GİZLİ yMux'ta kayıt, analiz ve telemetri yoktur. Düzenleri
 
 OFİS GÖRÜNÜMÜ Çalışma alanınızı piksel sanatı bir ofis olarak görmek için Ctrl+Shift+O tuşlarına basın: her bölme bir oda, her ajan ise masasında çalışan, size ihtiyaç duyduğunda el kaldıran, işini bitirince sevinen ve işi diğer odalara yürüyerek götüren bir karakterdir. Bir odaya tıklayarak terminalini yerinde okuyup yanıtlayın, sekiz temadan birini seçin ve her hesabın token kullanımıyla bir RPG kahramanı gibi seviye atlamasını izleyin.
 
+UZAKTAN KONTROL Uzak sunucu (varsayılan olarak kapalı): Kendi HTTPS alan adınızda barındırdığınız bir yMux-Server aktarıcısı üzerinden ajanlarınızı telefonunuzdan izleyin ve yönetin. Telefonun tarayıcısından (web uygulaması olarak yüklenebilir) tüm ajanları ve durumlarını görebilir, bir ajanın ekranını okuyabilir, menülere ve izin sorularına yanıt verebilir, bir ajanı durdurabilir ve istem gönderebilirsiniz. Her telefona üç erişim düzeyinden biri verilir: yalnızca görüntüleme, görüntüleme ve yanıt ya da görüntüleme, yanıt ve istem gönderme. Her komutu yalnızca bu bilgisayar onaylar. Telefon ile bilgisayar arasındaki içerik uçtan uca şifrelidir; aktarıcı onu okuyamaz.
+
 yMux ücretsiz ve açık kaynaklıdır: https://github.com/YoungMins/ymux","yMux ist ein schlanker Terminal-Multiplexer für Windows, inspiriert von tmux. Sie teilen ein Fenster in beliebig viele Terminals, speichern diese Layouts und machen genau dort weiter, wo Sie aufgehört haben.
 
 LAYOUTS, DIE BLEIBEN Teilen Sie jeden Bereich horizontal oder vertikal, so tief Sie möchten. Jeder Bereich merkt sich seine Shell, sein Arbeitsverzeichnis und optional einen Startbefehl, und jeder Arbeitsbereich behält sein Layout über Neustarts hinweg. Auch der Terminalverlauf wird gespeichert, sodass Ihre Ausgaben nach dem erneuten Öffnen der App noch da sind.
@@ -418,6 +440,8 @@ In 13 Sprachen verfügbar
 PRIVATSPHÄRE AB WERK yMux hat keine Anmeldung, keine Analysen und keine Telemetrie. Ihre Layouts, Ihr Verlauf und Ihre Einstellungen bleiben auf Ihrem PC. Das optionale Aktivitätsprotokoll sendet Daten nur an die Webhooks, die Sie selbst hinzufügen.
 
 BÜROANSICHT Drücken Sie Ctrl+Shift+O, um Ihren Arbeitsbereich als Pixel-Art-Büro zu sehen: Jeder Bereich ist ein Raum und jeder Agent eine Figur, die am Schreibtisch arbeitet, sich meldet, wenn sie Sie braucht, sich über erledigte Arbeit freut und Aufgaben zu anderen Räumen bringt. Klicken Sie auf einen Raum, um sein Terminal direkt dort zu lesen und zu beantworten, wählen Sie eines von acht Designs und sehen Sie zu, wie jedes Konto mit seinem Token-Verbrauch wie ein RPG-Held im Level aufsteigt.
+
+FERNSTEUERUNG Remote-Server (standardmäßig aus): Behalten Sie Ihre Agenten per Smartphone im Blick und steuern Sie sie über ein yMux-Server-Relay, das Sie selbst auf Ihrer eigenen HTTPS-Domain betreiben. Im Browser des Smartphones (als Web-App installierbar) sehen Sie alle Agenten samt Status, lesen den Bildschirm eines Agenten, beantworten Menüs und Berechtigungsfragen, stoppen einen Agenten und senden Prompts. Jedes Smartphone erhält eine von drei Zugriffsstufen: nur ansehen, ansehen und antworten oder ansehen, antworten und Prompts senden. Jeden Befehl genehmigt allein dieser Computer. Alles zwischen Smartphone und Computer ist Ende-zu-Ende-verschlüsselt, das Relay kann es nicht lesen.
 
 yMux ist kostenlos und Open Source: https://github.com/YoungMins/ymux","yMux là trình ghép kênh terminal nhẹ dành cho Windows, lấy cảm hứng từ tmux. Bạn có thể chia một cửa sổ thành bao nhiêu terminal tùy ý, lưu các bố cục đó và quay lại đúng chỗ đã dừng.
 
@@ -454,86 +478,140 @@ RIÊNG TƯ TỪ THIẾT KẾ yMux không cần đăng ký, không phân tích v�
 
 CHẾ ĐỘ VĂN PHÒNG Nhấn Ctrl+Shift+O để xem không gian làm việc như một văn phòng pixel art: mỗi ngăn là một căn phòng, mỗi agent là một nhân vật làm việc tại bàn, giơ tay khi cần bạn, ăn mừng khi xong việc và tự đi giao việc sang phòng khác. Nhấp vào một phòng để đọc và trả lời terminal ngay tại chỗ, chọn một trong tám chủ đề và xem mỗi tài khoản lên cấp như một anh hùng RPG theo lượng token đã dùng.
 
+ĐIỀU KHIỂN TỪ XA Máy chủ từ xa (mặc định tắt): xem và điều khiển các agent từ điện thoại qua relay yMux-Server do chính bạn đặt trên tên miền HTTPS của mình. Từ trình duyệt trên điện thoại (có thể cài như ứng dụng web), bạn xem được mọi agent và trạng thái của chúng, đọc màn hình của một agent, trả lời menu và câu hỏi cấp quyền, dừng agent và gửi prompt. Mỗi điện thoại có một trong ba mức truy cập: chỉ xem, xem và trả lời, hoặc xem, trả lời và gửi prompt. Chỉ máy tính này mới cho phép từng lệnh. Nội dung giữa điện thoại và máy tính được mã hóa đầu cuối, nên relay không đọc được.
+
 yMux miễn phí và mã nguồn mở: https://github.com/YoungMins/ymux"
-ReleaseNotes,3,Text,,"Prompt queue (Ctrl+Shift+K): line up the next prompts for a pane and one is sent each time the agent finishes a turn. Broadcast input (Ctrl+Shift+B) types into all visible terminals at once. Reopen a closed pane with its scrollback and agent session (Ctrl+Shift+Y). Closing a pane with a running agent now asks first, and an exited shell restarts with Enter.
+ReleaseNotes,3,Text,,"Remote server (off by default): watch and steer your agents from your phone through a yMux-Server relay that you host yourself on your own HTTPS domain.
 
-Fan-out gets ""Keep this one"": it merges the winning lane and cleans up the other worktrees and branches. A badge offers another account when one nears its usage limit. The workspace tree shows how long each agent has been in its state, plus a ""stuck"" badge.
+In Settings → Remote server, enter the server address and setup token, scan the QR code with your phone and type the 6-digit number it shows to pair.
 
-Usage view: totals now cover your whole history, kept even after old session logs are deleted (all-time numbers and hero levels may jump). Webhooks can send an optional daily digest without prompt text. Settings has a one-click agent tracking self-test, and WSL panes accept pasted images and dropped files.
+From the phone's browser (it installs as a web app) you see every agent and its status, read an agent's screen, answer menus and permission questions, stop an agent and send prompts.
 
-Microsoft Store build: pasted images, the Git Bash startup file and the open-folder buttons now work on a fresh install. Also fixed: closing the wrong pane right after switching workspaces.","프롬프트 대기열(Ctrl+Shift+K): 창마다 다음 프롬프트를 줄 세워 두면 에이전트가 턴을 끝낼 때마다 하나씩 전달됩니다. 입력 브로드캐스트(Ctrl+Shift+B)는 보이는 모든 터미널에 한꺼번에 입력합니다. 닫은 창은 스크롤백과 에이전트 세션까지 다시 열 수 있습니다(Ctrl+Shift+Y). 에이전트가 실행 중인 창을 닫을 때는 먼저 확인하고, 종료된 셸은 Enter로 다시 시작합니다.
+Watch several computers from one phone, and get a notification when an agent is waiting for you or has finished.
 
-팬아웃에 '이것으로 확정'이 생겼습니다. 이긴 레인을 병합하고 나머지 worktree와 브랜치를 정리합니다. 계정이 사용량 한도에 가까워지면 배지로 다른 계정을 안내합니다. 워크스페이스 트리에는 에이전트가 현재 상태로 머문 시간과 '멈춤' 배지가 표시됩니다.
+Each phone gets one of three access levels: view only, view and answer, or view, answer and prompt. This computer alone authorises every command.
 
-사용량 보기: 이제 합계가 전체 기록을 포함하며, 오래된 세션 로그를 지워도 기록은 남습니다(전체 기간 수치와 영웅 레벨이 크게 오를 수 있음). 웹훅은 프롬프트 내용 없이 하루 한 번 요약을 보낼 수 있습니다(선택). 설정에는 클릭 한 번으로 실행하는 에이전트 추적 자가 점검이 생겼고, WSL 창에 이미지를 붙여 넣고 파일을 끌어다 놓을 수 있습니다.
+Everything between phone and computer is end-to-end encrypted, so the relay cannot read it.","원격 서버(기본값은 꺼짐): 직접 운영하는 HTTPS 도메인의 yMux-Server 릴레이를 거쳐, 휴대폰에서 에이전트를 확인하고 조작할 수 있습니다.
 
-Microsoft Store 버전: 붙여 넣은 이미지, Git Bash 시작 파일, 폴더 열기 버튼이 새로 설치한 환경에서도 동작합니다. 워크스페이스를 바꾼 직후 엉뚱한 창이 닫히던 문제도 고쳤습니다.","プロンプト キュー（Ctrl+Shift+K）: ペインごとに次のプロンプトを並べておくと、エージェントがターンを終えるたびに 1 件ずつ送られます。入力のブロードキャスト（Ctrl+Shift+B）は、表示中のすべてのターミナルへ同時に入力します。閉じたペインはスクロールバックとエージェントのセッションごと再び開けます（Ctrl+Shift+Y）。実行中のエージェントがいるペインを閉じるときは先に確認し、終了したシェルは Enter で再起動できます。
+설정 → 원격 서버에서 서버 주소와 설정 토큰을 입력하고, 휴대폰으로 QR 코드를 스캔한 뒤 휴대폰에 표시된 6자리 번호를 입력하면 페어링됩니다.
 
-ファンアウトに「これを採用」を追加。勝ったレーンをマージし、ほかの worktree とブランチを片付けます。アカウントが使用量の上限に近づくと、バッジで別のアカウントを提案します。ワークスペースのツリーには、各エージェントが今の状態で過ごした時間と「停止?」バッジが表示されます。
+휴대폰 브라우저(웹 앱으로 설치 가능)에서 모든 에이전트와 상태를 보고, 에이전트 화면을 읽고, 메뉴와 권한 질문에 답하고, 에이전트를 중지하고, 프롬프트를 보낼 수 있습니다.
 
-使用量ビュー: 合計の対象がすべての履歴になり、古いセッション ログを削除しても履歴は残ります（通算の数値や勇者のレベルが跳ね上がることがあります）。Webhook では、プロンプトの内容を含まないダイジェストを 1 日 1 回送れます（任意）。設定にはワンクリックのエージェント追跡セルフテストが加わり、WSL のペインへ画像の貼り付けとファイルのドロップができます。
+휴대폰 하나로 여러 컴퓨터를 함께 확인할 수 있고, 에이전트가 답을 기다리거나 작업을 마치면 알림을 받습니다.
 
-Microsoft Store 版: 貼り付けた画像、Git Bash の起動ファイル、フォルダーを開くボタンが、新規インストールでも動作します。ワークスペースを切り替えた直後に別のペインが閉じる問題も修正しました。","提示队列（Ctrl+Shift+K）：为窗格排好后续提示，智能体每完成一轮就发送一条。输入广播（Ctrl+Shift+B）可同时向所有可见的终端输入。关闭的窗格可连同滚动缓冲区和智能体会话一起重新打开（Ctrl+Shift+Y）。关闭正在运行智能体的窗格前会先询问，已退出的 shell 按 Enter 即可重启。
+휴대폰마다 세 가지 접근 수준(보기만, 보기와 응답, 보기·응답·프롬프트 전송) 중 하나를 정합니다. 모든 명령은 이 컴퓨터만 승인합니다.
 
-分发（fan-out）新增“保留这个”：合并胜出的通道，并清理其他 worktree 和分支。账户接近用量上限时，徽标会提示改用另一个账户。工作区树会显示每个智能体在当前状态下已持续多久，并带有“卡住”徽标。
+휴대폰과 컴퓨터 사이의 내용은 종단 간 암호화되어 릴레이도 읽을 수 없습니다.","リモートサーバー（初期設定はオフ）: ご自身の HTTPS ドメインで運用する yMux-Server のリレーを通じて、スマートフォンからエージェントを確認・操作できます。
 
-用量视图：合计现在覆盖全部历史，旧会话日志被删除后历史依然保留（累计数字和英雄等级可能大幅上涨）。webhook 可选发送不含提示内容的每日摘要。设置中新增一键智能体跟踪自检，WSL 窗格也支持粘贴图片和拖入文件。
+「設定」→「リモートサーバー」でサーバーのアドレスとセットアップトークンを入力し、スマートフォンで QR コードを読み取って、画面に表示された 6 桁の番号を入力するとペアリングできます。
 
-Microsoft Store 版：粘贴的图片、Git Bash 启动文件和“打开文件夹”按钮在全新安装后也能正常使用。另外修复了切换工作区后立刻关闭到错误窗格的问题。","प्रॉम्प्ट कतार (Ctrl+Shift+K): पेन के अगले प्रॉम्प्ट कतार में लगाएँ; एजेंट के हर टर्न पूरा करने पर एक भेजा जाता है। इनपुट ब्रॉडकास्ट (Ctrl+Shift+B) सभी दिखते टर्मिनल में एक साथ टाइप करता है। बंद किया पेन स्क्रॉलबैक और एजेंट सेशन के साथ फिर खुल सकता है (Ctrl+Shift+Y)। चल रहे एजेंट वाला पेन बंद करने से पहले अब पूछा जाता है, और बंद हुआ शेल Enter से फिर शुरू होता है।
+スマートフォンのブラウザー（Web アプリとしてインストール可能）で、すべてのエージェントと状態の確認、エージェント画面の閲覧、メニューや権限の質問への応答、エージェントの停止、プロンプトの送信ができます。
 
-फैन-आउट में ""यही रखें"" जुड़ा है: यह जीतने वाली लेन को मर्ज करता है और बाकी worktree व ब्रांच साफ़ करता है। अकाउंट उपयोग सीमा के पास पहुँचे तो बैज दूसरा अकाउंट सुझाता है। वर्कस्पेस ट्री दिखाता है कि हर एजेंट कितनी देर से अपनी स्थिति में है, साथ में ""अटका?"" बैज।
+1 台のスマートフォンで複数のコンピューターを見守れ、エージェントが応答待ちになったときや完了したときに通知が届きます。
 
-उपयोग व्यू: कुल आँकड़े अब पूरा इतिहास गिनते हैं, और पुराने सेशन लॉग हटने पर भी इतिहास बना रहता है (कुल-समय के आँकड़े और हीरो लेवल बढ़ सकते हैं)। वेबहुक प्रॉम्प्ट के पाठ के बिना रोज़ाना डाइजेस्ट भेज सकते हैं (वैकल्पिक)। सेटिंग्स में एक क्लिक वाला एजेंट ट्रैकिंग सेल्फ़-टेस्ट है, और WSL पेन में इमेज पेस्ट व फ़ाइल ड्रॉप काम करते हैं।
+スマートフォンごとに 3 つのアクセスレベル（表示のみ、表示と応答、表示・応答・プロンプト送信）から選べます。すべてのコマンドは、このコンピューターだけが承認します。
 
-Microsoft Store बिल्ड: पेस्ट की गई इमेज, Git Bash की स्टार्टअप फ़ाइल और ""फ़ोल्डर खोलें"" बटन अब नई इंस्टॉलेशन पर भी काम करते हैं। वर्कस्पेस बदलते ही गलत पेन बंद होने की गड़बड़ी भी ठीक की गई है।","Cola de prompts (Ctrl+Shift+K): deja en cola los siguientes prompts de un panel y se envía uno cada vez que el agente termina un turno. La entrada simultánea (Ctrl+Shift+B) escribe a la vez en todos los terminales visibles. Reabre un panel cerrado con su historial y su sesión de agente (Ctrl+Shift+Y). Cerrar un panel con un agente en ejecución ahora pide confirmación, y un shell terminado se reinicia con Enter.
+スマートフォンとコンピューターの間の内容はエンドツーエンドで暗号化され、リレーは読み取れません。","远程服务器（默认关闭）：通过你自己在 HTTPS 域名上运行的 yMux-Server 中继，用手机查看并控制智能体。
 
-Fan-out incorpora «Quedarse con este»: fusiona el carril ganador y limpia los demás worktrees y ramas. Una insignia ofrece otra cuenta cuando una se acerca a su límite de uso. El árbol del espacio de trabajo muestra cuánto lleva cada agente en su estado, con una insignia de atascado.
+在“设置 → 远程服务器”中输入服务器地址和设置令牌，用手机扫描二维码，再输入手机上显示的 6 位数字即可配对。
 
-Vista de uso: los totales abarcan ahora todo el historial, que se conserva aunque se borren los registros de sesión antiguos (las cifras totales y los niveles de héroe pueden subir mucho). Los webhooks pueden enviar un resumen diario opcional sin el texto de los prompts. Ajustes incluye una autoprueba del seguimiento de agentes con un clic, y los paneles de WSL aceptan imágenes pegadas y archivos soltados.
+在手机浏览器（可安装为网页应用）中，可以查看所有智能体及其状态、阅读智能体的屏幕、回答菜单和权限提问、停止智能体，以及发送提示。
 
-Versión de Microsoft Store: las imágenes pegadas, el archivo de inicio de Git Bash y los botones de abrir carpeta ya funcionan en una instalación nueva. También se corrigió el cierre del panel equivocado justo después de cambiar de espacio de trabajo.","File de prompts (Ctrl+Shift+K) : mettez en attente les prochains prompts d’un volet, et l’un est envoyé chaque fois que l’agent termine un tour. La saisie diffusée (Ctrl+Shift+B) écrit en même temps dans tous les terminaux visibles. Rouvrez un volet fermé avec son historique et sa session d’agent (Ctrl+Shift+Y). Fermer un volet dont l’agent tourne demande désormais confirmation, et un shell arrêté redémarre avec Entrée.
+一部手机可同时关注多台电脑；智能体在等待你或已完成时会发送通知。
 
-Le fan-out gagne « Garder celle-ci » : il fusionne la voie gagnante et nettoie les autres worktrees et branches. Un badge propose un autre compte quand l’un approche de sa limite d’utilisation. L’arbre de l’espace de travail indique depuis quand chaque agent est dans son état, avec un badge « bloqué ».
+每部手机有三种访问级别：仅查看、查看并回应、查看回应并发送提示。所有命令都只由这台电脑批准。
 
-Vue d’utilisation : les totaux couvrent désormais tout l’historique, conservé même après la suppression des anciens journaux de session (les chiffres cumulés et les niveaux de héros peuvent bondir). Les webhooks peuvent envoyer un résumé quotidien facultatif, sans le texte des prompts. Les paramètres offrent un auto-test du suivi des agents en un clic, et les volets WSL acceptent images collées et fichiers déposés.
+手机与电脑之间的内容经过端到端加密，中继服务器无法读取。","रिमोट सर्वर (डिफ़ॉल्ट रूप से बंद): अपने HTTPS डोमेन पर चलाए गए yMux-Server रिले के ज़रिए अपने फ़ोन से एजेंट देखें और उन्हें नियंत्रित करें।
 
-Version Microsoft Store : les images collées, le fichier de démarrage de Git Bash et les boutons d’ouverture de dossier fonctionnent maintenant sur une installation neuve. Corrigé aussi : la fermeture du mauvais volet juste après un changement d’espace de travail.","طابور الموجّهات (Ctrl+Shift+K): ضع الموجّهات التالية لأي جزء في طابور ويُرسل واحد منها كلما أنهى الوكيل دورًا. يكتب بثّ الإدخال (Ctrl+Shift+B) في كل الطرفيات المعروضة دفعة واحدة. أعد فتح جزء أُغلق مع سجل التمرير وجلسة الوكيل (Ctrl+Shift+Y). يُطلب التأكيد الآن عند إغلاق جزء فيه وكيل قيد التشغيل، ويُعاد تشغيل الـ shell المنتهي بالضغط على Enter.
+सेटिंग्स → रिमोट सर्वर में सर्वर का पता और सेटअप टोकन दर्ज करें, फ़ोन से QR कोड स्कैन करें और फ़ोन पर दिख रही 6 अंकों की संख्या लिखकर पेयर करें।
 
-يحصل Fan-out على «الإبقاء على هذا»: يدمج المسار الفائز وينظّف بقية الـ worktree والفروع. تقترح شارة حسابًا آخر عندما يقترب حساب من حد الاستخدام. تعرض شجرة مساحة العمل منذ متى يوجد كل وكيل في حالته، مع شارة «عالق».
+फ़ोन के ब्राउज़र (वेब ऐप के रूप में इंस्टॉल हो सकता है) में सभी एजेंट और उनकी स्थिति देखें, किसी एजेंट की स्क्रीन पढ़ें, मेन्यू और अनुमति के सवालों के जवाब दें, एजेंट रोकें और प्रॉम्प्ट भेजें।
 
-عرض الاستخدام: تشمل الإجماليات الآن كامل السجل، ويبقى حتى بعد حذف سجلات الجلسات القديمة (قد ترتفع الأرقام الكلية ومستويات الأبطال كثيرًا). يمكن لـ webhook إرسال ملخص يومي اختياري بلا نص الموجّهات. وتضم الإعدادات اختبارًا ذاتيًا لتتبع الوكلاء بنقرة واحدة، وتقبل أجزاء WSL الصور الملصوقة والملفات المُسقطة.
+एक फ़ोन से कई कंप्यूटरों पर नज़र रखें, और एजेंट के इंतज़ार करने या काम पूरा करने पर सूचना पाएँ।
 
-إصدار Microsoft Store: تعمل الصور الملصوقة وملف بدء Git Bash وأزرار فتح المجلد الآن على التثبيت الجديد. وأُصلح أيضًا إغلاق جزء خاطئ فور تبديل مساحة العمل.","Fila de prompts (Ctrl+Shift+K): deixe na fila os próximos prompts de um painel e um é enviado sempre que o agente termina um turno. A entrada simultânea (Ctrl+Shift+B) digita ao mesmo tempo em todos os terminais visíveis. Reabra um painel fechado com seu histórico e sua sessão de agente (Ctrl+Shift+Y). Fechar um painel com um agente em execução agora pede confirmação, e um shell encerrado reinicia com Enter.
+हर फ़ोन को तीन पहुँच स्तरों में से एक मिलता है: केवल देखना, देखना और जवाब देना, या देखना, जवाब देना और प्रॉम्प्ट भेजना। हर कमांड को केवल यही कंप्यूटर मंज़ूर करता है।
 
-O fan-out ganhou «Ficar com este»: ele mescla a faixa vencedora e limpa os demais worktrees e branches. Um selo oferece outra conta quando uma se aproxima do limite de uso. A árvore do espaço de trabalho mostra há quanto tempo cada agente está no estado atual, com um selo de travado.
+फ़ोन और कंप्यूटर के बीच की सामग्री एंड-टू-एंड एन्क्रिप्टेड है, इसलिए रिले उसे नहीं पढ़ सकता।","Servidor remoto (desactivado por defecto): mira y controla tus agentes desde el móvil a través de un relé yMux-Server que alojas tú mismo en tu propio dominio HTTPS.
 
-Visão de uso: os totais agora cobrem todo o histórico, mantido mesmo depois que os logs de sessão antigos são apagados (os números totais e os níveis de herói podem subir bastante). Os webhooks podem enviar um resumo diário opcional, sem o texto dos prompts. As configurações trazem um autoteste do rastreamento de agentes com um clique, e os painéis WSL aceitam imagens coladas e arquivos soltos.
+En Configuración → Servidor remoto, introduce la dirección del servidor y el token de configuración, escanea el código QR con el móvil y escribe el número de 6 dígitos que muestra para emparejarlo.
 
-Versão da Microsoft Store: imagens coladas, o arquivo de inicialização do Git Bash e os botões de abrir pasta agora funcionam em uma instalação nova. Também foi corrigido o fechamento do painel errado logo após trocar de espaço de trabalho.","Очередь промптов (Ctrl+Shift+K): поставьте следующие промпты панели в очередь — по одному уходит каждый раз, когда агент завершает ход. Рассылка ввода (Ctrl+Shift+B) печатает сразу во всех видимых терминалах. Закрытую панель можно вернуть с историей прокрутки и сеансом агента (Ctrl+Shift+Y). Перед закрытием панели с работающим агентом теперь спрашивается подтверждение, а завершившаяся оболочка перезапускается клавишей Enter.
+Desde el navegador del móvil (se puede instalar como aplicación web) ves todos los agentes y su estado, lees la pantalla de un agente, respondes a menús y preguntas de permisos, detienes un agente y envías prompts.
 
-В fan-out появилась кнопка «Оставить эту»: она вливает победившую дорожку и убирает остальные worktree и ветки. Значок предлагает другую учётную запись, когда текущая близка к лимиту. Дерево рабочего пространства показывает, как давно каждый агент в своём состоянии, и значок «завис».
+Vigila varios equipos desde un solo móvil y recibe una notificación cuando un agente espera una respuesta o ha terminado.
 
-Вид использования: итоги теперь охватывают всю историю, и она сохраняется, даже когда старые журналы сеансов удалены (суммарные цифры и уровни героев могут подскочить). Webhook может по желанию присылать ежедневную сводку без текста промптов. В настройках есть самотест отслеживания агентов в один клик, а панели WSL принимают вставленные изображения и перетащенные файлы.
+Cada móvil tiene uno de tres niveles de acceso: solo ver, ver y responder, o ver, responder y enviar prompts. Solo este equipo autoriza cada comando.
 
-Сборка Microsoft Store: вставленные изображения, файл запуска Git Bash и кнопки открытия папки теперь работают при новой установке. Также исправлено закрытие не той панели сразу после смены рабочего пространства.","İstem kuyruğu (Ctrl+Shift+K): bir bölmenin sonraki istemlerini sıraya alın, ajan her turu bitirdiğinde biri gönderilir. Girdi yayını (Ctrl+Shift+B) görünen tüm terminallere aynı anda yazar. Kapatılan bir bölme, kaydırma geçmişi ve ajan oturumuyla yeniden açılabilir (Ctrl+Shift+Y). Çalışan ajanı olan bir bölmeyi kapatırken artık önce sorulur, sonlanmış bir kabuk da Enter ile yeniden başlatılır.
+Todo lo que viaja entre el móvil y el equipo está cifrado de extremo a extremo, así que el relé no puede leerlo.","Serveur distant (désactivé par défaut) : consultez et pilotez vos agents depuis votre téléphone via un relais yMux-Server que vous hébergez vous-même sur votre propre domaine HTTPS.
 
-Fan-out'a «Bunu tut» eklendi: kazanan şeridi birleştirir, diğer worktree ve dalları temizler. Bir hesap kullanım sınırına yaklaşınca bir rozet başka bir hesap önerir. Çalışma alanı ağacı, her ajanın durumunda ne kadar süredir olduğunu ve bir «takıldı» rozetini gösterir.
+Dans Paramètres → Serveur distant, saisissez l’adresse du serveur et le jeton de configuration, scannez le QR code avec votre téléphone, puis saisissez le numéro à 6 chiffres qu’il affiche pour l’associer.
 
-Kullanım görünümü: toplamlar artık tüm geçmişi kapsıyor ve eski oturum günlükleri silinse bile geçmiş korunuyor (tüm zamanların rakamları ve kahraman seviyeleri sıçrayabilir). Webhook'lar isteğe bağlı olarak istem metni içermeyen günlük bir özet gönderebilir. Ayarlar'da tek tıkla ajan izleme öz sınaması var, WSL bölmeleri de yapıştırılan görüntüleri ve bırakılan dosyaları kabul ediyor.
+Depuis le navigateur du téléphone (installable comme application web), vous voyez tous les agents et leur état, lisez l’écran d’un agent, répondez aux menus et aux questions d’autorisation, arrêtez un agent et envoyez des prompts.
 
-Microsoft Store sürümü: yapıştırılan görüntüler, Git Bash başlangıç dosyası ve klasör açma düğmeleri artık yeni bir kurulumda da çalışıyor. Çalışma alanı değiştirdikten hemen sonra yanlış bölmenin kapanması da düzeltildi.","Prompt-Warteschlange (Ctrl+Shift+K): Stellen Sie die nächsten Prompts eines Bereichs in eine Warteschlange, bei jeder beendeten Runde des Agenten wird einer gesendet. Die Eingabe-Übertragung (Ctrl+Shift+B) schreibt gleichzeitig in alle sichtbaren Terminals. Ein geschlossener Bereich lässt sich samt Scrollback und Agent-Sitzung wieder öffnen (Ctrl+Shift+Y). Vor dem Schließen eines Bereichs mit laufendem Agenten wird jetzt nachgefragt, und eine beendete Shell startet mit Enter neu.
+Surveillez plusieurs ordinateurs depuis un seul téléphone et recevez une notification quand un agent attend une réponse ou a terminé.
 
-Fan-out hat jetzt „Diese behalten“: Es führt die Gewinner-Lane zusammen und räumt die übrigen Worktrees und Branches auf. Ein Badge schlägt ein anderes Konto vor, wenn eines sein Nutzungslimit erreicht. Der Arbeitsbereichsbaum zeigt, wie lange jeder Agent schon in seinem Zustand ist, samt Badge „hängt?“.
+Chaque téléphone reçoit l’un de trois niveaux d’accès : lecture seule, voir et répondre, ou voir, répondre et envoyer des prompts. Seul cet ordinateur autorise chaque commande.
 
-Nutzungsansicht: Die Summen umfassen jetzt den gesamten Verlauf, der auch nach dem Löschen alter Sitzungsprotokolle erhalten bleibt (Gesamtwerte und Heldenstufen können springen). Webhooks können optional eine tägliche Zusammenfassung ohne Prompt-Text senden. Die Einstellungen haben einen Selbsttest fürs Agent-Tracking per Klick, und WSL-Bereiche nehmen eingefügte Bilder und abgelegte Dateien an.
+Tout ce qui circule entre le téléphone et l’ordinateur est chiffré de bout en bout : le relais ne peut pas le lire.","الخادم البعيد (متوقف افتراضيًا): تابع وكلاءك وتحكّم بهم من هاتفك عبر مرحّل yMux-Server تستضيفه بنفسك على نطاق HTTPS خاص بك.
 
-Microsoft-Store-Version: Eingefügte Bilder, die Startdatei von Git Bash und die Schaltflächen zum Öffnen von Ordnern funktionieren jetzt auch bei einer frischen Installation. Behoben wurde auch das Schließen des falschen Bereichs direkt nach einem Arbeitsbereichswechsel.","Hàng đợi prompt (Ctrl+Shift+K): xếp sẵn các prompt tiếp theo cho một ngăn, mỗi lần tác tử xong một lượt sẽ gửi một prompt. Phát đầu vào (Ctrl+Shift+B) gõ cùng lúc vào mọi terminal đang hiển thị. Mở lại ngăn đã đóng cùng nội dung cuộn và phiên tác tử (Ctrl+Shift+Y). Đóng ngăn có tác tử đang chạy giờ sẽ hỏi trước, còn shell đã thoát thì khởi động lại bằng Enter.
+في الإعدادات ← الخادم البعيد، أدخل عنوان الخادم ورمز الإعداد، ثم امسح رمز QR بهاتفك واكتب الرقم المكوّن من 6 أرقام الذي يعرضه الهاتف لإتمام الاقتران.
 
-Fan-out có thêm «Giữ lane này»: gộp lane thắng và dọn các worktree và nhánh còn lại. Huy hiệu gợi ý tài khoản khác khi một tài khoản gần chạm hạn mức sử dụng. Cây không gian làm việc cho biết mỗi tác tử đã ở trạng thái hiện tại bao lâu, kèm huy hiệu «kẹt».
+من متصفح الهاتف (يمكن تثبيته كتطبيق ويب) يمكنك رؤية كل الوكلاء وحالتهم، وقراءة شاشة أي وكيل، والرد على القوائم وأسئلة الأذونات، وإيقاف وكيل، وإرسال موجّهات.
 
-Chế độ xem mức dùng: các con số tổng nay bao gồm toàn bộ lịch sử, vẫn được giữ sau khi nhật ký phiên cũ bị xóa (số liệu mọi thời gian và cấp độ anh hùng có thể tăng vọt). Webhook có thể gửi bản tóm tắt hằng ngày tùy chọn, không chứa nội dung prompt. Phần cài đặt có tự kiểm tra theo dõi tác tử bằng một cú nhấp, và ngăn WSL nhận ảnh đã dán và tệp đã thả.
+راقب عدة حواسيب من هاتف واحد، واستلم إشعارًا عندما ينتظر وكيل ردّك أو ينتهي من عمله.
 
-Bản Microsoft Store: ảnh đã dán, tệp khởi động của Git Bash và các nút mở thư mục giờ hoạt động trên bản cài mới. Cũng đã sửa lỗi đóng nhầm ngăn ngay sau khi chuyển không gian làm việc."
+لكل هاتف أحد ثلاثة مستويات وصول: عرض فقط، أو عرض ورد، أو عرض ورد وإرسال موجّهات. وهذا الكمبيوتر وحده هو الذي يسمح بكل أمر.
+
+كل ما يجري بين الهاتف والكمبيوتر مشفّر من طرف إلى طرف، فلا يستطيع المرحّل قراءته.","Servidor remoto (desativado por padrão): acompanhe e controle seus agentes pelo celular, através de um relay yMux-Server que você hospeda no seu próprio domínio HTTPS.
+
+Em Configurações → Servidor remoto, informe o endereço do servidor e o token de configuração, escaneie o QR code com o celular e digite o número de 6 dígitos que ele mostra para parear.
+
+No navegador do celular (instalável como aplicativo web), você vê todos os agentes e o status deles, lê a tela de um agente, responde a menus e perguntas de permissão, interrompe um agente e envia prompts.
+
+Acompanhe vários computadores com um único celular e receba uma notificação quando um agente estiver esperando por você ou tiver terminado.
+
+Cada celular tem um de três níveis de acesso: somente ver, ver e responder, ou ver, responder e enviar prompts. Só este computador autoriza cada comando.
+
+Tudo o que passa entre o celular e o computador é criptografado de ponta a ponta, então o relay não consegue ler.","Удалённый сервер (по умолчанию выключен): следите за агентами и управляйте ими с телефона через ретранслятор yMux-Server, который вы сами размещаете на своём HTTPS-домене.
+
+В разделе «Настройки → Удалённый сервер» введите адрес сервера и токен настройки, отсканируйте QR-код телефоном и введите 6-значное число, которое он покажет, — так телефон будет связан с компьютером.
+
+В браузере телефона (его можно установить как веб-приложение) видны все агенты и их статус, можно читать экран агента, отвечать на меню и вопросы о разрешениях, останавливать агента и отправлять промпты.
+
+Один телефон может следить за несколькими компьютерами и присылает уведомление, когда агент ждёт вас или закончил работу.
+
+Каждому телефону даётся один из трёх уровней доступа: только просмотр; просмотр и ответы; просмотр, ответы и промпты. Каждую команду разрешает только этот компьютер.
+
+Всё, что передаётся между телефоном и компьютером, сквозно зашифровано, поэтому ретранслятор прочитать это не может.","Uzak sunucu (varsayılan olarak kapalı): Kendi HTTPS alan adınızda barındırdığınız bir yMux-Server aktarıcısı üzerinden ajanlarınızı telefonunuzdan izleyin ve yönetin.
+
+Ayarlar → Uzak sunucu bölümüne sunucu adresini ve kurulum belirtecini girin, telefonunuzla QR kodunu tarayın ve telefonda görünen 6 haneli numarayı yazarak eşleştirin.
+
+Telefonun tarayıcısından (web uygulaması olarak yüklenebilir) tüm ajanları ve durumlarını görebilir, bir ajanın ekranını okuyabilir, menülere ve izin sorularına yanıt verebilir, bir ajanı durdurabilir ve istem gönderebilirsiniz.
+
+Tek bir telefondan birden çok bilgisayarı izleyin; bir ajan sizi beklediğinde ya da bittiğinde bildirim alın.
+
+Her telefona üç erişim düzeyinden biri verilir: yalnızca görüntüleme, görüntüleme ve yanıt ya da görüntüleme, yanıt ve istem gönderme. Her komutu yalnızca bu bilgisayar onaylar.
+
+Telefon ile bilgisayar arasındaki içerik uçtan uca şifrelidir; aktarıcı onu okuyamaz.","Remote-Server (standardmäßig aus): Behalten Sie Ihre Agenten per Smartphone im Blick und steuern Sie sie über ein yMux-Server-Relay, das Sie selbst auf Ihrer eigenen HTTPS-Domain betreiben.
+
+Geben Sie unter Einstellungen → Remote-Server die Serveradresse und den Einrichtungs-Token ein, scannen Sie den QR-Code mit dem Smartphone und tippen Sie die 6-stellige Nummer ein, die es anzeigt – schon sind beide gekoppelt.
+
+Im Browser des Smartphones (als Web-App installierbar) sehen Sie alle Agenten samt Status, lesen den Bildschirm eines Agenten, beantworten Menüs und Berechtigungsfragen, stoppen einen Agenten und senden Prompts.
+
+Mehrere Computer lassen sich von einem Smartphone aus beobachten; eine Benachrichtigung kommt, wenn ein Agent auf Sie wartet oder fertig ist.
+
+Jedes Smartphone erhält eine von drei Zugriffsstufen: nur ansehen, ansehen und antworten oder ansehen, antworten und Prompts senden. Jeden Befehl genehmigt allein dieser Computer.
+
+Alles zwischen Smartphone und Computer ist Ende-zu-Ende-verschlüsselt, das Relay kann es nicht lesen.","Máy chủ từ xa (mặc định tắt): xem và điều khiển các agent từ điện thoại qua relay yMux-Server do chính bạn đặt trên tên miền HTTPS của mình.
+
+Trong Cài đặt → Máy chủ từ xa, nhập địa chỉ máy chủ và mã thiết lập, quét mã QR bằng điện thoại rồi nhập số gồm 6 chữ số hiện trên điện thoại để ghép đôi.
+
+Từ trình duyệt trên điện thoại (có thể cài như ứng dụng web), bạn xem được mọi agent và trạng thái của chúng, đọc màn hình của một agent, trả lời menu và câu hỏi cấp quyền, dừng agent và gửi prompt.
+
+Một điện thoại có thể theo dõi nhiều máy tính, và bạn nhận thông báo khi agent đang chờ bạn hoặc đã xong.
+
+Mỗi điện thoại có một trong ba mức truy cập: chỉ xem, xem và trả lời, hoặc xem, trả lời và gửi prompt. Chỉ máy tính này mới cho phép từng lệnh.
+
+Nội dung giữa điện thoại và máy tính được mã hóa đầu cuối, nên relay không đọc được."
 Title,4,Text,,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux
 ShortTitle,5,Text,,,,,,,,,,,,,,
 SortTitle,6,Text,,,,,,,,,,,,,,
@@ -855,7 +933,7 @@ Feature16,715,Text,,"Use a different Claude Code or Codex account in each pane, 
 Feature17,716,Text,,Attention inbox: jump to the next agent waiting for you (Ctrl+Shift+U),알림함: 응답을 기다리는 다음 에이전트로 바로 이동(Ctrl+Shift+U),通知受信トレイ: 応答待ちの次のエージェントにジャンプ(Ctrl+Shift+U),提醒收件箱：一键跳转到下一个等待你的智能体（Ctrl+Shift+U）,अटेंशन इनबॉक्स: आपका इंतज़ार कर रहे अगले एजेंट पर जाएँ (Ctrl+Shift+U),Bandeja de atención: salta al siguiente agente que te espera (Ctrl+Shift+U),Boîte d'attention : passez à l'agent suivant qui vous attend (Ctrl+Shift+U),صندوق التنبيهات: انتقل إلى الوكيل التالي الذي ينتظرك (Ctrl+Shift+U),Caixa de atenção: pule para o próximo agente que espera por você (Ctrl+Shift+U),"Центр внимания: переход к следующему агенту, который ждёт вас (Ctrl+Shift+U)",Dikkat gelen kutusu: sizi bekleyen sonraki ajana atlayın (Ctrl+Shift+U),"Aufmerksamkeits-Posteingang: zum nächsten Agenten springen, der auf Sie wartet (Ctrl+Shift+U)",Hộp thư chú ý: nhảy tới agent tiếp theo đang chờ bạn (Ctrl+Shift+U)
 Feature18,717,Text,,"Optional activity log with turn summaries sent to Slack, Discord, Teams or a webhook","턴 요약을 Slack, Discord, Teams나 웹훅으로 보내는 작업 기록(선택)",ターンの要約を Slack、Discord、Teams、Webhook に送信できるアクティビティ ログ(オプション),可选的活动日志，将每轮摘要发送到 Slack、Discord、Teams 或 webhook,"वैकल्पिक एक्टिविटी लॉग, टर्न सारांश Slack, Discord, Teams या वेबहुक पर भेजें","Registro de actividad opcional con resúmenes de turno enviados a Slack, Discord, Teams o un webhook","Journal d'activité facultatif avec résumés de tour envoyés à Slack, Discord, Teams ou un webhook",سجل نشاط اختياري مع ملخصات الدورات المرسلة إلى Slack أو Discord أو Teams أو webhook,"Registro de atividade opcional com resumos de turno enviados ao Slack, Discord, Teams ou a um webhook","Необязательный журнал активности: сводки ходов уходят в Slack, Discord, Teams или webhook","Tur özetlerini Slack, Discord, Teams veya webhook'a gönderen isteğe bağlı etkinlik günlüğü","Optionales Aktivitätsprotokoll mit Rundenzusammenfassungen an Slack, Discord, Teams oder einen Webhook","Nhật ký hoạt động tùy chọn, gửi bản tóm tắt từng lượt tới Slack, Discord, Teams hoặc webhook"
 Feature19,718,Text,,"Per-workspace notes, status bar, custom themes and shortcuts. No sign-up or telemetry, 13 languages","워크스페이스별 메모, 상태 표시줄, 테마·단축키 사용자 지정. 가입·원격 측정 없음, 13개 언어",ワークスペースごとのメモ、ステータス バー、テーマとショートカットのカスタマイズ。登録・テレメトリなし、13 言語,每个工作区的备忘笔记、状态栏、自定义主题和快捷键。无需注册，无遥测，支持 13 种语言,"हर वर्कस्पेस के नोट्स, स्टेटस बार, कस्टम थीम और शॉर्टकट। कोई साइन-अप या टेलीमेट्री नहीं, 13 भाषाएँ","Notas por espacio de trabajo, barra de estado, temas y atajos personalizables. Sin registro ni telemetría, 13 idiomas","Notes par espace de travail, barre d'état, thèmes et raccourcis personnalisés. Sans inscription ni télémétrie, 13 langues",ملاحظات لكل مساحة عمل وشريط حالة وسمات واختصارات مخصصة. بلا تسجيل ولا قياس عن بُعد، 13 لغة,"Notas por espaço de trabalho, barra de status, temas e atalhos personalizáveis. Sem cadastro ou telemetria, 13 idiomas","Заметки для рабочих пространств, строка состояния, свои темы и сочетания клавиш. Без регистрации и телеметрии, 13 языков","Çalışma alanı notları, durum çubuğu, özel temalar ve kısayollar. Kayıt ve telemetri yok, 13 dil","Notizen pro Arbeitsbereich, Statusleiste, eigene Designs und Tastenkombinationen. Ohne Anmeldung oder Telemetrie, 13 Sprachen","Ghi chú theo không gian làm việc, thanh trạng thái, giao diện và phím tắt tùy chỉnh. Không đăng ký, không thu thập dữ liệu, 13 ngôn ngữ"
-Feature20,719,Text,,Accounts level up as RPG heroes with their token usage; pick a class and a slime or human look that grows over ten steps,계정이 토큰 사용량에 따라 RPG 영웅처럼 레벨업: 직업과 슬라임·인간형 외형을 고르면 10단계로 성장,アカウントがトークン使用量で RPG の勇者のようにレベルアップ。職業とスライムか人間の外見を選ぶと 10 段階で成長,账户随 token 用量像 RPG 英雄一样升级；选择职业和史莱姆或人类外形，分 10 个阶段成长,"खाते टोकन उपयोग से RPG नायकों की तरह लेवल अप करते हैं; वर्ग और स्लाइम या मानव रूप चुनें, जो दस चरणों में बढ़ता है","Las cuentas suben de nivel como héroes de RPG con su uso de tokens; elige clase y aspecto de slime o humano, que crece en diez pasos",Les comptes gagnent des niveaux comme des héros de RPG avec leurs jetons ; choisissez une classe et un look slime ou humain qui évolue en dix étapes,ترتقي الحسابات كأبطال ألعاب تقمص الأدوار مع استخدام الرموز؛ اختر فئة ومظهر سلايم أو إنسان يتطور عبر عشر مراحل,"As contas sobem de nível como heróis de RPG com o uso de tokens; escolha classe e visual de slime ou humano, que evolui em dez etapas","Аккаунты растут в уровнях, как герои RPG, по расходу токенов; выберите класс и облик слайма или человека, меняющийся за десять ступеней",Hesaplar token kullanımıyla RPG kahramanları gibi seviye atlar; on adımda gelişen bir sınıf ve balçık ya da insan görünümü seçin,"Konten steigen mit ihrem Token-Verbrauch wie RPG-Helden auf; wählen Sie Klasse und Schleim- oder Menschenlook, der in zehn Stufen wächst","Tài khoản lên cấp như anh hùng RPG theo lượng token; chọn lớp và ngoại hình slime hoặc người, phát triển qua mười bậc"
+Feature20,719,Text,,"Remote server: watch your agents from a phone, answer menus and permission questions, stop agents and send prompts through a relay you host yourself; end-to-end encrypted, off by default","원격 서버: 직접 운영하는 릴레이를 통해 휴대폰에서 에이전트를 확인하고, 메뉴와 권한 질문에 답하고, 중지하거나 프롬프트를 보냅니다. 종단 간 암호화, 기본값은 꺼짐",リモートサーバー: 自分で運用するリレー経由で、スマートフォンからエージェントを確認し、メニューや権限の質問に応答、停止やプロンプト送信も。エンドツーエンド暗号化、初期設定はオフ,远程服务器：通过自己运行的中继，用手机查看智能体、回答菜单和权限提问、停止智能体或发送提示；端到端加密，默认关闭,"रिमोट सर्वर: अपने चलाए रिले के ज़रिए फ़ोन से एजेंट देखें, मेन्यू और अनुमति के सवालों के जवाब दें, रोकें या प्रॉम्प्ट भेजें; एंड-टू-एंड एन्क्रिप्टेड, डिफ़ॉल्ट रूप से बंद","Servidor remoto: vigila tus agentes desde el móvil, responde a menús y permisos, detenlos o envía prompts mediante un relé propio; cifrado de extremo a extremo, desactivado por defecto","Serveur distant : suivez vos agents depuis un téléphone, répondez aux menus, arrêtez-les ou envoyez des prompts via un relais à vous ; chiffré de bout en bout, désactivé par défaut",الخادم البعيد: تابع الوكلاء من هاتفك عبر مرحّل تستضيفه بنفسك، وردّ على القوائم وأسئلة الأذونات، وأوقف الوكلاء أو أرسل موجّهات؛ تشفير من طرف إلى طرف ومتوقف افتراضيًا,"Servidor remoto: acompanhe seus agentes pelo celular, responda a menus e permissões, interrompa-os ou envie prompts por um relay seu; criptografia de ponta a ponta, desativado por padrão","Удалённый сервер: с телефона следите за агентами через свой ретранслятор, отвечайте на меню, останавливайте и отправляйте промпты; сквозное шифрование, по умолчанию выключено","Uzak sunucu: Kendi aktarıcınız üzerinden ajanları telefondan izleyin, menülere yanıt verin, ajanı durdurun ya da istem gönderin; uçtan uca şifreli, varsayılan olarak kapalı","Remote-Server: Agenten per Smartphone über ein eigenes Relay beobachten, Menüs beantworten, Agenten stoppen oder Prompts senden; Ende-zu-Ende-verschlüsselt, standardmäßig aus","Máy chủ từ xa: xem agent từ điện thoại qua relay do bạn tự đặt, trả lời menu và câu hỏi cấp quyền, dừng agent hoặc gửi prompt; mã hóa đầu cuối, mặc định tắt"
 MinimumHardwareReq1,800,Text,,,,,,,,,,,,,,
 MinimumHardwareReq2,801,Text,,,,,,,,,,,,,,
 MinimumHardwareReq3,802,Text,,,,,,,,,,,,,,
