@@ -1,6 +1,6 @@
 {
   "name": "ymux-ui",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -38,7 +38,8 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "dompurify": "^3.4.16",
-    "marked": "^18.0.14"
+    "marked": "^18.0.14",
+    "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

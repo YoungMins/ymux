@@ -1,6 +1,6 @@
 [package]
 name = "ymux"
-version = "0.16.0"
+version = "0.17.0"
 description = "A lightweight tmux-inspired terminal multiplexer for Windows and macOS"
 edition = "2021"
 license = "MIT"
@@ -117,6 +117,27 @@ arboard = { version = "3.6.1", default-features = false, features = ["image-data
 # to avoid, and ymux ships on Windows and macOS.
 trash = { version = "5.2", optional = true }
 
+# Remote server (CLAUDE.md rule 19). ECDSA P-256 for the signatures the phone
+# and this desktop exchange; pure Rust and NOT behind `desktop` so the
+# authorisation tests run under `--no-default-features` on Linux CI. 0.13 is
+# the line the rest of the RustCrypto stack in the lock is on.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "ecdh", "pkcs8", "alloc", "std"] }
+# The link key is HKDF-SHA256 over an ECDH secret (PROTOCOL.md section 1).
+hkdf = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
+base64 = "0.22"
+# The link key's AES-256-GCM (sealed bodies, PROTOCOL.md section 1). Pure
+# Rust, NOT behind `desktop`, so the sealing tests run on Linux CI.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+
+# The one sanctioned non-shared network client (rule 19): a WebSocket needs a
+# persistent, bidirectional, frame-capped connection that the one-shot
+# `reqwest` clients cannot give. rustls with the ring provider and the bundled
+# webpki roots, never native-tls/OpenSSL. Desktop-only.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "1", optional = true }
+
 [dev-dependencies]
 # Real-filesystem round-trips for `fsops`. The semantics worth pinning
 # (rename silently overwriting, a directory symlink needing `remove_dir`)
@@ -159,7 +180,7 @@ libc = "0.2"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:tauri-plugin-notification", "dep:tauri-plugin-single-instance", "dep:arboard", "dep:trash"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:tauri-plugin-notification", "dep:tauri-plugin-single-instance", "dep:arboard", "dep:trash", "dep:tungstenite", "dep:rustls", "dep:webpki-roots"]
 
 [profile.release]
 lto = true
