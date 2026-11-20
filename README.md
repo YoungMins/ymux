@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.17.0-7fdbca?style=flat-square" alt="version 0.17.0" />
+  <img src="https://img.shields.io/badge/version-0.18.0-7fdbca?style=flat-square" alt="version 0.18.0" />
 </p>
 
 <p align="center">
@@ -439,6 +439,16 @@ workspaces, read a pane's screen, answer a menu or permission question, send
 Stop (Escape), and send a prompt (queued automatically while the agent is
 busy). It gets a notification when an agent is waiting or has finished.
 There is no remote command for raw keys, new panes or files.
+
+**Conversation view.** For Claude Code and Codex, the phone shows the agent's
+conversation as chat bubbles with rendered Markdown (tables, lists and code
+blocks read properly on a narrow screen; a wide table scrolls inside its own
+box) instead of raw terminal text. A Conversation / Screen switch keeps the
+old view. ymux reads the agent's own transcript, and only your messages, the
+agent's replies and one-line tool calls leave the computer (encrypted and
+redacted; no tool output). Turn it off with **Show agent conversations on
+paired devices** in **Settings → Remote server** (on by default). It needs an
+up-to-date yMux-Server; older ones keep the screen text view.
 
 **Access levels**, set per phone: **View only**, **View and answer**, or
 **View, answer and prompt**.
