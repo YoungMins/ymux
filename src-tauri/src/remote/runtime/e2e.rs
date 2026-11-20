@@ -80,6 +80,80 @@ impl Host for E2eHost {
             c.registered = true;
         }
     }
+    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>) -> Option<Value> {
+        Some(fake_chat(pane, conv, pos))
+    }
+}
+
+/// The one pane that has no conversation: `chat` answers `{"conv":""}`.
+const NO_CHAT_PANE: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+/// The fake conversation's name and the position after its last line.
+const CHAT_CONV: &str = "e2e-chat-conv";
+const CHAT_END: u64 = 3300;
+
+/// What the fake desktop answers to `chat` for every pane except
+/// [`NO_CHAT_PANE`]: a small fixed conversation (agent `claude`, conv
+/// `e2e-chat-conv`), nine items (ids `<offset>.0`) at line offsets 0, 120, 900,
+/// 1000, 1100, 1200, 3000, 3100 and 3200 and an end of 3300. `after` /
+/// `before` with that conv slice it by offset; a different conv or a position
+/// outside 0..=3300 answers the whole of it.
+fn fake_chat(pane: &str, conv: &str, pos: Option<ChatPos>) -> Value {
+    if pane == NO_CHAT_PANE {
+        return json!({"conv": ""});
+    }
+    let md = "Here is the status:\n\n| Step | Result |\n| --- | --- |\n| build | pass |\n| test | 12 passed |\n\n- first item\n- second item\n\n```rust\nfn main() {\n    println!(\"hello\");\n}\n```\n\n빌드가 성공했습니다. 테스트도 모두 통과했습니다.";
+    // A wide Markdown answer (7-column table, nested list, quote, code, task
+    // list) for looking at how a phone lays it out.
+    let long_line = format!("echo {}-done", "0123456789".repeat(13));
+    debug_assert_eq!(long_line.chars().count(), 140);
+    let wide = format!(
+        "## 작업 현황\n\n\
+| 작업 | 담당 | 상태 | 시작일 | 종료일 | 진행률 | 비고 |\n\
+| --- | --- | --- | --- | --- | ---: | --- |\n\
+| 로그인 개선 | 김민수 | 진행 중 | 2026-11-02 | 2026-11-20 | 65% | 소셜 로그인 연동을 먼저 끝내고 검증합니다. |\n\
+| 결제 연동 | 이서연 | 완료 | 2026-10-20 | 2026-11-10 | 100% | 테스트 결제까지 모두 확인을 마쳤습니다. |\n\
+| 알림 설정 | 박지훈 | 대기 | 2026-11-18 | 2026-12-01 | 0% | 디자인 시안이 나오는 대로 바로 시작합니다. |\n\
+| 성능 점검 | 최유진 | 진행 중 | 2026-11-05 | 2026-11-25 | 40% | 느린 화면을 먼저 찾아 순서대로 고치는 중입니다. |\n\
+| 문서 정리 | 정하늘 | 지연 | 2026-10-28 | 2026-11-15 | 80% | 영문 번역 검수가 늦어져 일정이 밀렸습니다. |\n\n\
+- 이번 주 목표\n  - API 응답 속도 개선 (target: under 200ms)\n  - 신규 onboarding 화면 검수\n- Next steps\n  - 배포 일정 확정\n  - release notes 작성\n\n\
+> 일정이 밀린 작업은 다음 주 월요일에 다시 확인합니다.\n\n\
+`cargo test` 는 **모두 통과**했고, *문서* 쪽만 남았습니다. 자세한 내용은 [문서](https://example.com/docs/path) 를 보세요.\n\n\
+```bash\n{long_line}\n```\n\n\
+- [x] 결제 연동 마무리\n- [ ] 알림 설정 시작"
+    );
+    let all: [(u64, &str, &str); 9] = [
+        (
+            0,
+            "user",
+            "Show me the build status as a table, then a code sample.",
+        ),
+        (120, "assistant", md),
+        (900, "tool", "Bash: cargo test"),
+        (1000, "assistant", "All tests pass."),
+        (1100, "user", "이번 주 작업 현황을 표로 정리해 줘."),
+        (1200, "assistant", &wide),
+        (3000, "tool", "Read: src/main.rs"),
+        (3100, "tool", "Bash: pnpm test"),
+        (3200, "assistant", "완료했습니다."),
+    ];
+    let (mut from, mut to) = (0, CHAT_END);
+    if conv == CHAT_CONV {
+        match pos {
+            Some(ChatPos::After(e)) if e <= CHAT_END => from = e,
+            Some(ChatPos::Before(s)) if s <= CHAT_END => to = s,
+            _ => {}
+        }
+    }
+    let items: Vec<Value> = all
+        .iter()
+        .filter(|(off, _, _)| *off >= from && *off < to)
+        .map(|(off, role, text)| {
+            json!({"id": format!("{off}.0"), "role": role, "text": text,
+                   "ts_ms": 1_700_000_000_000u64 + off})
+        })
+        .collect();
+    json!({"conv": CHAT_CONV, "agent": "claude", "items": items,
+           "start": from, "end": to, "older": from > 0, "newer": to < CHAT_END})
 }
 
 impl E2eHost {

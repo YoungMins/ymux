@@ -103,11 +103,14 @@ impl Cap {
     }
 }
 
-/// The five ops there are. Nothing else (raw keys, new panes, files) exists.
+/// The six ops there are. Nothing else (raw keys, new panes, files) exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     List,
     Peek,
+    /// The agent conversation of a pane, read from its transcript file. Answered
+    /// by the desktop itself (`remote::chat`), never by the page.
+    Chat,
     Answer,
     Interrupt,
     Prompt,
@@ -118,6 +121,7 @@ impl Op {
         match s {
             "list" => Some(Op::List),
             "peek" => Some(Op::Peek),
+            "chat" => Some(Op::Chat),
             "answer" => Some(Op::Answer),
             "interrupt" => Some(Op::Interrupt),
             "prompt" => Some(Op::Prompt),
@@ -129,6 +133,7 @@ impl Op {
         match self {
             Op::List => "list",
             Op::Peek => "peek",
+            Op::Chat => "chat",
             Op::Answer => "answer",
             Op::Interrupt => "interrupt",
             Op::Prompt => "prompt",
@@ -138,7 +143,7 @@ impl Op {
     /// The lowest capability that may run this op.
     pub fn needs(self) -> Cap {
         match self {
-            Op::List | Op::Peek => Cap::View,
+            Op::List | Op::Peek | Op::Chat => Cap::View,
             Op::Answer | Op::Interrupt => Cap::Respond,
             Op::Prompt => Cap::Prompt,
         }
@@ -273,6 +278,18 @@ pub fn is_open_nonce(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// Largest `after` / `before` position: 2^53 - 1, what a JS number holds exactly.
+pub const CHAT_POS_MAX: u64 = (1 << 53) - 1;
+
+/// Where in a conversation a `chat` request reads (`conv` names the file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatPos {
+    /// Items after this position, oldest first.
+    After(u64),
+    /// The items just before this position.
+    Before(u64),
+}
+
 /// A validated command, ready to hand to the app.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
@@ -280,6 +297,12 @@ pub enum Request {
     Peek {
         pane: String,
         lines: u64,
+    },
+    /// `conv` is empty when the device names none (then `pos` is `None` too).
+    Chat {
+        pane: String,
+        conv: String,
+        pos: Option<ChatPos>,
     },
     Answer {
         pane: String,
@@ -302,6 +325,7 @@ impl Request {
         match self {
             Request::List => Op::List,
             Request::Peek { .. } => Op::Peek,
+            Request::Chat { .. } => Op::Chat,
             Request::Answer { .. } => Op::Answer,
             Request::Interrupt { .. } => Op::Interrupt,
             Request::Prompt { .. } => Op::Prompt,
@@ -312,6 +336,7 @@ impl Request {
         match self {
             Request::List => "",
             Request::Peek { pane, .. }
+            | Request::Chat { pane, .. }
             | Request::Answer { pane, .. }
             | Request::Interrupt { pane }
             | Request::Prompt { pane, .. } => pane,
@@ -325,6 +350,8 @@ impl Request {
             Request::Peek { pane, lines } => {
                 json!({"id": id, "op": "peek", "pane": pane, "lines": lines})
             }
+            // Never sent to the page (the desktop answers a chat itself).
+            Request::Chat { pane, .. } => json!({"id": id, "op": "chat", "pane": pane}),
             Request::Answer {
                 pane,
                 n,
@@ -381,6 +408,37 @@ pub fn parse_request(cmd: &Value) -> Result<Request, Code> {
             Ok(Request::Peek {
                 pane: pane_field(cmd)?,
                 lines,
+            })
+        }
+        Op::Chat => {
+            let pos_field = |k: &str| -> Result<Option<u64>, Code> {
+                match obj.get(k) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(v) => v
+                        .as_u64()
+                        .filter(|n| *n <= CHAT_POS_MAX)
+                        .map(Some)
+                        .ok_or(Code::BadRequest),
+                }
+            };
+            let pos = match (pos_field("after")?, pos_field("before")?) {
+                (None, None) => None,
+                (Some(a), None) => Some(ChatPos::After(a)),
+                (None, Some(b)) => Some(ChatPos::Before(b)),
+                (Some(_), Some(_)) => return Err(Code::BadRequest),
+            };
+            let conv = match obj.get("conv") {
+                None | Some(Value::Null) => String::new(),
+                Some(Value::String(c)) if is_menu_id(c) => c.clone(),
+                Some(_) => return Err(Code::BadRequest),
+            };
+            if pos.is_some() && conv.is_empty() {
+                return Err(Code::BadRequest);
+            }
+            Ok(Request::Chat {
+                pane: pane_field(cmd)?,
+                conv,
+                pos,
             })
         }
         Op::Answer => {
@@ -697,6 +755,77 @@ mod tests {
             parse_request(&json!({"op":"keys","pane":P})),
             Err(Code::UnknownOp)
         );
+    }
+
+    #[test]
+    fn chat_needs_only_view_and_parses_its_cursor() {
+        assert_eq!(Op::parse("chat"), Some(Op::Chat));
+        assert_eq!(Op::Chat.needs(), Cap::View);
+        assert_eq!(Op::Chat.as_str(), "chat");
+        let chat = |pos| Request::Chat {
+            pane: P.into(),
+            conv: "abc_-1".into(),
+            pos,
+        };
+        assert_eq!(
+            parse_request(&json!({"op":"chat","pane":P})).unwrap(),
+            Request::Chat {
+                pane: P.into(),
+                conv: String::new(),
+                pos: None
+            }
+        );
+        assert_eq!(
+            parse_request(&json!({"op":"chat","pane":P,"conv":null,"after":null})).unwrap(),
+            Request::Chat {
+                pane: P.into(),
+                conv: String::new(),
+                pos: None
+            }
+        );
+        // A conv alone is "the newest of that conversation".
+        assert_eq!(
+            parse_request(&json!({"op":"chat","pane":P,"conv":"abc_-1"})).unwrap(),
+            chat(None)
+        );
+        assert_eq!(
+            parse_request(&json!({"op":"chat","pane":P,"conv":"abc_-1","after":0})).unwrap(),
+            chat(Some(ChatPos::After(0)))
+        );
+        assert_eq!(
+            parse_request(
+                &json!({"op":"chat","pane":P,"conv":"abc_-1","before":9007199254740991u64})
+            )
+            .unwrap(),
+            chat(Some(ChatPos::Before(CHAT_POS_MAX)))
+        );
+        let r = parse_request(&json!({"op":"chat","pane":P})).unwrap();
+        assert_eq!(r.op(), Op::Chat);
+        assert_eq!(r.pane(), P);
+        assert_eq!(r.event(4), json!({"id":4,"op":"chat","pane":P}));
+    }
+
+    #[test]
+    fn chat_rejects_bad_fields() {
+        let bad = |v: Value| assert_eq!(parse_request(&v), Err(Code::BadRequest), "{v}");
+        bad(json!({"op":"chat"}));
+        bad(json!({"op":"chat","pane":"nope"}));
+        // Both cursors, or a cursor without a conv.
+        bad(json!({"op":"chat","pane":P,"conv":"c","after":1,"before":2}));
+        bad(json!({"op":"chat","pane":P,"after":1}));
+        bad(json!({"op":"chat","pane":P,"before":1}));
+        bad(json!({"op":"chat","pane":P,"conv":"","after":1}));
+        // Range and type.
+        bad(json!({"op":"chat","pane":P,"conv":"c","after":9007199254740992u64}));
+        bad(json!({"op":"chat","pane":P,"conv":"c","after":-1}));
+        bad(json!({"op":"chat","pane":P,"conv":"c","after":1.5}));
+        bad(json!({"op":"chat","pane":P,"conv":"c","after":2.0}));
+        bad(json!({"op":"chat","pane":P,"conv":"c","before":"3"}));
+        // conv is a short token.
+        bad(json!({"op":"chat","pane":P,"conv":"a".repeat(33)}));
+        bad(json!({"op":"chat","pane":P,"conv":"a b"}));
+        bad(json!({"op":"chat","pane":P,"conv":""}));
+        bad(json!({"op":"chat","pane":P,"conv":7}));
     }
 
     #[test]

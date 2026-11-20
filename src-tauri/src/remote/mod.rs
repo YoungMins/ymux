@@ -6,13 +6,16 @@
 //! decides anything is pure and tested on Linux CI: `proto` (shapes, signed
 //! strings), `keys` (P-256, pairing proof), `session` (the section 5.1
 //! authorisation), `pairing`, `clip` (redaction + clipping of every outgoing
-//! text), `panes` (notification transitions, send throttle), `engine` (the
+//! text), `chat` (the `chat` op: a pane's agent conversation read from its
+//! transcript file, answered here without the page), `panes` (notification
+//! transitions, send throttle), `engine` (the
 //! protocol state machine over those), `devset` (the revision gate and the
 //! server-switch order), `backoff`, `audit`. `runtime` (desktop
 //! only) owns the socket thread and the Tauri commands.
 
 pub mod audit;
 pub mod backoff;
+pub mod chat;
 pub mod clip;
 pub mod devset;
 pub mod engine;

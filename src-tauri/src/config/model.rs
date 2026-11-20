@@ -167,6 +167,10 @@ pub struct RemoteConfig {
     pub name: String,
     pub notify_waiting: bool,
     pub notify_done: bool,
+    /// A paired device may read the agent conversation of a pane (`chat`,
+    /// end-to-end encrypted and redacted). On unless the user switches it off;
+    /// the struct-level serde default makes an older file load as `true`.
+    pub share_chat: bool,
     /// The server accepted this desktop's key at least once.
     pub registered: bool,
     pub devices: Vec<RemoteDevice>,
@@ -181,6 +185,7 @@ impl Default for RemoteConfig {
             name: String::new(),
             notify_waiting: true,
             notify_done: false,
+            share_chat: true,
             registered: false,
             devices: Vec::new(),
         }
@@ -1421,7 +1426,16 @@ mod tests {
         assert!(!parsed.remote.enabled);
         assert!(parsed.remote.notify_waiting);
         assert!(!parsed.remote.notify_done);
+        assert!(parsed.remote.share_chat);
         assert!(parsed.remote.devices.is_empty());
+        // A `[remote]` table written before `share_chat` existed still shares.
+        let old: Config =
+            toml::from_str("version = 7\n[remote]\nenabled = true\nnotify_done = true\n")
+                .expect("parse");
+        assert!(old.remote.enabled && old.remote.share_chat);
+        let off: Config =
+            toml::from_str("version = 7\n[remote]\nshare_chat = false\n").expect("parse");
+        assert!(!off.remote.share_chat);
         let config = Config {
             remote: RemoteConfig {
                 enabled: true,
@@ -1430,6 +1444,7 @@ mod tests {
                 name: "Desk".into(),
                 notify_waiting: false,
                 notify_done: true,
+                share_chat: false,
                 registered: true,
                 devices: vec![
                     RemoteDevice {

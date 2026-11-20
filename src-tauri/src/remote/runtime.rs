@@ -30,10 +30,13 @@ use super::backoff;
 use super::devset::{switch_server, DeviceSet, SwitchSteps};
 use super::engine::{Engine, Out, PairOutcome};
 use super::keys::{random_unit, Keypair, LinkKey};
-use super::proto::{Cap, MAX_FRAME};
+use super::proto::{Cap, ChatPos, MAX_FRAME};
 use super::{
-    connection_allowed, normalize_server_url, now_ms, pair_link, server_origin, ws_url, DEV_ENV,
+    chat, connection_allowed, normalize_server_url, now_ms, pair_link, server_origin, ws_url,
+    DEV_ENV,
 };
+use crate::agent_scan_disk::transcript_root;
+use crate::agent_sessions::{record_matches_pane, session_config_dir, SharedSessions};
 use crate::commands::AppState;
 use crate::config::model::{RemoteConfig, RemoteDevice};
 use crate::fspath::guard_local;
@@ -104,10 +107,21 @@ trait Host: Send + Sync {
     /// Start clean under a new desktop id: not registered, no paired devices
     /// (server address, name and notify settings stay). `false` = not saved.
     fn reset_identity(&self, new_desktop_id: &str) -> bool;
+    /// The `chat` reply data for a pane (the reader's own output, see
+    /// `remote::chat`): `{"conv":""}` whenever there is nothing it may show,
+    /// `None` when the conversation exists but could not be read this time.
+    /// Blocking file reads, bounded; called with no lock held.
+    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>) -> Option<Value>;
 }
+
+/// What a remembered transcript path was found for: agent, session id, config
+/// directory.
+type PathKey = (crate::agent_sessions::AgentKind, String, String);
 
 struct TauriHost {
     app: AppHandle,
+    /// pane -> the transcript path found for it (`chat` polls reuse it).
+    paths: Mutex<std::collections::HashMap<uuid::Uuid, (PathKey, std::path::PathBuf)>>,
 }
 
 impl Host for TauriHost {
@@ -159,6 +173,58 @@ impl Host for TauriHost {
         let _ = state.config.flush();
     }
 
+    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>) -> Option<Value> {
+        let state = self.app.state::<AppState>();
+        // Read now, not when the engine was last set up: switching sharing
+        // off holds for the very next request.
+        if !state.config.snapshot().remote.share_chat {
+            return Some(chat::none());
+        }
+        let Ok(id) = uuid::Uuid::parse_str(pane) else {
+            return Some(chat::none());
+        };
+        if !state.pty.has(id) {
+            self.paths.lock().remove(&id);
+            return Some(chat::none());
+        }
+        // Copy the record out: no lock is held across the disk reads below.
+        let rec = self.app.state::<SharedSessions>().0.lock().get(id).cloned();
+        let Some(rec) = rec.filter(|s| s.active) else {
+            return Some(chat::none());
+        };
+        // Only the directories this pane's own agents use: another account's
+        // conversation is not this pane's, even if the id matches.
+        let home = crate::accounts::home_dirs(dirs::home_dir().as_deref());
+        let dirs = state.pty.agent_dirs(id).unwrap_or_else(|| home.clone());
+        if !record_matches_pane(&rec, &dirs, &home) {
+            return Some(chat::none());
+        }
+        let config_dir = session_config_dir(&rec, &home).to_string();
+        let root = transcript_root(rec.agent, &config_dir);
+        // The pane's live directory, never the record's own: a disk-inferred
+        // binding is checked against where the pane really is.
+        let pane_cwd = state.pty.cwd_for(id).unwrap_or_default();
+        let binding = chat::Binding {
+            agent: rec.agent,
+            session_id: &rec.session_id,
+            record_cwd: &rec.cwd,
+            source: rec.source,
+        };
+        // The directory walk is remembered per pane for as long as the agent,
+        // session and config directory stay the same; the checks on the file
+        // itself run every time.
+        let key = (rec.agent, rec.session_id.clone(), config_dir);
+        let mut cached = match self.paths.lock().remove(&id) {
+            Some((k, p)) if k == key => Some(p),
+            _ => None,
+        };
+        let out = chat::answer(&binding, &root, &pane_cwd, conv, pos, &mut cached);
+        if let Some(p) = cached {
+            self.paths.lock().insert(id, (key, p));
+        }
+        out
+    }
+
     fn mark_registered(&self, ws_url_of_connection: &str) {
         let state = self.app.state::<AppState>();
         // Under the config lock: a `ready` from a connection to a server the
@@ -198,6 +264,7 @@ struct Snapshot {
     token: String,
     notify_waiting: bool,
     notify_done: bool,
+    share_chat: bool,
     set: PairedSet,
 }
 
@@ -300,6 +367,7 @@ impl Shared {
     ) -> Result<bool, String> {
         let mut ready = false;
         let mut dirty = false;
+        let mut answered = false;
         for o in outs {
             match o {
                 Out::Send(frame) => {
@@ -310,6 +378,20 @@ impl Shared {
                 }
                 Out::Request { payload, .. } => {
                     self.host.emit_request(payload);
+                }
+                Out::Chat {
+                    id,
+                    pane,
+                    conv,
+                    pos,
+                } => {
+                    // The desktop answers a conversation itself (no lock held
+                    // while the file is read), then hands the answer back.
+                    match self.host.chat(&pane, &conv, pos) {
+                        Some(data) => self.with_engine(|e| e.chat_reply(id, &data, now_ms())),
+                        None => self.with_engine(|e| e.chat_failed(id, now_ms())),
+                    };
+                    answered = true;
                 }
                 Out::PairRequest { device_id, name } => {
                     // No check number: the user types the one the phone shows.
@@ -328,6 +410,11 @@ impl Shared {
         }
         if dirty {
             self.changed();
+        }
+        if answered {
+            // Send the answers now, not on the next 200 ms pass of the loop.
+            let more = self.with_engine(Engine::drain).unwrap_or_default();
+            ready |= self.handle(more, ws, url)?;
         }
         Ok(ready)
     }
@@ -479,6 +566,7 @@ impl Shared {
             name: cfg.effective_name(),
             notify_waiting: cfg.notify_waiting,
             notify_done: cfg.notify_done,
+            share_chat: cfg.share_chat,
             set: self.paired(&cfg.devices),
             origin,
             token,
@@ -493,6 +581,7 @@ impl Shared {
             token,
             notify_waiting,
             notify_done,
+            share_chat,
             set:
                 PairedSet {
                     usable: paired,
@@ -521,6 +610,7 @@ impl Shared {
             e.set_origin(&origin);
             e.set_identity(&name, &token);
             e.set_notify(notify_waiting, notify_done);
+            e.set_share_chat(share_chat);
             e.set_devices(paired);
             e.set_unusable(unreadable);
             let panes = self.latest_panes.lock().clone();
@@ -532,6 +622,7 @@ impl Shared {
             e.set_origin(&origin);
             e.set_identity(&name, &token);
             e.set_notify(notify_waiting, notify_done);
+            e.set_share_chat(share_chat);
             e.set_devices(paired);
             e.set_unusable(unreadable);
         }
@@ -770,7 +861,10 @@ pub fn start(app: &AppHandle, standdown: bool) {
     let dev = std::env::var(DEV_ENV).ok();
     let allowed = connection_allowed(cfg!(debug_assertions), dev.as_deref(), standdown);
     let shared = Shared::new(
-        Arc::new(TauriHost { app: app.clone() }),
+        Arc::new(TauriHost {
+            app: app.clone(),
+            paths: Mutex::new(Default::default()),
+        }),
         secrets,
         Audit::new(dir.join("remote").join("audit.jsonl")),
         allowed,
@@ -828,6 +922,7 @@ pub struct RemoteStatus {
     pub notice: String,
     pub notify_waiting: bool,
     pub notify_done: bool,
+    pub share_chat: bool,
     pub devices: Vec<DeviceStatus>,
     pub pairing: Option<PairingInfo>,
 }
@@ -857,6 +952,7 @@ fn status_of(sh: &Shared) -> RemoteStatus {
         notice: (*sh.notice.lock()).to_string(),
         notify_waiting: cfg.notify_waiting,
         notify_done: cfg.notify_done,
+        share_chat: cfg.share_chat,
         devices: cfg
             .devices
             .iter()
@@ -914,6 +1010,7 @@ pub fn remote_configure(
     enabled: bool,
     notify_waiting: bool,
     notify_done: bool,
+    share_chat: bool,
 ) -> YmuxResult<RemoteStatus> {
     guard_local(&webview, &request, "remote_configure")?;
     let sh = &rt.shared;
@@ -939,6 +1036,7 @@ pub fn remote_configure(
         r.enabled = enabled;
         r.notify_waiting = notify_waiting;
         r.notify_done = notify_done;
+        r.share_chat = share_chat;
     };
     // Settings changes and the worker's reads of the device set take turns
     // (see `devset.rs`). Pointing the link at another server makes the setup

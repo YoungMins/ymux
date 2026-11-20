@@ -122,6 +122,15 @@ export function renderRemoteSection(host: HTMLElement): () => void {
   notifyBlock.appendChild(note(t("settings.remote.notifyHint")));
   host.appendChild(notifyBlock);
 
+  // ── Conversations ───────────────────────────────────────────────────
+  const chatBlock = el("div", "act-block");
+  const shareChat = checkbox(t("settings.remote.shareChat"));
+  const chatChecks = el("div", "act-checks");
+  chatChecks.appendChild(shareChat.wrap);
+  chatBlock.appendChild(chatChecks);
+  chatBlock.appendChild(note(t("settings.remote.shareChatHint")));
+  host.appendChild(chatBlock);
+
   // ── Devices ─────────────────────────────────────────────────────────
   const devBlock = el("div", "act-block");
   devBlock.appendChild(el("h4", "", t("settings.remote.devicesHeading")));
@@ -253,6 +262,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
     if (!formFilled) fillForm(s);
     nWaiting.box.checked = s.notify_waiting;
     nDone.box.checked = s.notify_done;
+    shareChat.box.checked = s.share_chat;
     tokenNote.textContent = t(s.has_token ? "settings.remote.tokenSet" : "settings.remote.tokenNone");
     clearToken.hidden = !s.has_token;
     const line = statusLine(s);
@@ -284,6 +294,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
       enabled: enable.box.checked,
       notifyWaiting: nWaiting.box.checked,
       notifyDone: nDone.box.checked,
+      shareChat: shareChat.box.checked,
     });
 
   save.addEventListener("click", () => {
@@ -338,6 +349,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
         enabled: s.enabled,
         notifyWaiting: nWaiting.box.checked,
         notifyDone: nDone.box.checked,
+        shareChat: shareChat.box.checked,
       })
       .then(paint)
       .catch((e) => {
@@ -347,6 +359,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
   };
   nWaiting.box.addEventListener("change", onNotify);
   nDone.box.addEventListener("change", onNotify);
+  shareChat.box.addEventListener("change", onNotify);
 
   pairBtn.addEventListener("click", () => {
     void (async () => {

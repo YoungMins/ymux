@@ -41,7 +41,7 @@ ymux/
 │       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
 │       ├── pty/                # PTY session management
 │       ├── quit_gate.rs        # Close-to-tray / real-quit handshake state machine (pure)
-│       ├── remote/             # Remote server link (rule 19): proto (frames, signed strings), keys (P-256, pairing proof), session (the §5.1 authorisation), pairing, clip (redact + clip outgoing text), panes (notify transitions, send throttle), engine (protocol state machine), backoff, audit (JSONL), fixtures/ (copied from yMux-Server) (all pure); runtime.rs = socket thread + commands (desktop)
+│       ├── remote/             # Remote server link (rule 19): proto (frames, signed strings), keys (P-256, pairing proof), session (the §5.1 authorisation), pairing, clip (redact + clip outgoing text), chat (the `chat` op: transcript reader + locate, answered without the page), panes (notify transitions, send throttle), engine (protocol state machine), backoff, audit (JSONL), fixtures/ (copied from yMux-Server) (all pure); runtime.rs = socket thread + commands (desktop)
 │       ├── secrets.rs          # Backend-owned secret store (webhook URL / HMAC secret / LLM API key): DPAPI on Windows, 0600 elsewhere; write-only over IPC
 │       ├── scrollback.rs       # Persist/restore per-pane terminal scrollback (pure)
 │       ├── shell/              # Shell detection (detect.rs)
@@ -658,9 +658,10 @@ CLIs, Explorer, default programs) sees the real AppData. So:
 
 With `remote.enabled`, ymux holds an outbound WebSocket to the user's own
 relay server (protocol: `yMux-Server/PROTOCOL.md`). A paired phone can list
-agent panes, read a pane's screen, answer a menu option, send Escape and send
-a prompt. That is all: there is no op for raw keys, new or closed panes, or
-files, and an unknown op is `unknown_op`. Code is `src-tauri/src/remote/`.
+agent panes, read a pane's screen, read a pane's agent conversation (`chat`),
+answer a menu option, send Escape and send a prompt. That is all: there is no
+op for raw keys, new or closed panes, or files, and an unknown op is
+`unknown_op`. Code is `src-tauri/src/remote/`.
 
 - **The relay is not trusted, even to read.** Every body between a paired
   device and this desktop is sealed with that device's *link key* (AES-256-GCM,
@@ -733,6 +734,67 @@ files, and an unknown op is `unknown_op`. Code is `src-tauri/src/remote/`.
   `clip::reply_data` field by field, never forwarded as given. `peek` lines
   are logical lines: only xterm's soft-wrapped rows are joined (in the page);
   text an agent's own TUI wraps stays split.
+- **`chat` is answered by the desktop, never by the page.** After
+  `authorise` (capability `view`) the engine pushes `Out::Chat`;
+  `Shared::handle` resolves it through `Host::chat` (no lock held) and hands the
+  answer to `Engine::chat_reply`, which goes through the normal in-flight slot,
+  session stamping and audit (accepted reads counted per minute, like `peek`).
+  `frontend_reply` ignores a chat id, so the page cannot answer one. More than
+  5 accepted `chat` per device per second are `busy` in the engine (counted in
+  the audit aggregate, nothing read; a chat refused for lack of in-flight room
+  takes no slot); a conversation that exists but could not be read this time
+  (a read error while looking, opening, scanning or reading) is `ok:false`
+  `internal` (`Host::chat` returns `None`, `Engine::chat_failed`), counted too.
+  `{"conv":""}` stays for no agent, an unvouched binding, sharing off, file not
+  found.
+  `remote/chat.rs` (pure, tested) reads the agent's own transcript file: Claude
+  Code JSONL or a Codex rollout, found by the pane's tracker record
+  (`active`, `record_matches_pane` against the pane's own account dirs,
+  `agent_scan_disk::transcript_lookup`, which tells a missing file from a read
+  error and only accepts regular files for Codex). `chat::open` canonicalises
+  on every request, requires the file to be inside the transcript root and to
+  BE that session's file (`is_session_file`: Claude stem == session id, Codex
+  name ends `-<id>.jsonl`, so a link to another session's file is refused),
+  opens the leaf with `attach::open_plain_leaf` (no link followed, not a FIFO or
+  device, regular, ONE hard link; `O_NONBLOCK|O_NOFOLLOW` on Unix), reads the
+  handle's real path back (`attach::real_path_of`) and requires it inside the
+  canonical root with the same name rule, then reads through that handle; when the binding's
+  `IdSource` is `Disk` (the id was only inferred) the transcript's recorded cwd
+  must be the pane's live cwd (`ypath::same_path`, rule 15; an unknown pane cwd
+  refuses; never the record's own cwd). Hook/Process bindings are vouched for
+  by the agent. `TauriHost::chat` remembers the path the directory walk found
+  per pane (as found, uncanonicalised; keyed by agent, session id, config dir)
+  but canonicalises and runs every check on each request, and
+  re-reads `remote.share_chat` itself. Shown: user text (not meta, sidechain,
+  compact summaries, tool results or harness wrappers, nor shell-mode output:
+  `<bash-input>` / Codex `<user_shell_command>` become a `tool` item with the
+  command only, ended at its closing tag, the start of the output or its first
+  line), assistant text and one-line `tool` items; never reasoning or
+  tool output. `conv` = 12 bytes of SHA-256 over agent, session id, canonical
+  path and the file identity (dev+inode / volume serial+file index), so a
+  replaced file is another conversation. Positions are byte offsets, normally
+  line starts; item ids `<offset>.<index>`; only newline-terminated lines
+  count. Honoured `after: e` has `start == e`, honoured `before: s` has
+  `end == s`, anything else is a newest page. The end of the complete lines is
+  found by a scan of its own (`SCAN_MAX` 64 MiB, backwards from EOF), so an
+  unfinished last line costs the page nothing; if no newline is found within
+  it the request is an `internal` error. Per request: at most 4 MiB read for
+  the page, a line over 2 MiB is skipped unparsed, at most 40 items and 64 KiB
+  of text in whole lines (a line yields at most 20 items / 48 KiB). A valid
+  record under 2 MiB is never split. A line longer than the page budget is
+  crossed in steps: the reply's `end` / `start` is then a byte inside
+  it (everything before it examined) and the next call resumes there, skipping
+  the rest unparsed; a reply never claims bytes it did not examine. Texts:
+  CR/CRLF to LF, newline and tab kept, other Cc/Cf/Zl/Zp dropped, redacted,
+  clipped to 8000 chars (`clip::chat_text`); `tool` lines 200 chars
+  (`clip::chat_tool_line`). Order: clean first, then pre-cut the cleaned text
+  (32000 chars; a tool field 4000), then redact (a cut text is shown the
+  closers `"'@` so quoted values and URL userinfo whose closer was cut away are
+  still caught); a cut text loses its partial last line (or its last 4000
+  chars, tool field 1000), so a secret straddling the cut leaves no fragment.
+  A tool name is cleaned and redacted too.
+  `Config::remote.share_chat` (default true, backend-owned, set by
+  `remote_configure`) off answers `{"conv":""}` without reading anything.
 - **Text is cleaned, redacted and clipped in Rust before it leaves**
   (`clip.rs`: control characters and Unicode format/line/paragraph separators
   (Cf, Zl, Zp: explicit ranges) out, `activity::redact`, then 2000 chars for

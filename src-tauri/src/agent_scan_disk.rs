@@ -289,7 +289,7 @@ pub fn codex_is_resumable(meta: &CodexMeta) -> bool {
 /// Read at most `MAX_HEAD_BYTES` from `path`, stopping early at `max_lines`
 /// complete lines. Any IO error is "no transcript here", not a failure: the
 /// agent may be rewriting the file right now.
-fn read_head(path: &Path, max_lines: usize) -> Option<String> {
+pub fn read_head(path: &Path, max_lines: usize) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mut reader = BufReader::new(file.take(MAX_HEAD_BYTES as u64));
     let mut out = String::new();
@@ -653,40 +653,94 @@ pub fn transcript_exists_within(
     root: &Path,
     session_id: &str,
     cwd_hint: &str,
-    mut budget: usize,
+    budget: usize,
 ) -> bool {
+    transcript_path_within(agent, root, session_id, cwd_hint, budget).is_some()
+}
+
+/// [`transcript_exists_within`], returning where the transcript is (any error
+/// is "not found"). The path is not yet known to be a regular file inside
+/// `root` for a Claude file reached through a link; a caller that reads it
+/// must check.
+pub fn transcript_path_within(
+    agent: AgentKind,
+    root: &Path,
+    session_id: &str,
+    cwd_hint: &str,
+    budget: usize,
+) -> Option<PathBuf> {
+    transcript_lookup(agent, root, session_id, cwd_hint, budget)
+        .ok()
+        .flatten()
+}
+
+/// `Ok(None)` when the transcript is not there; `Err` when looking failed for a
+/// reason other than a missing directory or file (a transient read error), so
+/// the caller can tell "gone" from "could not look".
+pub fn transcript_lookup(
+    agent: AgentKind,
+    root: &Path,
+    session_id: &str,
+    cwd_hint: &str,
+    mut budget: usize,
+) -> std::io::Result<Option<PathBuf>> {
     if !is_valid_session_id(session_id) {
-        return false;
+        return Ok(None);
     }
     let file_name = format!("{session_id}.jsonl");
     match agent {
         AgentKind::Claude => {
-            if !cwd_hint.is_empty()
-                && root
+            if !cwd_hint.is_empty() {
+                let path = root
                     .join(claude_project_dir_name(cwd_hint))
-                    .join(&file_name)
-                    .is_file()
-            {
-                return true;
+                    .join(&file_name);
+                if is_file_at(&path)? {
+                    return Ok(Some(path));
+                }
             }
-            let Ok(entries) = std::fs::read_dir(root) else {
-                return false;
+            let Some(entries) = read_dir_opt(root)? else {
+                return Ok(None);
             };
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = entry?;
                 if budget == 0 {
-                    return false;
+                    return Ok(None);
                 }
                 budget -= 1;
-                if entry.path().join(&file_name).is_file() {
-                    return true;
+                let path = entry.path().join(&file_name);
+                if is_file_at(&path)? {
+                    return Ok(Some(path));
                 }
             }
-            false
+            Ok(None)
         }
         AgentKind::Codex => {
             let suffix = format!("-{file_name}");
-            codex_find(root, 0, &suffix, &mut budget).is_some()
+            codex_find(root, 0, &suffix, &mut budget)
         }
+    }
+}
+
+/// `read_dir`, with a missing directory (or a name that is not a directory) as
+/// `None`.
+fn read_dir_opt(dir: &Path) -> std::io::Result<Option<std::fs::ReadDir>> {
+    match std::fs::read_dir(dir) {
+        Ok(r) => Ok(Some(r)),
+        Err(e) if is_absent(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn is_absent(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::NotFound
+}
+
+/// Is there a regular file at `p` (a link is followed)? A missing path is `false`.
+fn is_file_at(p: &Path) -> std::io::Result<bool> {
+    match std::fs::metadata(p) {
+        Ok(m) => Ok(m.is_file()),
+        Err(e) if is_absent(&e) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 
@@ -699,36 +753,46 @@ pub fn codex_rollout_path(root: &Path, session_id: &str) -> Option<PathBuf> {
     }
     let suffix = format!("-{session_id}.jsonl");
     let mut budget = MAX_EXISTS_ENTRIES;
-    codex_find(root, 0, &suffix, &mut budget)
+    codex_find(root, 0, &suffix, &mut budget).ok().flatten()
 }
 
 /// Depth-first over `YYYY/MM/DD/rollout-*.jsonl`, newest name first at every
-/// level.
-fn codex_find(dir: &Path, depth: usize, suffix: &str, budget: &mut usize) -> Option<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return None;
+/// level. Only a regular file (not a link, FIFO or directory) is a rollout.
+/// A missing directory is `Ok(None)`; any other read error is an `Err`.
+fn codex_find(
+    dir: &Path,
+    depth: usize,
+    suffix: &str,
+    budget: &mut usize,
+) -> std::io::Result<Option<PathBuf>> {
+    let Some(entries) = read_dir_opt(dir)? else {
+        return Ok(None);
     };
     let mut names: Vec<(String, PathBuf)> = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry?;
         if *budget == 0 {
-            return None;
+            return Ok(None);
         }
         *budget -= 1;
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
         if depth == 3 {
-            if name.ends_with(suffix) {
-                return Some(entry.path());
+            if name.ends_with(suffix) && entry.file_type()?.is_file() {
+                return Ok(Some(entry.path()));
             }
-        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+        } else if entry.file_type()?.is_dir() {
             names.push((name, entry.path()));
         }
     }
     names.sort_by(|a, b| b.0.cmp(&a.0));
-    names
-        .iter()
-        .find_map(|(_, path)| codex_find(path, depth + 1, suffix, budget))
+    for (_, path) in &names {
+        if let Some(found) = codex_find(path, depth + 1, suffix, budget)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
 }
 
 /// [`transcript_exists_within`] with the default budget.

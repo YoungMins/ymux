@@ -339,6 +339,8 @@ export interface RemoteStatus {
   notice: string;
   notify_waiting: boolean;
   notify_done: boolean;
+  /// A paired device may read agent conversations (`chat`).
+  share_chat: boolean;
   devices: RemoteDevice[];
   pairing: RemotePairing | null;
 }

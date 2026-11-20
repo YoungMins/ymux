@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { RemoteStatus } from "../types";
 
 const calls: string[] = [];
+const shared: boolean[] = [];
 let status: RemoteStatus;
 
 vi.mock("../ipc/bridge", () => ({
@@ -10,8 +11,9 @@ vi.mock("../ipc/bridge", () => ({
   onRemoteStatus: () => Promise.resolve(() => {}),
   remoteApi: {
     status: () => Promise.resolve(status),
-    configure: (c: { serverUrl: string }) => {
+    configure: (c: { serverUrl: string; shareChat: boolean }) => {
       calls.push(`configure:${c.serverUrl}`);
+      shared.push(c.shareChat);
       status = { ...status, server_url: c.serverUrl };
       return Promise.resolve(status);
     },
@@ -43,6 +45,7 @@ function base(over: Partial<RemoteStatus> = {}): RemoteStatus {
     notice: "",
     notify_waiting: true,
     notify_done: false,
+    share_chat: true,
     devices: [],
     pairing: null,
     ...over,
@@ -55,6 +58,27 @@ describe("Settings -> Remote server", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     calls.length = 0;
+    shared.length = 0;
+  });
+
+  it("shows the conversation switch from the status and applies a change at once", async () => {
+    status = base({ share_chat: true });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const stop = renderRemoteSection(host);
+    await tick();
+    const labels = [...host.querySelectorAll("label")];
+    const row = labels.find((l) => /agent conversations/i.test(l.textContent ?? ""));
+    expect(row).toBeDefined();
+    expect(host.textContent).toMatch(/end-to-end encrypted/);
+    const box = row!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    await tick();
+    await tick();
+    expect(shared).toEqual([false]);
+    stop();
   });
 
   it("shows the pairing QR code but never the link as text", async () => {

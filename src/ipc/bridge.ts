@@ -804,6 +804,7 @@ export const remoteApi = {
     enabled: boolean;
     notifyWaiting: boolean;
     notifyDone: boolean;
+    shareChat: boolean;
   }): Promise<RemoteStatus> => call("remote_configure", c),
   /// Empty clears the stored token.
   setToken: (token: string): Promise<RemoteStatus> => call("remote_set_token", { token }),

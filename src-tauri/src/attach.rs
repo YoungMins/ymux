@@ -253,7 +253,8 @@ fn open_nofollow(p: &Path, lock: bool) -> std::io::Result<File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        o.custom_flags(libc::O_NOFOLLOW);
+        // NONBLOCK: a FIFO swapped in at the leaf must not hang the open.
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     #[cfg(windows)]
     {
@@ -320,6 +321,27 @@ fn open_checked(p: &Path, lock: bool) -> Result<(File, Info), &'static str> {
     Ok((f, info))
 }
 
+/// For readers of other files that must not follow a link at the leaf: opens
+/// `p` read-only without following one, and gives the handle back only when it
+/// is a plain regular file with a single hard link (`Ok(None)` otherwise). A
+/// leaf that is not a regular file (link, FIFO, device, directory) is looked at
+/// before it is opened, so nothing blocks on it.
+pub(crate) fn open_plain_leaf(p: &Path) -> std::io::Result<Option<File>> {
+    if !std::fs::symlink_metadata(p)?.is_file() {
+        return Ok(None);
+    }
+    let f = open_nofollow(p, false)?;
+    match info_of(&f) {
+        Ok(info) if info.nlink <= 1 => Ok(Some(f)),
+        _ => Ok(None),
+    }
+}
+
+/// Where an open handle really is now, spelled without the `\\?\` prefix.
+pub(crate) fn real_path_of(f: &File) -> std::io::Result<String> {
+    handle_path(f).map(|s| plain_path(&s))
+}
+
 /// Is the handle the file `canonicalize` + `symlink_metadata` described?
 #[cfg(unix)]
 fn same_as_leaf(info: &Info, canon: &Path) -> bool {
@@ -341,7 +363,7 @@ fn same_as_leaf(info: &Info, canon: &Path) -> bool {
 
 /// `\\?\C:\x` -> `C:\x`, `\\?\UNC\h\s` -> `\\h\s`. Other spellings pass
 /// through. (A POSIX absolute path starts with `/`, so it is never touched.)
-fn plain_path(s: &str) -> String {
+pub(crate) fn plain_path(s: &str) -> String {
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else if let Some(rest) = s.strip_prefix(r"\\?\") {

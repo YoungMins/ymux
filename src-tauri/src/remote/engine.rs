@@ -43,6 +43,14 @@ pub enum Out {
         id: u64,
         payload: Value,
     },
+    /// A `chat` command, answered by the desktop itself (never the page): read
+    /// the pane's transcript, then hand the result to [`Engine::chat_reply`].
+    Chat {
+        id: u64,
+        pane: String,
+        conv: String,
+        pos: Option<proto::ChatPos>,
+    },
     /// Emit `remote://pair-request` (the proof already verified). It carries
     /// no check number: that goes to the phone, sealed, and the user types it.
     PairRequest {
@@ -135,8 +143,15 @@ pub struct Engine {
     now: u64,
     notify_waiting: bool,
     notify_done: bool,
+    /// May a paired device read agent conversations (`chat`)?
+    share_chat: bool,
+    /// device id -> times of its recent accepted `chat` commands.
+    chat_times: HashMap<String, Vec<u64>>,
     out: Vec<Out>,
 }
+
+/// Most `chat` commands one device may have accepted within a second.
+pub const CHAT_PER_SECOND: usize = 5;
 
 /// Sealed failure replies one device may be sent per window for frames that
 /// fail the session rules (`replay`, `bad_session`, `expired`). A relay can
@@ -205,6 +220,8 @@ impl Engine {
             now: 0,
             notify_waiting: true,
             notify_done: false,
+            share_chat: true,
+            chat_times: HashMap::new(),
             out: Vec::new(),
         }
     }
@@ -229,6 +246,11 @@ impl Engine {
         self.notify_done = done;
     }
 
+    /// Whether `chat` may show conversations; off answers `{"conv":""}`.
+    pub fn set_share_chat(&mut self, on: bool) {
+        self.share_chat = on;
+    }
+
     /// Device ids the config holds but that cannot be used this run (their
     /// link key could not be read). `on_ready` never tells the server to
     /// remove them.
@@ -249,6 +271,7 @@ impl Engine {
             self.sessions.drop_device(&id);
             self.fail_budget.windows.remove(&id);
             self.sig_budget.windows.remove(&id);
+            self.chat_times.remove(&id);
         }
         self.links = devices
             .iter()
@@ -731,10 +754,31 @@ impl Engine {
                         return;
                     }
                 }
+                // A poller may ask often; more than CHAT_PER_SECOND from one
+                // device in a second is `busy`, before anything is read.
+                let is_chat = matches!(request, Request::Chat { .. });
+                if is_chat && !self.chat_rate_room(now, device_id) {
+                    self.reject_note(now, device_id, Code::Busy.as_str());
+                    self.fail(device_id, re, Code::Busy);
+                    return;
+                }
+                // The owner can switch conversation sharing off: nothing is
+                // read, and the answer is the same as "no conversation".
+                if is_chat && !self.share_chat {
+                    self.chat_rate_take(now, device_id);
+                    self.agg.note_op(now, device_id, Op::Chat.as_str(), "ok");
+                    let body = proto::reply_ok(re, json!({"conv": ""}));
+                    self.emit(device_id, &body, Stamp::Session);
+                    return;
+                }
+                // Refused for lack of room, a chat takes no rate slot.
                 if self.inflight.len() >= MAX_INFLIGHT {
                     self.reject_note(now, device_id, Code::Busy.as_str());
                     self.fail(device_id, re, Code::Busy);
                     return;
+                }
+                if is_chat {
+                    self.chat_rate_take(now, device_id);
                 }
                 let id = self.next_id;
                 self.next_id += 1;
@@ -750,6 +794,17 @@ impl Engine {
                         deadline,
                     },
                 );
+                // A conversation is read by the desktop itself; the page is
+                // never asked (and never told).
+                if let Request::Chat { pane, conv, pos } = request {
+                    self.push(Out::Chat {
+                        id,
+                        pane,
+                        conv,
+                        pos,
+                    });
+                    return;
+                }
                 // The page must not press Enter after the moment this app
                 // answers `timeout`: a late reply is ignored.
                 let mut payload = request.event(id);
@@ -771,8 +826,56 @@ impl Engine {
         self.emit(&f.device_id, body, Stamp::Session);
     }
 
-    /// The app's answer to request `id`. A late or unknown id is ignored.
+    /// The app's answer to request `id`. A late or unknown id is ignored, and
+    /// so is an id that belongs to a `chat`: only [`Engine::chat_reply`] may
+    /// answer one, so the page cannot put words into a conversation.
     pub fn frontend_reply(&mut self, id: u64, data: &Value, now: u64) {
+        if self.inflight.get(&id).is_some_and(|f| f.op == Op::Chat) {
+            return;
+        }
+        self.answer(id, data, now);
+    }
+
+    /// The desktop's own answer to an [`Out::Chat`]. Any other id is ignored.
+    pub fn chat_reply(&mut self, id: u64, data: &Value, now: u64) {
+        if self.inflight.get(&id).is_some_and(|f| f.op == Op::Chat) {
+            self.answer(id, data, now);
+        }
+    }
+
+    /// The conversation exists but could not be read this time: `internal`
+    /// (the device keeps what it shows and asks again), one audit line.
+    pub fn chat_failed(&mut self, id: u64, now: u64) {
+        self.chat_reply(id, &Value::Null, now);
+    }
+
+    /// Accept one `chat` from `device` now? At most [`CHAT_PER_SECOND`] in any
+    /// second (only accepted ones count).
+    #[cfg(test)]
+    fn chat_rate_ok(&mut self, now: u64, device: &str) -> bool {
+        let room = self.chat_rate_room(now, device);
+        if room {
+            self.chat_rate_take(now, device);
+        }
+        room
+    }
+
+    /// Is there room for one more accepted `chat` from `device`?
+    fn chat_rate_room(&mut self, now: u64, device: &str) -> bool {
+        let w = self.chat_times.entry(device.to_string()).or_default();
+        w.retain(|t| now.saturating_sub(*t) < 1000);
+        w.len() < CHAT_PER_SECOND
+    }
+
+    /// Count one accepted `chat`.
+    fn chat_rate_take(&mut self, now: u64, device: &str) {
+        self.chat_times
+            .entry(device.to_string())
+            .or_default()
+            .push(now);
+    }
+
+    fn answer(&mut self, id: u64, data: &Value, now: u64) {
         self.now = now;
         let Some(f) = self.inflight.remove(&id) else {
             return;
@@ -784,8 +887,12 @@ impl Engine {
         // A polling phone repeats `peek` every couple of seconds: accepted
         // reads are one line per device, op and minute with a count. A write
         // keeps a line of its own: that is what an audit is for.
-        if code == "ok" && matches!(f.op, proto::Op::List | proto::Op::Peek) {
+        if code == "ok" && matches!(f.op, proto::Op::List | proto::Op::Peek | proto::Op::Chat) {
             self.agg.note_op(now, &f.device_id, f.op.as_str(), "ok");
+        } else if f.op == proto::Op::Chat {
+            // A device can poll `chat`: failures are counted too, not one
+            // line each.
+            self.agg.note_op(now, &f.device_id, f.op.as_str(), code);
         } else {
             self.audit(now, &f.device_id, f.op.as_str(), &f.pane, code);
         }
@@ -1496,6 +1603,263 @@ mod tests {
         r.e.tick(NOW + 70_000);
         let lines = audits(&r.e.drain());
         assert_eq!(lines.iter().filter(|l| l.code == "seq_gap").count(), 1);
+    }
+
+    fn chat_id(out: &[Out]) -> u64 {
+        out.iter()
+            .find_map(|o| match o {
+                Out::Chat { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("a chat action")
+    }
+
+    fn chat_data() -> Value {
+        json!({"conv":"abc","agent":"claude","start":0,"end":30,"older":false,"newer":false,
+               "items":[{"id":"0.0","role":"user","text":"hi\nthere","ts_ms":5},
+                        {"id":"10.0","role":"tool","text":"Bash: ls","ts_ms":6}]})
+    }
+
+    #[test]
+    fn chat_is_answered_by_the_desktop_and_never_reaches_the_page() {
+        // `view` is enough.
+        let mut r = Rig::new("view");
+        let out = r.cmd(json!({"op":"chat","pane":PANE,"conv":"abc","after":4}), NOW);
+        assert!(!has_request(&out), "the page is never asked");
+        assert!(
+            frames(&out).is_empty(),
+            "nothing is sent before the reader answers"
+        );
+        let id = chat_id(&out);
+        assert!(out.contains(&Out::Chat {
+            id,
+            pane: PANE.into(),
+            conv: "abc".into(),
+            pos: Some(proto::ChatPos::After(4)),
+        }));
+        // The page cannot answer it, through the page's own reply path.
+        r.e.frontend_reply(id, &chat_data(), NOW + 1);
+        assert!(r.e.drain().is_empty());
+        // The desktop's own answer is stamped like any other reply.
+        r.e.chat_reply(id, &chat_data(), NOW + 2);
+        let out = r.e.drain();
+        let b = r.reply(&out);
+        assert_eq!(b["k"], "reply");
+        assert_eq!(b["ok"], true);
+        assert_eq!(b["re"], r.seq);
+        assert_eq!(b["data"]["items"][0]["text"], "hi\nthere");
+        assert_eq!(b["data"]["items"][1]["role"], "tool");
+        assert_eq!(b["at_ms"], NOW + 2);
+        assert!(b["n"].as_u64().is_some());
+        // Answered once.
+        r.e.chat_reply(id, &chat_data(), NOW + 3);
+        assert!(r.e.drain().is_empty());
+    }
+
+    #[test]
+    fn only_a_chat_id_can_be_answered_as_a_chat() {
+        let mut r = Rig::new("view");
+        let out = r.cmd(json!({"op":"peek","pane":PANE}), NOW);
+        let id = request_id(&out);
+        r.e.chat_reply(id, &chat_data(), NOW);
+        assert!(
+            r.e.drain().is_empty(),
+            "a peek is not answered by chat_reply"
+        );
+        r.e.frontend_reply(
+            id,
+            &json!({"lines":[],"menu":[],"menu_id":"","question":[],"blocked":null,"status":"idle"}),
+            NOW,
+        );
+        let out = r.e.drain();
+        assert_eq!(r.opened(&out).len(), 1);
+    }
+
+    #[test]
+    fn accepted_chats_are_counted_not_logged_one_by_one() {
+        let mut r = Rig::new("view");
+        for _ in 0..3 {
+            let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW);
+            r.e.chat_reply(chat_id(&out), &chat_data(), NOW);
+        }
+        assert!(audits(&r.e.drain()).is_empty());
+        r.e.tick(NOW + 61_000);
+        let agg = audits(&r.e.drain());
+        assert_eq!(agg.len(), 1);
+        assert_eq!((agg[0].op, agg[0].code, agg[0].count), ("chat", "ok", 3));
+    }
+
+    #[test]
+    fn an_answer_that_is_not_a_chat_reply_is_internal() {
+        let mut r = Rig::new("view");
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW);
+        r.e.chat_reply(chat_id(&out), &json!({"conv":"x y"}), NOW);
+        let out = r.e.drain();
+        let b = r.reply(&out);
+        assert_eq!(
+            (b["ok"].clone(), b["code"].clone()),
+            (json!(false), json!("internal"))
+        );
+        // Failures of a polled read are counted, not logged one by one.
+        assert!(audits(&out).is_empty());
+        r.e.tick(NOW + 61_000);
+        let agg = audits(&r.e.drain());
+        assert_eq!(
+            (agg[0].op, agg[0].code, agg[0].count),
+            ("chat", "internal", 1)
+        );
+    }
+
+    #[test]
+    fn a_conversation_that_could_not_be_read_is_internal_and_counted() {
+        let mut r = Rig::new("view");
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW);
+        r.e.chat_failed(chat_id(&out), NOW + 1);
+        let out = r.e.drain();
+        let b = r.reply(&out);
+        assert_eq!(
+            (b["ok"].clone(), b["code"].clone()),
+            (json!(false), json!("internal"))
+        );
+        assert_eq!(b["re"], r.seq);
+        r.e.tick(NOW + 61_000);
+        let agg = audits(&r.e.drain());
+        assert_eq!((agg[0].op, agg[0].code), ("chat", "internal"));
+        // Not a chat id: ignored.
+        let out = r.cmd(json!({"op":"list"}), NOW + 62_000);
+        r.e.chat_failed(request_id(&out), NOW + 62_001);
+        assert!(r.e.drain().is_empty());
+    }
+
+    #[test]
+    fn more_than_five_chats_a_second_from_one_device_are_busy() {
+        let mut r = Rig::new("view");
+        let mut reads = 0;
+        for i in 0..8u64 {
+            let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + i * 10);
+            if out.iter().any(|o| matches!(o, Out::Chat { .. })) {
+                reads += 1;
+                r.e.chat_reply(chat_id(&out), &chat_data(), NOW + i * 10);
+                r.e.drain();
+            } else {
+                // Refused before anything could be read.
+                let b = r.reply(&out);
+                assert_eq!(
+                    (b["ok"].clone(), b["code"].clone()),
+                    (json!(false), json!("busy"))
+                );
+            }
+        }
+        assert_eq!(reads, CHAT_PER_SECOND);
+        // The window slides: a second on there is room again.
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 1_001);
+        chat_id(&out);
+        // Other ops are not limited.
+        for k in 0..8u64 {
+            let out = r.cmd(json!({"op":"list"}), NOW + 1_100 + k);
+            r.e.frontend_reply(request_id(&out), &json!({"panes":[]}), NOW + 1_100 + k);
+            r.e.drain();
+        }
+        // The refusals are counted in the aggregate.
+        r.e.tick(NOW + 70_000);
+        let agg = audits(&r.e.drain());
+        assert!(
+            agg.iter().any(|a| a.code == "busy" && a.count == 3),
+            "{agg:?}"
+        );
+    }
+
+    #[test]
+    fn a_chat_refused_for_lack_of_room_takes_no_rate_slot() {
+        let mut r = Rig::new("view");
+        // Fill the app's waiting slots with `list` commands that never answer.
+        for _ in 0..MAX_INFLIGHT {
+            let out = r.cmd(json!({"op":"list"}), NOW);
+            request_id(&out);
+        }
+        // Chats are now refused `busy` (no room), more often than the rate
+        // allows: none of them may use up the device's chat allowance.
+        for _ in 0..(CHAT_PER_SECOND + 3) {
+            let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 1);
+            assert!(!out.iter().any(|o| matches!(o, Out::Chat { .. })));
+            let b = r.reply(&out);
+            assert_eq!(b["code"], "busy");
+        }
+        // Room again (the waiting commands time out): the full allowance is there.
+        r.e.tick(NOW + 6_000);
+        r.e.drain();
+        for i in 0..CHAT_PER_SECOND {
+            let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 6_000 + i as u64);
+            r.e.chat_reply(chat_id(&out), &chat_data(), NOW + 6_000);
+            r.e.drain();
+        }
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 6_010);
+        assert_eq!(r.reply(&out)["code"], "busy");
+    }
+
+    #[test]
+    fn the_chat_rate_is_per_device_and_refusals_do_not_extend_it() {
+        let mut e = engine_with(vec![]);
+        for i in 0..CHAT_PER_SECOND {
+            assert!(e.chat_rate_ok(NOW + i as u64, "a"), "{i}");
+        }
+        assert!(!e.chat_rate_ok(NOW + 10, "a"));
+        assert!(e.chat_rate_ok(NOW + 10, "b"));
+        assert!(!e.chat_rate_ok(NOW + 900, "a"));
+        assert!(e.chat_rate_ok(NOW + 1_000, "a"));
+    }
+
+    #[test]
+    fn with_sharing_off_chat_says_there_is_no_conversation() {
+        let mut r = Rig::new("view");
+        r.e.set_share_chat(false);
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW);
+        assert!(!has_request(&out));
+        assert!(
+            !out.iter().any(|o| matches!(o, Out::Chat { .. })),
+            "nothing is read"
+        );
+        let b = r.reply(&out);
+        assert_eq!(b["ok"], true);
+        assert_eq!(b["data"], json!({"conv": ""}));
+        assert!(b["n"].as_u64().is_some() && b["at_ms"].as_u64().is_some());
+        r.e.tick(NOW + 61_000);
+        let agg = audits(&r.e.drain());
+        assert_eq!((agg[0].op, agg[0].code, agg[0].count), ("chat", "ok", 1));
+        // Other reads are not affected, and turning it back on works.
+        let out = r.cmd(json!({"op":"list"}), NOW);
+        assert!(has_request(&out));
+        r.e.set_share_chat(true);
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW);
+        chat_id(&out);
+    }
+
+    #[test]
+    fn a_bad_chat_request_is_rejected_before_anything_is_read() {
+        let mut r = Rig::new("view");
+        for bad in [
+            json!({"op":"chat","pane":PANE,"after":1}),
+            json!({"op":"chat","pane":PANE,"conv":"c","after":1,"before":2}),
+            json!({"op":"chat","pane":"nope"}),
+        ] {
+            let out = r.cmd(bad, NOW);
+            assert!(!out.iter().any(|o| matches!(o, Out::Chat { .. })));
+            let b = r.reply(&out);
+            assert_eq!(b["code"], "bad_request");
+        }
+    }
+
+    #[test]
+    fn a_chat_waiting_on_the_desktop_counts_toward_busy_and_times_out() {
+        let mut r = Rig::new("view");
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW);
+        let id = chat_id(&out);
+        r.e.tick(NOW + 5_001);
+        let out = r.e.drain();
+        let b = r.reply(&out);
+        assert_eq!(b["code"], "timeout");
+        r.e.chat_reply(id, &chat_data(), NOW + 6_000);
+        assert!(r.e.drain().is_empty());
     }
 
     #[test]
