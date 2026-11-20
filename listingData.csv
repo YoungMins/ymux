@@ -34,7 +34,7 @@ PRIVATE BY DESIGN yMux has no sign-up, no analytics and no telemetry. Your layou
 
 OFFICE VIEW Press Ctrl+Shift+O to see your workspace as a pixel-art office: each pane is a room and each agent a character that works at its desk, raises a hand when it needs you, celebrates when it finishes and walks over to deliver work to other rooms. Click a room to read and answer its terminal in place, pick one of eight themes, and watch each account level up as an RPG hero with its token usage.
 
-REMOTE CONTROL Remote server (off by default): watch and steer your agents from your phone through a yMux-Server relay that you host yourself on your own HTTPS domain. From the phone's browser (it installs as a web app) you see every agent and its status, read an agent's screen, answer menus and permission questions, stop an agent and send prompts. Each phone gets one of three access levels: view only, view and answer, or view, answer and prompt. This computer alone authorises every command. Everything between phone and computer is end-to-end encrypted, so the relay cannot read it.
+REMOTE CONTROL Remote server (off by default): watch and steer your agents from your phone through a yMux-Server relay that you host yourself on your own HTTPS domain. From the phone's browser (it installs as a web app) you see every agent and its status, read an agent's screen, answer menus and permission questions, stop an agent and send prompts. For Claude Code and Codex, the phone shows the conversation as chat, with formatted tables and code blocks, and a switch brings back the plain screen view; it can be turned off in Settings. Each phone gets one of three access levels: view only, view and answer, or view, answer and prompt. This computer alone authorises every command. Everything between phone and computer is end-to-end encrypted, so the relay cannot read it.
 
 yMux is free and open source: https://github.com/YoungMins/ymux","yMux는 tmux에서 영감을 받은 Windows용 경량 터미널 멀티플렉서입니다. 하나의 화면을 필요한 만큼 여러 터미널로 나누고, 그 레이아웃을 저장해 두었다가 중단했던 지점에서 그대로 다시 시작할 수 있습니다.
 
@@ -71,7 +71,7 @@ yMux를 다시 시작한 뒤에도 Claude Code와 Codex 세션을 이어서 진�
 
 사무실 보기 Ctrl+Shift+O를 누르면 워크스페이스를 픽셀 아트 사무실로 볼 수 있습니다. 창마다 방이 되고, 에이전트는 캐릭터가 되어 책상에서 일하고, 확인이 필요하면 손을 들고, 일을 마치면 기뻐하며, 다른 방으로 작업을 직접 배달합니다. 방을 누르면 그 자리에서 터미널을 보고 답할 수 있고, 테마 8종 중 하나를 고를 수 있으며, 계정마다 토큰 사용량에 따라 RPG 영웅처럼 레벨이 오릅니다.
 
-원격 제어 원격 서버(기본값은 꺼짐): 직접 운영하는 HTTPS 도메인의 yMux-Server 릴레이를 거쳐, 휴대폰에서 에이전트를 확인하고 조작할 수 있습니다. 휴대폰 브라우저(웹 앱으로 설치 가능)에서 모든 에이전트와 상태를 보고, 에이전트 화면을 읽고, 메뉴와 권한 질문에 답하고, 에이전트를 중지하고, 프롬프트를 보낼 수 있습니다. 휴대폰마다 세 가지 접근 수준(보기만, 보기와 응답, 보기·응답·프롬프트 전송) 중 하나를 정합니다. 모든 명령은 이 컴퓨터만 승인합니다. 휴대폰과 컴퓨터 사이의 내용은 종단 간 암호화되어 릴레이도 읽을 수 없습니다.
+원격 제어 원격 서버(기본값은 꺼짐): 직접 운영하는 HTTPS 도메인의 yMux-Server 릴레이를 거쳐, 휴대폰에서 에이전트를 확인하고 조작할 수 있습니다. 휴대폰 브라우저(웹 앱으로 설치 가능)에서 모든 에이전트와 상태를 보고, 에이전트 화면을 읽고, 메뉴와 권한 질문에 답하고, 에이전트를 중지하고, 프롬프트를 보낼 수 있습니다. Claude Code와 Codex는 대화를 채팅 형태로 보여 주며 표와 코드 블록도 보기 좋게 표시되고, 스위치로 기존 화면 보기로 돌아갈 수 있습니다. 설정에서 끌 수도 있습니다. 휴대폰마다 세 가지 접근 수준(보기만, 보기와 응답, 보기·응답·프롬프트 전송) 중 하나를 정합니다. 모든 명령은 이 컴퓨터만 승인합니다. 휴대폰과 컴퓨터 사이의 내용은 종단 간 암호화되어 릴레이도 읽을 수 없습니다.
 
 yMux는 무료 오픈 소스입니다: https://github.com/YoungMins/ymux","yMuxは、tmuxにインスパイアされた Windows 向けの軽量ターミナルマルチプレクサです。1つのウィンドウを必要なだけ複数のターミナルに分割し、そのレイアウトを保存して、中断したところからそのまま再開できます。
 
@@ -108,7 +108,7 @@ yMuxを再起動したあとも、Claude Code と Codex のセッションを再
 
 オフィス表示 Ctrl+Shift+O でワークスペースをピクセルアートのオフィスとして表示します。ペインごとに部屋ができ、エージェントはキャラクターになって机で作業し、対応が必要なときは手を挙げ、作業を終えると喜び、ほかの部屋へ作業を届けに歩いていきます。部屋をクリックするとその場でターミナルを見て返答でき、8 種類のテーマから選べ、アカウントごとにトークン使用量に応じて RPG の勇者のようにレベルが上がります。
 
-リモート操作 リモートサーバー（初期設定はオフ）: ご自身の HTTPS ドメインで運用する yMux-Server のリレーを通じて、スマートフォンからエージェントを確認・操作できます。 スマートフォンのブラウザー（Web アプリとしてインストール可能）で、すべてのエージェントと状態の確認、エージェント画面の閲覧、メニューや権限の質問への応答、エージェントの停止、プロンプトの送信ができます。 スマートフォンごとに 3 つのアクセスレベル（表示のみ、表示と応答、表示・応答・プロンプト送信）から選べます。すべてのコマンドは、このコンピューターだけが承認します。 スマートフォンとコンピューターの間の内容はエンドツーエンドで暗号化され、リレーは読み取れません。
+リモート操作 リモートサーバー（初期設定はオフ）: ご自身の HTTPS ドメインで運用する yMux-Server のリレーを通じて、スマートフォンからエージェントを確認・操作できます。 スマートフォンのブラウザー（Web アプリとしてインストール可能）で、すべてのエージェントと状態の確認、エージェント画面の閲覧、メニューや権限の質問への応答、エージェントの停止、プロンプトの送信ができます。 Claude Code と Codex では、会話が表やコードブロックを整えたチャット形式で表示され、切り替えで従来の画面表示に戻せます。設定でオフにすることもできます。 スマートフォンごとに 3 つのアクセスレベル（表示のみ、表示と応答、表示・応答・プロンプト送信）から選べます。すべてのコマンドは、このコンピューターだけが承認します。 スマートフォンとコンピューターの間の内容はエンドツーエンドで暗号化され、リレーは読み取れません。
 
 yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux","yMux 是一款受 tmux 启发、适用于 Windows 的轻量级终端复用器。你可以把一个窗口拆分成任意数量的终端，保存这些布局，下次打开时从上次离开的地方继续。
 
@@ -145,7 +145,7 @@ yMuxは無料のオープン ソースです: https://github.com/YoungMins/ymux"
 
 办公室视图 按 Ctrl+Shift+O 可将工作区显示为像素风办公室：每个窗格是一个房间，每个智能体都是一个角色，在办公桌前工作，需要你时举手，完成时欢呼，还会走到其他房间递送工作。点击房间即可就地查看并回复其终端；可从 8 种主题中选择；每个账户还会随 token 用量像 RPG 英雄一样升级。
 
-远程控制 远程服务器（默认关闭）：通过你自己在 HTTPS 域名上运行的 yMux-Server 中继，用手机查看并控制智能体。 在手机浏览器（可安装为网页应用）中，可以查看所有智能体及其状态、阅读智能体的屏幕、回答菜单和权限提问、停止智能体，以及发送提示。 每部手机有三种访问级别：仅查看、查看并回应、查看回应并发送提示。所有命令都只由这台电脑批准。 手机与电脑之间的内容经过端到端加密，中继服务器无法读取。
+远程控制 远程服务器（默认关闭）：通过你自己在 HTTPS 域名上运行的 yMux-Server 中继，用手机查看并控制智能体。 在手机浏览器（可安装为网页应用）中，可以查看所有智能体及其状态、阅读智能体的屏幕、回答菜单和权限提问、停止智能体，以及发送提示。 对于 Claude Code 和 Codex，手机会以聊天形式显示对话，表格和代码块也有排版，还可切换回原来的屏幕视图；也可以在设置中关闭。 每部手机有三种访问级别：仅查看、查看并回应、查看回应并发送提示。所有命令都只由这台电脑批准。 手机与电脑之间的内容经过端到端加密，中继服务器无法读取。
 
 yMux 免费且开源：https://github.com/YoungMins/ymux","yMux, tmux से प्रेरित Windows के लिए एक हल्का टर्मिनल मल्टीप्लेक्सर है। इससे आप एक विंडो को जितने चाहें उतने टर्मिनलों में बाँट सकते हैं, उन लेआउट को सेव कर सकते हैं, और ठीक वहीं से दोबारा शुरू कर सकते हैं जहाँ आपने छोड़ा था।
 
@@ -182,7 +182,7 @@ yMux रीस्टार्ट करने के बाद Claude Code औ�
 
 ऑफ़िस व्यू Ctrl+Shift+O दबाकर अपने वर्कस्पेस को पिक्सेल-आर्ट ऑफ़िस के रूप में देखें: हर पेन एक कमरा है और हर एजेंट एक किरदार, जो अपनी मेज़ पर काम करता है, ज़रूरत पड़ने पर हाथ उठाता है, काम पूरा होने पर जश्न मनाता है और दूसरे कमरों तक काम पहुँचाने चलकर जाता है। किसी कमरे पर क्लिक करके वहीं उसका टर्मिनल पढ़ें और जवाब दें, आठ थीम में से चुनें, और देखें कि हर खाता अपने टोकन उपयोग से RPG नायक की तरह लेवल अप करता है।
 
-रिमोट कंट्रोल रिमोट सर्वर (डिफ़ॉल्ट रूप से बंद): अपने HTTPS डोमेन पर चलाए गए yMux-Server रिले के ज़रिए अपने फ़ोन से एजेंट देखें और उन्हें नियंत्रित करें। फ़ोन के ब्राउज़र (वेब ऐप के रूप में इंस्टॉल हो सकता है) में सभी एजेंट और उनकी स्थिति देखें, किसी एजेंट की स्क्रीन पढ़ें, मेन्यू और अनुमति के सवालों के जवाब दें, एजेंट रोकें और प्रॉम्प्ट भेजें। हर फ़ोन को तीन पहुँच स्तरों में से एक मिलता है: केवल देखना, देखना और जवाब देना, या देखना, जवाब देना और प्रॉम्प्ट भेजना। हर कमांड को केवल यही कंप्यूटर मंज़ूर करता है। फ़ोन और कंप्यूटर के बीच की सामग्री एंड-टू-एंड एन्क्रिप्टेड है, इसलिए रिले उसे नहीं पढ़ सकता।
+रिमोट कंट्रोल रिमोट सर्वर (डिफ़ॉल्ट रूप से बंद): अपने HTTPS डोमेन पर चलाए गए yMux-Server रिले के ज़रिए अपने फ़ोन से एजेंट देखें और उन्हें नियंत्रित करें। फ़ोन के ब्राउज़र (वेब ऐप के रूप में इंस्टॉल हो सकता है) में सभी एजेंट और उनकी स्थिति देखें, किसी एजेंट की स्क्रीन पढ़ें, मेन्यू और अनुमति के सवालों के जवाब दें, एजेंट रोकें और प्रॉम्प्ट भेजें। Claude Code और Codex के लिए फ़ोन बातचीत को चैट के रूप में दिखाता है, जिसमें तालिकाएँ और कोड ब्लॉक ठीक से फ़ॉर्मैट होते हैं; एक स्विच से सादा स्क्रीन व्यू वापस आ जाता है, और इसे सेटिंग्स में बंद भी किया जा सकता है। हर फ़ोन को तीन पहुँच स्तरों में से एक मिलता है: केवल देखना, देखना और जवाब देना, या देखना, जवाब देना और प्रॉम्प्ट भेजना। हर कमांड को केवल यही कंप्यूटर मंज़ूर करता है। फ़ोन और कंप्यूटर के बीच की सामग्री एंड-टू-एंड एन्क्रिप्टेड है, इसलिए रिले उसे नहीं पढ़ सकता।
 
 yMux मुफ़्त और ओपन सोर्स है: https://github.com/YoungMins/ymux","yMux es un multiplexor de terminal ligero para Windows, inspirado en tmux. Te permite dividir una ventana en tantos terminales como necesites, guardar esas disposiciones y retomar el trabajo exactamente donde lo dejaste.
 
@@ -219,7 +219,7 @@ PRIVADO POR DISEÑO yMux no tiene registro, ni analíticas, ni telemetría. Tus 
 
 VISTA DE OFICINA Pulsa Ctrl+Shift+O para ver tu espacio de trabajo como una oficina en pixel art: cada panel es una sala y cada agente un personaje que trabaja en su escritorio, levanta la mano cuando te necesita, lo celebra al terminar y lleva el trabajo a otras salas. Haz clic en una sala para leer y responder su terminal ahí mismo, elige uno de ocho temas y mira cómo cada cuenta sube de nivel como un héroe de RPG con su uso de tokens.
 
-CONTROL REMOTO Servidor remoto (desactivado por defecto): mira y controla tus agentes desde el móvil a través de un relé yMux-Server que alojas tú mismo en tu propio dominio HTTPS. Desde el navegador del móvil (se puede instalar como aplicación web) ves todos los agentes y su estado, lees la pantalla de un agente, respondes a menús y preguntas de permisos, detienes un agente y envías prompts. Cada móvil tiene uno de tres niveles de acceso: solo ver, ver y responder, o ver, responder y enviar prompts. Solo este equipo autoriza cada comando. Todo lo que viaja entre el móvil y el equipo está cifrado de extremo a extremo, así que el relé no puede leerlo.
+CONTROL REMOTO Servidor remoto (desactivado por defecto): mira y controla tus agentes desde el móvil a través de un relé yMux-Server que alojas tú mismo en tu propio dominio HTTPS. Desde el navegador del móvil (se puede instalar como aplicación web) ves todos los agentes y su estado, lees la pantalla de un agente, respondes a menús y preguntas de permisos, detienes un agente y envías prompts. Con Claude Code y Codex, el móvil muestra la conversación como un chat, con tablas y bloques de código con formato, y un interruptor recupera la vista de pantalla normal; se puede desactivar en Configuración. Cada móvil tiene uno de tres niveles de acceso: solo ver, ver y responder, o ver, responder y enviar prompts. Solo este equipo autoriza cada comando. Todo lo que viaja entre el móvil y el equipo está cifrado de extremo a extremo, así que el relé no puede leerlo.
 
 yMux es gratuito y de código abierto: https://github.com/YoungMins/ymux","yMux est un multiplexeur de terminal léger pour Windows, inspiré de tmux. Il vous permet de diviser une fenêtre en autant de terminaux que nécessaire, d'enregistrer ces dispositions et de reprendre exactement là où vous vous étiez arrêté.
 
@@ -256,7 +256,7 @@ CONFIDENTIEL PAR CONCEPTION yMux n'a ni inscription, ni outil d'analyse, ni tél
 
 VUE BUREAU Appuyez sur Ctrl+Shift+O pour voir votre espace de travail comme un bureau en pixel art : chaque volet est une pièce et chaque agent un personnage qui travaille à son bureau, lève la main quand il a besoin de vous, se réjouit quand il a terminé et va livrer le travail dans d'autres pièces. Cliquez sur une pièce pour lire et répondre à son terminal sur place, choisissez parmi huit thèmes et regardez chaque compte gagner des niveaux comme un héros de RPG grâce à son utilisation de jetons.
 
-COMMANDE À DISTANCE Serveur distant (désactivé par défaut) : consultez et pilotez vos agents depuis votre téléphone via un relais yMux-Server que vous hébergez vous-même sur votre propre domaine HTTPS. Depuis le navigateur du téléphone (installable comme application web), vous voyez tous les agents et leur état, lisez l’écran d’un agent, répondez aux menus et aux questions d’autorisation, arrêtez un agent et envoyez des prompts. Chaque téléphone reçoit l’un de trois niveaux d’accès : lecture seule, voir et répondre, ou voir, répondre et envoyer des prompts. Seul cet ordinateur autorise chaque commande. Tout ce qui circule entre le téléphone et l’ordinateur est chiffré de bout en bout : le relais ne peut pas le lire.
+COMMANDE À DISTANCE Serveur distant (désactivé par défaut) : consultez et pilotez vos agents depuis votre téléphone via un relais yMux-Server que vous hébergez vous-même sur votre propre domaine HTTPS. Depuis le navigateur du téléphone (installable comme application web), vous voyez tous les agents et leur état, lisez l’écran d’un agent, répondez aux menus et aux questions d’autorisation, arrêtez un agent et envoyez des prompts. Pour Claude Code et Codex, le téléphone affiche la conversation sous forme de chat, avec des tableaux et des blocs de code mis en forme ; un commutateur rétablit la vue de l’écran, et l’option se désactive dans les Paramètres. Chaque téléphone reçoit l’un de trois niveaux d’accès : lecture seule, voir et répondre, ou voir, répondre et envoyer des prompts. Seul cet ordinateur autorise chaque commande. Tout ce qui circule entre le téléphone et l’ordinateur est chiffré de bout en bout : le relais ne peut pas le lire.
 
 yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو مُضاعِف طرفيات خفيف لنظام Windows، مستوحى من tmux. يتيح لك تقسيم نافذة واحدة إلى أي عدد تحتاجه من الطرفيات، وحفظ هذه التخطيطات، والعودة إلى حيث توقفت تمامًا.
 
@@ -293,7 +293,7 @@ yMux est gratuit et open source : https://github.com/YoungMins/ymux","yMux هو 
 
 عرض المكتب اضغط Ctrl+Shift+O لعرض مساحة عملك كمكتب بفن البكسل: كل جزء غرفة، وكل وكيل شخصية تعمل على مكتبها، وترفع يدها عندما تحتاج إليك، وتحتفل عند الانتهاء، وتسير لتسليم العمل إلى الغرف الأخرى. انقر على غرفة لقراءة طرفيتها والرد عليها في مكانها، واختر واحدة من ثماني سمات، وشاهد كل حساب يرتقي في المستويات كبطل ألعاب تقمص الأدوار مع استخدامه للرموز.
 
-التحكم عن بُعد الخادم البعيد (متوقف افتراضيًا): تابع وكلاءك وتحكّم بهم من هاتفك عبر مرحّل yMux-Server تستضيفه بنفسك على نطاق HTTPS خاص بك. من متصفح الهاتف (يمكن تثبيته كتطبيق ويب) يمكنك رؤية كل الوكلاء وحالتهم، وقراءة شاشة أي وكيل، والرد على القوائم وأسئلة الأذونات، وإيقاف وكيل، وإرسال موجّهات. لكل هاتف أحد ثلاثة مستويات وصول: عرض فقط، أو عرض ورد، أو عرض ورد وإرسال موجّهات. وهذا الكمبيوتر وحده هو الذي يسمح بكل أمر. كل ما يجري بين الهاتف والكمبيوتر مشفّر من طرف إلى طرف، فلا يستطيع المرحّل قراءته.
+التحكم عن بُعد الخادم البعيد (متوقف افتراضيًا): تابع وكلاءك وتحكّم بهم من هاتفك عبر مرحّل yMux-Server تستضيفه بنفسك على نطاق HTTPS خاص بك. من متصفح الهاتف (يمكن تثبيته كتطبيق ويب) يمكنك رؤية كل الوكلاء وحالتهم، وقراءة شاشة أي وكيل، والرد على القوائم وأسئلة الأذونات، وإيقاف وكيل، وإرسال موجّهات. مع Claude Code وCodex يعرض الهاتف المحادثة كدردشة مع جداول وكتل برمجية منسّقة، ويعيد مفتاح التبديل عرض الشاشة العادي، ويمكن إيقاف هذه الميزة من الإعدادات. لكل هاتف أحد ثلاثة مستويات وصول: عرض فقط، أو عرض ورد، أو عرض ورد وإرسال موجّهات. وهذا الكمبيوتر وحده هو الذي يسمح بكل أمر. كل ما يجري بين الهاتف والكمبيوتر مشفّر من طرف إلى طرف، فلا يستطيع المرحّل قراءته.
 
 yMux مجاني ومفتوح المصدر: https://github.com/YoungMins/ymux","O yMux é um multiplexador de terminal leve para Windows, inspirado no tmux. Com ele, você divide uma janela em quantos terminais precisar, salva esses layouts e retoma exatamente de onde parou.
 
@@ -330,7 +330,7 @@ PRIVACIDADE POR PROJETO O yMux não exige cadastro, nem tem análises ou telemet
 
 VISÃO DE ESCRITÓRIO Pressione Ctrl+Shift+O para ver seu espaço de trabalho como um escritório em pixel art: cada painel é uma sala e cada agente um personagem que trabalha em sua mesa, levanta a mão quando precisa de você, comemora quando termina e leva o trabalho até outras salas. Clique em uma sala para ler e responder ao terminal ali mesmo, escolha um entre oito temas e veja cada conta subir de nível como um herói de RPG com o uso de tokens.
 
-CONTROLE REMOTO Servidor remoto (desativado por padrão): acompanhe e controle seus agentes pelo celular, através de um relay yMux-Server que você hospeda no seu próprio domínio HTTPS. No navegador do celular (instalável como aplicativo web), você vê todos os agentes e o status deles, lê a tela de um agente, responde a menus e perguntas de permissão, interrompe um agente e envia prompts. Cada celular tem um de três níveis de acesso: somente ver, ver e responder, ou ver, responder e enviar prompts. Só este computador autoriza cada comando. Tudo o que passa entre o celular e o computador é criptografado de ponta a ponta, então o relay não consegue ler.
+CONTROLE REMOTO Servidor remoto (desativado por padrão): acompanhe e controle seus agentes pelo celular, através de um relay yMux-Server que você hospeda no seu próprio domínio HTTPS. No navegador do celular (instalável como aplicativo web), você vê todos os agentes e o status deles, lê a tela de um agente, responde a menus e perguntas de permissão, interrompe um agente e envia prompts. Com Claude Code e Codex, o celular mostra a conversa como chat, com tabelas e blocos de código formatados, e um botão traz de volta a visualização da tela; dá para desativar nas Configurações. Cada celular tem um de três níveis de acesso: somente ver, ver e responder, ou ver, responder e enviar prompts. Só este computador autoriza cada comando. Tudo o que passa entre o celular e o computador é criptografado de ponta a ponta, então o relay não consegue ler.
 
 O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux — лёгкий терминальный мультиплексор для Windows, вдохновлённый tmux. Он позволяет разделить одно окно на нужное число терминалов, сохранить такие раскладки и вернуться ровно туда, где вы остановились.
 
@@ -367,7 +367,7 @@ O yMux é gratuito e de código aberto: https://github.com/YoungMins/ymux","yMux
 
 ВИД «ОФИС» Нажмите Ctrl+Shift+O, чтобы увидеть рабочее пространство как офис в стиле пиксель-арт: каждая панель — комната, каждый агент — персонаж, который работает за столом, поднимает руку, когда нужны вы, радуется, закончив, и сам относит работу в другие комнаты. Щёлкните комнату, чтобы прямо там читать её терминал и отвечать, выберите одну из восьми тем и наблюдайте, как каждый аккаунт растёт в уровнях, словно герой RPG, по мере расхода токенов.
 
-УДАЛЁННОЕ УПРАВЛЕНИЕ Удалённый сервер (по умолчанию выключен): следите за агентами и управляйте ими с телефона через ретранслятор yMux-Server, который вы сами размещаете на своём HTTPS-домене. В браузере телефона (его можно установить как веб-приложение) видны все агенты и их статус, можно читать экран агента, отвечать на меню и вопросы о разрешениях, останавливать агента и отправлять промпты. Каждому телефону даётся один из трёх уровней доступа: только просмотр; просмотр и ответы; просмотр, ответы и промпты. Каждую команду разрешает только этот компьютер. Всё, что передаётся между телефоном и компьютером, сквозно зашифровано, поэтому ретранслятор прочитать это не может.
+УДАЛЁННОЕ УПРАВЛЕНИЕ Удалённый сервер (по умолчанию выключен): следите за агентами и управляйте ими с телефона через ретранслятор yMux-Server, который вы сами размещаете на своём HTTPS-домене. В браузере телефона (его можно установить как веб-приложение) видны все агенты и их статус, можно читать экран агента, отвечать на меню и вопросы о разрешениях, останавливать агента и отправлять промпты. Для Claude Code и Codex телефон показывает диалог как чат с оформленными таблицами и блоками кода; переключатель возвращает обычный вид экрана, а в настройках эту функцию можно выключить. Каждому телефону даётся один из трёх уровней доступа: только просмотр; просмотр и ответы; просмотр, ответы и промпты. Каждую команду разрешает только этот компьютер. Всё, что передаётся между телефоном и компьютером, сквозно зашифровано, поэтому ретранслятор прочитать это не может.
 
 yMux бесплатен и имеет открытый исходный код: https://github.com/YoungMins/ymux","yMux, tmux'tan esinlenen, Windows için hafif bir terminal çoklayıcısıdır. Tek bir pencereyi istediğiniz sayıda terminale bölmenizi, bu düzenleri kaydetmenizi ve kaldığınız yerden aynen devam etmenizi sağlar.
 
@@ -404,7 +404,7 @@ TASARIMI GEREĞİ GİZLİ yMux'ta kayıt, analiz ve telemetri yoktur. Düzenleri
 
 OFİS GÖRÜNÜMÜ Çalışma alanınızı piksel sanatı bir ofis olarak görmek için Ctrl+Shift+O tuşlarına basın: her bölme bir oda, her ajan ise masasında çalışan, size ihtiyaç duyduğunda el kaldıran, işini bitirince sevinen ve işi diğer odalara yürüyerek götüren bir karakterdir. Bir odaya tıklayarak terminalini yerinde okuyup yanıtlayın, sekiz temadan birini seçin ve her hesabın token kullanımıyla bir RPG kahramanı gibi seviye atlamasını izleyin.
 
-UZAKTAN KONTROL Uzak sunucu (varsayılan olarak kapalı): Kendi HTTPS alan adınızda barındırdığınız bir yMux-Server aktarıcısı üzerinden ajanlarınızı telefonunuzdan izleyin ve yönetin. Telefonun tarayıcısından (web uygulaması olarak yüklenebilir) tüm ajanları ve durumlarını görebilir, bir ajanın ekranını okuyabilir, menülere ve izin sorularına yanıt verebilir, bir ajanı durdurabilir ve istem gönderebilirsiniz. Her telefona üç erişim düzeyinden biri verilir: yalnızca görüntüleme, görüntüleme ve yanıt ya da görüntüleme, yanıt ve istem gönderme. Her komutu yalnızca bu bilgisayar onaylar. Telefon ile bilgisayar arasındaki içerik uçtan uca şifrelidir; aktarıcı onu okuyamaz.
+UZAKTAN KONTROL Uzak sunucu (varsayılan olarak kapalı): Kendi HTTPS alan adınızda barındırdığınız bir yMux-Server aktarıcısı üzerinden ajanlarınızı telefonunuzdan izleyin ve yönetin. Telefonun tarayıcısından (web uygulaması olarak yüklenebilir) tüm ajanları ve durumlarını görebilir, bir ajanın ekranını okuyabilir, menülere ve izin sorularına yanıt verebilir, bir ajanı durdurabilir ve istem gönderebilirsiniz. Claude Code ve Codex için telefon konuşmayı, biçimlendirilmiş tablolar ve kod blokları içeren bir sohbet olarak gösterir; bir anahtar düz ekran görünümünü geri getirir ve özellik Ayarlar’dan kapatılabilir. Her telefona üç erişim düzeyinden biri verilir: yalnızca görüntüleme, görüntüleme ve yanıt ya da görüntüleme, yanıt ve istem gönderme. Her komutu yalnızca bu bilgisayar onaylar. Telefon ile bilgisayar arasındaki içerik uçtan uca şifrelidir; aktarıcı onu okuyamaz.
 
 yMux ücretsiz ve açık kaynaklıdır: https://github.com/YoungMins/ymux","yMux ist ein schlanker Terminal-Multiplexer für Windows, inspiriert von tmux. Sie teilen ein Fenster in beliebig viele Terminals, speichern diese Layouts und machen genau dort weiter, wo Sie aufgehört haben.
 
@@ -441,7 +441,7 @@ PRIVATSPHÄRE AB WERK yMux hat keine Anmeldung, keine Analysen und keine Telemet
 
 BÜROANSICHT Drücken Sie Ctrl+Shift+O, um Ihren Arbeitsbereich als Pixel-Art-Büro zu sehen: Jeder Bereich ist ein Raum und jeder Agent eine Figur, die am Schreibtisch arbeitet, sich meldet, wenn sie Sie braucht, sich über erledigte Arbeit freut und Aufgaben zu anderen Räumen bringt. Klicken Sie auf einen Raum, um sein Terminal direkt dort zu lesen und zu beantworten, wählen Sie eines von acht Designs und sehen Sie zu, wie jedes Konto mit seinem Token-Verbrauch wie ein RPG-Held im Level aufsteigt.
 
-FERNSTEUERUNG Remote-Server (standardmäßig aus): Behalten Sie Ihre Agenten per Smartphone im Blick und steuern Sie sie über ein yMux-Server-Relay, das Sie selbst auf Ihrer eigenen HTTPS-Domain betreiben. Im Browser des Smartphones (als Web-App installierbar) sehen Sie alle Agenten samt Status, lesen den Bildschirm eines Agenten, beantworten Menüs und Berechtigungsfragen, stoppen einen Agenten und senden Prompts. Jedes Smartphone erhält eine von drei Zugriffsstufen: nur ansehen, ansehen und antworten oder ansehen, antworten und Prompts senden. Jeden Befehl genehmigt allein dieser Computer. Alles zwischen Smartphone und Computer ist Ende-zu-Ende-verschlüsselt, das Relay kann es nicht lesen.
+FERNSTEUERUNG Remote-Server (standardmäßig aus): Behalten Sie Ihre Agenten per Smartphone im Blick und steuern Sie sie über ein yMux-Server-Relay, das Sie selbst auf Ihrer eigenen HTTPS-Domain betreiben. Im Browser des Smartphones (als Web-App installierbar) sehen Sie alle Agenten samt Status, lesen den Bildschirm eines Agenten, beantworten Menüs und Berechtigungsfragen, stoppen einen Agenten und senden Prompts. Bei Claude Code und Codex zeigt das Smartphone die Unterhaltung als Chat mit formatierten Tabellen und Codeblöcken; ein Schalter bringt die reine Bildschirmansicht zurück, und in den Einstellungen lässt sich die Funktion ausschalten. Jedes Smartphone erhält eine von drei Zugriffsstufen: nur ansehen, ansehen und antworten oder ansehen, antworten und Prompts senden. Jeden Befehl genehmigt allein dieser Computer. Alles zwischen Smartphone und Computer ist Ende-zu-Ende-verschlüsselt, das Relay kann es nicht lesen.
 
 yMux ist kostenlos und Open Source: https://github.com/YoungMins/ymux","yMux là trình ghép kênh terminal nhẹ dành cho Windows, lấy cảm hứng từ tmux. Bạn có thể chia một cửa sổ thành bao nhiêu terminal tùy ý, lưu các bố cục đó và quay lại đúng chỗ đã dừng.
 
@@ -478,140 +478,88 @@ RIÊNG TƯ TỪ THIẾT KẾ yMux không cần đăng ký, không phân tích v�
 
 CHẾ ĐỘ VĂN PHÒNG Nhấn Ctrl+Shift+O để xem không gian làm việc như một văn phòng pixel art: mỗi ngăn là một căn phòng, mỗi agent là một nhân vật làm việc tại bàn, giơ tay khi cần bạn, ăn mừng khi xong việc và tự đi giao việc sang phòng khác. Nhấp vào một phòng để đọc và trả lời terminal ngay tại chỗ, chọn một trong tám chủ đề và xem mỗi tài khoản lên cấp như một anh hùng RPG theo lượng token đã dùng.
 
-ĐIỀU KHIỂN TỪ XA Máy chủ từ xa (mặc định tắt): xem và điều khiển các agent từ điện thoại qua relay yMux-Server do chính bạn đặt trên tên miền HTTPS của mình. Từ trình duyệt trên điện thoại (có thể cài như ứng dụng web), bạn xem được mọi agent và trạng thái của chúng, đọc màn hình của một agent, trả lời menu và câu hỏi cấp quyền, dừng agent và gửi prompt. Mỗi điện thoại có một trong ba mức truy cập: chỉ xem, xem và trả lời, hoặc xem, trả lời và gửi prompt. Chỉ máy tính này mới cho phép từng lệnh. Nội dung giữa điện thoại và máy tính được mã hóa đầu cuối, nên relay không đọc được.
+ĐIỀU KHIỂN TỪ XA Máy chủ từ xa (mặc định tắt): xem và điều khiển các agent từ điện thoại qua relay yMux-Server do chính bạn đặt trên tên miền HTTPS của mình. Từ trình duyệt trên điện thoại (có thể cài như ứng dụng web), bạn xem được mọi agent và trạng thái của chúng, đọc màn hình của một agent, trả lời menu và câu hỏi cấp quyền, dừng agent và gửi prompt. Với Claude Code và Codex, điện thoại hiển thị cuộc trò chuyện dạng chat, có bảng và khối mã được định dạng; một công tắc đưa về chế độ xem màn hình cũ, và có thể tắt trong Cài đặt. Mỗi điện thoại có một trong ba mức truy cập: chỉ xem, xem và trả lời, hoặc xem, trả lời và gửi prompt. Chỉ máy tính này mới cho phép từng lệnh. Nội dung giữa điện thoại và máy tính được mã hóa đầu cuối, nên relay không đọc được.
 
 yMux miễn phí và mã nguồn mở: https://github.com/YoungMins/ymux"
-ReleaseNotes,3,Text,,"Remote server (off by default): watch and steer your agents from your phone through a yMux-Server relay that you host yourself on your own HTTPS domain.
+ReleaseNotes,3,Text,,"On a paired phone, an agent's pane now shows the conversation (Claude Code, Codex) as chat bubbles with rendered Markdown instead of raw terminal text. Tables, lists and code blocks read properly on a narrow screen, and a wide table scrolls inside its own box. A switch between Conversation and Screen keeps the old view.
 
-In Settings → Remote server, enter the server address and setup token, scan the QR code with your phone and type the 6-digit number it shows to pair.
+yMux reads the agent's own transcript. Only your messages, the agent's replies and one-line tool calls leave the computer, end-to-end encrypted and redacted. Tool output is never sent.
 
-From the phone's browser (it installs as a web app) you see every agent and its status, read an agent's screen, answer menus and permission questions, stop an agent and send prompts.
+Settings → Remote server has a new switch, “Show agent conversations on paired devices”, on by default.
 
-Watch several computers from one phone, and get a notification when an agent is waiting for you or has finished.
+This needs the updated yMux-Server. Older servers and phone apps keep working with the screen text view.","연결된 휴대폰에서 에이전트 pane이 원시 터미널 텍스트 대신 에이전트와의 대화(Claude Code, Codex)를 Markdown이 렌더링된 채팅 말풍선으로 보여 줍니다. 표, 목록, 코드 블록이 좁은 화면에서도 읽기 좋고, 너비가 넓은 표는 자체 상자 안에서 스크롤됩니다. 대화와 화면을 전환하는 스위치로 예전 보기로 돌아갈 수 있습니다.
 
-Each phone gets one of three access levels: view only, view and answer, or view, answer and prompt. This computer alone authorises every command.
+yMux는 에이전트 자신의 대화 기록을 읽습니다. 사용자의 메시지, 에이전트의 응답, 한 줄짜리 도구 호출만 종단 간 암호화되고 비밀 값이 가려진 채 컴퓨터 밖으로 나갑니다. 도구 출력은 보내지 않습니다.
 
-Everything between phone and computer is end-to-end encrypted, so the relay cannot read it.","원격 서버(기본값은 꺼짐): 직접 운영하는 HTTPS 도메인의 yMux-Server 릴레이를 거쳐, 휴대폰에서 에이전트를 확인하고 조작할 수 있습니다.
+설정 → 원격 서버에 새 스위치 “연결된 기기에서 에이전트 대화 보기”가 생겼습니다. 기본값은 켜짐입니다.
 
-설정 → 원격 서버에서 서버 주소와 설정 토큰을 입력하고, 휴대폰으로 QR 코드를 스캔한 뒤 휴대폰에 표시된 6자리 번호를 입력하면 페어링됩니다.
+업데이트된 yMux-Server가 필요합니다. 이전 서버와 휴대폰 앱에서는 화면 텍스트 보기가 그대로 동작합니다.","ペアリング済みのスマートフォンでは、エージェントのペインに生のターミナルテキストの代わりに、会話（Claude Code、Codex）が Markdown 表示のチャット吹き出しで表示されます。表、リスト、コードブロックが狭い画面でも読みやすく、幅の広い表はその枠の中でスクロールします。会話と画面の切り替えで、従来の表示に戻せます。
 
-휴대폰 브라우저(웹 앱으로 설치 가능)에서 모든 에이전트와 상태를 보고, 에이전트 화면을 읽고, 메뉴와 권한 질문에 답하고, 에이전트를 중지하고, 프롬프트를 보낼 수 있습니다.
+yMux はエージェント自身の会話記録を読み取ります。コンピューターの外に出るのは、ユーザーのメッセージ、エージェントの返信、1 行のツール呼び出しだけで、エンドツーエンドで暗号化され、機密情報は伏せられます。ツールの出力は送られません。
 
-휴대폰 하나로 여러 컴퓨터를 함께 확인할 수 있고, 에이전트가 답을 기다리거나 작업을 마치면 알림을 받습니다.
+「設定」→「リモートサーバー」に、新しいスイッチ「ペアリング済みの端末にエージェントの会話を表示する」が加わりました。初期設定はオンです。
 
-휴대폰마다 세 가지 접근 수준(보기만, 보기와 응답, 보기·응답·프롬프트 전송) 중 하나를 정합니다. 모든 명령은 이 컴퓨터만 승인합니다.
+更新された yMux-Server が必要です。古いサーバーやスマートフォンのアプリでは、これまでどおり画面テキストの表示で動作します。","在已配对的手机上，智能体窗格现在以聊天气泡显示对话（Claude Code、Codex），并渲染 Markdown，而不再是原始终端文本。表格、列表和代码块在窄屏上也清晰易读，过宽的表格会在自己的框内滚动。通过“对话 / 屏幕”切换，可以继续使用原来的视图。
 
-휴대폰과 컴퓨터 사이의 내용은 종단 간 암호화되어 릴레이도 읽을 수 없습니다.","リモートサーバー（初期設定はオフ）: ご自身の HTTPS ドメインで運用する yMux-Server のリレーを通じて、スマートフォンからエージェントを確認・操作できます。
+yMux 读取智能体自己的对话记录。离开电脑的只有你的消息、智能体的回复和单行的工具调用，均经过端到端加密并已隐去敏感信息。工具输出不会被发送。
 
-「設定」→「リモートサーバー」でサーバーのアドレスとセットアップトークンを入力し、スマートフォンで QR コードを読み取って、画面に表示された 6 桁の番号を入力するとペアリングできます。
+“设置 → 远程服务器”新增开关“在已配对的设备上显示 agent 对话”，默认开启。
 
-スマートフォンのブラウザー（Web アプリとしてインストール可能）で、すべてのエージェントと状態の確認、エージェント画面の閲覧、メニューや権限の質問への応答、エージェントの停止、プロンプトの送信ができます。
+需要更新后的 yMux-Server。旧版服务器和手机应用仍可使用屏幕文本视图。","पेयर किए गए फ़ोन पर अब एजेंट पेन में कच्चे टर्मिनल टेक्स्ट की जगह बातचीत (Claude Code, Codex) चैट बबल के रूप में दिखती है, जिसमें Markdown रेंडर होता है। तालिकाएँ, सूचियाँ और कोड ब्लॉक छोटी स्क्रीन पर भी आराम से पढ़े जाते हैं, और चौड़ी तालिका अपने ही बॉक्स में स्क्रॉल होती है। बातचीत और स्क्रीन के बीच बदलने वाले स्विच से पुराना व्यू बना रहता है।
 
-1 台のスマートフォンで複数のコンピューターを見守れ、エージェントが応答待ちになったときや完了したときに通知が届きます。
+yMux एजेंट की अपनी ट्रांसक्रिप्ट पढ़ता है। कंप्यूटर से बाहर केवल आपके संदेश, एजेंट के जवाब और एक पंक्ति के टूल कॉल जाते हैं, एंड-टू-एंड एन्क्रिप्टेड और गोपनीय जानकारी हटाकर। टूल का आउटपुट कभी नहीं भेजा जाता।
 
-スマートフォンごとに 3 つのアクセスレベル（表示のみ、表示と応答、表示・応答・プロンプト送信）から選べます。すべてのコマンドは、このコンピューターだけが承認します。
+सेटिंग्स → रिमोट सर्वर में नया स्विच “पेयर किए गए डिवाइस पर एजेंट की बातचीत दिखाएँ” जुड़ा है, जो डिफ़ॉल्ट रूप से चालू है।
 
-スマートフォンとコンピューターの間の内容はエンドツーエンドで暗号化され、リレーは読み取れません。","远程服务器（默认关闭）：通过你自己在 HTTPS 域名上运行的 yMux-Server 中继，用手机查看并控制智能体。
+इसके लिए अपडेट किया हुआ yMux-Server चाहिए। पुराने सर्वर और फ़ोन ऐप स्क्रीन टेक्स्ट व्यू के साथ पहले की तरह काम करते रहते हैं।","En un móvil emparejado, el panel de un agente ahora muestra la conversación (Claude Code, Codex) como burbujas de chat con Markdown renderizado, en lugar del texto bruto del terminal. Las tablas, listas y bloques de código se leen bien en una pantalla estrecha, y una tabla ancha se desplaza dentro de su propio recuadro. Un interruptor entre Conversación y Pantalla conserva la vista anterior.
 
-在“设置 → 远程服务器”中输入服务器地址和设置令牌，用手机扫描二维码，再输入手机上显示的 6 位数字即可配对。
+yMux lee la transcripción del propio agente. Solo tus mensajes, las respuestas del agente y las llamadas a herramientas de una línea salen del equipo, cifrados de extremo a extremo y con los secretos ocultos. La salida de las herramientas nunca se envía.
 
-在手机浏览器（可安装为网页应用）中，可以查看所有智能体及其状态、阅读智能体的屏幕、回答菜单和权限提问、停止智能体，以及发送提示。
+En Configuración → Servidor remoto hay un nuevo interruptor, «Mostrar las conversaciones de los agentes en los dispositivos vinculados», activado por defecto.
 
-一部手机可同时关注多台电脑；智能体在等待你或已完成时会发送通知。
+Requiere el yMux-Server actualizado. Los servidores y aplicaciones móviles anteriores siguen funcionando con la vista de texto de pantalla.","Sur un téléphone associé, le volet d’un agent affiche désormais la conversation (Claude Code, Codex) sous forme de bulles de chat avec Markdown rendu, au lieu du texte brut du terminal. Les tableaux, listes et blocs de code se lisent bien sur un écran étroit, et un tableau large défile dans son propre cadre. Un commutateur entre Conversation et Écran conserve l’ancienne vue.
 
-每部手机有三种访问级别：仅查看、查看并回应、查看回应并发送提示。所有命令都只由这台电脑批准。
+yMux lit la transcription propre à l’agent. Seuls vos messages, les réponses de l’agent et les appels d’outils d’une ligne quittent l’ordinateur, chiffrés de bout en bout et expurgés. La sortie des outils n’est jamais envoyée.
 
-手机与电脑之间的内容经过端到端加密，中继服务器无法读取。","रिमोट सर्वर (डिफ़ॉल्ट रूप से बंद): अपने HTTPS डोमेन पर चलाए गए yMux-Server रिले के ज़रिए अपने फ़ोन से एजेंट देखें और उन्हें नियंत्रित करें।
+Paramètres → Serveur distant propose un nouveau commutateur, « Afficher les conversations des agents sur les appareils associés », activé par défaut.
 
-सेटिंग्स → रिमोट सर्वर में सर्वर का पता और सेटअप टोकन दर्ज करें, फ़ोन से QR कोड स्कैन करें और फ़ोन पर दिख रही 6 अंकों की संख्या लिखकर पेयर करें।
+Il faut le yMux-Server à jour. Les serveurs et applications mobiles plus anciens continuent de fonctionner avec la vue texte de l’écran.","على الهاتف المقترن، يعرض جزء الوكيل الآن المحادثة (Claude Code وCodex) في فقاعات دردشة مع Markdown منسّق بدلًا من نص الطرفية الخام. تُقرأ الجداول والقوائم وكتل الشيفرة جيدًا على الشاشة الضيقة، ويتمرّر الجدول العريض داخل صندوقه الخاص. ويتيح مفتاح التبديل بين المحادثة والشاشة الإبقاء على العرض القديم.
 
-फ़ोन के ब्राउज़र (वेब ऐप के रूप में इंस्टॉल हो सकता है) में सभी एजेंट और उनकी स्थिति देखें, किसी एजेंट की स्क्रीन पढ़ें, मेन्यू और अनुमति के सवालों के जवाब दें, एजेंट रोकें और प्रॉम्प्ट भेजें।
+يقرأ yMux سجل الوكيل نفسه. لا يغادر الحاسوب سوى رسائلك وردود الوكيل واستدعاءات الأدوات من سطر واحد، مشفّرة من طرف إلى طرف مع إخفاء الأسرار. ولا يُرسل ناتج الأدوات أبدًا.
 
-एक फ़ोन से कई कंप्यूटरों पर नज़र रखें, और एजेंट के इंतज़ार करने या काम पूरा करने पर सूचना पाएँ।
+يضم الإعدادات ← الخادم البعيد مفتاحًا جديدًا هو «عرض محادثات الوكلاء على الأجهزة المقترنة»، وهو مفعّل افتراضيًا.
 
-हर फ़ोन को तीन पहुँच स्तरों में से एक मिलता है: केवल देखना, देखना और जवाब देना, या देखना, जवाब देना और प्रॉम्प्ट भेजना। हर कमांड को केवल यही कंप्यूटर मंज़ूर करता है।
+يتطلب هذا إصدار yMux-Server المحدّث. تواصل الخوادم وتطبيقات الهاتف الأقدم العمل بعرض نص الشاشة.","Em um celular pareado, o painel de um agente agora mostra a conversa (Claude Code, Codex) em balões de chat com Markdown renderizado, em vez do texto bruto do terminal. Tabelas, listas e blocos de código ficam legíveis em uma tela estreita, e uma tabela larga rola dentro da própria caixa. Um botão para alternar entre Conversa e Tela mantém a visualização antiga.
 
-फ़ोन और कंप्यूटर के बीच की सामग्री एंड-टू-एंड एन्क्रिप्टेड है, इसलिए रिले उसे नहीं पढ़ सकता।","Servidor remoto (desactivado por defecto): mira y controla tus agentes desde el móvil a través de un relé yMux-Server que alojas tú mismo en tu propio dominio HTTPS.
+O yMux lê a transcrição do próprio agente. Somente suas mensagens, as respostas do agente e as chamadas de ferramenta de uma linha saem do computador, com criptografia de ponta a ponta e segredos ocultados. A saída das ferramentas nunca é enviada.
 
-En Configuración → Servidor remoto, introduce la dirección del servidor y el token de configuración, escanea el código QR con el móvil y escribe el número de 6 dígitos que muestra para emparejarlo.
+Em Configurações → Servidor remoto há um novo botão, “Mostrar as conversas dos agentes nos dispositivos pareados”, ativado por padrão.
 
-Desde el navegador del móvil (se puede instalar como aplicación web) ves todos los agentes y su estado, lees la pantalla de un agente, respondes a menús y preguntas de permisos, detienes un agente y envías prompts.
+É preciso usar o yMux-Server atualizado. Servidores e aplicativos de celular mais antigos continuam funcionando com a visualização de texto da tela.","На подключённом телефоне панель агента теперь показывает диалог (Claude Code, Codex) в виде чата с отрисованным Markdown вместо необработанного текста терминала. Таблицы, списки и блоки кода читаются на узком экране, а широкая таблица прокручивается внутри своей рамки. Переключатель между диалогом и экраном сохраняет прежний вид.
 
-Vigila varios equipos desde un solo móvil y recibe una notificación cuando un agente espera una respuesta o ha terminado.
+yMux читает собственную запись сеанса агента. С компьютера уходят только ваши сообщения, ответы агента и однострочные вызовы инструментов, со сквозным шифрованием и скрытыми секретами. Вывод инструментов не отправляется.
 
-Cada móvil tiene uno de tres niveles de acceso: solo ver, ver y responder, o ver, responder y enviar prompts. Solo este equipo autoriza cada comando.
+В разделе «Настройки → Удалённый сервер» появился новый переключатель «Показывать диалоги агентов на подключённых устройствах», по умолчанию включён.
 
-Todo lo que viaja entre el móvil y el equipo está cifrado de extremo a extremo, así que el relé no puede leerlo.","Serveur distant (désactivé par défaut) : consultez et pilotez vos agents depuis votre téléphone via un relais yMux-Server que vous hébergez vous-même sur votre propre domaine HTTPS.
+Нужен обновлённый yMux-Server. Старые серверы и приложения на телефоне продолжают работать с текстовым видом экрана.","Eşleşmiş bir telefonda ajan bölmesi artık ham terminal metni yerine konuşmayı (Claude Code, Codex) işlenmiş Markdown içeren sohbet balonları olarak gösterir. Tablolar, listeler ve kod blokları dar ekranda rahat okunur, geniş bir tablo kendi kutusu içinde kayar. Konuşma ile Ekran arasında geçiş yapan bir anahtar eski görünümü korur.
 
-Dans Paramètres → Serveur distant, saisissez l’adresse du serveur et le jeton de configuration, scannez le QR code avec votre téléphone, puis saisissez le numéro à 6 chiffres qu’il affiche pour l’associer.
+yMux ajanın kendi döküm dosyasını okur. Bilgisayardan yalnızca mesajlarınız, ajanın yanıtları ve tek satırlık araç çağrıları çıkar; bunlar uçtan uca şifrelidir ve gizli bilgiler maskelenir. Araç çıktısı hiçbir zaman gönderilmez.
 
-Depuis le navigateur du téléphone (installable comme application web), vous voyez tous les agents et leur état, lisez l’écran d’un agent, répondez aux menus et aux questions d’autorisation, arrêtez un agent et envoyez des prompts.
+Ayarlar → Uzak sunucu bölümünde yeni bir anahtar var: “Ajan konuşmalarını eşleşmiş cihazlarda göster”. Varsayılan olarak açıktır.
 
-Surveillez plusieurs ordinateurs depuis un seul téléphone et recevez une notification quand un agent attend une réponse ou a terminé.
+Güncellenmiş yMux-Server gerekir. Eski sunucular ve telefon uygulamaları ekran metni görünümüyle çalışmaya devam eder.","Auf einem gekoppelten Smartphone zeigt der Bereich eines Agenten die Unterhaltung (Claude Code, Codex) jetzt als Chat-Blasen mit gerendertem Markdown statt als rohen Terminaltext. Tabellen, Listen und Codeblöcke lassen sich auch auf einem schmalen Bildschirm gut lesen, und eine breite Tabelle scrollt in ihrem eigenen Kasten. Ein Schalter zwischen Unterhaltung und Bildschirm behält die alte Ansicht bei.
 
-Chaque téléphone reçoit l’un de trois niveaux d’accès : lecture seule, voir et répondre, ou voir, répondre et envoyer des prompts. Seul cet ordinateur autorise chaque commande.
+yMux liest das eigene Transkript des Agenten. Nur Ihre Nachrichten, die Antworten des Agenten und einzeilige Werkzeugaufrufe verlassen den Computer, Ende-zu-Ende-verschlüsselt und geschwärzt. Werkzeugausgaben werden nie gesendet.
 
-Tout ce qui circule entre le téléphone et l’ordinateur est chiffré de bout en bout : le relais ne peut pas le lire.","الخادم البعيد (متوقف افتراضيًا): تابع وكلاءك وتحكّم بهم من هاتفك عبر مرحّل yMux-Server تستضيفه بنفسك على نطاق HTTPS خاص بك.
+Unter Einstellungen → Remote-Server gibt es einen neuen Schalter, „Agent-Unterhaltungen auf gekoppelten Geräten anzeigen“, standardmäßig an.
 
-في الإعدادات ← الخادم البعيد، أدخل عنوان الخادم ورمز الإعداد، ثم امسح رمز QR بهاتفك واكتب الرقم المكوّن من 6 أرقام الذي يعرضه الهاتف لإتمام الاقتران.
+Dafür wird der aktualisierte yMux-Server benötigt. Ältere Server und Smartphone-Apps funktionieren weiter mit der Bildschirmtext-Ansicht.","Trên điện thoại đã ghép nối, ngăn của agent giờ hiển thị cuộc trò chuyện (Claude Code, Codex) dưới dạng bong bóng chat với Markdown đã được kết xuất, thay vì văn bản thô của terminal. Bảng, danh sách và khối mã đọc tốt trên màn hình hẹp, còn bảng rộng cuộn trong khung riêng của nó. Công tắc chuyển giữa Cuộc trò chuyện và Màn hình giữ lại chế độ xem cũ.
 
-من متصفح الهاتف (يمكن تثبيته كتطبيق ويب) يمكنك رؤية كل الوكلاء وحالتهم، وقراءة شاشة أي وكيل، والرد على القوائم وأسئلة الأذونات، وإيقاف وكيل، وإرسال موجّهات.
+yMux đọc bản ghi của chính agent. Chỉ tin nhắn của bạn, phản hồi của agent và các lệnh gọi công cụ một dòng rời khỏi máy tính, được mã hóa đầu cuối và che thông tin bí mật. Kết quả đầu ra của công cụ không bao giờ được gửi.
 
-راقب عدة حواسيب من هاتف واحد، واستلم إشعارًا عندما ينتظر وكيل ردّك أو ينتهي من عمله.
+Cài đặt → Máy chủ từ xa có công tắc mới “Hiện cuộc trò chuyện của agent trên các thiết bị đã ghép nối”, mặc định bật.
 
-لكل هاتف أحد ثلاثة مستويات وصول: عرض فقط، أو عرض ورد، أو عرض ورد وإرسال موجّهات. وهذا الكمبيوتر وحده هو الذي يسمح بكل أمر.
-
-كل ما يجري بين الهاتف والكمبيوتر مشفّر من طرف إلى طرف، فلا يستطيع المرحّل قراءته.","Servidor remoto (desativado por padrão): acompanhe e controle seus agentes pelo celular, através de um relay yMux-Server que você hospeda no seu próprio domínio HTTPS.
-
-Em Configurações → Servidor remoto, informe o endereço do servidor e o token de configuração, escaneie o QR code com o celular e digite o número de 6 dígitos que ele mostra para parear.
-
-No navegador do celular (instalável como aplicativo web), você vê todos os agentes e o status deles, lê a tela de um agente, responde a menus e perguntas de permissão, interrompe um agente e envia prompts.
-
-Acompanhe vários computadores com um único celular e receba uma notificação quando um agente estiver esperando por você ou tiver terminado.
-
-Cada celular tem um de três níveis de acesso: somente ver, ver e responder, ou ver, responder e enviar prompts. Só este computador autoriza cada comando.
-
-Tudo o que passa entre o celular e o computador é criptografado de ponta a ponta, então o relay não consegue ler.","Удалённый сервер (по умолчанию выключен): следите за агентами и управляйте ими с телефона через ретранслятор yMux-Server, который вы сами размещаете на своём HTTPS-домене.
-
-В разделе «Настройки → Удалённый сервер» введите адрес сервера и токен настройки, отсканируйте QR-код телефоном и введите 6-значное число, которое он покажет, — так телефон будет связан с компьютером.
-
-В браузере телефона (его можно установить как веб-приложение) видны все агенты и их статус, можно читать экран агента, отвечать на меню и вопросы о разрешениях, останавливать агента и отправлять промпты.
-
-Один телефон может следить за несколькими компьютерами и присылает уведомление, когда агент ждёт вас или закончил работу.
-
-Каждому телефону даётся один из трёх уровней доступа: только просмотр; просмотр и ответы; просмотр, ответы и промпты. Каждую команду разрешает только этот компьютер.
-
-Всё, что передаётся между телефоном и компьютером, сквозно зашифровано, поэтому ретранслятор прочитать это не может.","Uzak sunucu (varsayılan olarak kapalı): Kendi HTTPS alan adınızda barındırdığınız bir yMux-Server aktarıcısı üzerinden ajanlarınızı telefonunuzdan izleyin ve yönetin.
-
-Ayarlar → Uzak sunucu bölümüne sunucu adresini ve kurulum belirtecini girin, telefonunuzla QR kodunu tarayın ve telefonda görünen 6 haneli numarayı yazarak eşleştirin.
-
-Telefonun tarayıcısından (web uygulaması olarak yüklenebilir) tüm ajanları ve durumlarını görebilir, bir ajanın ekranını okuyabilir, menülere ve izin sorularına yanıt verebilir, bir ajanı durdurabilir ve istem gönderebilirsiniz.
-
-Tek bir telefondan birden çok bilgisayarı izleyin; bir ajan sizi beklediğinde ya da bittiğinde bildirim alın.
-
-Her telefona üç erişim düzeyinden biri verilir: yalnızca görüntüleme, görüntüleme ve yanıt ya da görüntüleme, yanıt ve istem gönderme. Her komutu yalnızca bu bilgisayar onaylar.
-
-Telefon ile bilgisayar arasındaki içerik uçtan uca şifrelidir; aktarıcı onu okuyamaz.","Remote-Server (standardmäßig aus): Behalten Sie Ihre Agenten per Smartphone im Blick und steuern Sie sie über ein yMux-Server-Relay, das Sie selbst auf Ihrer eigenen HTTPS-Domain betreiben.
-
-Geben Sie unter Einstellungen → Remote-Server die Serveradresse und den Einrichtungs-Token ein, scannen Sie den QR-Code mit dem Smartphone und tippen Sie die 6-stellige Nummer ein, die es anzeigt – schon sind beide gekoppelt.
-
-Im Browser des Smartphones (als Web-App installierbar) sehen Sie alle Agenten samt Status, lesen den Bildschirm eines Agenten, beantworten Menüs und Berechtigungsfragen, stoppen einen Agenten und senden Prompts.
-
-Mehrere Computer lassen sich von einem Smartphone aus beobachten; eine Benachrichtigung kommt, wenn ein Agent auf Sie wartet oder fertig ist.
-
-Jedes Smartphone erhält eine von drei Zugriffsstufen: nur ansehen, ansehen und antworten oder ansehen, antworten und Prompts senden. Jeden Befehl genehmigt allein dieser Computer.
-
-Alles zwischen Smartphone und Computer ist Ende-zu-Ende-verschlüsselt, das Relay kann es nicht lesen.","Máy chủ từ xa (mặc định tắt): xem và điều khiển các agent từ điện thoại qua relay yMux-Server do chính bạn đặt trên tên miền HTTPS của mình.
-
-Trong Cài đặt → Máy chủ từ xa, nhập địa chỉ máy chủ và mã thiết lập, quét mã QR bằng điện thoại rồi nhập số gồm 6 chữ số hiện trên điện thoại để ghép đôi.
-
-Từ trình duyệt trên điện thoại (có thể cài như ứng dụng web), bạn xem được mọi agent và trạng thái của chúng, đọc màn hình của một agent, trả lời menu và câu hỏi cấp quyền, dừng agent và gửi prompt.
-
-Một điện thoại có thể theo dõi nhiều máy tính, và bạn nhận thông báo khi agent đang chờ bạn hoặc đã xong.
-
-Mỗi điện thoại có một trong ba mức truy cập: chỉ xem, xem và trả lời, hoặc xem, trả lời và gửi prompt. Chỉ máy tính này mới cho phép từng lệnh.
-
-Nội dung giữa điện thoại và máy tính được mã hóa đầu cuối, nên relay không đọc được."
+Cần yMux-Server bản mới. Máy chủ và ứng dụng điện thoại cũ vẫn dùng được với chế độ xem văn bản màn hình."
 Title,4,Text,,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux
 ShortTitle,5,Text,,,,,,,,,,,,,,
 SortTitle,6,Text,,,,,,,,,,,,,,
@@ -933,7 +881,7 @@ Feature16,715,Text,,"Use a different Claude Code or Codex account in each pane, 
 Feature17,716,Text,,Attention inbox: jump to the next agent waiting for you (Ctrl+Shift+U),알림함: 응답을 기다리는 다음 에이전트로 바로 이동(Ctrl+Shift+U),通知受信トレイ: 応答待ちの次のエージェントにジャンプ(Ctrl+Shift+U),提醒收件箱：一键跳转到下一个等待你的智能体（Ctrl+Shift+U）,अटेंशन इनबॉक्स: आपका इंतज़ार कर रहे अगले एजेंट पर जाएँ (Ctrl+Shift+U),Bandeja de atención: salta al siguiente agente que te espera (Ctrl+Shift+U),Boîte d'attention : passez à l'agent suivant qui vous attend (Ctrl+Shift+U),صندوق التنبيهات: انتقل إلى الوكيل التالي الذي ينتظرك (Ctrl+Shift+U),Caixa de atenção: pule para o próximo agente que espera por você (Ctrl+Shift+U),"Центр внимания: переход к следующему агенту, который ждёт вас (Ctrl+Shift+U)",Dikkat gelen kutusu: sizi bekleyen sonraki ajana atlayın (Ctrl+Shift+U),"Aufmerksamkeits-Posteingang: zum nächsten Agenten springen, der auf Sie wartet (Ctrl+Shift+U)",Hộp thư chú ý: nhảy tới agent tiếp theo đang chờ bạn (Ctrl+Shift+U)
 Feature18,717,Text,,"Optional activity log with turn summaries sent to Slack, Discord, Teams or a webhook","턴 요약을 Slack, Discord, Teams나 웹훅으로 보내는 작업 기록(선택)",ターンの要約を Slack、Discord、Teams、Webhook に送信できるアクティビティ ログ(オプション),可选的活动日志，将每轮摘要发送到 Slack、Discord、Teams 或 webhook,"वैकल्पिक एक्टिविटी लॉग, टर्न सारांश Slack, Discord, Teams या वेबहुक पर भेजें","Registro de actividad opcional con resúmenes de turno enviados a Slack, Discord, Teams o un webhook","Journal d'activité facultatif avec résumés de tour envoyés à Slack, Discord, Teams ou un webhook",سجل نشاط اختياري مع ملخصات الدورات المرسلة إلى Slack أو Discord أو Teams أو webhook,"Registro de atividade opcional com resumos de turno enviados ao Slack, Discord, Teams ou a um webhook","Необязательный журнал активности: сводки ходов уходят в Slack, Discord, Teams или webhook","Tur özetlerini Slack, Discord, Teams veya webhook'a gönderen isteğe bağlı etkinlik günlüğü","Optionales Aktivitätsprotokoll mit Rundenzusammenfassungen an Slack, Discord, Teams oder einen Webhook","Nhật ký hoạt động tùy chọn, gửi bản tóm tắt từng lượt tới Slack, Discord, Teams hoặc webhook"
 Feature19,718,Text,,"Per-workspace notes, status bar, custom themes and shortcuts. No sign-up or telemetry, 13 languages","워크스페이스별 메모, 상태 표시줄, 테마·단축키 사용자 지정. 가입·원격 측정 없음, 13개 언어",ワークスペースごとのメモ、ステータス バー、テーマとショートカットのカスタマイズ。登録・テレメトリなし、13 言語,每个工作区的备忘笔记、状态栏、自定义主题和快捷键。无需注册，无遥测，支持 13 种语言,"हर वर्कस्पेस के नोट्स, स्टेटस बार, कस्टम थीम और शॉर्टकट। कोई साइन-अप या टेलीमेट्री नहीं, 13 भाषाएँ","Notas por espacio de trabajo, barra de estado, temas y atajos personalizables. Sin registro ni telemetría, 13 idiomas","Notes par espace de travail, barre d'état, thèmes et raccourcis personnalisés. Sans inscription ni télémétrie, 13 langues",ملاحظات لكل مساحة عمل وشريط حالة وسمات واختصارات مخصصة. بلا تسجيل ولا قياس عن بُعد، 13 لغة,"Notas por espaço de trabalho, barra de status, temas e atalhos personalizáveis. Sem cadastro ou telemetria, 13 idiomas","Заметки для рабочих пространств, строка состояния, свои темы и сочетания клавиш. Без регистрации и телеметрии, 13 языков","Çalışma alanı notları, durum çubuğu, özel temalar ve kısayollar. Kayıt ve telemetri yok, 13 dil","Notizen pro Arbeitsbereich, Statusleiste, eigene Designs und Tastenkombinationen. Ohne Anmeldung oder Telemetrie, 13 Sprachen","Ghi chú theo không gian làm việc, thanh trạng thái, giao diện và phím tắt tùy chỉnh. Không đăng ký, không thu thập dữ liệu, 13 ngôn ngữ"
-Feature20,719,Text,,"Remote server: watch your agents from a phone, answer menus and permission questions, stop agents and send prompts through a relay you host yourself; end-to-end encrypted, off by default","원격 서버: 직접 운영하는 릴레이를 통해 휴대폰에서 에이전트를 확인하고, 메뉴와 권한 질문에 답하고, 중지하거나 프롬프트를 보냅니다. 종단 간 암호화, 기본값은 꺼짐",リモートサーバー: 自分で運用するリレー経由で、スマートフォンからエージェントを確認し、メニューや権限の質問に応答、停止やプロンプト送信も。エンドツーエンド暗号化、初期設定はオフ,远程服务器：通过自己运行的中继，用手机查看智能体、回答菜单和权限提问、停止智能体或发送提示；端到端加密，默认关闭,"रिमोट सर्वर: अपने चलाए रिले के ज़रिए फ़ोन से एजेंट देखें, मेन्यू और अनुमति के सवालों के जवाब दें, रोकें या प्रॉम्प्ट भेजें; एंड-टू-एंड एन्क्रिप्टेड, डिफ़ॉल्ट रूप से बंद","Servidor remoto: vigila tus agentes desde el móvil, responde a menús y permisos, detenlos o envía prompts mediante un relé propio; cifrado de extremo a extremo, desactivado por defecto","Serveur distant : suivez vos agents depuis un téléphone, répondez aux menus, arrêtez-les ou envoyez des prompts via un relais à vous ; chiffré de bout en bout, désactivé par défaut",الخادم البعيد: تابع الوكلاء من هاتفك عبر مرحّل تستضيفه بنفسك، وردّ على القوائم وأسئلة الأذونات، وأوقف الوكلاء أو أرسل موجّهات؛ تشفير من طرف إلى طرف ومتوقف افتراضيًا,"Servidor remoto: acompanhe seus agentes pelo celular, responda a menus e permissões, interrompa-os ou envie prompts por um relay seu; criptografia de ponta a ponta, desativado por padrão","Удалённый сервер: с телефона следите за агентами через свой ретранслятор, отвечайте на меню, останавливайте и отправляйте промпты; сквозное шифрование, по умолчанию выключено","Uzak sunucu: Kendi aktarıcınız üzerinden ajanları telefondan izleyin, menülere yanıt verin, ajanı durdurun ya da istem gönderin; uçtan uca şifreli, varsayılan olarak kapalı","Remote-Server: Agenten per Smartphone über ein eigenes Relay beobachten, Menüs beantworten, Agenten stoppen oder Prompts senden; Ende-zu-Ende-verschlüsselt, standardmäßig aus","Máy chủ từ xa: xem agent từ điện thoại qua relay do bạn tự đặt, trả lời menu và câu hỏi cấp quyền, dừng agent hoặc gửi prompt; mã hóa đầu cuối, mặc định tắt"
+Feature20,719,Text,,"Remote server: read agents' conversations as chat on your phone, answer menus and permission questions, stop agents and send prompts through your own relay; end-to-end encrypted, off by default","원격 서버: 휴대폰에서 에이전트 대화를 채팅으로 읽고, 메뉴와 권한 질문에 답하고, 중지하거나 프롬프트를 보냅니다. 직접 운영하는 릴레이 사용, 종단 간 암호화, 기본값은 꺼짐",リモートサーバー: スマートフォンでエージェントの会話をチャット表示で読み、メニューや権限の質問に応答、停止やプロンプト送信も。自分で運用するリレー、エンドツーエンド暗号化、初期設定はオフ,远程服务器：用手机以聊天形式阅读智能体对话、回答菜单和权限提问、停止智能体或发送提示；使用自己运行的中继，端到端加密，默认关闭,"रिमोट सर्वर: फ़ोन पर एजेंट की बातचीत चैट की तरह पढ़ें, मेन्यू और अनुमति के सवालों के जवाब दें, रोकें या प्रॉम्प्ट भेजें; अपना रिले, एंड-टू-एंड एन्क्रिप्टेड, डिफ़ॉल्ट रूप से बंद","Servidor remoto: lee las conversaciones de tus agentes como chat en el móvil, responde a menús, detenlos o envía prompts con un relé propio; cifrado de extremo a extremo, desactivado por defecto","Serveur distant : lisez les conversations des agents en chat sur mobile, répondez aux menus, arrêtez-les ou envoyez des prompts via votre relais ; chiffré de bout en bout, désactivé par défaut",الخادم البعيد: اقرأ محادثات الوكلاء كدردشة على هاتفك، وردّ على القوائم وأسئلة الأذونات، وأوقف الوكلاء أو أرسل موجّهات عبر مرحّل خاص بك؛ تشفير من طرف إلى طرف ومتوقف افتراضيًا,"Servidor remoto: leia as conversas dos agentes como chat no celular, responda a menus e permissões, interrompa-os ou envie prompts pelo seu relay; criptografia de ponta a ponta, desativado por padrão","Удалённый сервер: читайте диалоги агентов как чат на телефоне, отвечайте на меню, останавливайте агентов и отправляйте промпты через свой ретранслятор; сквозное шифрование, по умолчанию выключено","Uzak sunucu: Ajan konuşmalarını telefonda sohbet olarak okuyun, menülere yanıt verin, ajanı durdurun ya da istem gönderin; kendi aktarıcınız, uçtan uca şifreli, varsayılan olarak kapalı","Remote-Server: Agenten-Unterhaltungen am Smartphone als Chat lesen, Menüs beantworten, Agenten stoppen oder Prompts senden, über ein eigenes Relay; Ende-zu-Ende-verschlüsselt, standardmäßig aus","Máy chủ từ xa: đọc cuộc trò chuyện của agent như chat trên điện thoại, trả lời menu và câu hỏi cấp quyền, dừng agent hoặc gửi prompt qua relay của bạn; mã hóa đầu cuối, mặc định tắt"
 MinimumHardwareReq1,800,Text,,,,,,,,,,,,,,
 MinimumHardwareReq2,801,Text,,,,,,,,,,,,,,
 MinimumHardwareReq3,802,Text,,,,,,,,,,,,,,
