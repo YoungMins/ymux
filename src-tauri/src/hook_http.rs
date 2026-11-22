@@ -1847,8 +1847,8 @@ mod tests {
         *seed
     }
 
-    /// Hostile input must never panic: the release profile aborts on panic,
-    /// which would take the whole app down.
+    /// Hostile input must never panic: a panic ends the receiver thread for the
+    /// rest of the run (release builds unwind), and agent tracking with it.
     #[test]
     fn hostile_heads_and_bodies_never_panic() {
         let alphabet: &[u8] = b"POST /ymux-agent-hook HTTP/1.1\r\n:Content-Length:X-Ymux-Token \

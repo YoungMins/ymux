@@ -36,7 +36,8 @@
 //! `<line offset>.<100 + n>`, `n` counting the pictures a line lists, in
 //! order; item ids use `<line offset>.<0..20>`, so the two never meet.
 //!
-//! Nothing here may panic (a release build aborts on panic): every offset sum
+//! Nothing here may panic (a panic would end the remote worker thread for the
+//! rest of the run): every offset sum
 //! is saturating or checked, bytes are never sliced as text, and a line that
 //! is not valid JSON is simply not an item.
 

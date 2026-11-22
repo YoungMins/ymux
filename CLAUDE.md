@@ -364,7 +364,8 @@ receives it. `commands::start_hook_receiver` wires accepted events into
   user can connect: each connection has a whole-request deadline
   (`hook_http::LIMITS`, 3 s, re-applied before every read), at most 32 are
   served at once (extras are closed on accept), only a quiet 204 drains an
-  unread body, and nothing in the path may panic (release aborts on panic;
+  unread body, and nothing in the path may panic (a panic ends that thread for the rest of the
+  run: release builds unwind, see the root `Cargo.toml`;
   `hostile_heads_and_bodies_never_panic` fuzzes it).
 - **Token + pane.** ymux mints a fresh token per run (244 CSPRNG bits)
   (`hook_http::new_token`) and injects `YMUX_HOOK_TOKEN` into every PTY next to

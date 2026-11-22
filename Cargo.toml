@@ -5,3 +5,15 @@ members = [
     "crates/ypath",
 ]
 resolver = "2"
+
+# Cargo reads profiles only from the workspace root: a [profile] in a member's
+# Cargo.toml is ignored with a warning (src-tauri carried one for years, so it
+# never applied). These are the build-only parts of it. The two that change how
+# the app behaves were deliberately NOT carried over: `opt-level = "z"` (slower
+# transcript and usage-log parsing for a few MB) and `panic = "abort"` (every
+# shipped build has unwound: a panic ends one worker thread, not the app and
+# all its terminals).
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

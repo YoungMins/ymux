@@ -181,10 +181,3 @@ libc = "0.2"
 [features]
 default = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:reqwest", "dep:tauri-plugin-notification", "dep:tauri-plugin-single-instance", "dep:arboard", "dep:trash", "dep:tungstenite", "dep:rustls", "dep:webpki-roots"]
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = "z"
-strip = true
-panic = "abort"
