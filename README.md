@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.18.0-7fdbca?style=flat-square" alt="version 0.18.0" />
+  <img src="https://img.shields.io/badge/version-0.19.0-7fdbca?style=flat-square" alt="version 0.19.0" />
 </p>
 
 <p align="center">
@@ -449,6 +449,20 @@ agent's replies and one-line tool calls leave the computer (encrypted and
 redacted; no tool output). Turn it off with **Show agent conversations on
 paired devices** in **Settings → Remote server** (on by default). It needs an
 up-to-date yMux-Server; older ones keep the screen text view.
+
+**Pictures, after exit, groups, versions.** Pictures from the conversation (ones
+attached to a prompt and ones the agent opened or captured; PNG, JPEG, GIF and
+WebP up to 8 MB) can show in the chat bubbles, with a full-screen viewer. This
+is off by default: pictures are encrypted but cannot be redacted, so a
+screenshot may show secrets. Switch it on with **Show pictures from
+conversations on paired devices** in **Settings → Remote server**. After an
+agent exits back to the shell, its last conversation stays readable on the
+phone for a day (while ymux keeps running, or until another agent starts in
+that pane). The phone lists panes grouped by workspace, with counts and a
+"needs you" badge, and the groups collapse. Versions are shown: the phone's
+settings list the page, the server and each computer's yMux, and Settings →
+Remote server shows the server's version. A computer whose yMux is too old for
+the conversation view says so on the phone. Pictures need yMux-Server 0.19.0.
 
 **Access levels**, set per phone: **View only**, **View and answer**, or
 **View, answer and prompt**.

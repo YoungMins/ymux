@@ -987,18 +987,18 @@ pnpm test              # Full suite: fmt + tsc + clippy + tests
 bash scripts/test.sh
 ```
 
-### Test count (Rust 1326 on Windows + frontend 1388)
+### Test count (Rust 1397 on Windows + frontend 1392)
 
-Measured 2026-11-20 on Windows with `cargo test --no-default-features --lib -p ymux`
-(1326 passed, 0 failed, 9 ignored), `cargo test -p ytheme -p ypath` and
+Measured 2026-11-22 on Windows with `cargo test --no-default-features --lib -p ymux`
+(1397 passed, 0 failed, 9 ignored), `cargo test -p ytheme -p ypath` and
 `npx vitest run`.
 
 | Crate | Tests | What they cover |
 |-------|-------|-----------------|
-| ymux_lib | 1326 pass + 9 ignored on Windows (without `desktop`) | Remote server link (`remote/`: frames and signed strings, P-256 keys + pairing proof, ECDH/HKDF link key and sealing, session authorisation, clip/redact, audit log, engine, vectors copied from yMux-Server's `fixtures/`), Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
+| ymux_lib | 1397 pass + 9 ignored on Windows (without `desktop`) | Remote server link (`remote/`: frames and signed strings, P-256 keys + pairing proof, ECDH/HKDF link key and sealing, session authorisation, clip/redact, audit log, engine, conversation pictures (`image` op, `chat/pics.rs`), vectors copied from yMux-Server's `fixtures/`), Config model + TOML round-trip, PTY, OSC 7 (incl. `CwdChange` respelling dedupe), shell detect, macOS shell integration, updater, sysmonitor, git log/branch/worktree porcelain (non-ASCII + cross-source path comparison, real-git round-trip), filesystem + text-file commands (`fsx`, `fsops`, `textfile`: EOL/BOM round-trip), command guards (`ipc_guard`), resumable agent sessions (`agent_sessions.rs`, `agent_scan_disk.rs`: resume-argv building, selector stripping, transcript disk scan), agent registry (`agents.rs`), process-tree agent scan (`agent_scan.rs`), Claude Code http-hook settings merge + `y` migration (`agent_hooks.rs`), hook receiver auth/parsing/port choice + live listener (`hook_http.rs`) |
 | ytheme | 9 | Theme TOML round-trip, hex parsing, defaults |
 | ypath | 6 | NFC folding, drive/UNC/verbatim/WSL case rules, POSIX case sensitivity, backslash as a POSIX filename character |
-| _frontend_ | 1388 (104 files) | vitest: remote server page side (`src/remote/`, `RemoteSection`, `logicalLines`), layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
+| _frontend_ | 1392 (104 files) | vitest: remote server page side (`src/remote/`, `RemoteSection`, `logicalLines`), layout tree, pane tabs, agent tree model, file dock (`cwdFollow`, `dockModel`), files pane models, editor models (EOL, close guard, drafts, keymap, headless CM6), git pane models (graph lanes, keys), bottom-anchored prompt, IME, pane status, workspace reorder, drop paths, viewport sync, scrollback, platform shortcut mapping, Settings shortcut list vs. main.ts's keydown handler (`shortcutList.test.ts`) |
 
 The 8 Windows-only `pty::osc7::tests` failures noted in earlier versions of
 this section no longer occur: the Windows run is clean.
