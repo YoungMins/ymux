@@ -4,6 +4,7 @@ import type { RemoteStatus } from "../types";
 
 const calls: string[] = [];
 const shared: boolean[] = [];
+const pictures: boolean[] = [];
 let status: RemoteStatus;
 
 vi.mock("../ipc/bridge", () => ({
@@ -11,9 +12,10 @@ vi.mock("../ipc/bridge", () => ({
   onRemoteStatus: () => Promise.resolve(() => {}),
   remoteApi: {
     status: () => Promise.resolve(status),
-    configure: (c: { serverUrl: string; shareChat: boolean }) => {
+    configure: (c: { serverUrl: string; shareChat: boolean; shareImages: boolean }) => {
       calls.push(`configure:${c.serverUrl}`);
       shared.push(c.shareChat);
+      pictures.push(c.shareImages);
       status = { ...status, server_url: c.serverUrl };
       return Promise.resolve(status);
     },
@@ -46,6 +48,8 @@ function base(over: Partial<RemoteStatus> = {}): RemoteStatus {
     notify_waiting: true,
     notify_done: false,
     share_chat: true,
+    share_images: false,
+    server_version: "",
     devices: [],
     pairing: null,
     ...over,
@@ -59,6 +63,57 @@ describe("Settings -> Remote server", () => {
     document.body.innerHTML = "";
     calls.length = 0;
     shared.length = 0;
+    pictures.length = 0;
+  });
+
+  it("shows the server version next to the connection state, and nothing when there is none", async () => {
+    const shown = async (over: Partial<RemoteStatus>): Promise<string> => {
+      status = base(over);
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const stop = renderRemoteSection(host);
+      await tick();
+      const visible = [...host.querySelectorAll(".act-note")].filter(
+        (n) => !(n as HTMLElement).hidden && /^Server /.test(n.textContent ?? ""),
+      );
+      stop();
+      host.remove();
+      return visible.map((n) => n.textContent).join("|");
+    };
+    expect(await shown({ state: "online", server_version: "0.19.0" })).toBe("Server 0.19.0");
+    expect(await shown({ state: "online", server_version: "" })).toBe("");
+    expect(await shown({ state: "online", server_version: "<b>x</b>" })).toBe("");
+    expect(await shown({ state: "connecting", server_version: "0.19.0" })).toBe("");
+  });
+
+  it("has a separate picture switch: off by default, needs conversations, applies at once", async () => {
+    status = base({ share_chat: true, share_images: false });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const stop = renderRemoteSection(host);
+    await tick();
+    const row = [...host.querySelectorAll("label")].find((l) => /pictures from conversations/i.test(l.textContent ?? ""));
+    expect(row).toBeDefined();
+    expect(host.textContent).toMatch(/cannot be redacted/);
+    const box = row!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(false);
+    box.checked = true;
+    box.dispatchEvent(new Event("change"));
+    await tick();
+    await tick();
+    expect(pictures).toEqual([true]);
+    expect(shared).toEqual([true]);
+    stop();
+    // With conversations off the picture switch is unavailable.
+    const host2 = document.createElement("div");
+    document.body.appendChild(host2);
+    status = base({ share_chat: false, share_images: true });
+    const stop2 = renderRemoteSection(host2);
+    await tick();
+    const row2 = [...host2.querySelectorAll("label")].find((l) => /pictures from conversations/i.test(l.textContent ?? ""));
+    expect(row2!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true);
+    stop2();
   });
 
   it("shows the conversation switch from the status and applies a change at once", async () => {

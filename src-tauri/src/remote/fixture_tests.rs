@@ -340,7 +340,7 @@ fn every_server_to_desktop_fixture_parses() {
     ));
     assert!(matches!(
         proto::parse_server_frame(&fixture!("ready_desktop").to_string()),
-        Some(ServerFrame::Ready { devices }) if devices.len() == 1
+        Some(ServerFrame::Ready { devices, .. }) if devices.len() == 1
     ));
     assert!(matches!(
         proto::parse_server_frame(&fixture!("device_online").to_string()),
@@ -548,7 +548,23 @@ fn the_recorded_conversation_runs_through_the_engine() {
     let mut want = plaintext("session");
     assert_ne!(replies[0]["session"], want["session"], "a fresh random id");
     want["session"] = replies[0]["session"].clone();
-    assert_eq!(replies[0], want);
+    // The reply also carries `app` (this desktop's version, display only), an
+    // additive field the recorded plaintext predates: it must be a valid
+    // version, and everything else must equal the recording exactly.
+    let mut got = replies[0].clone();
+    let app = got.as_object_mut().unwrap().remove("app");
+    if want.get("app").is_none() {
+        assert_eq!(
+            app.as_ref().and_then(Value::as_str),
+            Some(crate::remote::proto::APP_VERSION)
+        );
+        assert!(crate::remote::proto::is_version(
+            app.as_ref().and_then(Value::as_str).unwrap_or("")
+        ));
+    } else {
+        got["app"] = app.unwrap_or(Value::Null);
+    }
+    assert_eq!(got, want);
 
     // From here on the recorded session id, as the recorded commands name it.
     e.adopt_session_for_test(&device.id, &s(&k, "session"));

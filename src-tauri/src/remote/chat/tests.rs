@@ -8,6 +8,45 @@ use tempfile::TempDir;
 const SID: &str = "0a1b2c3d-0000-4000-8000-000000000001";
 const T0: &str = "2026-11-12T13:43:44.123Z";
 
+// The reader's entry points take a picture switch these tests mostly leave off;
+// these shadow them with the picture-less form (the picture tests below call
+// `super::` ones, spelled out).
+fn line_items(agent: AgentKind, line: &[u8]) -> Vec<Item> {
+    super::line_items(agent, line, false)
+}
+
+fn answer(
+    b: &Binding<'_>,
+    root: &Path,
+    pane_cwd: &str,
+    conv: &str,
+    pos: Option<ChatPos>,
+    cached: &mut Option<PathBuf>,
+) -> Option<Value> {
+    super::answer(b, root, pane_cwd, conv, pos, false, true, cached, &mut 0)
+}
+
+fn read_opened(
+    agent: AgentKind,
+    session_id: &str,
+    opened: Opened,
+    conv: &str,
+    pos: Option<ChatPos>,
+) -> Result<Value, Fail> {
+    super::read_opened(
+        Rd {
+            agent,
+            images: false,
+            big: true,
+        },
+        session_id,
+        opened,
+        conv,
+        pos,
+        &mut 0,
+    )
+}
+
 fn user(text: &str) -> String {
     json!({"type":"user","timestamp":T0,"cwd":"/w","isSidechain":false,
            "message":{"role":"user","content":text}})
@@ -624,8 +663,8 @@ fn start_and_end_move_over_lines_without_items() {
 #[test]
 fn an_oversize_line_is_skipped_unparsed() {
     let d = TempDir::new().unwrap();
-    let giant = user(&"g".repeat(3 * 1024 * 1024));
-    assert!(giant.len() as u64 > MAX_LINE);
+    let giant = user(&"g".repeat(25 * 1024 * 1024));
+    assert!(giant.len() as u64 > IMAGE_LINE_MAX);
     let p = write(&d, "a.jsonl", &[user("before"), giant, user("after")]);
     let r = rd(&p, "", None);
     assert_eq!(texts(&r), vec!["before", "after"]);
@@ -715,20 +754,22 @@ fn a_line_beyond_the_budget_is_crossed_in_steps_going_forward() {
     let first = rd(&p, "", None);
     let conv = first["conv"].as_str().unwrap().to_string();
     let e = n(&first, "end");
-    // A 5 MiB excluded line, then a 1 MiB real message, then a short one.
+    // A 30 MiB excluded line (over what is ever parsed, and longer than the
+    // 24 MiB + one page budget a request spends on a line), then a 1 MiB real
+    // message, then a short one.
     let big_msg = user(&"word ".repeat(200_000));
     assert!(big_msg.len() > 900_000);
     append(
         &p,
         &format!(
             "{}\n{}\n{}\n",
-            junk(5 * 1024 * 1024),
+            junk(30 * 1024 * 1024),
             big_msg,
             user("three")
         ),
     );
     let (got, calls) = follow(&p, &conv, e);
-    assert!(calls > 1, "the 5 MiB line takes more than one call");
+    assert!(calls > 1, "the 30 MiB line takes more than one call");
     assert_eq!(
         got.len(),
         2,
@@ -740,16 +781,16 @@ fn a_line_beyond_the_budget_is_crossed_in_steps_going_forward() {
 }
 
 #[test]
-fn a_10_mib_line_is_crossed_going_forward_and_back() {
+fn a_30_mib_line_is_crossed_going_forward_and_back() {
     let d = TempDir::new().unwrap();
     let p = write(
         &d,
         "a.jsonl",
         &[
             user("first"),
-            junk(10 * 1024 * 1024),
+            junk(30 * 1024 * 1024),
             user("middle"),
-            junk(10 * 1024 * 1024),
+            junk(30 * 1024 * 1024),
             user("last"),
         ],
     );
@@ -1445,7 +1486,21 @@ mod real {
         capped: usize,
         mid_line_positions: usize,
         failures: Vec<String>,
+        /// Descriptors seen in the file being walked: `(type, id)`.
+        seen: Vec<(String, String)>,
+        /// Unique descriptors over all files, by type: png, jpeg, gif, webp.
+        by_type: [usize; 4],
+        descriptors_size: u64,
+        max_line: u64,
+        big_lines: usize,
+        fetched: usize,
+        fetched_parts: usize,
+        fetched_bytes: u64,
+        max_fetch_ms: u128,
     }
+
+    /// Up to this many real pictures are fetched whole, in parts, over the run.
+    const FETCH_CAP: usize = 20;
 
     fn bucket(len: u64) -> &'static str {
         match len {
@@ -1484,6 +1539,18 @@ mod real {
         }
         let mut ids = Vec::new();
         for i in items {
+            for im in i["images"].as_array().into_iter().flatten() {
+                st.seen.push((
+                    im["type"]
+                        .as_str()
+                        .ok_or("picture without a type")?
+                        .to_string(),
+                    im["id"]
+                        .as_str()
+                        .ok_or("picture without an id")?
+                        .to_string(),
+                ));
+            }
             match i["role"].as_str() {
                 Some("user") => st.user += 1,
                 Some("assistant") => st.assistant += 1,
@@ -1510,9 +1577,10 @@ mod real {
         let len0 = std::fs::metadata(path).map_err(|_| "stat")?.len();
         let timed = |conv: &str, pos: Option<ChatPos>| {
             let t = Instant::now();
-            let r = read(agent, sid, path, conv, pos);
+            let r = read_with(agent, sid, path, conv, pos, true);
             (r, t.elapsed().as_millis())
         };
+        st.seen.clear();
         let (first, ms) = timed("", None);
         let at = |what: &str, off: u64| format!("{what} (offset {off})");
         let (ids, start0, end0, mut older, _) = check(st, &first, ms).map_err(|e| at(&e, 0))?;
@@ -1597,6 +1665,95 @@ mod real {
         }
         if back.is_empty() {
             st.empty_files += 1;
+        }
+        // The longest line this file has, and how many are "big".
+        {
+            use std::io::BufRead;
+            let mut rdr =
+                std::io::BufReader::with_capacity(1 << 20, File::open(path).map_err(|_| "open")?);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                let n = rdr.read_until(b'\n', &mut buf).map_err(|_| "read")? as u64;
+                if n == 0 {
+                    break;
+                }
+                if n > MAX_LINE {
+                    st.big_lines += 1;
+                }
+                if n <= IMAGE_LINE_MAX {
+                    st.max_line = st.max_line.max(n);
+                }
+            }
+        }
+        // Pictures: count each listed one once, then fetch a few whole.
+        let mut uniq: Vec<(String, String)> = Vec::new();
+        for (ty, id) in std::mem::take(&mut st.seen) {
+            if !uniq.iter().any(|(_, i)| *i == id) {
+                uniq.push((ty, id));
+            }
+        }
+        let mut cache = pics::PicCache::default();
+        for (ty, id) in &uniq {
+            let slot = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+                .iter()
+                .position(|t| t == &ty.as_str())
+                .ok_or("a listed picture of an unknown type")?;
+            st.by_type[slot] += 1;
+            if st.fetched >= FETCH_CAP {
+                continue;
+            }
+            let t = Instant::now();
+            let file = File::open(path).map_err(|_| "open")?;
+            let opened = Opened {
+                id: file_identity(&file),
+                len: file.metadata().map_err(|_| "stat")?.len(),
+                path: path.to_path_buf(),
+                file,
+            };
+            let first = image_opened(
+                agent, sid, opened, "pane", &conv, id, 0, true, &mut cache, &mut 0,
+            )
+            .ok_or("an image read failed")?;
+            let (parts, size) = (
+                first["parts"].as_u64().unwrap_or(0),
+                first["size"].as_u64().unwrap_or(0),
+            );
+            if first.get("data").is_none() || parts == 0 || size == 0 {
+                return Err(format!("a listed picture is gone ({ty})"));
+            }
+            let mut total = 0u64;
+            for k in 0..parts {
+                let file = File::open(path).map_err(|_| "open")?;
+                let opened = Opened {
+                    id: file_identity(&file),
+                    len: file.metadata().map_err(|_| "stat")?.len(),
+                    path: path.to_path_buf(),
+                    file,
+                };
+                let r = image_opened(
+                    agent, sid, opened, "pane", &conv, id, k as u32, true, &mut cache, &mut 0,
+                )
+                .ok_or("an image read failed")?;
+                let ok = clip::reply_data(Op::Image, &r).ok_or("part fails clip::reply_data")?;
+                if ok["type"] != ty.as_str()
+                    || ok["size"].as_u64() != Some(size)
+                    || ok["parts"].as_u64() != Some(parts)
+                {
+                    return Err("parts disagree".into());
+                }
+                total += crate::remote::keys::b64u_decode(ok["data"].as_str().unwrap_or(""))
+                    .ok_or("bad part data")?
+                    .len() as u64;
+                st.fetched_parts += 1;
+            }
+            if total != size {
+                return Err(format!("parts add up to {total}, not {size}"));
+            }
+            st.fetched += 1;
+            st.fetched_bytes += size;
+            st.descriptors_size += size;
+            st.max_fetch_ms = st.max_fetch_ms.max(t.elapsed().as_millis());
         }
         Ok(())
     }
@@ -1716,7 +1873,23 @@ mod real {
             st.capped,
             st.failures.len()
         );
-        let _ = st.mid_line_positions;
+        println!(
+            "real picture gate: descriptors png {} jpeg {} gif {} webp {}, \
+             largest parsed line {} bytes, lines over {} bytes {}, \
+             pictures fetched whole {} ({} parts, {} bytes, slowest {} ms)",
+            st.by_type[0],
+            st.by_type[1],
+            st.by_type[2],
+            st.by_type[3],
+            st.max_line,
+            MAX_LINE,
+            st.big_lines,
+            st.fetched,
+            st.fetched_parts,
+            st.fetched_bytes,
+            st.max_fetch_ms
+        );
+        let _ = (st.mid_line_positions, st.descriptors_size);
         for f in &st.failures {
             println!("FAILURE {f}");
         }

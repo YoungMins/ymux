@@ -139,6 +139,18 @@ export function statusLine(s: Pick<RemoteStatus, "state" | "error">): {
   }
 }
 
+/// A version string as the protocol allows it (display only): 1 to 32 chars of
+/// `[0-9A-Za-z.+-]`. Anything else is "unknown" and is not shown.
+export function isVersion(v: unknown): v is string {
+  return typeof v === "string" && /^[0-9A-Za-z.+-]{1,32}$/.test(v);
+}
+
+/// The server version to show next to the connection state: only while online,
+/// and only a valid one (the backend already checked, this is defence in depth).
+export function serverVersionToShow(s: Pick<RemoteStatus, "state" | "server_version">): string | null {
+  return s.state === "online" && isVersion(s.server_version) ? s.server_version : null;
+}
+
 /// Whether panes should be published (a server is, or is about to be, there).
 export function shouldPublish(state: RemoteStatus["state"] | undefined): boolean {
   return state === "online" || state === "connecting";

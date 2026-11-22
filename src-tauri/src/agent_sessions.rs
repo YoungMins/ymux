@@ -826,6 +826,15 @@ pub struct SessionTracker {
     /// suppress the pane's scrollback either: until an agent of the pane's own
     /// account is recorded, the pane restores and saves like a plain shell.
     foreign: HashSet<Uuid>,
+    /// Panes whose record was declined this run (a resume that failed, or a
+    /// transcript found missing): nothing to show for them (`servable_record`)
+    /// until a running agent is tied to a conversation again.
+    declined: HashSet<Uuid>,
+    /// Panes whose bound agent was seen exiting during this run. Runtime only:
+    /// a record that is inactive when the app starts was ended by something
+    /// this run did not see (another agent may have replaced it), so it is not
+    /// served until an agent is tied to a conversation in that pane again.
+    exited_here: HashSet<Uuid>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
     /// Pane id -> when a hook-borne id was last checked against the pane's
@@ -1009,6 +1018,7 @@ impl SessionTracker {
         F: FnOnce(AgentKind, &str) -> Vec<crate::agent_scan_disk::DiskSession>,
     {
         let Some(agent) = AgentKind::from_kind(&obs.kind) else {
+            self.note_other_agent(obs);
             return;
         };
         let pane = obs.pane_id;
@@ -1138,6 +1148,11 @@ impl SessionTracker {
                     },
                 );
                 self.dirty |= self.store.deactivate(pane);
+                // ...and stays out of the remote conversation view even if
+                // this process exits unbound: the record is not the pane's
+                // conversation any more. Cleared when an agent is tied to a
+                // conversation (`record`).
+                self.declined.insert(pane);
             }
         }
 
@@ -1214,6 +1229,10 @@ impl SessionTracker {
         source: IdSource,
         now: u64,
     ) {
+        // A running agent is tied to a conversation: a decline from before
+        // (for an older record) no longer applies to the pane.
+        self.declined.remove(&obs.pane_id);
+        self.exited_here.remove(&obs.pane_id);
         // No status from the caller: keep the record's own for this same
         // conversation, else `working` — the conservative answer for
         // `interrupted`.
@@ -1242,6 +1261,34 @@ impl SessionTracker {
         self.dirty |= changed;
     }
 
+    /// An agent ymux keeps no conversation for (Gemini, opencode, aider ...)
+    /// is running in the pane: whatever record the pane has was established by
+    /// an earlier agent, so it is declined and stays out of the remote
+    /// conversation view for as long as this process lives and after it exits
+    /// (`declined`), until an agent is tied to a conversation again. The
+    /// process is remembered by key only, so that a different one is noticed.
+    fn note_other_agent(&mut self, obs: &PaneObservation) {
+        let Some(process) = obs.process.as_ref() else {
+            return;
+        };
+        let pane = obs.pane_id;
+        if self
+            .bindings
+            .get(&pane)
+            .is_some_and(|b| b.process != process.key())
+        {
+            self.release(pane);
+        }
+        if let std::collections::btree_map::Entry::Vacant(slot) = self.bindings.entry(pane) {
+            slot.insert(Binding {
+                process: process.key(),
+                session_id: None,
+            });
+            self.dirty |= self.store.deactivate(pane);
+            self.declined.insert(pane);
+        }
+    }
+
     /// Drop the pane's process binding and decline its record.
     fn release(&mut self, pane_id: Uuid) {
         self.bindings.remove(&pane_id);
@@ -1257,7 +1304,14 @@ impl SessionTracker {
     /// PTY dies at once, and treating that as "the user quit the agent" would
     /// erase exactly the records the next launch needs.
     pub fn note_agent_exit(&mut self, pane_id: Uuid) {
+        let was_live = self.bindings.contains_key(&pane_id)
+            || self.store.get(pane_id).is_some_and(|s| s.active);
         self.release(pane_id);
+        // Remembered for this run only: the remote conversation view serves an
+        // ended conversation only for an exit seen here (`servable_record`).
+        if was_live {
+            self.exited_here.insert(pane_id);
+        }
     }
 
     /// Whether `pane_id` should stop persisting its scrollback (spec §5).
@@ -1315,6 +1369,7 @@ impl SessionTracker {
                 }
             }
             ResumeOutcome::Missing { .. } => {
+                self.declined.insert(pane_id);
                 self.dirty |= self.store.deactivate(pane_id);
             }
             ResumeOutcome::None => {}
@@ -1347,6 +1402,7 @@ impl SessionTracker {
         for pane in expired {
             self.pending.remove(&pane);
             self.failed.insert(pane);
+            self.declined.insert(pane);
             self.dirty |= self.store.deactivate(pane);
         }
     }
@@ -1379,6 +1435,36 @@ impl SessionTracker {
         self.pending.remove(&pane_id);
         self.failed.remove(&pane_id);
         self.foreign.remove(&pane_id);
+        self.declined.remove(&pane_id);
+        self.exited_here.remove(&pane_id);
+    }
+
+    /// The record whose conversation the remote view (`chat` / `image`) may
+    /// read for `pane_id`, or `None`.
+    ///
+    /// While the agent runs (the record is active) it is the pane's. After the
+    /// agent exits back to the shell the conversation that just ended is still
+    /// the pane's, but only when ALL hold: that exit was seen during this run
+    /// (`exited_here`: a record that was already inactive at startup is never
+    /// served), the agent itself named the id (a
+    /// hook, or its argv / pid file: not [`IdSource::Disk`], which only a
+    /// running agent backs); no agent process is bound in the pane right now
+    /// (a NEW agent that is not tied to a conversation yet would otherwise
+    /// show the previous agent's conversation under its live pane); no resume
+    /// is waiting on one, none was declined this run (failed resume, missing
+    /// transcript); and the record is inside [`FRESH_WINDOW`] (so a
+    /// declined resume after an app restart does not stay servable for days).
+    /// The account directory, file name, root containment and Disk cwd checks
+    /// are the caller's.
+    pub fn servable_record(&self, pane_id: Uuid, now: u64) -> Option<AgentSession> {
+        let rec = self.store.get(pane_id)?;
+        let ended_but_vouched = rec.source != IdSource::Disk
+            && self.exited_here.contains(&pane_id)
+            && !self.bindings.contains_key(&pane_id)
+            && !self.pending.contains_key(&pane_id)
+            && !self.declined.contains(&pane_id)
+            && now.saturating_sub(rec.updated_at) <= FRESH_WINDOW.as_secs();
+        (rec.active || ended_but_vouched).then(|| rec.clone())
     }
 }
 
@@ -2052,6 +2138,275 @@ mod tests {
         let mut store = AgentSessionStore::default();
         assert!(!store.put(session(Uuid::from_u128(1), "rm -rf /", IdSource::Hook)));
         assert!(store.sessions.is_empty());
+    }
+
+    #[test]
+    fn after_the_agent_exits_only_an_agent_vouched_conversation_is_still_served() {
+        let pane = Uuid::from_u128(40);
+        for (source, served) in [
+            (IdSource::Hook, true),
+            (IdSource::Process, true),
+            (IdSource::Disk, false),
+        ] {
+            let mut store = AgentSessionStore::default();
+            assert!(store.put(session(pane, "cccc-0001", source)));
+            let mut t = SessionTracker::from_store(store);
+            let now = 1_000_010;
+            assert!(
+                t.servable_record(pane, now).is_some(),
+                "running: {source:?}"
+            );
+            t.note_agent_exit(pane);
+            assert!(!t.get(pane).expect("the record stays").active);
+            assert_eq!(t.servable_record(pane, now).is_some(), served, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn a_new_unbound_agent_hides_the_previous_conversation_until_it_is_bound() {
+        let pane = Uuid::from_u128(43);
+        let mut t = SessionTracker::default();
+        let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
+        o.hook_session_id = Some(ID_A.to_string());
+        o.pid_file_session_id = Some(ID_A.to_string());
+        t.observe(&o, 1_000, &[], |_, _| {
+            panic!("a hook id needs no disk scan")
+        });
+        assert_eq!(t.get(pane).unwrap().source, IdSource::Hook);
+        t.note_agent_exit(pane);
+        let served = |t: &SessionTracker, now| t.servable_record(pane, now).map(|r| r.session_id);
+        assert_eq!(served(&t, 1_001).as_deref(), Some(ID_A), "just exited");
+        // Another agent (a Codex with no hook or argv id) starts in the pane
+        // and cannot be tied to a conversation (nothing on disk yet).
+        let mut codex = obs(pane, "codex", Some("D:/Git/ymux"));
+        codex.process = Some(process(200, 1_100, &["codex"]));
+        for now in [1_100, 1_110, 1_170, 1_230] {
+            t.observe(&codex, now, &[], |_, _| vec![]);
+            assert!(t.servable_record(pane, now).is_none(), "t={now}");
+        }
+        // Once it is bound the NEW conversation is served.
+        t.observe(&codex, 1_300, &[], |_, _| {
+            vec![disk_at(ID_B, "D:\\Git\\ymux", 1_200)]
+        });
+        assert_eq!(served(&t, 1_300).as_deref(), Some(ID_B));
+        assert!(t.get(pane).unwrap().active);
+        // ...and when that agent exits the Disk guess is not served either.
+        t.note_agent_exit(pane);
+        assert_eq!(served(&t, 1_301), None);
+    }
+
+    /// Claude A (hook-vouched) runs in the pane and exits at t=1000.
+    fn pane_after_claude_exits() -> (SessionTracker, Uuid) {
+        let pane = Uuid::from_u128(46);
+        let mut t = SessionTracker::default();
+        let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
+        o.hook_session_id = Some(ID_A.to_string());
+        o.pid_file_session_id = Some(ID_A.to_string());
+        t.observe(&o, 1_000, &[], |_, _| panic!("no scan"));
+        t.note_agent_exit(pane);
+        assert!(t.servable_record(pane, 1_001).is_some(), "just exited");
+        (t, pane)
+    }
+
+    #[test]
+    fn an_agent_with_no_resume_story_hides_the_old_conversation_too() {
+        let (mut t, pane) = pane_after_claude_exits();
+        // gemini starts in the pane (a kind ymux does not track).
+        let mut g = obs(pane, "gemini", Some("D:/Git/ymux"));
+        g.process = Some(process(300, 1_100, &["gemini"]));
+        for now in [1_100, 1_110, 1_170, 1_230, 20_000, 1_000 + 85_000] {
+            t.observe(&g, now, &[], |_, _| vec![]);
+            assert!(t.servable_record(pane, now).is_none(), "t={now}");
+        }
+        // It exits: the old Claude conversation does not come back.
+        t.note_agent_exit(pane);
+        for now in [1_000 + 85_000, 1_000 + 85_100] {
+            assert!(t.servable_record(pane, now).is_none(), "after exit t={now}");
+        }
+        // A different gemini process replaces the first one's key only.
+        let mut g2 = obs(pane, "gemini", Some("D:/Git/ymux"));
+        g2.process = Some(process(301, 1_200, &["gemini"]));
+        t.observe(&g2, 2_000, &[], |_, _| vec![]);
+        assert!(t.servable_record(pane, 2_000).is_none());
+    }
+
+    #[test]
+    fn an_unbound_agent_that_exits_leaves_the_old_conversation_unserved() {
+        let (mut t, pane) = pane_after_claude_exits();
+        // Codex B starts and is never tied to a conversation; then it exits.
+        let mut codex = obs(pane, "codex", Some("D:/Git/ymux"));
+        codex.process = Some(process(200, 1_100, &["codex"]));
+        t.observe(&codex, 1_100, &[], |_, _| vec![]);
+        assert!(t.servable_record(pane, 1_110).is_none());
+        t.note_agent_exit(pane);
+        for now in [1_200, 1_000 + 70, 1_000 + 85_000] {
+            assert!(t.servable_record(pane, now).is_none(), "t={now}");
+        }
+        // A later agent that IS tied to a conversation is served, and so is
+        // its conversation after it exits.
+        let mut again = obs(pane, "claude", Some("D:/Git/ymux"));
+        again.process = Some(process(400, 90_000, &["claude"]));
+        again.hook_session_id = Some(ID_B.to_string());
+        again.pid_file_session_id = Some(ID_B.to_string());
+        t.observe(&again, 90_000, &[], |_, _| vec![]);
+        assert_eq!(
+            t.servable_record(pane, 90_001)
+                .map(|r| r.session_id)
+                .as_deref(),
+            Some(ID_B)
+        );
+        t.note_agent_exit(pane);
+        assert_eq!(
+            t.servable_record(pane, 90_100)
+                .map(|r| r.session_id)
+                .as_deref(),
+            Some(ID_B)
+        );
+    }
+
+    #[test]
+    fn an_ended_conversation_is_served_only_inside_the_fresh_window() {
+        let pane = Uuid::from_u128(44);
+        let mut store = AgentSessionStore::default();
+        store.put(session(pane, "ffff-0001", IdSource::Hook));
+        let mut t = SessionTracker::from_store(store);
+        t.note_agent_exit(pane);
+        let at = 1_000_000;
+        let day = FRESH_WINDOW.as_secs();
+        assert!(t.servable_record(pane, at + day).is_some());
+        assert!(t.servable_record(pane, at + day + 1).is_none());
+        // A clock earlier than the record is not "stale".
+        assert!(t.servable_record(pane, at - 5).is_some());
+    }
+
+    #[test]
+    fn a_declined_resume_or_a_missing_transcript_is_not_served() {
+        let pane = Uuid::from_u128(45);
+        let fresh = |s: &mut AgentSessionStore| {
+            s.put(session(pane, "9999-0001", IdSource::Hook));
+        };
+        // A resume waiting on its agent: nothing is bound yet.
+        let mut store = AgentSessionStore::default();
+        fresh(&mut store);
+        let mut t = SessionTracker::from_store(store);
+        t.note_agent_exit(pane);
+        assert!(t.servable_record(pane, 1_000_010).is_some());
+        t.begin_resume(pane, "9999-0001", 1_000_010);
+        assert!(t.servable_record(pane, 1_000_011).is_none(), "pending");
+        // ...and it never showed up.
+        t.expire_pending(1_000_010 + RESUME_CONFIRM_WINDOW + 1);
+        assert!(t.servable_record(pane, 1_000_200).is_none(), "failed");
+        // A transcript found missing at restart.
+        let mut store = AgentSessionStore::default();
+        fresh(&mut store);
+        let mut t = SessionTracker::from_store(store);
+        t.note_agent_exit(pane);
+        t.note_outcome(
+            pane,
+            &ResumeOutcome::Missing {
+                agent: "claude".into(),
+            },
+            1_000_010,
+        );
+        assert!(t.servable_record(pane, 1_000_011).is_none(), "missing");
+    }
+
+    #[test]
+    fn a_new_agent_in_the_pane_moves_the_binding_off_the_old_conversation() {
+        let pane = Uuid::from_u128(41);
+        let mut store = AgentSessionStore::default();
+        store.put(session(pane, "dddd-0001", IdSource::Hook));
+        // Served after an exit seen in this run (the tracker is rebuilt from
+        // the persisted state, the agent was running, then it exits).
+        let servable = |s: &AgentSessionStore| {
+            let mut t = SessionTracker::from_store(s.clone());
+            t.note_agent_exit(pane);
+            t.servable_record(pane, 1_000_010).is_some()
+        };
+        assert!(servable(&store));
+        // The next agent names its own id: the old conversation is not served
+        // for this pane any more (one record per pane).
+        assert!(store.put(session(pane, "dddd-0002", IdSource::Hook)));
+        let now = store.get(pane).unwrap();
+        assert_eq!(now.session_id, "dddd-0002");
+        assert!(now.active && servable(&store));
+        // A disk guess cannot take the pane over from an exited exact record
+        // as a *servable* one: it is inactive-or-active as the scan says, and
+        // an inactive guess is not served.
+        store.deactivate(pane);
+        let mut guess = session(pane, "dddd-0003", IdSource::Disk);
+        guess.active = false;
+        assert!(store.put(guess));
+        assert!(!servable(&store));
+    }
+
+    #[test]
+    fn only_an_exit_seen_in_this_run_makes_an_ended_conversation_servable() {
+        let pane = Uuid::from_u128(47);
+        // A record that is inactive when the app starts (another agent may
+        // have replaced it, unseen): never served.
+        let mut store = AgentSessionStore::default();
+        store.put(session(pane, "abab-0001", IdSource::Hook));
+        store.deactivate(pane);
+        let mut t = SessionTracker::from_store(store);
+        assert!(
+            t.servable_record(pane, 1_000_010).is_none(),
+            "inactive at startup"
+        );
+        // An exit noted for a pane that had no live agent changes nothing.
+        t.note_agent_exit(pane);
+        assert!(
+            t.servable_record(pane, 1_000_010).is_none(),
+            "nothing was live"
+        );
+        // The agent runs in this run (bound by its hook), then exits: served,
+        // inside the window and with none of the blocking conditions.
+        let mut o = obs(pane, "claude", Some("D:/Git/ymux"));
+        o.hook_session_id = Some(ID_A.to_string());
+        o.pid_file_session_id = Some(ID_A.to_string());
+        t.observe(&o, 1_000_100, &[], |_, _| panic!("no scan"));
+        assert!(t.servable_record(pane, 1_000_101).is_some(), "running");
+        t.note_agent_exit(pane);
+        assert_eq!(
+            t.servable_record(pane, 1_000_200)
+                .map(|r| r.session_id)
+                .as_deref(),
+            Some(ID_A)
+        );
+        // An app restart: the tracker is rebuilt from what was persisted (the
+        // record is inactive now): not served, until an agent is tied again.
+        let restarted = SessionTracker::from_store(t.store().clone());
+        assert!(!restarted.store().get(pane).unwrap().active);
+        assert!(
+            restarted.servable_record(pane, 1_000_300).is_none(),
+            "after a restart"
+        );
+        let mut again = restarted;
+        again.observe(&o, 1_000_400, &[], |_, _| panic!("no scan"));
+        assert!(
+            again.servable_record(pane, 1_000_401).is_some(),
+            "bound again"
+        );
+        again.note_agent_exit(pane);
+        assert!(
+            again.servable_record(pane, 1_000_500).is_some(),
+            "and exits again"
+        );
+    }
+
+    #[test]
+    fn a_record_of_another_accounts_directory_is_not_this_panes_even_when_inactive() {
+        let pane = Uuid::from_u128(42);
+        let mut rec = session(pane, "eeee-0001", IdSource::Hook);
+        rec.active = false;
+        rec.config_dir = "D:\\accounts\\other\\claude".to_string();
+        let home = dirs_at("D:\\home\\.claude", "D:\\home\\.codex");
+        assert!(
+            !record_matches_pane(&rec, &home, &home),
+            "foreign directory"
+        );
+        rec.config_dir = String::new();
+        assert!(record_matches_pane(&rec, &home, &home), "the home default");
     }
 
     #[test]

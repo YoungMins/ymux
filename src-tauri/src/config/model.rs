@@ -171,6 +171,11 @@ pub struct RemoteConfig {
     /// end-to-end encrypted and redacted). On unless the user switches it off;
     /// the struct-level serde default makes an older file load as `true`.
     pub share_chat: bool,
+    /// A paired device may also see the pictures in those conversations
+    /// (`image`, end-to-end encrypted). OFF by default: a picture cannot be
+    /// redacted (rule 17) and a screenshot may show a secret. Only meaningful
+    /// while `share_chat` is on.
+    pub share_images: bool,
     /// The server accepted this desktop's key at least once.
     pub registered: bool,
     pub devices: Vec<RemoteDevice>,
@@ -186,6 +191,7 @@ impl Default for RemoteConfig {
             notify_waiting: true,
             notify_done: false,
             share_chat: true,
+            share_images: false,
             registered: false,
             devices: Vec::new(),
         }
@@ -1436,6 +1442,12 @@ mod tests {
         let off: Config =
             toml::from_str("version = 7\n[remote]\nshare_chat = false\n").expect("parse");
         assert!(!off.remote.share_chat);
+        // A picture cannot be redacted: sharing them is off unless chosen, and
+        // a file written before the field existed stays off.
+        assert!(!parsed.remote.share_images && !old.remote.share_images);
+        let pics: Config =
+            toml::from_str("version = 7\n[remote]\nshare_images = true\n").expect("parse");
+        assert!(pics.remote.share_images && pics.remote.share_chat);
         let config = Config {
             remote: RemoteConfig {
                 enabled: true,
@@ -1445,6 +1457,7 @@ mod tests {
                 notify_waiting: false,
                 notify_done: true,
                 share_chat: false,
+                share_images: true,
                 registered: true,
                 devices: vec![
                     RemoteDevice {

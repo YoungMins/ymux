@@ -80,9 +80,50 @@ impl Host for E2eHost {
             c.registered = true;
         }
     }
-    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>) -> Option<Value> {
+    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>, _big: bool) -> Option<Value> {
         Some(fake_chat(pane, conv, pos))
     }
+    fn image(&self, pane: &str, conv: &str, id: &str, part: u32, _big: bool) -> Option<Value> {
+        Some(fake_image(pane, conv, id, part))
+    }
+}
+
+/// The fake conversation's two pictures, both synthetic PNGs from the tiny
+/// writer in `remote::testpng` (stored deflate, so a browser really decodes
+/// them): `1100.100` is a 64x64 two-colour checker (one part) on the Korean
+/// user item `1100.0`, `3250.100` a noisy 400x300 one (over 96 KiB: several
+/// parts) on the tool item `3250.0`.
+const PIC_SMALL_ID: &str = "1100.100";
+const PIC_LARGE_ID: &str = "3250.100";
+
+fn fake_pic(id: &str) -> Option<Vec<u8>> {
+    use crate::remote::testpng;
+    match id {
+        PIC_SMALL_ID => Some(testpng::checker(
+            64,
+            64,
+            8,
+            [0x2d, 0x6c, 0xdf],
+            [0xf2, 0xc9, 0x4c],
+        )),
+        PIC_LARGE_ID => Some(testpng::noisy(400, 300, 7)),
+        _ => None,
+    }
+}
+
+/// What the fake desktop answers to `image`: it always shares pictures. Any
+/// pane but [`NO_CHAT_PANE`], the conv [`CHAT_CONV`] and one of the two ids
+/// above serve their picture in 96 KiB parts, anything else is `gone`.
+fn fake_image(pane: &str, conv: &str, id: &str, part: u32) -> Value {
+    let gone = json!({"result": "gone"});
+    if pane == NO_CHAT_PANE || conv != CHAT_CONV {
+        return gone;
+    }
+    fake_pic(id)
+        .and_then(|bytes| {
+            crate::remote::chat::pics::part_reply(CHAT_CONV, id, "image/png", &bytes, part)
+        })
+        .unwrap_or(gone)
 }
 
 /// The one pane that has no conversation: `chat` answers `{"conv":""}`.
@@ -93,8 +134,10 @@ const CHAT_END: u64 = 3300;
 
 /// What the fake desktop answers to `chat` for every pane except
 /// [`NO_CHAT_PANE`]: a small fixed conversation (agent `claude`, conv
-/// `e2e-chat-conv`), nine items (ids `<offset>.0`) at line offsets 0, 120, 900,
-/// 1000, 1100, 1200, 3000, 3100 and 3200 and an end of 3300. `after` /
+/// `e2e-chat-conv`), ten items (ids `<offset>.0`) at line offsets 0, 120, 900,
+/// 1000, 1100, 1200, 3000, 3100, 3200 and 3250 and an end of 3300. Item
+/// `1100.0` carries one picture descriptor and `3250.0` (a tool item) one more
+/// (see [`fake_pic`]). `after` /
 /// `before` with that conv slice it by offset; a different conv or a position
 /// outside 0..=3300 answers the whole of it.
 fn fake_chat(pane: &str, conv: &str, pos: Option<ChatPos>) -> Value {
@@ -121,7 +164,7 @@ fn fake_chat(pane: &str, conv: &str, pos: Option<ChatPos>) -> Value {
 ```bash\n{long_line}\n```\n\n\
 - [x] 결제 연동 마무리\n- [ ] 알림 설정 시작"
     );
-    let all: [(u64, &str, &str); 9] = [
+    let all: [(u64, &str, &str); 10] = [
         (
             0,
             "user",
@@ -135,6 +178,7 @@ fn fake_chat(pane: &str, conv: &str, pos: Option<ChatPos>) -> Value {
         (3000, "tool", "Read: src/main.rs"),
         (3100, "tool", "Bash: pnpm test"),
         (3200, "assistant", "완료했습니다."),
+        (3250, "tool", "Read: chart.png"),
     ];
     let (mut from, mut to) = (0, CHAT_END);
     if conv == CHAT_CONV {
@@ -148,8 +192,17 @@ fn fake_chat(pane: &str, conv: &str, pos: Option<ChatPos>) -> Value {
         .iter()
         .filter(|(off, _, _)| *off >= from && *off < to)
         .map(|(off, role, text)| {
-            json!({"id": format!("{off}.0"), "role": role, "text": text,
-                   "ts_ms": 1_700_000_000_000u64 + off})
+            let mut item = json!({"id": format!("{off}.0"), "role": role, "text": text,
+                                  "ts_ms": 1_700_000_000_000u64 + off});
+            let pic = match off {
+                1100 => Some(PIC_SMALL_ID),
+                3250 => Some(PIC_LARGE_ID),
+                _ => None,
+            };
+            if let Some((id, bytes)) = pic.and_then(|id| fake_pic(id).map(|b| (id, b))) {
+                item["images"] = json!([{"id": id, "type": "image/png", "size": bytes.len()}]);
+            }
+            item
         })
         .collect();
     json!({"conv": CHAT_CONV, "agent": "claude", "items": items,
@@ -518,6 +571,8 @@ impl Fake {
             server_url: s.base.to_string(),
             desktop_id,
             name: s.name.into(),
+            // The fake desktop always shares pictures.
+            share_images: true,
             ..RemoteConfig::default()
         });
         let secrets = Arc::new(SecretStore::new(&s.dir.join("desktop")));
@@ -1594,5 +1649,111 @@ mod store_failures {
         assert_eq!(set.usable.len(), 1);
         assert_eq!(set.missing, [Y, "z"]);
         assert!(set.unreadable.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod fake_pictures {
+    use super::*;
+    use crate::remote::clip;
+    use crate::remote::keys::b64u_decode;
+    use crate::remote::proto::Op;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn the_fake_pictures_decode_and_are_served_in_checked_parts() {
+        for (id, dims, parts) in [
+            (PIC_SMALL_ID, (64, 64), 1u64),
+            (PIC_LARGE_ID, (400, 300), 4),
+        ] {
+            let bytes = fake_pic(id).unwrap();
+            let mut r = png::Decoder::new(std::io::Cursor::new(&bytes))
+                .read_info()
+                .unwrap();
+            let mut buf = vec![0; r.output_buffer_size()];
+            let info = r.next_frame(&mut buf).unwrap();
+            assert_eq!((info.width, info.height), dims, "{id}");
+            let mut joined = Vec::new();
+            for k in 0..parts {
+                let reply = fake_image("p", CHAT_CONV, id, k as u32);
+                let reply = clip::reply_data(Op::Image, &reply).expect("passes the reply check");
+                assert_eq!(
+                    (reply["parts"].as_u64(), reply["size"].as_u64()),
+                    (Some(parts), Some(bytes.len() as u64))
+                );
+                joined.extend(b64u_decode(reply["data"].as_str().unwrap()).unwrap());
+            }
+            assert_eq!(joined, bytes);
+            assert_eq!(
+                fake_image("p", CHAT_CONV, id, parts as u32),
+                json!({"result": "gone"})
+            );
+            println!(
+                "fake picture {id}: {} bytes, {parts} parts, sha256 {}",
+                bytes.len(),
+                Sha256::digest(&bytes)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            );
+        }
+        assert!(fake_pic(PIC_LARGE_ID).unwrap().len() > 96 * 1024);
+        // Not served: another conv, the pane without a conversation, other ids.
+        for (pane, conv, id) in [
+            ("p", "other", PIC_SMALL_ID),
+            (NO_CHAT_PANE, CHAT_CONV, PIC_SMALL_ID),
+            ("p", CHAT_CONV, "1100.101"),
+            ("p", CHAT_CONV, "0.100"),
+        ] {
+            assert_eq!(
+                fake_image(pane, conv, id, 0),
+                json!({"result": "gone"}),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fake_conversation_keeps_its_items_and_adds_two_pictures() {
+        let all = fake_chat("p", "", None);
+        assert!(clip::reply_data(Op::Chat, &all).is_some());
+        let items = all["items"].as_array().unwrap();
+        let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            [
+                "0.0", "120.0", "900.0", "1000.0", "1100.0", "1200.0", "3000.0", "3100.0",
+                "3200.0", "3250.0"
+            ]
+        );
+        let sizes = |i: usize| items[i]["images"][0]["size"].as_u64().unwrap();
+        assert_eq!(items[4]["images"][0]["id"], PIC_SMALL_ID);
+        assert_eq!(sizes(4), fake_pic(PIC_SMALL_ID).unwrap().len() as u64);
+        assert_eq!(
+            (
+                items[9]["role"].as_str(),
+                items[9]["images"][0]["id"].as_str()
+            ),
+            (Some("tool"), Some(PIC_LARGE_ID))
+        );
+        assert_eq!(sizes(9), fake_pic(PIC_LARGE_ID).unwrap().len() as u64);
+        assert_eq!(
+            items.iter().filter(|i| i.get("images").is_some()).count(),
+            2
+        );
+        // Paging semantics: the new item is the last, the end is unchanged.
+        let tail = fake_chat("p", CHAT_CONV, Some(ChatPos::After(3201)));
+        assert_eq!(tail["items"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            (
+                tail["start"].clone(),
+                tail["end"].clone(),
+                tail["newer"].clone()
+            ),
+            (json!(3201), json!(3300), json!(false))
+        );
+        let before = fake_chat("p", CHAT_CONV, Some(ChatPos::Before(3250)));
+        assert_eq!(before["items"].as_array().unwrap().len(), 9);
+        assert_eq!(before["newer"], true);
     }
 }

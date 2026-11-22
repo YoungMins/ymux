@@ -41,7 +41,7 @@ ymux/
 │       ├── paste_images.rs     # Save + time-prune pasted clipboard images (pure)
 │       ├── pty/                # PTY session management
 │       ├── quit_gate.rs        # Close-to-tray / real-quit handshake state machine (pure)
-│       ├── remote/             # Remote server link (rule 19): proto (frames, signed strings), keys (P-256, pairing proof), session (the §5.1 authorisation), pairing, clip (redact + clip outgoing text), chat (the `chat` op: transcript reader + locate, answered without the page), panes (notify transitions, send throttle), engine (protocol state machine), backoff, audit (JSONL), fixtures/ (copied from yMux-Server) (all pure); runtime.rs = socket thread + commands (desktop)
+│       ├── remote/             # Remote server link (rule 19): proto (frames, signed strings), keys (P-256, pairing proof), session (the §5.1 authorisation), pairing, clip (redact + clip outgoing text), chat (the `chat` op: transcript reader + locate, answered without the page; `chat/json.rs` borrowing parser, `chat/pics.rs` pictures for the `image` op), panes (notify transitions, send throttle), engine (protocol state machine), backoff, audit (JSONL), fixtures/ (copied from yMux-Server) (all pure); runtime.rs = socket thread + commands (desktop)
 │       ├── secrets.rs          # Backend-owned secret store (webhook URL / HMAC secret / LLM API key): DPAPI on Windows, 0600 elsewhere; write-only over IPC
 │       ├── scrollback.rs       # Persist/restore per-pane terminal scrollback (pure)
 │       ├── shell/              # Shell detection (detect.rs)
@@ -658,8 +658,9 @@ CLIs, Explorer, default programs) sees the real AppData. So:
 
 With `remote.enabled`, ymux holds an outbound WebSocket to the user's own
 relay server (protocol: `yMux-Server/PROTOCOL.md`). A paired phone can list
-agent panes, read a pane's screen, read a pane's agent conversation (`chat`),
-answer a menu option, send Escape and send a prompt. That is all: there is no
+agent panes, read a pane's screen, read a pane's agent conversation (`chat`)
+and, if the owner switched it on, the pictures in it (`image`), answer a menu
+option, send Escape and send a prompt. That is all: there is no
 op for raw keys, new or closed panes, or files, and an unknown op is
 `unknown_op`. Code is `src-tauri/src/remote/`.
 
@@ -745,11 +746,25 @@ op for raw keys, new or closed panes, or files, and an unknown op is
   takes no slot); a conversation that exists but could not be read this time
   (a read error while looking, opening, scanning or reading) is `ok:false`
   `internal` (`Host::chat` returns `None`, `Engine::chat_failed`), counted too.
-  `{"conv":""}` stays for no agent, an unvouched binding, sharing off, file not
-  found.
+  `{"conv":""}` stays for no conversation to show (the pane never had one, or
+  its record is an inactive Disk-inferred guess), an unvouched binding, sharing
+  off, file not found. The conversation of an agent that has since exited back
+  to the shell IS still shown, but only while nothing else claims the pane:
+  `SessionTracker::servable_record` (pure, tested) serves a record that is
+  `active`, or one that is inactive AND whose agent was seen exiting during
+  this run (`exited_here`, memory only: a record that is already inactive when
+  the app starts is never served until an agent is tied to a conversation in
+  that pane again) AND agent-vouched (Hook or Process source,
+  never Disk) AND has no live binding in the pane (a NEW agent process that is
+  not yet tied to a conversation, or an agent ymux keeps no conversation for
+  such as Gemini, hides the old one until a conversation is bound; once such a
+  process has been seen the pane stays declined even after it exits) AND no
+  resume pending or declined this run (failed resume, transcript missing) AND
+  `updated_at` inside `FRESH_WINDOW` (24 h). Every other check below still
+  applies.
   `remote/chat.rs` (pure, tested) reads the agent's own transcript file: Claude
   Code JSONL or a Codex rollout, found by the pane's tracker record
-  (`active`, `record_matches_pane` against the pane's own account dirs,
+  (`servable_record`, `record_matches_pane` against the pane's own account dirs,
   `agent_scan_disk::transcript_lookup`, which tells a missing file from a read
   error and only accepts regular files for Codex). `chat::open` canonicalises
   on every request, requires the file to be inside the transcript root and to
@@ -795,6 +810,50 @@ op for raw keys, new or closed panes, or files, and an unknown op is
   A tool name is cleaned and redacted too.
   `Config::remote.share_chat` (default true, backend-owned, set by
   `remote_configure`) off answers `{"conv":""}` without reading anything.
+- **Pictures (`image`) are a second, default-OFF switch.** A picture cannot be
+  redacted (rule 17), so `Config::remote.share_images` (default false,
+  backend-owned like `share_chat`, set by `remote_configure`, needs
+  `share_chat` on too) gates everything: off, the reader lists no descriptor and
+  never looks at a picture byte, and `image` answers `{"result":"gone"}` from
+  the engine without reading. On, a chat item may carry `images` (at most 8;
+  `id` = `<line offset>.<100+n>`, a number space item ids `<offset>.<0..40>`
+  never meet; an item that exists only for its pictures is numbered 20..40 so
+  every item keeps the same id with sharing on and off): the pictures of a user message, and those a tool result handed
+  the agent (an item of role `tool`, empty text; its text output still never
+  shown). The type is ALWAYS the file signature of the decoded start (PNG, JPEG,
+  GIF, WebP), never the declared media type; SVG, unknown types, bad base64 and
+  over 8 MiB are not listed. `image` (capability `view`, answered by the
+  desktop through `Out::Image` / `Host::image`, never the page; 12 a second per
+  device, then `busy`) goes through the very same vetting as `chat`
+  (`chat::resolve`), requires `conv` to be the pane's current one, reads the
+  line at the id's offset (a line start, complete, at most 24 MiB, through the
+  verified handle), decodes the picture and answers it in 96 KiB parts
+  (`pics::part_reply`; `clip::image` checks the part arithmetic and part 0's
+  signature again). Anything unsatisfiable is `gone`, a read error `internal`.
+  Decoded pictures are cached per (pane, conv, id), LRU by bytes only (32 MiB),
+  so the parts cost one read; the cache drops with the pane's conversation and
+  when sharing goes off (also at once in `remote_configure`). Each entry
+  remembers the file length and the picture's line length at decode time and is
+  dropped, not served, if the file has shrunk or the line at that offset no
+  longer ends where it did. Lines with pictures are routinely over 2 MiB: lines up to
+  `IMAGE_LINE_MAX` (24 MiB) are parsed (also with pictures off: their text
+  used to be lost) by `chat::json`, a tree that borrows the line so a picture's
+  base64 is never copied, and are paid from their own `BIG_BUDGET` (48 MiB per
+  request) beside the page's 4 MiB, the first big line of a request always
+  allowed; longer lines are skipped and crossed in steps as before. A line over
+  2 MiB with more than 200 000 JSON values is skipped (`json::BIG_NODE_MAX`).
+  Per device, `engine::WorkBudget` adds up what its `chat` / `image` calls made
+  the desktop read of big lines: exactly each big line's own length, once per
+  line per request, nothing for a line of 2 MiB or less (`Host::take_work`,
+  charged by `Engine::note_work`). Inside 512 MiB per rolling 10 s a device is
+  not limited at all. Over it the op is NOT refused: the engine tells the
+  reader `big: false`, which then serves everything that needs no big line and
+  stops, truthfully (`newer` / `older` true, honest cursors), in front of the
+  first big line it would need; only when that first needed line is big does the
+  answer become `busy` (`Engine::big_busy`, counted; an `image` cache hit is
+  always served, a miss on a big line is `busy`). A tail poll (`after: end`)
+  reads no big line again and is not `busy`, unless what is new is itself a
+  big line; the window sliding past restores everything.
 - **Text is cleaned, redacted and clipped in Rust before it leaves**
   (`clip.rs`: control characters and Unicode format/line/paragraph separators
   (Cf, Zl, Zp: explicit ranges) out, `activity::redact`, then 2000 chars for
@@ -858,6 +917,13 @@ op for raw keys, new or closed panes, or files, and an unknown op is
   a stand-down instance** (no hook receiver, rule 13): `tauri dev` shares the
   live config and would otherwise claim the real desktop id. Status then says
   `unavailable`; the settings commands still work but no thread starts.
+- **Versions are display only.** The `session` reply carries `app` (this
+  build's `CARGO_PKG_VERSION`, `proto::APP_VERSION`) and the server's `ready`
+  may carry `server`; both are at most 32 chars of `[0-9A-Za-z.+-]`
+  (`proto::is_version`, anything else is "unknown", never an error). The
+  server's is kept only in memory (`Engine::server_version`, forgotten with the
+  connection; `RemoteStatus.server_version`, shown in Settings next to the
+  connection state) and nothing is decided from either.
 - **Transport.** `tungstenite` (sync, rustls with the ring provider and
   webpki roots, no native-tls/OpenSSL) is the one sanctioned network client
   outside `webhooks::client` and `summarizer::transport`, because a WebSocket

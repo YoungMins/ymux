@@ -58,6 +58,14 @@ pub fn is_menu_id(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// A chat item or picture id: 1 to 40 chars of `[0-9.]`.
+pub fn is_picture_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 40 && s.chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
+/// Largest `part` of an `image` request (PROTOCOL.md: 0 to 255).
+pub const IMAGE_PART_MAX: u64 = 255;
+
 /// What a device signs for a command: the prefix plus the body string.
 pub fn cmd_signed(body: &str) -> Vec<u8> {
     let mut v = b"ymux-remote-v1|cmd|".to_vec();
@@ -103,7 +111,7 @@ impl Cap {
     }
 }
 
-/// The six ops there are. Nothing else (raw keys, new panes, files) exists.
+/// The seven ops there are. Nothing else (raw keys, new panes, files) exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     List,
@@ -111,6 +119,9 @@ pub enum Op {
     /// The agent conversation of a pane, read from its transcript file. Answered
     /// by the desktop itself (`remote::chat`), never by the page.
     Chat,
+    /// One part of one picture of that conversation (`remote::chat::pics`).
+    /// Answered by the desktop itself, like `Chat`.
+    Image,
     Answer,
     Interrupt,
     Prompt,
@@ -122,6 +133,7 @@ impl Op {
             "list" => Some(Op::List),
             "peek" => Some(Op::Peek),
             "chat" => Some(Op::Chat),
+            "image" => Some(Op::Image),
             "answer" => Some(Op::Answer),
             "interrupt" => Some(Op::Interrupt),
             "prompt" => Some(Op::Prompt),
@@ -134,6 +146,7 @@ impl Op {
             Op::List => "list",
             Op::Peek => "peek",
             Op::Chat => "chat",
+            Op::Image => "image",
             Op::Answer => "answer",
             Op::Interrupt => "interrupt",
             Op::Prompt => "prompt",
@@ -143,7 +156,7 @@ impl Op {
     /// The lowest capability that may run this op.
     pub fn needs(self) -> Cap {
         match self {
-            Op::List | Op::Peek | Op::Chat => Cap::View,
+            Op::List | Op::Peek | Op::Chat | Op::Image => Cap::View,
             Op::Answer | Op::Interrupt => Cap::Respond,
             Op::Prompt => Cap::Prompt,
         }
@@ -207,6 +220,11 @@ pub enum ServerFrame {
     Ready {
         #[serde(default)]
         devices: Vec<String>,
+        /// The server's version, for display only; absent from an older
+        /// server. Any JSON value is accepted here (a frame is never dropped
+        /// for it); only a string passing [`is_version`] is kept.
+        #[serde(default)]
+        server: Value,
     },
     #[serde(rename = "error")]
     Error {
@@ -304,6 +322,13 @@ pub enum Request {
         conv: String,
         pos: Option<ChatPos>,
     },
+    /// One part of one picture; every field is validated ([`is_picture_id`]).
+    Image {
+        pane: String,
+        conv: String,
+        id: String,
+        part: u32,
+    },
     Answer {
         pane: String,
         n: u32,
@@ -326,6 +351,7 @@ impl Request {
             Request::List => Op::List,
             Request::Peek { .. } => Op::Peek,
             Request::Chat { .. } => Op::Chat,
+            Request::Image { .. } => Op::Image,
             Request::Answer { .. } => Op::Answer,
             Request::Interrupt { .. } => Op::Interrupt,
             Request::Prompt { .. } => Op::Prompt,
@@ -337,6 +363,7 @@ impl Request {
             Request::List => "",
             Request::Peek { pane, .. }
             | Request::Chat { pane, .. }
+            | Request::Image { pane, .. }
             | Request::Answer { pane, .. }
             | Request::Interrupt { pane }
             | Request::Prompt { pane, .. } => pane,
@@ -352,6 +379,7 @@ impl Request {
             }
             // Never sent to the page (the desktop answers a chat itself).
             Request::Chat { pane, .. } => json!({"id": id, "op": "chat", "pane": pane}),
+            Request::Image { pane, .. } => json!({"id": id, "op": "image", "pane": pane}),
             Request::Answer {
                 pane,
                 n,
@@ -439,6 +467,30 @@ pub fn parse_request(cmd: &Value) -> Result<Request, Code> {
                 pane: pane_field(cmd)?,
                 conv,
                 pos,
+            })
+        }
+        Op::Image => {
+            let conv = obj
+                .get("conv")
+                .and_then(Value::as_str)
+                .filter(|c| is_menu_id(c))
+                .ok_or(Code::BadRequest)?;
+            let id = obj
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|i| is_picture_id(i))
+                .ok_or(Code::BadRequest)?;
+            let part = obj
+                .get("part")
+                .and_then(Value::as_u64)
+                .filter(|p| *p <= IMAGE_PART_MAX)
+                .and_then(|p| u32::try_from(p).ok())
+                .ok_or(Code::BadRequest)?;
+            Ok(Request::Image {
+                pane: pane_field(cmd)?,
+                conv: conv.to_string(),
+                id: id.to_string(),
+                part,
             })
         }
         Op::Answer => {
@@ -587,7 +639,21 @@ pub fn session_body(
 ) -> Value {
     json!({"k": "session", "open": open, "session": session, "cap": cap.as_str(),
            "name": name, "now_ms": now_ms,
-           "prev": {"session": prev.session, "seq": prev.seq}, "v": VERSION})
+           "prev": {"session": prev.session, "seq": prev.seq}, "v": VERSION,
+           "app": APP_VERSION})
+}
+
+/// This desktop app's version, sent in the `session` reply for display only
+/// (PROTOCOL.md 5.1): nothing is decided from it, on either side.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// A version string a peer sent, as it may be kept and shown: 1 to 32 chars of
+/// `[0-9A-Za-z.+-]` (anything else is "unknown").
+pub fn is_version(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 32
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'+' | b'-'))
 }
 
 /// `pair_challenge`: the check number, sealed for the one device that can
@@ -829,6 +895,63 @@ mod tests {
     }
 
     #[test]
+    fn image_needs_only_view_and_validates_every_field() {
+        assert_eq!(Op::parse("image"), Some(Op::Image));
+        assert_eq!(Op::Image.needs(), Cap::View);
+        assert_eq!(Op::Image.as_str(), "image");
+        let ok =
+            parse_request(&json!({"op":"image","pane":P,"conv":"abc_-1","id":"1100.100","part":0}));
+        let want = Request::Image {
+            pane: P.into(),
+            conv: "abc_-1".into(),
+            id: "1100.100".into(),
+            part: 0,
+        };
+        assert_eq!(ok.unwrap(), want);
+        assert_eq!(want.op(), Op::Image);
+        assert_eq!(want.pane(), P);
+        // The page is never asked (the desktop answers an image itself).
+        assert_eq!(want.event(3), json!({"id":3,"op":"image","pane":P}));
+        let edge = parse_request(
+            &json!({"op":"image","pane":P,"conv":"c","id":"0".repeat(40),"part":255}),
+        );
+        assert!(matches!(edge, Ok(Request::Image { part: 255, .. })));
+        let bad = |v: Value| assert_eq!(parse_request(&v), Err(Code::BadRequest), "{v}");
+        let base = json!({"op":"image","pane":P,"conv":"c","id":"10.100","part":1});
+        for (k, v) in [
+            ("pane", json!("nope")),
+            ("pane", json!(null)),
+            ("conv", json!("")),
+            ("conv", json!("a".repeat(33))),
+            ("conv", json!("a b")),
+            ("conv", json!(7)),
+            ("conv", json!(null)),
+            ("id", json!("")),
+            ("id", json!("1".repeat(41))),
+            ("id", json!("1a.100")),
+            ("id", json!("1 .100")),
+            ("id", json!("../x")),
+            ("id", json!(100)),
+            ("id", json!(null)),
+            ("part", json!(256)),
+            ("part", json!(-1)),
+            ("part", json!(1.5)),
+            ("part", json!("1")),
+            ("part", json!(null)),
+            ("part", json!(u64::MAX)),
+        ] {
+            let mut c = base.clone();
+            c[k] = v;
+            bad(c);
+        }
+        for k in ["pane", "conv", "id", "part"] {
+            let mut c = base.clone();
+            c.as_object_mut().unwrap().remove(k);
+            bad(c);
+        }
+    }
+
+    #[test]
     fn unknown_server_frames_are_not_errors() {
         assert!(matches!(
             parse_server_frame(r#"{"t":"something_new","x":1}"#),
@@ -898,8 +1021,24 @@ mod tests {
             b,
             json!({"k":"session","open":"nonce123","session":"sess","cap":"respond",
                    "name":"My PC","now_ms":1_700_000_000_000u64,
-                   "prev":{"session":"old","seq":4},"v":1})
+                   "prev":{"session":"old","seq":4},"v":1,"app":APP_VERSION})
         );
+        assert!(is_version(APP_VERSION), "{APP_VERSION}");
+        for ok in ["0.19.0", "1.2.3-rc.1+build5", "a", &"9".repeat(32)] {
+            assert!(is_version(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            " 1.0",
+            "1.0 ",
+            "1_0",
+            "é",
+            "1.0\n",
+            &"9".repeat(33),
+            "<b>",
+        ] {
+            assert!(!is_version(bad), "{bad:?}");
+        }
         // No earlier session: empty and 0.
         let b = session_body("n", "s", Cap::View, "x", 1, &Prev::default());
         assert_eq!(b["prev"], json!({"session":"","seq":0}));

@@ -12,7 +12,14 @@ import { t } from "../i18n/i18n";
 import { fill } from "../git/worktreeFlow";
 import { describeError, onRemoteStatus, remoteApi } from "../ipc/bridge";
 import { qrSvg } from "../remote/qr";
-import { REMOTE_CAPS, countdown, isRemoteCap, statusLine, type StatusTone } from "../remote/remoteModel";
+import {
+  REMOTE_CAPS,
+  countdown,
+  isRemoteCap,
+  serverVersionToShow,
+  statusLine,
+  type StatusTone,
+} from "../remote/remoteModel";
 import type { RemoteDevice, RemoteStatus } from "../types";
 import { askConfirm } from "../ui/Dialog";
 
@@ -94,6 +101,9 @@ export function renderRemoteSection(host: HTMLElement): () => void {
   const save = button(t("settings.remote.save"), true);
   const saveMsg = note("");
   const statusEl = note("");
+  // "Server 0.19.0" beside the connection state; hidden when there is none.
+  const versionEl = note("");
+  versionEl.hidden = true;
   const noticeEl = note("");
   noticeEl.hidden = true;
 
@@ -108,6 +118,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
   actions.append(save, saveMsg);
   conn.appendChild(actions);
   conn.appendChild(statusEl);
+  conn.appendChild(versionEl);
   conn.appendChild(noticeEl);
   host.appendChild(conn);
 
@@ -129,6 +140,13 @@ export function renderRemoteSection(host: HTMLElement): () => void {
   chatChecks.appendChild(shareChat.wrap);
   chatBlock.appendChild(chatChecks);
   chatBlock.appendChild(note(t("settings.remote.shareChatHint")));
+  // Pictures cannot be redacted, so they are their own switch, off by default,
+  // and only meaningful while conversations are shared.
+  const shareImages = checkbox(t("settings.remote.shareImages"));
+  const imageChecks = el("div", "act-checks");
+  imageChecks.appendChild(shareImages.wrap);
+  chatBlock.appendChild(imageChecks);
+  chatBlock.appendChild(note(t("settings.remote.shareImagesHint")));
   host.appendChild(chatBlock);
 
   // ── Devices ─────────────────────────────────────────────────────────
@@ -263,11 +281,18 @@ export function renderRemoteSection(host: HTMLElement): () => void {
     nWaiting.box.checked = s.notify_waiting;
     nDone.box.checked = s.notify_done;
     shareChat.box.checked = s.share_chat;
+    shareImages.box.checked = s.share_images;
+    shareImages.box.disabled = !s.share_chat;
     tokenNote.textContent = t(s.has_token ? "settings.remote.tokenSet" : "settings.remote.tokenNone");
     clearToken.hidden = !s.has_token;
     const line = statusLine(s);
     const text = t(`settings.remote.${line.key}`);
     setNote(statusEl, line.key === "err.other" ? fill(text, { detail: line.detail || "?" }) : text, line.tone);
+    const serverVersion = serverVersionToShow(s);
+    versionEl.hidden = serverVersion === null;
+    if (serverVersion !== null) {
+      setNote(versionEl, fill(t("settings.remote.serverVersion"), { version: serverVersion }));
+    }
     noticeEl.hidden = s.notice !== "identity_reset";
     if (!noticeEl.hidden) setNote(noticeEl, t("settings.remote.notice.identity_reset"), "warn");
     pairBtn.disabled = s.state !== "online" || s.pairing !== null;
@@ -295,6 +320,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
       notifyWaiting: nWaiting.box.checked,
       notifyDone: nDone.box.checked,
       shareChat: shareChat.box.checked,
+      shareImages: shareImages.box.checked,
     });
 
   save.addEventListener("click", () => {
@@ -350,6 +376,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
         notifyWaiting: nWaiting.box.checked,
         notifyDone: nDone.box.checked,
         shareChat: shareChat.box.checked,
+        shareImages: shareImages.box.checked,
       })
       .then(paint)
       .catch((e) => {
@@ -360,6 +387,7 @@ export function renderRemoteSection(host: HTMLElement): () => void {
   nWaiting.box.addEventListener("change", onNotify);
   nDone.box.addEventListener("change", onNotify);
   shareChat.box.addEventListener("change", onNotify);
+  shareImages.box.addEventListener("change", onNotify);
 
   pairBtn.addEventListener("click", () => {
     void (async () => {

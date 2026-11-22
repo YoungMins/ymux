@@ -8,7 +8,9 @@ import {
   countdown,
   errorKey,
   labelMatches,
+  isVersion,
   mapSendResult,
+  serverVersionToShow,
   shouldPublish,
   statusLine,
   type RemoteListInput,
@@ -103,6 +105,22 @@ describe("result tables", () => {
     const long = "Yes, allow this command to run in the sandbox for the rest of the session";
     expect(labelMatches(long, `${long.slice(0, 40)}…`)).toBe(true);
     expect(labelMatches(long, "Yes…")).toBe(false);
+  });
+});
+
+describe("server version", () => {
+  it("accepts 1-32 chars of [0-9A-Za-z.+-] and nothing else", () => {
+    for (const ok of ["0.19.0", "1.2.3-rc.1+b5", "a", "9".repeat(32)]) expect(isVersion(ok)).toBe(true);
+    for (const bad of ["", " 1", "1 ", "1_0", "é", "<b>", "9".repeat(33), 7, null, undefined]) {
+      expect(isVersion(bad)).toBe(false);
+    }
+  });
+
+  it("is shown only while online", () => {
+    expect(serverVersionToShow({ state: "online", server_version: "0.19.0" })).toBe("0.19.0");
+    expect(serverVersionToShow({ state: "online", server_version: "" })).toBeNull();
+    expect(serverVersionToShow({ state: "connecting", server_version: "0.19.0" })).toBeNull();
+    expect(serverVersionToShow({ state: "off", server_version: "0.19.0" })).toBeNull();
   });
 });
 

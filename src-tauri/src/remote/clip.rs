@@ -7,7 +7,8 @@
 
 use serde_json::{json, Map, Value};
 
-use super::proto::{is_menu_id, is_uuid, Op, Pane, LINES_MAX};
+use super::chat::pics::{self, IMAGE_MAX, PARTS_MAX, PART_BYTES, PER_ITEM};
+use super::proto::{is_menu_id, is_picture_id, is_uuid, Op, Pane, LINES_MAX};
 use crate::activity::redact::{clip, redact};
 
 /// Longest screen line or question line sent out.
@@ -401,6 +402,74 @@ fn result(data: &Value, allowed: &[&str]) -> Option<Value> {
     allowed.contains(&r).then(|| json!({ "result": r }))
 }
 
+fn is_image_type(t: &str) -> bool {
+    matches!(t, "image/png" | "image/jpeg" | "image/gif" | "image/webp")
+}
+
+/// The `images` of a chat item, rebuilt: at most [`PER_ITEM`], each with an id
+/// not used before in the reply (`seen` collects them), one of the four types
+/// and a size from 1 byte to [`IMAGE_MAX`]. `None` for anything else.
+fn picture_descriptors<'a>(
+    images: &'a Value,
+    seen: &mut std::collections::HashSet<&'a str>,
+) -> Option<Vec<Value>> {
+    let list = images.as_array()?;
+    if list.len() > PER_ITEM {
+        return None;
+    }
+    let mut out = Vec::with_capacity(list.len());
+    for p in list {
+        let id = p.get("id")?.as_str()?;
+        let ty = p.get("type")?.as_str()?;
+        let size = p.get("size")?.as_u64()?;
+        if !is_picture_id(id) || !is_image_type(ty) || size == 0 || size > IMAGE_MAX {
+            return None;
+        }
+        if !seen.insert(id) {
+            return None;
+        }
+        out.push(json!({"id": id, "type": ty, "size": size}));
+    }
+    Some(out)
+}
+
+/// An `image` reply as it may leave: `{"result":"gone"}`, or one part of a
+/// picture, checked against its own arithmetic: `parts` is what `size` needs,
+/// every part but the last is exactly [`PART_BYTES`] and the last holds the
+/// rest, and part 0 starts with the signature of the type it claims. The data
+/// is decoded and written again, so what leaves is canonical base64url.
+fn image(data: &Value) -> Option<Value> {
+    let o = data.as_object()?;
+    if o.contains_key("result") {
+        return result(data, &["gone"]);
+    }
+    let conv = o.get("conv")?.as_str().filter(|c| is_menu_id(c))?;
+    let id = o.get("id")?.as_str().filter(|i| is_picture_id(i))?;
+    let ty = o.get("type")?.as_str().filter(|t| is_image_type(t))?;
+    let size = o
+        .get("size")?
+        .as_u64()
+        .filter(|s| (1..=IMAGE_MAX).contains(s))?;
+    let part = o.get("part")?.as_u64()?;
+    let parts = o.get("parts")?.as_u64()?;
+    if parts != pics::parts(size) || parts > PARTS_MAX || part >= parts {
+        return None;
+    }
+    let bytes = super::keys::b64u_decode(o.get("data")?.as_str()?)?;
+    let want = if part + 1 < parts {
+        PART_BYTES as u64
+    } else {
+        size - (parts - 1) * PART_BYTES as u64
+    };
+    if bytes.len() as u64 != want || (part == 0 && pics::sniff(&bytes) != Some(ty)) {
+        return None;
+    }
+    Some(json!({
+        "conv": conv, "id": id, "type": ty, "size": size, "part": part,
+        "parts": parts, "data": super::keys::b64u(&bytes),
+    }))
+}
+
 /// A `chat` reply as it may leave: the reader's own output, checked field by
 /// field (roles, id and conv spellings, counts, the 64 KiB total) and every
 /// text cleaned again. `{"conv":""}` stays as it is.
@@ -423,9 +492,17 @@ fn chat(data: &Value) -> Option<Value> {
     }
     let mut total = 0usize;
     let mut items = Vec::with_capacity(raw.len());
+    // Every id of the reply, items and pictures: unique within it.
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for it in raw {
         let id = it.get("id")?.as_str()?;
-        if id.is_empty() || id.len() > 40 || !id.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        if !is_picture_id(id) {
+            return None;
+        }
+        // An id is used once in a reply: a repeated item id, or a picture that
+        // reuses an item's (the reader's two number spaces never meet), is not
+        // a reply of ours.
+        if !seen.insert(id) {
             return None;
         }
         let role = it.get("role")?.as_str()?;
@@ -439,8 +516,15 @@ fn chat(data: &Value) -> Option<Value> {
         if total > CHAT_BYTES_MAX {
             return None;
         }
-        items.push(json!({"id": id, "role": role, "text": text,
-                          "ts_ms": as_count(it.get("ts_ms"))}));
+        let mut item = json!({"id": id, "role": role, "text": text,
+                              "ts_ms": as_count(it.get("ts_ms"))});
+        if let Some(images) = it.get("images") {
+            let listed = picture_descriptors(images, &mut seen)?;
+            if !listed.is_empty() {
+                item["images"] = Value::Array(listed);
+            }
+        }
+        items.push(item);
     }
     let pos = |k: &str| {
         o.get(k)?
@@ -461,6 +545,7 @@ pub fn reply_data(op: Op, data: &Value) -> Option<Value> {
         Op::List => Some(json!({ "panes": panes(data.get("panes")?)? })),
         Op::Peek => peek(data),
         Op::Chat => chat(data),
+        Op::Image => image(data),
         Op::Answer => result(data, &["sent", "stale", "gone", "failed"]),
         Op::Interrupt => result(data, &["sent", "gone", "failed"]),
         Op::Prompt => result(
@@ -722,6 +807,229 @@ mod tests {
 
     fn chat_item(id: &str, role: &str, text: &str) -> Value {
         json!({"id": id, "role": role, "text": text, "ts_ms": 5})
+    }
+
+    fn pic(id: &str, ty: &str, size: u64) -> Value {
+        json!({"id": id, "type": ty, "size": size, "extra": 1})
+    }
+
+    #[test]
+    fn chat_item_pictures_are_checked_and_rebuilt() {
+        let base = |images: Value| {
+            let mut it = chat_item("5.0", "user", "look");
+            it["images"] = images;
+            json!({"conv": "c", "agent": "claude", "items": [it], "start": 0, "end": 9,
+                   "older": false, "newer": false})
+        };
+        let ok = reply_data(
+            Op::Chat,
+            &base(json!([
+                pic("5.100", "image/png", 10),
+                pic("5.101", "image/webp", 8_388_608)
+            ])),
+        )
+        .unwrap();
+        assert_eq!(
+            ok["items"][0]["images"],
+            json!([{"id":"5.100","type":"image/png","size":10},
+                   {"id":"5.101","type":"image/webp","size":8_388_608}]),
+            "rebuilt, `extra` dropped"
+        );
+        // No field when there are none (an empty list is not sent either).
+        let none = reply_data(Op::Chat, &base(json!([]))).unwrap();
+        assert!(none["items"][0].get("images").is_none());
+        let bad = |v: Value| assert!(reply_data(Op::Chat, &base(v)).is_none());
+        bad(json!([pic("5.100", "image/svg+xml", 10)]));
+        bad(json!([pic("5.100", "image/PNG", 10)]));
+        bad(json!([pic("5.100", "image/png", 0)]));
+        bad(json!([pic("5.100", "image/png", 8_388_609)]));
+        bad(json!([pic("5.100", "image/png", u64::MAX)]));
+        bad(json!([pic("a.100", "image/png", 10)]));
+        bad(json!([pic("", "image/png", 10)]));
+        bad(json!([pic(&"1".repeat(41), "image/png", 10)]));
+        bad(json!([json!({"id":"5.100","type":"image/png"})]));
+        bad(json!([
+            json!({"id":"5.100","type":"image/png","size":"10"})
+        ]));
+        bad(json!(["5.100"]));
+        bad(json!("5.100"));
+        bad(json!({"id":"5.100"}));
+        // At most eight an item, ids unique across the reply.
+        let nine: Vec<Value> = (0..9)
+            .map(|i| pic(&format!("5.{}", 100 + i), "image/png", 10))
+            .collect();
+        bad(json!(nine));
+        let eight: Vec<Value> = (0..8)
+            .map(|i| pic(&format!("5.{}", 100 + i), "image/png", 10))
+            .collect();
+        assert!(reply_data(Op::Chat, &base(json!(eight))).is_some());
+        bad(json!([
+            pic("5.100", "image/png", 10),
+            pic("5.100", "image/png", 11)
+        ]));
+        // A tool item may have an empty text and pictures.
+        let mut it = chat_item("6.0", "tool", "");
+        it["images"] = json!([pic("6.100", "image/gif", 3)]);
+        let r = json!({"conv": "c", "agent": "codex", "items": [it], "start": 0, "end": 1,
+                       "older": false, "newer": false});
+        assert!(reply_data(Op::Chat, &r).is_some());
+    }
+
+    #[test]
+    fn a_repeated_item_id_or_a_picture_reusing_one_is_not_a_reply() {
+        let reply = |items: Value| {
+            json!({"conv": "c", "agent": "claude", "items": items, "start": 0, "end": 9,
+                   "older": false, "newer": false})
+        };
+        let ok = reply(json!([
+            chat_item("1.0", "user", "a"),
+            chat_item("2.0", "user", "b")
+        ]));
+        assert!(reply_data(Op::Chat, &ok).is_some());
+        let dup = reply(json!([
+            chat_item("1.0", "user", "a"),
+            chat_item("1.0", "assistant", "b")
+        ]));
+        assert!(reply_data(Op::Chat, &dup).is_none(), "duplicate item id");
+        let mut first = chat_item("1.0", "user", "a");
+        first["images"] = json!([pic("1.0", "image/png", 10)]);
+        assert!(
+            reply_data(Op::Chat, &reply(json!([first]))).is_none(),
+            "picture id = item id"
+        );
+    }
+
+    const K96: usize = 98_304;
+
+    /// `len` bytes that start like a PNG (so part 0 passes its signature check).
+    fn part_data(len: usize) -> String {
+        let mut bytes = vec![0x11u8; len];
+        let sig = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let n = len.min(8);
+        bytes[..n].copy_from_slice(&sig[..n]);
+        super::super::keys::b64u(&bytes)
+    }
+
+    fn image_part(size: u64, part: u64, parts: u64, len: usize) -> Value {
+        json!({"conv": "c", "id": "5.100", "type": "image/png", "size": size, "part": part,
+               "parts": parts, "data": part_data(len), "extra": 1})
+    }
+
+    #[test]
+    fn image_reply_is_rebuilt_and_its_part_arithmetic_checked() {
+        let size = 2 * K96 as u64 + 1000;
+        let first = reply_data(Op::Image, &image_part(size, 0, 3, K96)).unwrap();
+        assert!(first.get("extra").is_none());
+        assert_eq!(
+            (
+                first["part"].clone(),
+                first["parts"].clone(),
+                first["size"].clone()
+            ),
+            (json!(0), json!(3), json!(size))
+        );
+        assert_eq!(
+            (
+                first["type"].clone(),
+                first["conv"].clone(),
+                first["id"].clone()
+            ),
+            (json!("image/png"), json!("c"), json!("5.100"))
+        );
+        // Middle and last parts: exactly 96 KiB, then the remainder.
+        assert!(reply_data(Op::Image, &image_part(size, 1, 3, K96)).is_some());
+        assert!(reply_data(Op::Image, &image_part(size, 2, 3, 1000)).is_some());
+        assert!(reply_data(Op::Image, &image_part(size, 1, 3, K96 - 1)).is_none());
+        assert!(reply_data(Op::Image, &image_part(size, 2, 3, 999)).is_none());
+        assert!(reply_data(Op::Image, &image_part(size, 2, 3, 1001)).is_none());
+        assert!(reply_data(Op::Image, &image_part(size, 2, 3, K96)).is_none());
+        assert!(
+            reply_data(Op::Image, &image_part(size, 0, 3, K96 + 1)).is_none(),
+            "more than 96 KiB"
+        );
+        // A single small part.
+        assert!(reply_data(Op::Image, &image_part(500, 0, 1, 500)).is_some());
+        assert!(reply_data(Op::Image, &image_part(8, 0, 1, 8)).is_some());
+        // Counts that do not agree with the size, or are out of range.
+        assert!(
+            reply_data(Op::Image, &image_part(size, 3, 3, 1000)).is_none(),
+            "part < parts"
+        );
+        assert!(reply_data(Op::Image, &image_part(size, 0, 2, K96)).is_none());
+        assert!(reply_data(Op::Image, &image_part(size, 0, 4, K96)).is_none());
+        assert!(
+            reply_data(Op::Image, &image_part(0, 0, 0, 0)).is_none(),
+            "zero bytes"
+        );
+        assert!(
+            reply_data(Op::Image, &image_part(8_388_609, 0, 86, K96)).is_none(),
+            "over 8 MiB"
+        );
+        let max = 8_388_608u64;
+        assert!(reply_data(Op::Image, &image_part(max, 85, 86, max as usize - 85 * K96)).is_some());
+        assert!(reply_data(Op::Image, &image_part(max, 0, 86, K96)).is_some());
+        assert!(reply_data(Op::Image, &image_part(max, 0, 257, K96)).is_none());
+        assert!(reply_data(Op::Image, &image_part(size, 256, 3, K96)).is_none());
+        assert!(reply_data(Op::Image, &image_part(size, u64::MAX, 3, K96)).is_none());
+    }
+
+    #[test]
+    fn image_reply_fields_are_validated() {
+        let ok = image_part(500, 0, 1, 500);
+        let with = |f: &dyn Fn(&mut Value)| {
+            let mut v = ok.clone();
+            f(&mut v);
+            reply_data(Op::Image, &v)
+        };
+        assert!(with(&|_| {}).is_some());
+        assert!(with(&|v| v["conv"] = json!("a b")).is_none());
+        assert!(with(&|v| v["conv"] = json!("")).is_none());
+        assert!(with(&|v| v["id"] = json!("a.1")).is_none());
+        assert!(with(&|v| v["id"] = json!("1".repeat(41))).is_none());
+        assert!(with(&|v| v["type"] = json!("image/svg+xml")).is_none());
+        assert!(
+            with(&|v| v["type"] = json!("image/jpeg")).is_none(),
+            "part 0 is a PNG, not a JPEG"
+        );
+        assert!(with(&|v| v["size"] = json!("500")).is_none());
+        assert!(with(&|v| v["part"] = json!(-1)).is_none());
+        assert!(with(&|v| v["data"] = json!(7)).is_none());
+        assert!(
+            with(&|v| v["data"] = json!("AAAA=")).is_none(),
+            "no padding in base64url"
+        );
+        assert!(
+            with(&|v| v["data"] = json!("+/+/")).is_none(),
+            "base64url, not base64"
+        );
+        assert!(with(&|v| v["data"] = json!("!!!!")).is_none());
+        assert!(with(&|v| v["data"] = json!("")).is_none());
+        for k in ["conv", "id", "type", "size", "part", "parts", "data"] {
+            assert!(
+                with(&|v| {
+                    v.as_object_mut().unwrap().remove(k);
+                })
+                .is_none(),
+                "{k}"
+            );
+        }
+        // Data that is not a picture at all (part 0 must start with the type).
+        let mut text = ok.clone();
+        text["data"] = json!(super::super::keys::b64u(&[b'x'; 500]));
+        assert!(reply_data(Op::Image, &text).is_none());
+    }
+
+    #[test]
+    fn gone_is_the_only_result_an_image_may_carry() {
+        assert_eq!(
+            reply_data(Op::Image, &json!({"result": "gone"})),
+            Some(json!({"result": "gone"}))
+        );
+        assert!(reply_data(Op::Image, &json!({"result": "sent"})).is_none());
+        assert!(reply_data(Op::Image, &json!({"result": 1})).is_none());
+        assert!(reply_data(Op::Image, &json!(null)).is_none());
+        assert!(reply_data(Op::Image, &json!([])).is_none());
+        assert!(reply_data(Op::Image, &json!({})).is_none());
     }
 
     #[test]

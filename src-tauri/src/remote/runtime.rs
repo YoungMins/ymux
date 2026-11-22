@@ -111,7 +111,26 @@ trait Host: Send + Sync {
     /// `remote::chat`): `{"conv":""}` whenever there is nothing it may show,
     /// `None` when the conversation exists but could not be read this time.
     /// Blocking file reads, bounded; called with no lock held.
-    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>) -> Option<Value>;
+    /// `big`: big transcript lines may be read (the device is inside its work
+    /// budget). Without it the reply holds what needs no big line, and is
+    /// `chat::busy()` when nothing can be served without one.
+    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>, big: bool) -> Option<Value>;
+    /// Drop every decoded picture kept for `image` (sharing was switched off).
+    fn forget_pictures(&self) {}
+    /// The `image` reply data: one part of one picture of the pane's current
+    /// conversation (`remote::chat::image`). `{"result":"gone"}` whenever it
+    /// cannot be served (and always when picture sharing is off), `None` when
+    /// the line could not be read this time. Blocking file reads, bounded;
+    /// called with no lock held.
+    /// `big` as for `chat`: a cache hit is served either way, a miss that
+    /// needs a big line is `chat::busy()` without it.
+    fn image(&self, pane: &str, conv: &str, id: &str, part: u32, big: bool) -> Option<Value>;
+    /// The bytes of big transcript lines the last `chat` / `image` call read
+    /// (and reset the count): charged to the device in the engine's work
+    /// budget. `0` for a host that reads none.
+    fn take_work(&self) -> u64 {
+        0
+    }
 }
 
 /// What a remembered transcript path was found for: agent, session id, config
@@ -122,6 +141,102 @@ struct TauriHost {
     app: AppHandle,
     /// pane -> the transcript path found for it (`chat` polls reuse it).
     paths: Mutex<std::collections::HashMap<uuid::Uuid, (PathKey, std::path::PathBuf)>>,
+    /// The last decoded pictures served, so the parts of one picture cost one
+    /// read (dropped with the conversation and when sharing goes off).
+    pics: Mutex<chat::pics::PicCache>,
+    /// Big-line bytes read since the last `take_work`.
+    work: AtomicU64,
+    /// Bumped by `forget_pictures`: a cache taken out by a request in flight
+    /// is dropped, not put back, when this moved meanwhile.
+    pics_gen: AtomicU64,
+}
+
+/// Where a pane's transcript is and who it belongs to: what `chat` and `image`
+/// both need before they read anything.
+struct Located {
+    id: uuid::Uuid,
+    agent: crate::agent_sessions::AgentKind,
+    session_id: String,
+    record_cwd: String,
+    source: crate::agent_sessions::IdSource,
+    root: std::path::PathBuf,
+    /// The pane's live directory, never the record's own.
+    pane_cwd: String,
+    key: PathKey,
+}
+
+impl Located {
+    fn binding(&self) -> chat::Binding<'_> {
+        chat::Binding {
+            agent: self.agent,
+            session_id: &self.session_id,
+            record_cwd: &self.record_cwd,
+            source: self.source,
+        }
+    }
+}
+
+impl TauriHost {
+    /// The transcript of the agent in `pane`, if the pane has one it may show:
+    /// a live pane with an active agent record that belongs to the pane's own
+    /// account directories. `None` = nothing to show.
+    fn locate(&self, pane: &str) -> Option<Located> {
+        let state = self.app.state::<AppState>();
+        let id = uuid::Uuid::parse_str(pane).ok()?;
+        if !state.pty.has(id) {
+            self.paths.lock().remove(&id);
+            return None;
+        }
+        // Copy the record out: no lock is held across the disk reads that follow.
+        // Running, or an agent-vouched conversation that has just ended (the
+        // agent went back to the shell) and no new agent is unbound in the
+        // pane: see `SessionTracker::servable_record`.
+        let rec = self
+            .app
+            .state::<SharedSessions>()
+            .0
+            .lock()
+            .servable_record(id, crate::agent_sessions::now_secs())?;
+        // Only the directories this pane's own agents use: another account's
+        // conversation is not this pane's, even if the id matches.
+        let home = crate::accounts::home_dirs(dirs::home_dir().as_deref());
+        let dirs = state.pty.agent_dirs(id).unwrap_or_else(|| home.clone());
+        if !record_matches_pane(&rec, &dirs, &home) {
+            return None;
+        }
+        let config_dir = session_config_dir(&rec, &home).to_string();
+        let root = transcript_root(rec.agent, &config_dir);
+        // The pane's live directory, never the record's own: a disk-inferred
+        // binding is checked against where the pane really is.
+        let pane_cwd = state.pty.cwd_for(id).unwrap_or_default();
+        let key = (rec.agent, rec.session_id.clone(), config_dir);
+        Some(Located {
+            id,
+            agent: rec.agent,
+            session_id: rec.session_id.clone(),
+            record_cwd: rec.cwd.clone(),
+            source: rec.source,
+            root,
+            pane_cwd,
+            key,
+        })
+    }
+
+    /// The directory walk is remembered per pane for as long as the agent,
+    /// session and config directory stay the same; the checks on the file
+    /// itself run every time.
+    fn take_path(&self, l: &Located) -> Option<std::path::PathBuf> {
+        match self.paths.lock().remove(&l.id) {
+            Some((k, p)) if k == l.key => Some(p),
+            _ => None,
+        }
+    }
+
+    fn keep_path(&self, l: Located, cached: Option<std::path::PathBuf>) {
+        if let Some(p) = cached {
+            self.paths.lock().insert(l.id, (l.key, p));
+        }
+    }
 }
 
 impl Host for TauriHost {
@@ -173,55 +288,87 @@ impl Host for TauriHost {
         let _ = state.config.flush();
     }
 
-    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>) -> Option<Value> {
-        let state = self.app.state::<AppState>();
+    fn forget_pictures(&self) {
+        // Bumped first: a request that has the cache out right now (see
+        // `image`) sees it and drops it instead of putting it back.
+        self.pics_gen.fetch_add(1, Ordering::SeqCst);
+        self.pics.lock().clear();
+    }
+
+    fn chat(&self, pane: &str, conv: &str, pos: Option<ChatPos>, big: bool) -> Option<Value> {
         // Read now, not when the engine was last set up: switching sharing
         // off holds for the very next request.
-        if !state.config.snapshot().remote.share_chat {
+        let cfg = self.cfg();
+        if !cfg.share_images || !cfg.share_chat {
+            self.pics.lock().clear();
+        }
+        if !cfg.share_chat {
             return Some(chat::none());
         }
-        let Ok(id) = uuid::Uuid::parse_str(pane) else {
+        let Some(l) = self.locate(pane) else {
             return Some(chat::none());
         };
-        if !state.pty.has(id) {
-            self.paths.lock().remove(&id);
-            return Some(chat::none());
+        let mut cached = self.take_path(&l);
+        let mut work = 0;
+        let out = chat::answer(
+            &l.binding(),
+            &l.root,
+            &l.pane_cwd,
+            conv,
+            pos,
+            cfg.share_images,
+            big,
+            &mut cached,
+            &mut work,
+        );
+        self.work.fetch_add(work, Ordering::Relaxed);
+        self.keep_path(l, cached);
+        out
+    }
+
+    fn take_work(&self) -> u64 {
+        self.work.swap(0, Ordering::Relaxed)
+    }
+
+    fn image(&self, pane: &str, conv: &str, id: &str, part: u32, big: bool) -> Option<Value> {
+        // Both switches, read now: turning either off holds for the very next
+        // request, and what was kept decoded is dropped.
+        let cfg = self.cfg();
+        if !cfg.share_images || !cfg.share_chat {
+            self.pics.lock().clear();
+            return Some(chat::gone());
         }
-        // Copy the record out: no lock is held across the disk reads below.
-        let rec = self.app.state::<SharedSessions>().0.lock().get(id).cloned();
-        let Some(rec) = rec.filter(|s| s.active) else {
-            return Some(chat::none());
+        let Some(l) = self.locate(pane) else {
+            self.pics.lock().forget_pane(pane);
+            return Some(chat::gone());
         };
-        // Only the directories this pane's own agents use: another account's
-        // conversation is not this pane's, even if the id matches.
-        let home = crate::accounts::home_dirs(dirs::home_dir().as_deref());
-        let dirs = state.pty.agent_dirs(id).unwrap_or_else(|| home.clone());
-        if !record_matches_pane(&rec, &dirs, &home) {
-            return Some(chat::none());
+        let mut cached = self.take_path(&l);
+        let gen = self.pics_gen.load(Ordering::SeqCst);
+        let mut cache = std::mem::take(&mut *self.pics.lock());
+        let mut work = 0;
+        let out = chat::image(
+            &l.binding(),
+            &l.root,
+            &l.pane_cwd,
+            pane,
+            conv,
+            id,
+            part,
+            big,
+            &mut cached,
+            &mut cache,
+            &mut work,
+        );
+        self.work.fetch_add(work, Ordering::Relaxed);
+        // Put back only if sharing was not switched off meanwhile (then the
+        // pictures it holds must not come back).
+        {
+            let mut slot = self.pics.lock();
+            if self.pics_gen.load(Ordering::SeqCst) == gen {
+                *slot = cache;
+            }
         }
-        let config_dir = session_config_dir(&rec, &home).to_string();
-        let root = transcript_root(rec.agent, &config_dir);
-        // The pane's live directory, never the record's own: a disk-inferred
-        // binding is checked against where the pane really is.
-        let pane_cwd = state.pty.cwd_for(id).unwrap_or_default();
-        let binding = chat::Binding {
-            agent: rec.agent,
-            session_id: &rec.session_id,
-            record_cwd: &rec.cwd,
-            source: rec.source,
-        };
-        // The directory walk is remembered per pane for as long as the agent,
-        // session and config directory stay the same; the checks on the file
-        // itself run every time.
-        let key = (rec.agent, rec.session_id.clone(), config_dir);
-        let mut cached = match self.paths.lock().remove(&id) {
-            Some((k, p)) if k == key => Some(p),
-            _ => None,
-        };
-        let out = chat::answer(&binding, &root, &pane_cwd, conv, pos, &mut cached);
-        if let Some(p) = cached {
-            self.paths.lock().insert(id, (key, p));
-        }
+        self.keep_path(l, cached);
         out
     }
 
@@ -265,6 +412,7 @@ struct Snapshot {
     notify_waiting: bool,
     notify_done: bool,
     share_chat: bool,
+    share_images: bool,
     set: PairedSet,
 }
 
@@ -384,12 +532,41 @@ impl Shared {
                     pane,
                     conv,
                     pos,
+                    big,
                 } => {
                     // The desktop answers a conversation itself (no lock held
                     // while the file is read), then hands the answer back.
-                    match self.host.chat(&pane, &conv, pos) {
+                    let out = self.host.chat(&pane, &conv, pos, big);
+                    let work = self.host.take_work();
+                    self.with_engine(|e| e.note_work(id, work, now_ms()));
+                    match out {
+                        Some(data) if chat::is_busy(&data) => {
+                            self.with_engine(|e| e.big_busy(id, now_ms()))
+                        }
                         Some(data) => self.with_engine(|e| e.chat_reply(id, &data, now_ms())),
                         None => self.with_engine(|e| e.chat_failed(id, now_ms())),
+                    };
+                    answered = true;
+                }
+                Out::Image {
+                    id,
+                    pane,
+                    conv,
+                    pic,
+                    part,
+                    big,
+                } => {
+                    // Like a chat: the desktop answers itself, the page is
+                    // never asked, no lock is held while the file is read.
+                    let out = self.host.image(&pane, &conv, &pic, part, big);
+                    let work = self.host.take_work();
+                    self.with_engine(|e| e.note_work(id, work, now_ms()));
+                    match out {
+                        Some(data) if chat::is_busy(&data) => {
+                            self.with_engine(|e| e.big_busy(id, now_ms()))
+                        }
+                        Some(data) => self.with_engine(|e| e.image_reply(id, &data, now_ms())),
+                        None => self.with_engine(|e| e.image_failed(id, now_ms())),
                     };
                     answered = true;
                 }
@@ -567,6 +744,7 @@ impl Shared {
             notify_waiting: cfg.notify_waiting,
             notify_done: cfg.notify_done,
             share_chat: cfg.share_chat,
+            share_images: cfg.share_images,
             set: self.paired(&cfg.devices),
             origin,
             token,
@@ -582,6 +760,7 @@ impl Shared {
             notify_waiting,
             notify_done,
             share_chat,
+            share_images,
             set:
                 PairedSet {
                     usable: paired,
@@ -611,6 +790,7 @@ impl Shared {
             e.set_identity(&name, &token);
             e.set_notify(notify_waiting, notify_done);
             e.set_share_chat(share_chat);
+            e.set_share_images(share_images);
             e.set_devices(paired);
             e.set_unusable(unreadable);
             let panes = self.latest_panes.lock().clone();
@@ -623,6 +803,7 @@ impl Shared {
             e.set_identity(&name, &token);
             e.set_notify(notify_waiting, notify_done);
             e.set_share_chat(share_chat);
+            e.set_share_images(share_images);
             e.set_devices(paired);
             e.set_unusable(unreadable);
         }
@@ -864,6 +1045,9 @@ pub fn start(app: &AppHandle, standdown: bool) {
         Arc::new(TauriHost {
             app: app.clone(),
             paths: Mutex::new(Default::default()),
+            pics: Mutex::new(Default::default()),
+            work: AtomicU64::new(0),
+            pics_gen: AtomicU64::new(0),
         }),
         secrets,
         Audit::new(dir.join("remote").join("audit.jsonl")),
@@ -923,6 +1107,10 @@ pub struct RemoteStatus {
     pub notify_waiting: bool,
     pub notify_done: bool,
     pub share_chat: bool,
+    pub share_images: bool,
+    /// The server's version from its `ready`, for display only; empty when it
+    /// sent none, it was not valid, or the link is down. Never persisted.
+    pub server_version: String,
     pub devices: Vec<DeviceStatus>,
     pub pairing: Option<PairingInfo>,
 }
@@ -930,8 +1118,14 @@ pub struct RemoteStatus {
 fn status_of(sh: &Shared) -> RemoteStatus {
     let cfg = sh.cfg();
     let secret = sh.secrets.status(SECRET_ID);
-    let (online, window) = sh
-        .with_engine(|e| (e.online_devices(), e.pairing_window()))
+    let (online, window, server_version) = sh
+        .with_engine(|e| {
+            (
+                e.online_devices(),
+                e.pairing_window(),
+                e.server_version().unwrap_or_default().to_string(),
+            )
+        })
         .unwrap_or_default();
     let link = sh.link.lock().clone();
     let unreadable = sh.unreadable.lock().clone();
@@ -953,6 +1147,8 @@ fn status_of(sh: &Shared) -> RemoteStatus {
         notify_waiting: cfg.notify_waiting,
         notify_done: cfg.notify_done,
         share_chat: cfg.share_chat,
+        share_images: cfg.share_images,
+        server_version,
         devices: cfg
             .devices
             .iter()
@@ -1011,6 +1207,7 @@ pub fn remote_configure(
     notify_waiting: bool,
     notify_done: bool,
     share_chat: bool,
+    share_images: bool,
 ) -> YmuxResult<RemoteStatus> {
     guard_local(&webview, &request, "remote_configure")?;
     let sh = &rt.shared;
@@ -1037,6 +1234,7 @@ pub fn remote_configure(
         r.notify_waiting = notify_waiting;
         r.notify_done = notify_done;
         r.share_chat = share_chat;
+        r.share_images = share_images;
     };
     // Settings changes and the worker's reads of the device set take turns
     // (see `devset.rs`). Pointing the link at another server makes the setup
@@ -1064,6 +1262,11 @@ pub fn remote_configure(
         }
         Ok(changed)
     })?;
+    // Pictures switched off: what was kept decoded goes now, not with the next
+    // request.
+    if !share_images || !share_chat {
+        sh.host.forget_pictures();
+    }
     sh.active.store(sh.allowed && enabled, Ordering::Relaxed);
     sh.wake();
     if server_changed && !server_url.trim().is_empty() {

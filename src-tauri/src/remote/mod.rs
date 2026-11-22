@@ -30,6 +30,10 @@ pub mod session;
 #[cfg(test)]
 mod fixture_tests;
 
+/// A tiny PNG writer for tests and the end-to-end fake desktop.
+#[cfg(test)]
+pub(crate) mod testpng;
+
 #[cfg(feature = "desktop")]
 pub mod runtime;
 

@@ -341,6 +341,12 @@ export interface RemoteStatus {
   notify_done: boolean;
   /// A paired device may read agent conversations (`chat`).
   share_chat: boolean;
+  /// ...and the pictures in them (`image`); off by default, a picture cannot
+  /// be redacted.
+  share_images: boolean;
+  /// The server's version from its `ready` (display only, never stored); "" when
+  /// the server sent none or the link is down.
+  server_version: string;
   devices: RemoteDevice[];
   pairing: RemotePairing | null;
 }

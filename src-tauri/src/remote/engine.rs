@@ -50,6 +50,22 @@ pub enum Out {
         pane: String,
         conv: String,
         pos: Option<proto::ChatPos>,
+        /// May the reader read big transcript lines for this command (the
+        /// device is inside its work budget)?
+        big: bool,
+    },
+    /// An `image` command, answered by the desktop itself like a chat: read
+    /// one part of one picture, then hand the result to [`Engine::image_reply`]
+    /// (or [`Engine::image_failed`]). `pic` is the picture's id.
+    Image {
+        id: u64,
+        pane: String,
+        conv: String,
+        pic: String,
+        part: u32,
+        /// As for [`Out::Chat`]: a cache hit is served either way, a miss that
+        /// needs a big line is `busy` without it.
+        big: bool,
     },
     /// Emit `remote://pair-request` (the proof already verified). It carries
     /// no check number: that goes to the phone, sealed, and the user types it.
@@ -145,13 +161,72 @@ pub struct Engine {
     notify_done: bool,
     /// May a paired device read agent conversations (`chat`)?
     share_chat: bool,
+    /// May they also see the pictures in them (`image`)? Off until the owner
+    /// switches it on: a picture cannot be redacted.
+    share_images: bool,
     /// device id -> times of its recent accepted `chat` commands.
     chat_times: HashMap<String, Vec<u64>>,
+    /// Same for `image` commands.
+    image_times: HashMap<String, Vec<u64>>,
+    /// Big-line bytes read on behalf of each device (`chat` + `image`).
+    work: WorkBudget,
+    /// The server's version from its `ready`; empty when absent or invalid.
+    /// Display only, never persisted, forgotten with the connection.
+    server_version: String,
     out: Vec<Out>,
 }
 
 /// Most `chat` commands one device may have accepted within a second.
 pub const CHAT_PER_SECOND: usize = 5;
+/// Most `image` commands one device may have accepted within a second.
+pub const IMAGE_PER_SECOND: usize = 12;
+
+/// The window over which a device's big-line reads are added up, and how many
+/// bytes of them one device may cause within it (`chat` and `image` cache
+/// misses that read lines over 2 MiB). A phone that follows a conversation
+/// (`after: end`) never re-reads a finished line, so normal use stays far
+/// below this; a poll that meets a newly appended big line (what is new is
+/// itself such an entry) is still `busy` over the budget, and one that
+/// re-reads 22 MiB lines in a loop is limited.
+pub const WORK_WINDOW_MS: u64 = 10_000;
+pub const WORK_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Big-line bytes read for each device, over a rolling [`WORK_WINDOW_MS`].
+#[derive(Debug, Default)]
+pub struct WorkBudget {
+    by_device: HashMap<String, Vec<(u64, u64)>>,
+}
+
+impl WorkBudget {
+    /// May `device` have another read started now?
+    pub fn room(&mut self, now: u64, device: &str) -> bool {
+        let w = self.by_device.entry(device.to_string()).or_default();
+        w.retain(|(t, _)| now.saturating_sub(*t) < WORK_WINDOW_MS);
+        w.iter().map(|(_, b)| *b).sum::<u64>() < WORK_MAX_BYTES
+    }
+
+    /// `device` caused `bytes` of big-line reads at `now`.
+    pub fn charge(&mut self, now: u64, device: &str, bytes: u64) {
+        if bytes > 0 {
+            self.by_device
+                .entry(device.to_string())
+                .or_default()
+                .push((now, bytes));
+        }
+    }
+}
+
+/// Is there room for one more accepted command in `times` (a device's recent
+/// accepted ones) within the last second, given a limit of `limit`?
+fn rate_room(times: &mut HashMap<String, Vec<u64>>, now: u64, device: &str, limit: usize) -> bool {
+    let w = times.entry(device.to_string()).or_default();
+    w.retain(|t| now.saturating_sub(*t) < 1000);
+    w.len() < limit
+}
+
+fn rate_take(times: &mut HashMap<String, Vec<u64>>, now: u64, device: &str) {
+    times.entry(device.to_string()).or_default().push(now);
+}
 
 /// Sealed failure replies one device may be sent per window for frames that
 /// fail the session rules (`replay`, `bad_session`, `expired`). A relay can
@@ -221,7 +296,11 @@ impl Engine {
             notify_waiting: true,
             notify_done: false,
             share_chat: true,
+            share_images: false,
             chat_times: HashMap::new(),
+            image_times: HashMap::new(),
+            work: WorkBudget::default(),
+            server_version: String::new(),
             out: Vec::new(),
         }
     }
@@ -249,6 +328,12 @@ impl Engine {
     /// Whether `chat` may show conversations; off answers `{"conv":""}`.
     pub fn set_share_chat(&mut self, on: bool) {
         self.share_chat = on;
+    }
+
+    /// Whether `image` may serve pictures (it also needs conversation sharing);
+    /// off answers `{"result":"gone"}` without reading anything.
+    pub fn set_share_images(&mut self, on: bool) {
+        self.share_images = on;
     }
 
     /// Device ids the config holds but that cannot be used this run (their
@@ -458,6 +543,7 @@ impl Engine {
 
     pub fn on_connect(&mut self) {
         self.phase = Phase::AwaitChallenge;
+        self.server_version.clear();
         self.sessions.clear();
         self.online.clear();
         self.pairing = None;
@@ -468,6 +554,7 @@ impl Engine {
     pub fn on_disconnect(&mut self, now: u64) {
         self.now = now;
         self.phase = Phase::Idle;
+        self.server_version.clear();
         self.sessions.clear();
         self.online.clear();
         self.pairing = None;
@@ -487,7 +574,7 @@ impl Engine {
         self.now = now;
         match frame {
             ServerFrame::Challenge { nonce, v, origin } => self.on_challenge(&nonce, v, &origin),
-            ServerFrame::Ready { devices } => self.on_ready(&devices),
+            ServerFrame::Ready { devices, server } => self.on_ready(&devices, &server),
             ServerFrame::Error { code } => {
                 if matches!(self.phase, Phase::AwaitChallenge | Phase::AwaitReady) {
                     self.phase = Phase::Idle;
@@ -556,11 +643,22 @@ impl Engine {
         self.send(hello);
     }
 
-    fn on_ready(&mut self, server_devices: &[String]) {
+    /// The server's version as shown in Settings: `Some` only for a valid one
+    /// (display only: nothing is decided from it). Memory only.
+    pub fn server_version(&self) -> Option<&str> {
+        (!self.server_version.is_empty()).then_some(self.server_version.as_str())
+    }
+
+    fn on_ready(&mut self, server_devices: &[String], server: &Value) {
         if self.phase != Phase::AwaitReady {
             return;
         }
         self.phase = Phase::Ready;
+        self.server_version = server
+            .as_str()
+            .filter(|s| proto::is_version(s))
+            .unwrap_or_default()
+            .to_string();
         // A device the server still holds but this desktop does not know can
         // never run a command here, yet it would keep receiving pushes.
         // A device the config still holds but whose link key could not be
@@ -762,6 +860,23 @@ impl Engine {
                     self.fail(device_id, re, Code::Busy);
                     return;
                 }
+                // Pictures are fetched in parts, so more are allowed (12 a
+                // second), by the same rule.
+                let is_image = matches!(request, Request::Image { .. });
+                if is_image && !self.image_rate_room(now, device_id) {
+                    self.reject_note(now, device_id, Code::Busy.as_str());
+                    self.fail(device_id, re, Code::Busy);
+                    return;
+                }
+                // Pictures are the owner's second switch, on top of the
+                // conversation's: either one off and nothing is read.
+                if is_image && !(self.share_chat && self.share_images) {
+                    self.image_rate_take(now, device_id);
+                    self.agg.note_op(now, device_id, Op::Image.as_str(), "ok");
+                    let body = proto::reply_ok(re, json!({"result": "gone"}));
+                    self.emit(device_id, &body, Stamp::Session);
+                    return;
+                }
                 // The owner can switch conversation sharing off: nothing is
                 // read, and the answer is the same as "no conversation".
                 if is_chat && !self.share_chat {
@@ -771,6 +886,12 @@ impl Engine {
                     self.emit(device_id, &body, Stamp::Session);
                     return;
                 }
+                // A device that has made the desktop read more than its share
+                // of big lines lately is not refused: the reader is told it
+                // may not read a big line now (`big: false`), serves all it can
+                // without one and answers `busy` only when it can do nothing
+                // else (see `big_busy`).
+                let big = self.work.room(now, device_id);
                 // Refused for lack of room, a chat takes no rate slot.
                 if self.inflight.len() >= MAX_INFLIGHT {
                     self.reject_note(now, device_id, Code::Busy.as_str());
@@ -779,6 +900,9 @@ impl Engine {
                 }
                 if is_chat {
                     self.chat_rate_take(now, device_id);
+                }
+                if is_image {
+                    self.image_rate_take(now, device_id);
                 }
                 let id = self.next_id;
                 self.next_id += 1;
@@ -802,6 +926,24 @@ impl Engine {
                         pane,
                         conv,
                         pos,
+                        big,
+                    });
+                    return;
+                }
+                if let Request::Image {
+                    pane,
+                    conv,
+                    id: pic,
+                    part,
+                } = request
+                {
+                    self.push(Out::Image {
+                        id,
+                        pane,
+                        conv,
+                        pic,
+                        part,
+                        big,
                     });
                     return;
                 }
@@ -827,13 +969,63 @@ impl Engine {
     }
 
     /// The app's answer to request `id`. A late or unknown id is ignored, and
-    /// so is an id that belongs to a `chat`: only [`Engine::chat_reply`] may
-    /// answer one, so the page cannot put words into a conversation.
+    /// so is an id that belongs to a `chat` or an `image`: only
+    /// [`Engine::chat_reply`] / [`Engine::image_reply`] may answer those, so
+    /// the page cannot put words into a conversation or a picture into a phone.
     pub fn frontend_reply(&mut self, id: u64, data: &Value, now: u64) {
-        if self.inflight.get(&id).is_some_and(|f| f.op == Op::Chat) {
+        if self
+            .inflight
+            .get(&id)
+            .is_some_and(|f| matches!(f.op, Op::Chat | Op::Image))
+        {
             return;
         }
         self.answer(id, data, now);
+    }
+
+    /// The desktop's own answer to an [`Out::Image`]. Any other id is ignored.
+    pub fn image_reply(&mut self, id: u64, data: &Value, now: u64) {
+        if self.inflight.get(&id).is_some_and(|f| f.op == Op::Image) {
+            self.answer(id, data, now);
+        }
+    }
+
+    /// The desktop read `bytes` of big lines to answer command `id` (a `chat`
+    /// or `image`): charged to the device that sent it. Call before the reply.
+    pub fn note_work(&mut self, id: u64, bytes: u64, now: u64) {
+        if let Some(f) = self
+            .inflight
+            .get(&id)
+            .filter(|f| matches!(f.op, Op::Chat | Op::Image))
+        {
+            let device = f.device_id.clone();
+            self.work.charge(now, &device, bytes);
+        }
+    }
+
+    /// The command `id` (a `chat` or `image`) could not be served without
+    /// reading a big line, and its device is over its big-line work budget:
+    /// answer `busy` (counted). The device asks again later.
+    pub fn big_busy(&mut self, id: u64, now: u64) {
+        self.now = now;
+        if !self
+            .inflight
+            .get(&id)
+            .is_some_and(|f| matches!(f.op, Op::Chat | Op::Image))
+        {
+            return;
+        }
+        let Some(f) = self.inflight.remove(&id) else {
+            return;
+        };
+        self.agg.note_op(now, &f.device_id, f.op.as_str(), "busy");
+        let body = proto::reply_err(f.re, Code::Busy);
+        self.reply_in_session(&f, &body, now);
+    }
+
+    /// The picture's line could not be read this time: `internal`.
+    pub fn image_failed(&mut self, id: u64, now: u64) {
+        self.image_reply(id, &Value::Null, now);
     }
 
     /// The desktop's own answer to an [`Out::Chat`]. Any other id is ignored.
@@ -862,17 +1054,22 @@ impl Engine {
 
     /// Is there room for one more accepted `chat` from `device`?
     fn chat_rate_room(&mut self, now: u64, device: &str) -> bool {
-        let w = self.chat_times.entry(device.to_string()).or_default();
-        w.retain(|t| now.saturating_sub(*t) < 1000);
-        w.len() < CHAT_PER_SECOND
+        rate_room(&mut self.chat_times, now, device, CHAT_PER_SECOND)
     }
 
     /// Count one accepted `chat`.
     fn chat_rate_take(&mut self, now: u64, device: &str) {
-        self.chat_times
-            .entry(device.to_string())
-            .or_default()
-            .push(now);
+        rate_take(&mut self.chat_times, now, device);
+    }
+
+    /// Is there room for one more accepted `image` from `device`?
+    fn image_rate_room(&mut self, now: u64, device: &str) -> bool {
+        rate_room(&mut self.image_times, now, device, IMAGE_PER_SECOND)
+    }
+
+    /// Count one accepted `image`.
+    fn image_rate_take(&mut self, now: u64, device: &str) {
+        rate_take(&mut self.image_times, now, device);
     }
 
     fn answer(&mut self, id: u64, data: &Value, now: u64) {
@@ -887,11 +1084,16 @@ impl Engine {
         // A polling phone repeats `peek` every couple of seconds: accepted
         // reads are one line per device, op and minute with a count. A write
         // keeps a line of its own: that is what an audit is for.
-        if code == "ok" && matches!(f.op, proto::Op::List | proto::Op::Peek | proto::Op::Chat) {
+        if code == "ok"
+            && matches!(
+                f.op,
+                proto::Op::List | proto::Op::Peek | proto::Op::Chat | proto::Op::Image
+            )
+        {
             self.agg.note_op(now, &f.device_id, f.op.as_str(), "ok");
-        } else if f.op == proto::Op::Chat {
-            // A device can poll `chat`: failures are counted too, not one
-            // line each.
+        } else if matches!(f.op, proto::Op::Chat | proto::Op::Image) {
+            // A device can poll `chat` and fetch pictures at will: failures
+            // are counted too, not one line each.
             self.agg.note_op(now, &f.device_id, f.op.as_str(), code);
         } else {
             self.audit(now, &f.device_id, f.op.as_str(), &f.pane, code);
@@ -1562,6 +1764,55 @@ mod tests {
     }
 
     #[test]
+    fn the_servers_version_is_kept_for_display_only_and_only_when_valid() {
+        let ready = |e: &mut Engine, ready: Value| {
+            e.on_connect();
+            e.on_text(&challenge(), 0);
+            e.drain();
+            e.on_text(&ready.to_string(), 0);
+            e.drain();
+        };
+        let mut e = engine_with(vec![]);
+        assert_eq!(e.server_version(), None);
+        ready(&mut e, json!({"t":"ready","devices":[],"server":"0.19.0"}));
+        assert_eq!(e.server_version(), Some("0.19.0"));
+        // An older server sends none; a bad one is "unknown", not an error.
+        for bad in [
+            json!(null),
+            json!(""),
+            json!("0 19"),
+            json!("<b>x</b>"),
+            json!("9".repeat(33)),
+            json!(7),
+        ] {
+            ready(&mut e, json!({"t":"ready","devices":[],"server":bad}));
+            assert_eq!(e.server_version(), None, "{bad}");
+        }
+        ready(&mut e, json!({"t":"ready","devices":[]}));
+        assert_eq!(e.server_version(), None);
+        // Forgotten with the connection.
+        ready(
+            &mut e,
+            json!({"t":"ready","devices":[],"server":"1.2.3-rc.1"}),
+        );
+        assert_eq!(e.server_version(), Some("1.2.3-rc.1"));
+        e.on_disconnect(5);
+        assert_eq!(e.server_version(), None);
+        // The connection still came up either way.
+        ready(&mut e, json!({"t":"ready","devices":[],"server":"x y"}));
+        assert!(e.online_devices().is_empty());
+    }
+
+    #[test]
+    fn the_session_reply_names_this_apps_version() {
+        let mut r = Rig::new("view");
+        let out = r.open(NOW + 1_000);
+        let b = r.opened(&out);
+        assert_eq!(b[0]["app"], proto::APP_VERSION);
+        assert!(proto::is_version(b[0]["app"].as_str().unwrap()));
+    }
+
+    #[test]
     fn ready_keeps_a_device_the_config_holds_but_cannot_use_this_run() {
         let mut e = engine_with(vec![]);
         e.set_unusable(vec![DEV.to_string()]);
@@ -1636,6 +1887,7 @@ mod tests {
             pane: PANE.into(),
             conv: "abc".into(),
             pos: Some(proto::ChatPos::After(4)),
+            big: true,
         }));
         // The page cannot answer it, through the page's own reply path.
         r.e.frontend_reply(id, &chat_data(), NOW + 1);
@@ -1859,6 +2111,310 @@ mod tests {
         let b = r.reply(&out);
         assert_eq!(b["code"], "timeout");
         r.e.chat_reply(id, &chat_data(), NOW + 6_000);
+        assert!(r.e.drain().is_empty());
+    }
+
+    // ------------------------------------------------------------- pictures
+
+    fn image_id(out: &[Out]) -> u64 {
+        out.iter()
+            .find_map(|o| match o {
+                Out::Image { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("an image action")
+    }
+
+    fn image_cmd() -> Value {
+        json!({"op":"image","pane":PANE,"conv":"abc","id":"10.100","part":2})
+    }
+
+    fn image_data() -> Value {
+        json!({"conv":"abc","id":"10.100","type":"image/png","size":8,"part":0,"parts":1,
+               "data":crate::remote::keys::b64u(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])})
+    }
+
+    /// A rig whose owner switched picture sharing on (it is off by default).
+    fn pic_rig() -> Rig {
+        let mut r = Rig::new("view");
+        r.e.set_share_images(true);
+        r
+    }
+
+    #[test]
+    fn image_is_answered_by_the_desktop_and_never_reaches_the_page() {
+        let mut r = pic_rig();
+        let out = r.cmd(image_cmd(), NOW);
+        assert!(!has_request(&out), "the page is never asked");
+        assert!(
+            frames(&out).is_empty(),
+            "nothing is sent before the reader answers"
+        );
+        let id = image_id(&out);
+        assert!(out.contains(&Out::Image {
+            id,
+            pane: PANE.into(),
+            conv: "abc".into(),
+            pic: "10.100".into(),
+            part: 2,
+            big: true,
+        }));
+        // Not through the page's reply path, and not as a chat.
+        r.e.frontend_reply(id, &image_data(), NOW + 1);
+        r.e.chat_reply(id, &image_data(), NOW + 1);
+        assert!(r.e.drain().is_empty());
+        r.e.image_reply(id, &image_data(), NOW + 2);
+        let out = r.e.drain();
+        let b = r.reply(&out);
+        assert_eq!(
+            (b["k"].clone(), b["ok"].clone(), b["re"].clone()),
+            (json!("reply"), json!(true), json!(r.seq))
+        );
+        assert_eq!(b["data"]["type"], "image/png");
+        assert_eq!(b["at_ms"], NOW + 2);
+        assert!(b["n"].as_u64().is_some());
+        r.e.image_reply(id, &image_data(), NOW + 3);
+        assert!(r.e.drain().is_empty(), "answered once");
+        // A chat or a peek is not answered by `image_reply`.
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 4);
+        r.e.image_reply(chat_id(&out), &image_data(), NOW + 4);
+        assert!(r.e.drain().is_empty());
+        let out = r.cmd(json!({"op":"peek","pane":PANE}), NOW + 5);
+        r.e.image_reply(request_id(&out), &image_data(), NOW + 5);
+        assert!(r.e.drain().is_empty());
+        r.e.image_failed(request_id(&out), NOW + 5);
+        assert!(r.e.drain().is_empty());
+    }
+
+    #[test]
+    fn image_replies_are_counted_not_logged_and_failures_too() {
+        let mut r = pic_rig();
+        for _ in 0..3 {
+            let out = r.cmd(image_cmd(), NOW);
+            r.e.image_reply(image_id(&out), &image_data(), NOW);
+        }
+        assert!(audits(&r.e.drain()).is_empty());
+        // The answer that does not fit the protocol, and a read error.
+        let out = r.cmd(image_cmd(), NOW);
+        r.e.image_reply(image_id(&out), &json!({"conv":"x y"}), NOW);
+        let out = r.e.drain();
+        assert_eq!(r.reply(&out)["code"], "internal");
+        let out = r.cmd(image_cmd(), NOW + 1);
+        r.e.image_failed(image_id(&out), NOW + 1);
+        let out = r.e.drain();
+        assert_eq!(r.reply(&out)["code"], "internal");
+        assert!(audits(&out).is_empty());
+        r.e.tick(NOW + 61_000);
+        let agg = audits(&r.e.drain());
+        let get = |code: &str| {
+            agg.iter()
+                .find(|a| a.op == "image" && a.code == code)
+                .map(|a| a.count)
+        };
+        assert_eq!((get("ok"), get("internal")), (Some(3), Some(2)));
+    }
+
+    #[test]
+    fn more_than_twelve_images_a_second_from_one_device_are_busy() {
+        let mut r = pic_rig();
+        let mut reads = 0;
+        for i in 0..16u64 {
+            let out = r.cmd(image_cmd(), NOW + i * 10);
+            if out.iter().any(|o| matches!(o, Out::Image { .. })) {
+                reads += 1;
+                r.e.image_reply(image_id(&out), &image_data(), NOW + i * 10);
+                r.e.drain();
+            } else {
+                let b = r.reply(&out);
+                assert_eq!(
+                    (b["ok"].clone(), b["code"].clone()),
+                    (json!(false), json!("busy"))
+                );
+            }
+        }
+        assert_eq!(reads, IMAGE_PER_SECOND);
+        assert_eq!(IMAGE_PER_SECOND, 12);
+        // The chat allowance is a separate one.
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 200);
+        chat_id(&out);
+        // The window slides.
+        let out = r.cmd(image_cmd(), NOW + 1_001);
+        image_id(&out);
+        // Refusals are counted.
+        r.e.tick(NOW + 70_000);
+        let agg = audits(&r.e.drain());
+        assert!(
+            agg.iter().any(|a| a.code == "busy" && a.count == 4),
+            "{agg:?}"
+        );
+    }
+
+    #[test]
+    fn an_image_refused_for_lack_of_room_takes_no_rate_slot() {
+        let mut r = pic_rig();
+        for _ in 0..MAX_INFLIGHT {
+            request_id(&r.cmd(json!({"op":"list"}), NOW));
+        }
+        for _ in 0..(IMAGE_PER_SECOND + 3) {
+            let out = r.cmd(image_cmd(), NOW + 1);
+            assert!(!out.iter().any(|o| matches!(o, Out::Image { .. })));
+            assert_eq!(r.reply(&out)["code"], "busy");
+        }
+        r.e.tick(NOW + 6_000);
+        r.e.drain();
+        for i in 0..IMAGE_PER_SECOND {
+            let out = r.cmd(image_cmd(), NOW + 6_000 + i as u64);
+            r.e.image_reply(image_id(&out), &image_data(), NOW + 6_000);
+            r.e.drain();
+        }
+        let out = r.cmd(image_cmd(), NOW + 6_020);
+        assert_eq!(r.reply(&out)["code"], "busy");
+    }
+
+    #[test]
+    fn pictures_are_off_by_default_and_need_chat_sharing_too() {
+        // A new engine shares no pictures.
+        let mut r = Rig::new("view");
+        for step in 0..3 {
+            match step {
+                1 => r.e.set_share_images(true),
+                2 => r.e.set_share_chat(false),
+                _ => {}
+            }
+            let out = r.cmd(image_cmd(), NOW + step);
+            if step == 1 {
+                image_id(&out);
+                r.e.image_failed(image_id(&out), NOW + step);
+                r.e.drain();
+                continue;
+            }
+            // Gone, and nothing was read.
+            assert!(
+                !out.iter().any(|o| matches!(o, Out::Image { .. })),
+                "step {step}"
+            );
+            assert!(!has_request(&out));
+            let b = r.reply(&out);
+            assert_eq!(
+                (b["ok"].clone(), b["data"].clone()),
+                (json!(true), json!({"result":"gone"}))
+            );
+            assert!(b["n"].as_u64().is_some() && b["at_ms"].as_u64().is_some());
+        }
+        // Chat sharing on, pictures off: chat is unaffected.
+        r.e.set_share_chat(true);
+        r.e.set_share_images(false);
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 10);
+        chat_id(&out);
+        r.e.tick(NOW + 61_000);
+        let agg = audits(&r.e.drain());
+        assert!(
+            agg.iter()
+                .any(|a| a.op == "image" && a.code == "ok" && a.count == 2),
+            "{agg:?}"
+        );
+    }
+
+    #[test]
+    fn over_the_big_line_budget_the_reader_is_told_not_to_read_big_lines_and_may_answer_busy() {
+        let mut r = pic_rig();
+        let big_of = |out: &[Out]| {
+            out.iter()
+                .find_map(|o| match o {
+                    Out::Image { big, .. } | Out::Chat { big, .. } => Some(*big),
+                    _ => None,
+                })
+                .expect("a read action")
+        };
+        let out = r.cmd(image_cmd(), NOW);
+        let id = image_id(&out);
+        assert!(big_of(&out));
+        r.e.note_work(id, WORK_MAX_BYTES - 1, NOW);
+        r.e.image_reply(id, &image_data(), NOW);
+        r.e.drain();
+        // Just under the budget: still allowed.
+        let out = r.cmd(json!({"op":"chat","pane":PANE}), NOW + 100);
+        let cid = chat_id(&out);
+        assert!(big_of(&out));
+        r.e.note_work(cid, 1, NOW + 100);
+        r.e.chat_reply(cid, &chat_data(), NOW + 100);
+        r.e.drain();
+        // At it: the ops still reach the reader (it may serve what needs no
+        // big line), which is told not to read one.
+        for (i, cmd) in [image_cmd(), json!({"op":"chat","pane":PANE})]
+            .into_iter()
+            .enumerate()
+        {
+            let out = r.cmd(cmd, NOW + 200 + i as u64);
+            assert!(!big_of(&out), "no big lines now");
+            // It could not serve anything without one: `busy`, counted.
+            let id = match i {
+                0 => image_id(&out),
+                _ => chat_id(&out),
+            };
+            r.e.big_busy(id, NOW + 200 + i as u64);
+            let out = r.e.drain();
+            assert_eq!(r.reply(&out)["code"], "busy");
+        }
+        // Another command's id cannot be answered `busy` this way.
+        let out = r.cmd(json!({"op":"list"}), NOW + 250);
+        r.e.big_busy(request_id(&out), NOW + 250);
+        assert!(r.e.drain().is_empty());
+        r.e.frontend_reply(request_id(&out), &json!({"panes":[]}), NOW + 250);
+        r.e.drain();
+        let out = r.cmd(json!({"op":"list"}), NOW + 300);
+        assert!(has_request(&out));
+        // A page that read no big line costs nothing, and another command's
+        // id cannot be charged.
+        r.e.note_work(request_id(&out), 10 * WORK_MAX_BYTES, NOW + 300);
+        r.e.frontend_reply(request_id(&out), &json!({"panes":[]}), NOW + 300);
+        r.e.drain();
+        // The window slides.
+        let out = r.cmd(image_cmd(), NOW + WORK_WINDOW_MS + 1);
+        image_id(&out);
+        assert!(big_of(&out), "the window slid: big lines are allowed again");
+        // Per device: the counts are not shared.
+        let mut b = WorkBudget::default();
+        b.charge(NOW, "a", WORK_MAX_BYTES);
+        assert!(!b.room(NOW + 1, "a") && b.room(NOW + 1, "b"));
+        assert!(b.room(NOW + WORK_WINDOW_MS, "a"));
+        r.e.tick(NOW + 70_000);
+        let agg = audits(&r.e.drain());
+        assert!(
+            agg.iter()
+                .filter(|a| a.code == "busy")
+                .map(|a| a.count)
+                .sum::<u32>()
+                == 2,
+            "{agg:?}"
+        );
+    }
+
+    #[test]
+    fn a_bad_image_request_is_rejected_before_anything_is_read() {
+        let mut r = pic_rig();
+        for bad in [
+            json!({"op":"image","pane":PANE,"conv":"abc","id":"10.100"}),
+            json!({"op":"image","pane":PANE,"conv":"abc","id":"x","part":0}),
+            json!({"op":"image","pane":PANE,"id":"10.100","part":0}),
+            json!({"op":"image","pane":PANE,"conv":"abc","id":"10.100","part":256}),
+            json!({"op":"image","pane":"nope","conv":"abc","id":"10.100","part":0}),
+        ] {
+            let out = r.cmd(bad, NOW);
+            assert!(!out.iter().any(|o| matches!(o, Out::Image { .. })));
+            assert_eq!(r.reply(&out)["code"], "bad_request");
+        }
+    }
+
+    #[test]
+    fn an_image_waiting_on_the_desktop_counts_toward_busy_and_times_out() {
+        let mut r = pic_rig();
+        let out = r.cmd(image_cmd(), NOW);
+        let id = image_id(&out);
+        r.e.tick(NOW + 5_001);
+        let out = r.e.drain();
+        assert_eq!(r.reply(&out)["code"], "timeout");
+        r.e.image_reply(id, &image_data(), NOW + 6_000);
         assert!(r.e.drain().is_empty());
     }
 
