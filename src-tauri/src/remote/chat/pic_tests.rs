@@ -384,6 +384,82 @@ fn item_ids_are_the_same_with_sharing_on_and_off() {
 }
 
 #[test]
+fn every_codex_harness_prefix_is_dropped_but_the_typed_text_stays() {
+    for w in [
+        "<hook_prompt hook_run_id=\"x\">a</hook_prompt>",
+        "<skill>\n<name>x</name>",
+        "<codex_internal_context>x",
+        "<goal_context>x",
+        "# In app browser\nstuff",
+        "<recommended_plugins>x",
+        "<in-app-browser-context>x",
+        "# Context from my IDE setup:\n## Open tabs",
+        "# Files mentioned by the user:\n## a.rs: /w/a.rs",
+        "<image name=[Image #1] path=\"C:\\x\\a.png\">",
+        "  </image>",
+        "<image>",
+        "<file name=\"/w/a.rs\">\nbody\n</file>",
+        "<local_file path=\"/w/a.rs\">",
+    ] {
+        let line = json!({"type":"response_item","payload":{
+            "type":"message","role":"user","content":[
+                {"type":"input_text","text":w},
+                {"type":"input_text","text":"typed"}]}});
+        let it = codex_items(&line, false);
+        assert_eq!(it.len(), 1, "{w}");
+        assert_eq!(it[0].text, "typed", "{w}");
+    }
+}
+
+#[test]
+fn a_codex_context_block_keeps_only_the_request_after_its_marker() {
+    let one = |text: &str| {
+        let line = json!({"type":"response_item","payload":{
+            "type":"message","role":"user","content":[{"type":"input_text","text":text}]}});
+        codex_items(&line, false)
+    };
+    for head in [
+        "# In app browser\nurl: x",
+        "# Context from my IDE setup:\n## Open tabs\n- a",
+        "# Files mentioned by the user:\n## a.rs: /w/a.rs",
+    ] {
+        let it = one(&format!(
+            "{head}\n\n## My request for Codex:\n  fix the bug \n"
+        ));
+        assert_eq!(it.len(), 1, "{head}");
+        assert_eq!(it[0].text, "fix the bug", "{head}");
+        // Without the marker the whole block is context.
+        assert!(one(head).is_empty(), "{head}");
+        // An empty request leaves nothing.
+        assert!(one(&format!("{head}\n## My request for Codex:\n \n")).is_empty());
+    }
+    // The marker only counts as a line of its own.
+    assert!(one("# In app browser\nsee ## My request for Codex: here").is_empty());
+}
+
+#[test]
+fn codex_picture_wrapper_blocks_are_not_message_text() {
+    let p = b64(&png(70));
+    let line = json!({"type":"response_item","timestamp":T0,"payload":{
+        "type":"message","role":"user","content":[
+            {"type":"input_text","text":"<image name=[Image #1] path=\"C:\\Users\\x\\a.png\">"},
+            {"type":"input_image","image_url":format!("data:image/png;base64,{p}")},
+            {"type":"input_text","text":"</image>"},
+            {"type":"input_text","text":"what is this"}]}});
+    let on = codex_items(&line, true);
+    assert_eq!(on.len(), 1);
+    assert_eq!(on[0].text, "what is this");
+    assert_eq!(on[0].images.len(), 1);
+    let off = codex_items(&line, false);
+    assert_eq!((off.len(), off[0].text.as_str()), (1, "what is this"));
+    // Wrappers alone leave nothing to show without pictures.
+    let bare = json!({"type":"response_item","payload":{"type":"message","role":"user","content":[
+        {"type":"input_text","text":"<image name=[Image #2]>"},
+        {"type":"input_text","text":"</image>"}]}});
+    assert!(codex_items(&bare, false).is_empty());
+}
+
+#[test]
 fn codex_lists_what_the_user_attached_and_what_a_tool_returned() {
     let p = b64(&png(70));
     let j = b64(&bytes_of(&JPG, 55, 9));

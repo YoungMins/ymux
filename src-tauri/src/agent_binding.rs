@@ -239,6 +239,67 @@ const CODEX_VALUE_FLAGS: &[&str] = &[
     "--ask-for-approval",
 ];
 
+/// Codex subcommands that run no interactive session: a process running one
+/// is a background server or a one-shot, not a possible author of the rollout
+/// a pane's TUI is about to write. Deliberately not `agent_sessions`'s
+/// `CODEX_SUBCOMMANDS` (which answers "is this startup command resumable").
+const CODEX_BACKGROUND_SUBCOMMANDS: &[&str] = &[
+    "app-server",
+    "exec-server",
+    "exec",
+    "e",
+    "mcp-server",
+    "mcp",
+    // Read off `codex --help`: none of these opens an interactive session.
+    // `resume` and `fork` do, and `agents` / `cloud` are left interactive
+    // when in doubt.
+    "review",
+    "login",
+    "logout",
+    "plugin",
+    "remote-control",
+    "app",
+    "completion",
+    "update",
+    "doctor",
+    "sandbox",
+    "debug",
+    "apply",
+    "a",
+    "queue",
+    "archive",
+    "delete",
+    "migrate-rollouts",
+    "migrate-nfs-db",
+    "unarchive",
+    "features",
+    "help",
+];
+
+/// Flags that make Codex print something and exit.
+const CODEX_PROBE_FLAGS: &[&str] = &["--version", "-V", "--help", "-h"];
+
+/// Whether a Codex process's first positional argument is one of
+/// [`CODEX_BACKGROUND_SUBCOMMANDS`]. A prompt or `resume` is interactive.
+pub fn is_background_codex(argv: &[String]) -> bool {
+    let args = cli_args(argv);
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if CODEX_VALUE_FLAGS.contains(&a) {
+            i += 2;
+        } else if a.starts_with('-') {
+            if CODEX_PROBE_FLAGS.contains(&a) {
+                return true;
+            }
+            i += 1;
+        } else {
+            return CODEX_BACKGROUND_SUBCOMMANDS.contains(&a);
+        }
+    }
+    false
+}
+
 fn codex_argv_id(args: &[String]) -> Option<String> {
     let mut i = 0;
     let mut in_resume = false;
@@ -305,15 +366,23 @@ pub fn guess_transcript(
                 .iter()
                 .any(|o| !proc.subtree.contains(&o.pid) && o.known_id.as_deref() == Some(id))
     };
-    let first = candidates
-        .iter()
-        .filter(|d| d.created.is_some_and(|c| c >= proc.start_secs))
-        .filter(|d| !held_elsewhere(&d.session_id))
-        .min_by(|a, b| {
-            a.created
-                .cmp(&b.created)
-                .then_with(|| a.session_id.cmp(&b.session_id))
-        })?;
+    let eligible = || {
+        candidates
+            .iter()
+            .filter(|d| d.created.is_some_and(|c| c >= proc.start_secs))
+            .filter(|d| !held_elsewhere(&d.session_id))
+    };
+    // Codex writes its rollout late (seconds to hours after the TUI started),
+    // so with two candidates there is no telling whose is whose: only a lone
+    // one is a guess.
+    if agent == AgentKind::Codex && eligible().count() != 1 {
+        return None;
+    }
+    let first = eligible().min_by(|a, b| {
+        a.created
+            .cmp(&b.created)
+            .then_with(|| a.session_id.cmp(&b.session_id))
+    })?;
     let created = first.created?;
     let contested = others.iter().any(|o| {
         o.kind == agent

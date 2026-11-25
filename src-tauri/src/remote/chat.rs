@@ -467,6 +467,19 @@ fn is_wrapper(agent: AgentKind, text: &str) -> bool {
             "<collaboration_mode>",
             "<user_shell_command>",
             "# AGENTS.md instructions",
+            "<hook_prompt",
+            "<skill",
+            "<codex_internal_context",
+            "<goal_context",
+            "<recommended_plugins",
+            "<in-app-browser-context",
+            // Codex brackets an attached picture with `<image name=[Image #1]
+            // path="…">` and `</image>` blocks (a local path), and wraps
+            // attached files the same way: dropped whole.
+            "<image",
+            "</image",
+            "<file ",
+            "<local_file",
         ],
     };
     prefixes.iter().any(|p| t.starts_with(p))
@@ -569,11 +582,41 @@ fn command_end<'a>(rest: &'a str, enders: &[&str]) -> &'a str {
     rest[..end].trim()
 }
 
+/// Codex context blocks that carry the user's request after a marker line.
+const CODEX_CONTEXT_HEADERS: &[&str] = &[
+    "# In app browser",
+    "# Context from my IDE setup",
+    "# Files mentioned by the user",
+];
+const CODEX_REQUEST_MARKER: &str = "## My request for Codex:";
+
+/// What of one text block is the user's own: the block itself, the request
+/// after the marker line of a context block (nothing without one), or nothing
+/// for a harness wrapper.
+fn keep_text(agent: AgentKind, t: &str) -> Option<&str> {
+    if t.trim().is_empty() {
+        return None;
+    }
+    if agent == AgentKind::Codex
+        && CODEX_CONTEXT_HEADERS
+            .iter()
+            .any(|h| t.trim_start().starts_with(h))
+    {
+        let mut offset = 0;
+        for line in t.split_inclusive('\n') {
+            offset += line.len();
+            if line.trim() == CODEX_REQUEST_MARKER {
+                return Some(t[offset..].trim()).filter(|r| !r.is_empty());
+            }
+        }
+        return None;
+    }
+    (!is_wrapper(agent, t)).then_some(t)
+}
+
 /// Joined text blocks: blank ones and the harness's wrappers are dropped.
 fn join_texts<'a>(agent: AgentKind, texts: impl Iterator<Item = &'a str>) -> Option<String> {
-    let kept: Vec<&str> = texts
-        .filter(|t| !t.trim().is_empty() && !is_wrapper(agent, t))
-        .collect();
+    let kept: Vec<&str> = texts.filter_map(|t| keep_text(agent, t)).collect();
     (!kept.is_empty()).then(|| kept.join("\n\n"))
 }
 

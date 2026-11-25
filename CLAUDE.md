@@ -598,6 +598,26 @@ send data to hosts the user names. The rules:
 - **Codex is tailed only for tracker-bound sessions** whose rollout
   `session_meta.cwd` matches the pane's cwd (`ypath::same_path`), from the
   file's current end, with a read cap per poll. A session id alone is not trusted.
+  What counts as the interactive TUI's rollout (`agent_scan_disk::codex_is_resumable`)
+  is `source == "cli"` or `originator == "codex-tui"` with `source` `"cli"` or
+  `"vscode"` (codex-cli 0.160.1+ writes `"vscode"` there); exec, Desktop, the
+  Claude Code plugin, `codex_vscode` and sub-agents (object `source`) never are.
+  Codex writes its rollout late, so its disk guess fails closed: only when
+  exactly one unclaimed rollout of the cwd began after the process started
+  (`guess_transcript`), never for a process that has seen another interactive
+  Codex in its folder at any time (`SessionTracker::codex_rivals`, fed from
+  `others` on every scan tick, memory only), never for a background subcommand,
+  and a Disk-guessed binding is dropped (not switched) when a second candidate
+  appears (`wants_revalidation`). `codex resume <id>` in argv still binds
+  exactly. `/new` or `/fork` inside a Codex bound by a disk guess makes a
+  second candidate and so unbinds the pane until the app or the Codex process
+  restarts (by design: fail closed). A guessed Codex session IS auto-resumed
+  with the pane's startup flags (`outcome_for`; pre-existing policy,
+  unchanged). A background
+  `codex app-server` / `exec-server` / `exec` / `mcp-server` process
+  (`agent_binding::is_background_codex`) is not a competing author in
+  `scan::other_agents`, since ChatGPT and the Claude Code plugin keep those
+  running in the pane's cwd. Rollouts compressed to `.jsonl.zst` are not found.
 - **The daily digest is counts only.** `webhooks::digest` builds one
   `kind = "digest"` event per scheduled period from the activity log's counts
   (turns, sessions, tool calls/failures, diff stats, top workspaces) and
@@ -782,7 +802,9 @@ op for raw keys, new or closed panes, or files, and an unknown op is
   per pane (as found, uncanonicalised; keyed by agent, session id, config dir)
   but canonicalises and runs every check on each request, and
   re-reads `remote.share_chat` itself. Shown: user text (not meta, sidechain,
-  compact summaries, tool results or harness wrappers, nor shell-mode output:
+  compact summaries, tool results or harness wrappers (for Codex, a text block
+  starting with a prefix of `chat::is_wrapper`, among them `<image` / `</image`
+  and `<file `, dropped whole), nor shell-mode output:
   `<bash-input>` / Codex `<user_shell_command>` become a `tool` item with the
   command only, ended at its closing tag, the start of the output or its first
   line), assistant text and one-line `tool` items; never reasoning or
@@ -855,6 +877,31 @@ op for raw keys, new or closed panes, or files, and an unknown op is
   always served, a miss on a big line is `busy`). A tail poll (`after: end`)
   reads no big line again and is not `busy`, unless what is new is itself a
   big line; the window sliding past restores everything.
+- **What a pane's `status` and `since_ms` mean to a phone.** A pane's `status`
+  is the agent's real status, never the PC's `attention` (unseen) flag, which
+  nothing on the phone could clear (`remoteModel::reportedStatus`). A hook lead
+  reports the backend's status, and `waiting` also when a debounced dialog
+  check on the screen finds a real numbered menu (a pointer on one option plus
+  another numbered option within the last 20 rows, `menuOptions`' shape) or a
+  known trust phrase in the last 6 rows (`remote/dialogState.ts`); that check
+  runs only while the backend says `working`. A process-scan lead (Codex,
+  Gemini) has no status of its own: it takes the pane's, with `attention`
+  counted as `done`, and the dialog check runs for `working`, `done` and
+  `idle`, because such an agent goes quiet on its approval prompt. The dialog
+  state is debounced (seen on two evaluations at least 1.5 s apart to start,
+  gone on two to end; hook-reported `waiting` is immediate), rows echoing the
+  last prompt sent to the pane are ignored, and the prompt phase uses the same
+  status. `since_ms` is when that reported status began: `StatusClock`
+  (`remote/statusClock.ts`) observes it on every evaluation (every trigger and
+  the ~2 s scan heartbeat, whether or not the link is up), so it moves only
+  when the reported status changes; panes no longer listed are forgotten. The
+  publisher is poked directly (never through an animation frame, which a
+  hidden window stops), and the heartbeat also steps every pane's status
+  machine (`TerminalPane.tickStatus`), so a hidden window still reaches
+  `done`. An answer typed from the phone or the Office keys tells the pane's
+  status machine that input was submitted, only for a process lead
+  (`answerNotesSubmit`); it is never a focus, and never for a hook lead, whose
+  PC flag comes down when the agent leaves `waiting` (`noLongerWaitingPanes`).
 - **Text is cleaned, redacted and clipped in Rust before it leaves**
   (`clip.rs`: control characters and Unicode format/line/paragraph separators
   (Cf, Zl, Zp: explicit ranges) out, `activity::redact`, then 2000 chars for

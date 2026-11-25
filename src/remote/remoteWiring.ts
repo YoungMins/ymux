@@ -43,8 +43,20 @@ export function startRemote(manager: WorkspaceManager): () => void {
 
   // Panes that are gone lose their menu ids. (The agent's raw status
   // generation is fed by `WorkspaceManager.applyAgents`, per snapshot.)
+  // Every trigger first evaluates the panes (this records the dialog
+  // sightings and the age of each reported status, link up or not), then
+  // lets the publisher send what changed. Not a timer first: a hidden window
+  // throttles those, its events run.
+  const evaluate = (): void => {
+    try {
+      host.observe();
+    } catch (e) {
+      console.warn("remote pane evaluation failed:", e);
+    }
+    publisher.pokeNow();
+  };
   const onChange = (): void => {
-    publisher.poke();
+    evaluate();
     if (!shouldPublish(status?.state)) return;
     try {
       host.menus.keepOnly(buildPaneList(host.listInput()).map((p) => p.pane));
@@ -52,7 +64,14 @@ export function startRemote(manager: WorkspaceManager): () => void {
       console.warn("remote menu cleanup failed:", e);
     }
   };
-  const offs: (() => void)[] = [manager.onTreeChange(onChange), manager.onInboxChange(onChange)];
+  const offs: (() => void)[] = [
+    manager.onTreeChange(onChange),
+    manager.onInboxChange(onChange),
+    // A pane's status change and the ~2 s agent scan heartbeat reach the
+    // publisher directly: the inbox feed above waits for an animation frame,
+    // which a hidden or minimised window never runs.
+    manager.onRemoteWake(evaluate),
+  ];
   let disposed = false;
   const keep = (p: Promise<() => void>, what: string): void => {
     p.then((off) => (disposed ? off() : offs.push(off))).catch((e) =>

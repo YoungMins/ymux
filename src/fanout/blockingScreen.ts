@@ -12,7 +12,7 @@ export const SCAN_ROWS = 30;
 /// Words like "trust" or "approve" alone are deliberately absent: they occur
 /// in ordinary prose and code output. A real approval menu is caught by the
 /// select shape below.
-const STRONG = [
+export const STRONG = [
   "do you trust the files in this folder",
   "do you trust the contents of this directory",
   "do you trust this folder",

@@ -10,6 +10,10 @@ import {
   labelMatches,
   isVersion,
   mapSendResult,
+  answerNotesSubmit,
+  queuePhase,
+  remotePhase,
+  reportedStatus,
   serverVersionToShow,
   shouldPublish,
   statusLine,
@@ -19,6 +23,9 @@ import { bumpInput, inputGeneration } from "./inputGen";
 import { MenuIds, agentKey } from "./menuId";
 import { handleRequest, type RemoteHost, type RemoteTerminal } from "./remoteOps";
 import { createPublisher } from "./remotePublisher";
+import { DialogDebounce, screenShowsDialog } from "./dialogState";
+import { StatusClock } from "./statusClock";
+import { phaseOf } from "../workspace/promptQueue";
 
 function split(a: LayoutNode, b: LayoutNode): LayoutNode {
   return { kind: "split", direction: "horizontal", ratio: 0.5, a, b };
@@ -37,6 +44,7 @@ function input(over: Partial<RemoteListInput> & { specs: PaneSpec[]; agents?: Ag
     paneStatus: over.paneStatus ?? (() => undefined),
     title: over.title ?? ((id) => `t-${id}`),
     since: over.since ?? (() => null),
+    dialog: over.dialog ?? (() => false),
     queued: over.queued ?? (() => 0),
     live: over.live ?? (() => true),
   };
@@ -64,7 +72,7 @@ describe("buildPaneList", () => {
     ]);
   });
 
-  it("treats a pane flagged attention as waiting, and a process lead by the pane's status", () => {
+  it("reports the agent's real status: a pane flagged attention is not waiting, a process lead follows the pane", () => {
     const ps: Record<string, PaneStatus> = { a: "attention", b: "running", c: "done" };
     const list = buildPaneList(
       input({
@@ -73,7 +81,51 @@ describe("buildPaneList", () => {
         paneStatus: (id) => ps[id],
       }),
     );
-    expect(list.map((p) => p.status)).toEqual(["waiting", "working", "done"]);
+    expect(list.map((p) => p.status)).toEqual(["working", "working", "done"]);
+  });
+
+  it("reports waiting when the agent is waiting, whatever the pane's flag", () => {
+    const list = buildPaneList(
+      input({
+        specs: [term("a"), term("b")],
+        agents: { a: claude("waiting"), b: claude("done") },
+        paneStatus: (id) => (id === "a" ? "idle" : "attention"),
+      }),
+    );
+    expect(list.map((p) => p.status)).toEqual(["waiting", "done"]);
+  });
+
+  it("reports waiting for a working agent with a dialog on screen, and reads the screen only for working", () => {
+    const asked: string[] = [];
+    const list = buildPaneList(
+      input({
+        specs: [term("a"), term("b"), term("c"), term("d")],
+        agents: { a: claude("working"), b: claude("working"), c: claude("done"), d: claude("waiting") },
+        dialog: (id) => {
+          asked.push(id);
+          return id !== "b";
+        },
+      }),
+    );
+    expect(list.map((p) => p.status)).toEqual(["waiting", "working", "done", "waiting"]);
+    expect(asked).toEqual(["a", "b"]);
+  });
+
+  it("is none for a pane with no agent, dialog or not", () => {
+    const list = buildPaneList(input({ specs: [term("a")], dialog: () => true }));
+    expect(list[0].status).toBe("none");
+  });
+
+  it("asks for the since of the reported status", () => {
+    const list = buildPaneList(
+      input({
+        specs: [term("a")],
+        agents: { a: claude("working") },
+        dialog: () => true,
+        since: (_id, status) => (status === "waiting" ? 77 : 1),
+      }),
+    );
+    expect(list[0]).toMatchObject({ status: "waiting", since_ms: 77 });
   });
 
   it("leaves out non-terminal panes and unhydrated terminals without an agent", () => {
@@ -86,6 +138,160 @@ describe("buildPaneList", () => {
       }),
     );
     expect(list.map((p) => p.pane)).toEqual(["a", "coldAgent"]);
+  });
+});
+
+describe("reportedStatus / remotePhase", () => {
+  const hook = (status: "working" | "waiting" | "done" | "idle") => ({ source: "hook" as const, status });
+  const proc = { source: "process" as const, status: "idle" as const };
+  const panes: PaneStatus[] = ["running", "done", "idle", "attention"];
+
+  it("hook leads: the backend's status; the screen only matters for working", () => {
+    for (const ps of panes) {
+      for (const status of ["working", "waiting", "done", "idle"] as const) {
+        expect(reportedStatus(hook(status), ps, () => false)).toBe(status);
+        const asked: boolean[] = [];
+        const got = reportedStatus(hook(status), ps, () => (asked.push(true), true));
+        expect(got).toBe(status === "working" || status === "waiting" ? "waiting" : status);
+        expect(asked.length).toBe(status === "working" ? 1 : 0);
+      }
+    }
+  });
+
+  it("process leads without a dialog: running is working, done/idle as is, attention counts as done", () => {
+    expect(reportedStatus(proc, "running", () => false)).toBe("working");
+    expect(reportedStatus(proc, "done", () => false)).toBe("done");
+    expect(reportedStatus(proc, "idle", () => false)).toBe("idle");
+    expect(reportedStatus(proc, "attention", () => false)).toBe("done");
+  });
+
+  it("process leads with a dialog: waiting whatever the pane's status", () => {
+    for (const ps of panes) expect(reportedStatus(proc, ps, () => true)).toBe("waiting");
+  });
+
+  it("derives the prompt phase from the same status", () => {
+    expect(remotePhase(null, "idle", () => false)).toBe("none");
+    expect(remotePhase(proc, "attention", () => false)).toBe("ready");
+    expect(remotePhase(proc, "attention", () => true)).toBe("waiting");
+    expect(remotePhase(proc, "done", () => true)).toBe("waiting");
+    expect(remotePhase(proc, "running", () => false)).toBe("working");
+    expect(remotePhase(hook("working"), "attention", () => false)).toBe("working");
+    expect(remotePhase(hook("working"), "idle", () => true)).toBe("waiting");
+    expect(remotePhase(hook("waiting"), "idle", () => false)).toBe("waiting");
+    expect(remotePhase(hook("done"), "attention", () => true)).toBe("ready");
+  });
+
+  it("the queue pump: a process lead's attention is ready unless a dialog shows; hook leads keep phaseOf", () => {
+    const hk = (status: "working" | "waiting" | "done" | "idle") => ({ source: "hook" as const, status });
+    expect(queuePhase(null, "idle", () => false)).toBe("none");
+    expect(queuePhase(proc, "attention", () => false)).toBe("ready");
+    expect(queuePhase(proc, "attention", () => true)).toBe("waiting");
+    expect(queuePhase(proc, "done", () => true)).toBe("waiting");
+    expect(queuePhase(proc, "running", () => false)).toBe("working");
+    // Hook leads: exactly phaseOf, whatever the pane and the screen say.
+    for (const ps of panes) {
+      for (const status of ["working", "waiting", "done", "idle"] as const) {
+        for (const d of [false, true]) {
+          expect(queuePhase(hk(status), ps, () => d)).toBe(phaseOf(hk(status), ps));
+        }
+      }
+    }
+  });
+
+  it("only a process lead's answer is told to the pane's status machine", () => {
+    expect(answerNotesSubmit(proc)).toBe(true);
+    expect(answerNotesSubmit(hook("waiting"))).toBe(false);
+    expect(answerNotesSubmit(null)).toBe(false);
+  });
+
+  it("lists a process lead blocked on an approval as waiting even though its pane went done", () => {
+    const list = buildPaneList(
+      input({
+        specs: [term("a")],
+        agents: { a: claude("idle", "process") },
+        paneStatus: () => "done",
+        dialog: () => true,
+      }),
+    );
+    expect(list[0].status).toBe("waiting");
+  });
+});
+
+describe("evaluating the list over time (screen + debounce + clock)", () => {
+  const MENU3 = ["Do you want to proceed?", "❯ 1. Yes", "  2. Yes, and don't ask again", "  3. No"];
+
+  function rig(agents: AgentSnapshot, ps: PaneStatus) {
+    const t = { now: 100_000, screen: [] as string[], prompt: undefined as string | undefined };
+    const clock = new StatusClock(() => t.now);
+    const deb = new DialogDebounce();
+    const tick = (ms = 2000): RemotePane => {
+      t.now += ms;
+      const asked = new Set<string>();
+      const list = buildPaneList(
+        input({
+          specs: [term("a")],
+          agents,
+          paneStatus: () => ps,
+          dialog: (id) => {
+            asked.add(id);
+            deb.observe(id, screenShowsDialog(t.screen, t.prompt), t.now);
+            return deb.stable(id);
+          },
+          since: (id, status) => clock.observe(id, status, null),
+        }),
+      );
+      clock.retainOnly(list.map((p) => p.pane));
+      return list[0];
+    };
+    return { t, tick };
+  }
+
+  it("a numbered prompt echo is never waiting", () => {
+    const r = rig({ a: claude("idle", "process") }, "done");
+    r.t.screen = ["› 1. do x", "  thinking"];
+    r.t.prompt = "1. do x";
+    for (let i = 0; i < 4; i++) expect(r.tick().status).toBe("done");
+    r.t.prompt = undefined;
+    r.t.screen = ["❯ 1. fix the bug"];
+    for (let i = 0; i < 4; i++) expect(r.tick().status).toBe("done");
+  });
+
+  it("a real 3-option menu is waiting from the second tick on, and gone after two more", () => {
+    const r = rig({ a: claude("working") }, "running");
+    r.t.screen = MENU3;
+    expect(r.tick().status).toBe("working");
+    const w = r.tick();
+    expect(w.status).toBe("waiting");
+    expect(r.tick().status).toBe("waiting");
+    r.t.screen = ["working..."];
+    expect(r.tick().status).toBe("waiting");
+    expect(r.tick().status).toBe("working");
+  });
+
+  it("two evaluations closer than 1.5 s do not count as two", () => {
+    const r = rig({ a: claude("working") }, "running");
+    r.t.screen = MENU3;
+    r.tick();
+    expect(r.tick(500).status).toBe("working");
+    expect(r.tick(1000).status).toBe("waiting");
+  });
+
+  it("flapping input moves neither the status nor since_ms", () => {
+    const r = rig({ a: claude("working") }, "running");
+    const first = r.tick();
+    for (let i = 0; i < 10; i++) {
+      r.t.screen = i % 2 === 0 ? MENU3 : ["working..."];
+      const p = r.tick();
+      expect(p.status).toBe("working");
+      expect(p.since_ms).toBe(first.since_ms);
+    }
+  });
+
+  it("a hook-reported waiting is immediate, and its since moves only with the status", () => {
+    const r = rig({ a: claude("waiting") }, "attention");
+    const p = r.tick();
+    expect(p.status).toBe("waiting");
+    expect(r.tick().since_ms).toBe(p.since_ms);
   });
 });
 
@@ -207,13 +413,16 @@ function fakeHost(opts: {
   agent?: FakeAgent;
   /// The generations cannot be read.
   noGens?: boolean;
-}): RemoteHost & { sent: string[]; enqueued: string[] } {
+}): RemoteHost & { sent: string[]; enqueued: string[]; acked: string[] } {
   const sent: string[] = [];
   const enqueued: string[] = [];
+  const acked: string[] = [];
   const agent = (): FakeAgent => opts.agent ?? { status: opts.status ?? "waiting", tool: null };
   return {
     sent,
     enqueued,
+    acked,
+    answered: (id) => void acked.push(id),
     menus: opts.menus ?? new MenuIds(mint),
     inputGen: (id) => (opts.noGens ? null : inputGeneration(id)),
     agentKey: () =>
@@ -221,6 +430,7 @@ function fakeHost(opts: {
         ? null
         : agentKey({ kind: "claude", status: agent().status, source: "hook", tool: agent().tool }),
     listInput: () => input({ specs: [term("a")], agents: { a: claude(agent().status) } }),
+    observe: () => buildPaneList(input({ specs: [term("a")], agents: { a: claude(agent().status) } })),
     terminal: (id) => opts.terminals?.[id] ?? null,
     phase: () => opts.phase ?? "ready",
     queued: () => opts.queued ?? 0,
@@ -412,7 +622,10 @@ describe("answer", () => {
     const host = fakeHost({ terminals: { a: t } });
     const id = await menuIdOf(host);
     expect(await ans(host, id, 1, "Yes")).toEqual({ result: "sent" });
+    expect(host.acked).toEqual(["a"]);
     expect(await ans(host, id, 1, "Yes")).toEqual({ result: "stale" });
+    // A stale answer acknowledges nothing more.
+    expect(host.acked).toEqual(["a"]);
     // The menu is still painted for a moment: a peek must not hand out a fresh
     // id for it, or the same click could be typed twice.
     expect(await menuIdOf(host)).toBe("");
@@ -725,5 +938,56 @@ describe("publisher", () => {
     r.pub.dispose();
     r.pub.poke();
     expect(r.pending()).toBe(false);
+    r.pub.pokeNow();
+    expect(r.sent).toHaveLength(0);
+  });
+
+  describe("pokeNow", () => {
+    function timed() {
+      const clock = { t: 10_000 };
+      let fn: (() => void) | null = null;
+      let panes: RemotePane[] = [row("working")];
+      const sent: RemotePane[][] = [];
+      const pub = createPublisher({
+        compute: () => panes,
+        send: async (p) => void sent.push(p),
+        active: () => true,
+        now: () => clock.t,
+        setTimer: (f) => {
+          fn = f;
+          return 1;
+        },
+        clearTimer: () => {
+          fn = null;
+        },
+      });
+      return { clock, pub, sent, set: (p: RemotePane[]) => (panes = p), pending: () => fn !== null };
+    }
+
+    it("publishes at once, with no timer, when the window is open", () => {
+      const r = timed();
+      r.pub.pokeNow();
+      expect(r.sent).toHaveLength(1);
+      expect(r.pending()).toBe(false);
+    });
+
+    it("inside the window it only arms the timer, and an identical list is not resent", () => {
+      const r = timed();
+      r.pub.pokeNow();
+      r.clock.t += 100;
+      r.set([row("done")]);
+      r.pub.pokeNow();
+      expect(r.sent).toHaveLength(1);
+      expect(r.pending()).toBe(true);
+      // The next heartbeat finds the window open and does not wait for the
+      // (possibly throttled) timer.
+      r.clock.t += 2000;
+      r.pub.pokeNow();
+      expect(r.sent).toHaveLength(2);
+      expect(r.pending()).toBe(false);
+      r.clock.t += 2000;
+      r.pub.pokeNow();
+      expect(r.sent).toHaveLength(2);
+    });
   });
 });

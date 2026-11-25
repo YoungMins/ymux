@@ -215,6 +215,14 @@ export function newlyWaitingPanes(prev: AgentSnapshot, next: AgentSnapshot): Uui
   );
 }
 
+/// Panes whose lead agent was waiting and no longer is (answered, interrupted,
+/// gone): each takes back the attention `newlyWaitingPanes` raised.
+export function noLongerWaitingPanes(prev: AgentSnapshot, next: AgentSnapshot): Uuid[] {
+  return Object.keys(prev).filter(
+    (id) => prev[id].lead?.status === "waiting" && next[id]?.lead?.status !== "waiting",
+  );
+}
+
 export function parseExpanded(raw: string | null): ExpandedMap {
   if (!raw) return {};
   try {

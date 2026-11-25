@@ -75,19 +75,36 @@ const MENU_ROWS = 30;
 /// tells a live menu from a numbered list in the agent's answer. Rows between
 /// the options (a description under one) are allowed.
 export function menuOptions(lines: readonly string[]): MenuOption[] {
-  const tail = lines.slice(-MENU_ROWS);
+  return findMenu(lines).options;
+}
+
+/// `menuOptions` plus where the menu sits: `end` is the index in `lines` of
+/// its last option row (-1 when there is no menu) and `pointer` the glyph on
+/// the selected option.
+export function findMenu(lines: readonly string[]): { options: MenuOption[]; end: number; pointer: string } {
+  const base = Math.max(0, lines.length - MENU_ROWS);
   let best: MenuOption[] = [];
+  let end = -1;
+  let pointer = "";
+  let runPointer = "";
   let run: MenuOption[] = [];
-  for (const line of tail) {
-    const m = OPTION.exec(unframe(line));
+  for (let i = base; i < lines.length; i++) {
+    const m = OPTION.exec(unframe(lines[i]));
     if (!m) continue;
     const opt = { n: m[2], label: m[3], selected: !!m[1], input: isInputOption(m[3]) };
     if (Number(opt.n) === run.length + 1) run.push(opt);
-    else if (opt.n === "1") run = [opt];
-    else continue;
-    if (run.length >= 2 && run.some((o) => o.selected)) best = [...run];
+    else if (opt.n === "1") {
+      run = [opt];
+      runPointer = "";
+    } else continue;
+    if (m[1]) runPointer = m[1];
+    if (run.length >= 2 && run.some((o) => o.selected)) {
+      best = [...run];
+      end = i;
+      pointer = runPointer;
+    }
   }
-  return best;
+  return { options: best, end, pointer };
 }
 
 /// The choice `o` as the screen shows it now: same number and label, or null

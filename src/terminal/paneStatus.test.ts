@@ -68,6 +68,34 @@ describe("PaneStatusMachine", () => {
     expect(m.status).toBe("done");
   });
 
+  it("an answer from outside the terminal (submit) restarts the turn: done -> running -> done", () => {
+    // Codex went quiet on an approval prompt (done); the phone answers it.
+    const seen: string[] = [];
+    const m = new PaneStatusMachine((s) => seen.push(s), 4000);
+    m.onSubmit(0);
+    m.tick(5000, false);
+    expect(m.status).toBe("done");
+    m.onSubmit(6000);
+    expect(m.status).toBe("running");
+    m.onOutput(7000);
+    m.tick(8000, false);
+    expect(m.status).toBe("running");
+    m.tick(12000, false);
+    expect(m.status).toBe("done");
+    expect(seen).toEqual(["running", "done", "running", "done"]);
+  });
+
+  it("a focus-style acknowledgement would leave the pane idle for the rest of the turn", () => {
+    // Why remote answers use the submit transition, not `onFocus`.
+    const m = new PaneStatusMachine(() => {}, 4000);
+    m.onSubmit(0);
+    m.tick(5000, false);
+    m.onFocus();
+    m.onOutput(6000);
+    m.tick(20000, false);
+    expect(m.status).toBe("idle");
+  });
+
   it("holds an unwatched done indefinitely — it is an unread marker", () => {
     const m = new PaneStatusMachine(() => {}, 4000, 8000);
     m.onSubmit(0);

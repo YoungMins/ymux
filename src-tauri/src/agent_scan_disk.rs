@@ -222,6 +222,9 @@ pub struct CodexMeta {
     /// a subagent rollout — the object `{"subagent": {…}}`, which reads back
     /// here as `None`.
     pub source: Option<String>,
+    /// `payload.originator`: `"codex-tui"` for the interactive TUI (since
+    /// codex-cli 0.160.1 that rollout says `source: "vscode"`, not `"cli"`).
+    pub originator: Option<String>,
     /// `payload.timestamp` (falling back to the line's own `timestamp`), in
     /// epoch seconds: when the session was created. A resumed session keeps
     /// appending to its original rollout, so this stays the original date.
@@ -267,19 +270,28 @@ pub fn parse_codex_meta(first_line: &str) -> Option<CodexMeta> {
         id,
         cwd,
         source: p.get("source").and_then(|x| x.as_str()).map(str::to_string),
+        originator: p
+            .get("originator")
+            .and_then(|x| x.as_str())
+            .map(str::to_string),
         created,
     })
 }
 
 /// Whether this rollout is one a ymux pane could have been running.
 ///
-/// Only `source == "cli"` — the interactive TUI. `"exec"` is `codex exec`
-/// (non-interactive), `"vscode"` and the `Codex Desktop` originator are other
-/// front ends, and the object-valued `source` is a subagent thread. Resuming
-/// any of those in a pane would drop the user into a conversation they never
-/// had in that terminal.
+/// Only the interactive TUI: `source == "cli"` (codex-cli before 0.160), or
+/// `originator == "codex-tui"` with `source` `"cli"` or `"vscode"` (0.160.1+
+/// writes `"vscode"` there). `"exec"` is `codex exec` (non-interactive); the
+/// `Codex Desktop` and `Claude Code` originators and `codex_vscode` are other
+/// front ends, and the object-valued `source` (read back here as `None`) is a
+/// subagent thread. Resuming any of those in a pane would drop the user into
+/// a conversation they never had in that terminal.
 pub fn codex_is_resumable(meta: &CodexMeta) -> bool {
-    meta.source.as_deref() == Some("cli") && is_valid_session_id(&meta.id)
+    let tui = meta.source.as_deref() == Some("cli")
+        || (meta.originator.as_deref() == Some("codex-tui")
+            && matches!(meta.source.as_deref(), Some("cli" | "vscode")));
+    tui && is_valid_session_id(&meta.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,6 +1080,97 @@ mod tests {
         assert!(!codex_is_resumable(&meta));
     }
 
+    /// First lines shaped like codex-cli 0.166 writes them (key structure of
+    /// real ones; every value is made up).
+    fn modern_meta(id: &str, cwd: &str, originator: &str, source: &str) -> String {
+        format!(
+            r#"{{"timestamp":"2026-11-20T00:16:24.000Z","ordinal":0,"type":"session_meta","payload":{{"session_id":"{id}","id":"{id}","timestamp":"2026-11-20T00:16:23.900Z","cwd":{cwd},"runtime_workspace_roots":[],"originator":"{originator}","cli_version":"0.166.0","source":{source},"model_provider":"openai","base_instructions":{{"text":"x"}},"history_mode":"full","multi_agent_version":2,"context_window":1,"git":{{}}}}}}"#,
+            cwd = serde_json::Value::from(cwd),
+        )
+    }
+
+    const MODERN_ID: &str = "01a1f64f-c166-7a61-8806-767f14218193";
+
+    #[test]
+    fn a_modern_tui_rollout_reads_as_resumable_despite_source_vscode() {
+        // codex-cli 0.160.1+ stamps the interactive TUI with source "vscode".
+        let line = modern_meta(MODERN_ID, "/w", "codex-tui", "\"vscode\"");
+        let meta = parse_codex_meta(&line).expect("parses");
+        assert_eq!(meta.originator.as_deref(), Some("codex-tui"));
+        assert_eq!(meta.source.as_deref(), Some("vscode"));
+        assert!(codex_is_resumable(&meta));
+    }
+
+    #[test]
+    fn other_codex_front_ends_are_not_resumable() {
+        for (originator, source) in [
+            ("Codex Desktop", "\"vscode\""),
+            ("Claude Code", "\"vscode\""),
+            ("codex_vscode", "\"vscode\""),
+            ("codex_exec", "\"exec\""),
+            ("codex-tui", r#"{"subagent":{"depth":1}}"#),
+            ("something-new", "\"vscode\""),
+            ("codex-tui", "\"exec\""),
+            ("codex-tui", "\"mcp\""),
+            ("codex-tui", "\"\""),
+        ] {
+            let line = modern_meta(MODERN_ID, "/w", originator, source);
+            let meta = parse_codex_meta(&line).expect("parses");
+            assert!(!codex_is_resumable(&meta), "{originator} / {source}");
+        }
+    }
+
+    #[test]
+    fn codex_candidates_keeps_only_the_interactive_tui_rollout() {
+        let root = tempdir("codex-five");
+        let now = SystemTime::now();
+        let cwd = "/w/proj";
+        let day = root.join("2026/11/20");
+        let cases = [
+            (
+                "01a1f64f-0000-7000-8000-000000000001",
+                "codex-tui",
+                "\"vscode\"",
+            ),
+            (
+                "01a1f64f-0000-7000-8000-000000000002",
+                "Codex Desktop",
+                "\"vscode\"",
+            ),
+            (
+                "01a1f64f-0000-7000-8000-000000000003",
+                "Claude Code",
+                "\"vscode\"",
+            ),
+            (
+                "01a1f64f-0000-7000-8000-000000000004",
+                "codex_vscode",
+                "\"vscode\"",
+            ),
+            (
+                "01a1f64f-0000-7000-8000-000000000005",
+                "codex_exec",
+                "\"exec\"",
+            ),
+            (
+                "01a1f64f-0000-7000-8000-000000000006",
+                "codex-tui",
+                r#"{"subagent":{"depth":1}}"#,
+            ),
+        ];
+        for (id, originator, source) in cases {
+            let f = day.join(format!("rollout-2026-11-20T09-16-24-{id}.jsonl"));
+            write(
+                &f,
+                &format!("{}\n", modern_meta(id, cwd, originator, source)),
+            );
+        }
+        let found = codex_candidates(&root, cwd, now);
+        let ids: Vec<&str> = found.iter().map(|d| d.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["01a1f64f-0000-7000-8000-000000000001"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn parse_codex_meta_rejects_a_non_meta_first_line() {
         assert_eq!(parse_codex_meta(r#"{"type":"event_msg"}"#), None);
@@ -1756,6 +1859,86 @@ mod tests {
         let head = read_head(&f, 1).expect("should read something");
         assert!(head.len() <= MAX_HEAD_BYTES, "read must stop at the cap");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Real-data gate, read-only (counts only, no paths or text): over this
+    /// machine's `~/.codex/sessions`, how many plain rollouts the old
+    /// `source == "cli"` rule accepted and how many the current rule does, and
+    /// what `codex_candidates` returns for the cwds of the 10 newest ones.
+    /// Run: `cargo test --no-default-features --lib -p ymux real_codex_tui_gate -- --ignored --nocapture`
+    #[test]
+    #[ignore = "reads the real ~/.codex/sessions"]
+    fn real_codex_tui_gate() {
+        fn walk(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, SystemTime)>, zst: &mut usize) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                let Ok(md) = e.metadata() else { continue };
+                if md.is_dir() && depth < 4 {
+                    walk(&p, depth + 1, out, zst);
+                } else if md.is_file()
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl.zst"))
+                {
+                    *zst += 1;
+                } else if md.is_file()
+                    && p.extension().and_then(|x| x.to_str()) == Some("jsonl")
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("rollout-"))
+                {
+                    out.push((p, md.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
+                }
+            }
+        }
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .expect("home dir");
+        let root = PathBuf::from(home).join(".codex").join("sessions");
+        let mut files = Vec::new();
+        let mut compressed = 0;
+        walk(&root, 0, &mut files, &mut compressed);
+        files.sort_by_key(|(_, m)| std::cmp::Reverse(*m));
+        let (mut plain, mut parsed, mut before, mut after, mut tui_vscode) = (0, 0, 0, 0, 0);
+        let mut cwds: Vec<String> = Vec::new();
+        for (i, (p, _)) in files.iter().enumerate() {
+            plain += 1;
+            let Some(head) = read_head(p, 1) else {
+                continue;
+            };
+            let Some(meta) = parse_codex_meta(head.trim_end()) else {
+                continue;
+            };
+            parsed += 1;
+            before += usize::from(meta.source.as_deref() == Some("cli"));
+            after += usize::from(codex_is_resumable(&meta));
+            tui_vscode += usize::from(
+                meta.originator.as_deref() == Some("codex-tui")
+                    && meta.source.as_deref() == Some("vscode"),
+            );
+            if i < 10 && !cwds.contains(&meta.cwd) {
+                cwds.push(meta.cwd);
+            }
+        }
+        // Within the 24 h freshness window, as the app asks.
+        let now = SystemTime::now();
+        let candidates: usize = cwds
+            .iter()
+            .map(|c| codex_candidates(&root, c, now).len())
+            .sum();
+        println!(
+            "codex gate: only plain .jsonl rollouts are examined; compressed .jsonl.zst \
+             rollouts are skipped (plain={plain} compressed_skipped={compressed})"
+        );
+        println!(
+            "codex gate: plain_rollouts={plain} parsed={parsed} accepted_before={before} \
+             accepted_now={after} tui_with_source_vscode={tui_vscode} \
+             newest10_distinct_cwds={} codex_candidates_fresh_total={candidates}",
+            cwds.len()
+        );
     }
 
     /// Set a file's mtime. `std::fs` has no portable setter, so this goes

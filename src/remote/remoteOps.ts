@@ -33,7 +33,13 @@ export interface RemoteTerminal {
 /// What the app offers the remote ops (implemented by WorkspaceManager's
 /// `remote*` methods).
 export interface RemoteHost {
+  /// The list input, READ-ONLY: what the last `observe` recorded.
   listInput(): RemoteListInput;
+  /// One evaluation of every pane (dialog sightings, reported statuses and
+  /// their ages are recorded; panes no longer listed are forgotten). Run on
+  /// every trigger and on the scan heartbeat, whether or not a phone is
+  /// connected. Returns the list as evaluated.
+  observe(): RemotePane[];
   /// The per-pane menu ids (`peek` hands one out, `answer` must echo it).
   menus: MenuIds;
   /// The pane's input generation (`inputGen.ts`): advances on every write to
@@ -45,6 +51,10 @@ export interface RemoteHost {
   agentKey(id: Uuid): string | null;
   /// The live terminal of a pane, or null when absent or not yet hydrated.
   terminal(id: Uuid): RemoteTerminal | null;
+  /// A menu option was typed for the pane from the phone: the host tells the
+  /// pane's own status machine that input was submitted when its status is
+  /// the pane's (`answerNotesSubmit`). Never focuses or scrolls anything.
+  answered(id: Uuid): void;
   phase(id: Uuid): AgentPhase;
   queued(id: Uuid): number;
   /// Add to the pane's prompt queue; false when blank or full.
@@ -151,6 +161,7 @@ export function answer(host: RemoteHost, id: Uuid, n: number, label: string, men
   // One answer per appearance of a menu: retired before the key goes out.
   host.menus.retire(id);
   term.typeText(o.n);
+  host.answered(id);
   return "sent";
 }
 

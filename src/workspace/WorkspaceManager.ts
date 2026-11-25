@@ -92,7 +92,12 @@ import { fill, gitErrorText } from "../git/worktreeFlow";
 import { shellFamilyFromExecutable, type ShellFamily } from "../terminal/shellQuote";
 import { showContextMenu, type ContextMenuEntry } from "../menu/ContextMenu";
 import { moveItem } from "./reorder";
-import { effectiveLeadStatus, newlyWaitingPanes, paneLabel, workspaceIdOfPane } from "./agentTree";
+import {
+  newlyWaitingPanes,
+  noLongerWaitingPanes,
+  paneLabel,
+  workspaceIdOfPane,
+} from "./agentTree";
 import {
   buildInbox,
   nextAttention,
@@ -119,9 +124,12 @@ import type { ProviderUsage } from "../tokenmonitor/model";
 import { shouldFocusAfterSend } from "./backgroundSend";
 import { showToast, STICKY_TOAST } from "../ui/Toast";
 import type { RemoteHost } from "../remote/remoteOps";
+import { DIALOG_ROWS, DialogDebounce, screenShowsDialog } from "../remote/dialogState";
+import { answerNotesSubmit, buildPaneList, queuePhase, remotePhase, type RemoteListInput } from "../remote/remoteModel";
+import { StatusClock } from "../remote/statusClock";
 import { MenuIds, agentKey } from "../remote/menuId";
 import { inputGeneration } from "../remote/inputGen";
-import { PromptQueues, phaseOf, queueSuffix, QUEUE_TICK_MS } from "./promptQueue";
+import { PromptQueues, queueSuffix, QUEUE_TICK_MS, type AgentPhase } from "./promptQueue";
 import { quotaPollWanted } from "../accounts/quotaModel";
 import { BroadcastSwitch, applyZoom, broadcastTargets, broadcastParticipants, type BroadcastPane } from "./broadcast";
 import { paintPaneFlags } from "./paneFlags";
@@ -202,6 +210,17 @@ export class WorkspaceManager {
   paneStatus = new Map<Uuid, PaneStatus>();
   /// When each pane entered its current status (ms epoch), for the inbox.
   private statusSince = new Map<Uuid, number>();
+  /// When each pane entered the status the remote phone is shown (not the
+  /// pane's own status above).
+  private remoteClock = new StatusClock();
+  /// Per pane: the dialog-on-screen state the phone is told, debounced; the
+  /// raw screen read (cached for half a second).
+  private remoteDialogs = new DialogDebounce();
+  private rawDialogs = new Map<Uuid, { at: number; seen: boolean }>();
+  /// The remote publisher's direct triggers: a pane status change and the
+  /// backend's scan heartbeat. Called synchronously, never through
+  /// `requestAnimationFrame` (a hidden window does not run those).
+  private remoteWake = new Set<() => void>();
   private readHistoryLog = new ReadHistory();
   private inboxListeners = new Set<() => void>();
   private inboxFrame: number | null = null;
@@ -864,6 +883,7 @@ export class WorkspaceManager {
       onStatusChange: (status) => {
         this.paneStatus.set(spec.id, status);
         this.statusSince.set(spec.id, Date.now());
+        this.wakeRemote();
         this.scheduleInboxChange();
         this.applyPaneStatusClass(spec.id, status);
         const wsId = this.workspaceOfPane(spec.id);
@@ -2532,11 +2552,16 @@ export class WorkspaceManager {
       tokenUsage: () => api.getTokenUsage(),
       key: (id, key) => {
         const pane = this.findPaneById(id);
-        if (pane instanceof TerminalPane) pane.typeText(keyBytes(key, pane.applicationCursorKeys));
+        if (!(pane instanceof TerminalPane)) return;
+        pane.typeText(keyBytes(key, pane.applicationCursorKeys));
+        // An answering key (Enter, a menu number) is input submitted.
+        if (key === "enter" || key === "1" || key === "2" || key === "3") this.noteAnswer(id, pane);
       },
       type: (id, data) => {
         const pane = this.findPaneById(id);
-        if (pane instanceof TerminalPane) pane.typeText(data);
+        if (!(pane instanceof TerminalPane)) return;
+        pane.typeText(data);
+        if (data.includes("\r")) this.noteAnswer(id, pane);
       },
       cursorKeys: (id) => {
         const pane = this.findPaneById(id);
@@ -2781,11 +2806,12 @@ export class WorkspaceManager {
     // them current from `applyAgents`.
     menus.observeAgents(this._agents);
     this.remoteMenus = menus;
-    return {
-      menus,
-      inputGen: (id) => inputGeneration(id),
-      agentKey: (id) => agentKey(this._agents[id]?.lead),
-      listInput: () => ({
+    /// The list input. Read-only unless `asked` is given: then it is an
+    /// evaluation, which records the pane's dialog sightings and reported
+    /// statuses (the only writer of `remoteDialogs` and `remoteClock`).
+    const inputOf = (asked?: Set<Uuid>): RemoteListInput => {
+      const now = Date.now();
+      return {
         workspaces: this.config.workspaces.map((ws) => ({
           label: formatWorkspaceLabel(ws.id, ws.name ?? null, this.workspacePosition(ws.id)),
           root: ws.root,
@@ -2793,12 +2819,54 @@ export class WorkspaceManager {
         agents: this._agents,
         paneStatus: (id) => this.paneStatus.get(id),
         title: (id) => this.tabLabelFor(id),
-        since: (id) => this.statusSince.get(id) ?? officeLog.statusSince(id),
+        // The age of the status the phone is shown. A hook agent's first
+        // sighting takes the office log's time for that status.
+        since: (id, status) =>
+          asked
+            ? this.remoteClock.observe(
+                id,
+                status,
+                this._agents[id]?.lead?.source === "hook" ? officeLog.statusSince(id) : null,
+              )
+            : this.remoteClock.read(id, status),
+        dialog: (id) => {
+          if (asked) {
+            asked.add(id);
+            this.remoteDialogs.observe(id, this.rawDialog(id, now), now);
+          }
+          return this.remoteDialogs.stable(id);
+        },
         queued: (id) => this.promptQueues.count(id),
         live: (id) => term(id) !== null,
-      }),
+      };
+    };
+    return {
+      menus,
+      inputGen: (id) => inputGeneration(id),
+      agentKey: (id) => agentKey(this._agents[id]?.lead),
+      listInput: () => inputOf(),
+      observe: () => {
+        const asked = new Set<Uuid>();
+        const list = buildPaneList(inputOf(asked));
+        const ids = list.map((p) => p.pane);
+        this.remoteClock.retainOnly(ids);
+        this.remoteDialogs.retainOnly(ids);
+        // The screen is no evidence for a pane whose status did not ask for
+        // it: when it asks again it starts from nothing.
+        for (const id of ids) if (!asked.has(id)) this.remoteDialogs.forget(id);
+        return list;
+      },
+      // Typed without Enter, so it must still count as input submitted (never
+      // as a focus: that would leave the pane idle for the rest of the turn).
+      answered: (id) => {
+        const p = term(id);
+        if (p) this.noteAnswer(id, p);
+      },
       terminal: term,
-      phase: (id) => phaseOf(this._agents[id]?.lead, this.paneStatus.get(id) ?? "idle"),
+      phase: (id) =>
+        remotePhase(this._agents[id]?.lead, this.paneStatus.get(id) ?? "idle", () =>
+          this.remoteDialogs.stable(id),
+        ),
       queued: (id) => this.promptQueues.count(id),
       enqueue: (id, text) => {
         if (this.promptQueues.add(id, text) < 0) return false;
@@ -2808,6 +2876,25 @@ export class WorkspaceManager {
       send: (id, text, notAfterMs) =>
         this.sendToPane(id, text, true, undefined, { from: null, kind: "prompt" }, false, notAfterMs),
     };
+  }
+
+  /// A menu answer was typed into `pane` from outside its terminal (the phone,
+  /// the office view's keys): see `answerNotesSubmit`.
+  private noteAnswer(id: Uuid, pane: TerminalPane): void {
+    if (answerNotesSubmit(this._agents[id]?.lead)) pane.noteSubmit();
+  }
+
+  /// Whether the pane's screen shows a real dialog right now (the raw read the
+  /// remote debounce is fed with). The read is cached for half a second.
+  private rawDialog(id: Uuid, now: number): boolean {
+    const c = this.rawDialogs.get(id);
+    if (c && now - c.at < 500) return c.seen;
+    const pane = this.findPaneById(id);
+    const seen =
+      pane instanceof TerminalPane &&
+      screenShowsDialog(pane.screenTail(DIALOG_ROWS), pane.lastSentText ?? undefined);
+    this.rawDialogs.set(id, { at: now, seen });
+    return seen;
   }
 
   /// Open the queue dialog for the focused terminal pane.
@@ -2872,13 +2959,22 @@ export class WorkspaceManager {
     }, QUEUE_TICK_MS);
   }
 
+  /// The phase a queued prompt is delivered by: the phone's rule for a process
+  /// lead (its pane's `attention` without a dialog is ready), `phaseOf` for a
+  /// hook lead.
+  private queuePhaseOf(paneId: Uuid): AgentPhase {
+    return queuePhase(this._agents[paneId]?.lead, this.paneStatus.get(paneId) ?? "idle", () =>
+      this.remoteDialogs.stable(paneId),
+    );
+  }
+
   /// Deliver the next queued prompt to `paneId` if its agent is ready for it.
   private pumpQueue(paneId: Uuid): void {
     const pane = this.findPaneById(paneId);
     if (!(pane instanceof TerminalPane)) return;
     const text = this.promptQueues.claim(
       paneId,
-      phaseOf(this._agents[paneId]?.lead, this.paneStatus.get(paneId) ?? "idle"),
+      this.queuePhaseOf(paneId),
       () => pane.screenBlock() !== null,
       Date.now(),
       { focused: this.focusedPaneId === paneId, inputAt: pane.userInputAt },
@@ -2890,8 +2986,7 @@ export class WorkspaceManager {
   /// is written (the Enter is re-checked against the agent and the screen).
   private async deliverQueued(paneId: Uuid, pane: TerminalPane, text: string): Promise<void> {
     const fit = (): boolean => {
-      const lead = this._agents[paneId]?.lead;
-      return !!lead && effectiveLeadStatus(lead, this.paneStatus.get(paneId) ?? "idle") !== "waiting";
+      return !!this._agents[paneId]?.lead && this.queuePhaseOf(paneId) !== "waiting";
     };
     let outcome: "delivered" | "retry" = "retry";
     let entered = false;
@@ -3031,8 +3126,30 @@ export class WorkspaceManager {
     this.syncQueueTimer();
     officeLog.clearMail(paneId);
     this.statusSince.delete(paneId);
+    this.remoteClock.forget(paneId);
+    this.remoteDialogs.forget(paneId);
+    this.rawDialogs.delete(paneId);
     this.readHistoryLog.remove(paneId);
     this.scheduleInboxChange();
+  }
+
+  /// Subscribe to the remote publisher's direct triggers (a pane's status
+  /// changed, the agent scan heartbeat). Not coalesced, not frame-bound.
+  onRemoteWake(cb: () => void): () => void {
+    this.remoteWake.add(cb);
+    return () => {
+      this.remoteWake.delete(cb);
+    };
+  }
+
+  private wakeRemote(): void {
+    for (const cb of this.remoteWake) {
+      try {
+        cb();
+      } catch (e) {
+        console.warn("remote wake failed:", e);
+      }
+    }
   }
 
   /// Subscribe to inbox changes (status, tree, closes), coalesced to at most
@@ -3311,6 +3428,13 @@ export class WorkspaceManager {
       const pane = this.findPaneById(id);
       if (pane instanceof TerminalPane) pane.markWaiting();
     }
+    // An agent that is no longer waiting takes back the attention it raised
+    // (the phone, a hook-side answer or an interrupt never type the Enter
+    // that would have cleared it).
+    for (const id of noLongerWaitingPanes(this._agents, next)) {
+      const pane = this.findPaneById(id);
+      if (pane instanceof TerminalPane) pane.markWaitingCleared();
+    }
     this.noteAgentsForOffice(this._agents, next);
     // Arrival time says nothing about when the process list was sampled, so
     // only the scan heartbeat (`noteAgentScan`) advances `agentSnapshotAt`.
@@ -3331,6 +3455,13 @@ export class WorkspaceManager {
   /// event arrived; a scan sampled before a paste cannot vouch for the lead
   /// afterwards.
   noteAgentScan(sampledAtMs: number): void {
+    // The heartbeat still arrives while the window is hidden, which throttles
+    // the panes' own 1 s status timers: step every status machine from here
+    // too (time-based, idempotent), then let the remote side evaluate.
+    for (const cache of this.paneCaches.values()) {
+      for (const pane of cache.values()) if (pane instanceof TerminalPane) pane.tickStatus();
+    }
+    this.wakeRemote();
     if (Number.isFinite(sampledAtMs) && sampledAtMs > this.agentSnapshotAt) {
       this.agentSnapshotAt = sampledAtMs;
       this.pumpHandoffs();

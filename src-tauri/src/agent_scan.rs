@@ -382,6 +382,11 @@ pub fn other_agents(
         .into_iter()
         .filter_map(|(kind, p)| {
             let kind = AgentKind::from_kind(kind)?;
+            // A server another app keeps running (no TUI) writes no
+            // conversation a pane could be waiting for.
+            if kind == AgentKind::Codex && crate::agent_binding::is_background_codex(&p.argv) {
+                return None;
+            }
             let known_id = crate::agent_binding::argv_session_id(kind, &p.argv).or_else(|| {
                 if kind == AgentKind::Claude {
                     pid_file_id(&tree.claude_probes(p))
@@ -483,7 +488,15 @@ pub fn start_agent_scan(app: tauri::AppHandle) {
                             .any(|(id, a)| tracker.may_disk_scan(*id, a.process.key(), now))
                     };
                     let others = if !wanted {
-                        Vec::new()
+                        // A Codex pane still needs to see every other
+                        // interactive Codex on each tick (one that comes and
+                        // goes between two disk scans is a rival all the
+                        // same); that costs no file read, unlike Claude's.
+                        if pane_agents.values().any(|a| a.kind == "codex") {
+                            other_agents(&procs, |_| None)
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         // A Claude outside ymux can run under any account
                         // dir, so probe every directory ymux knows of.
@@ -824,6 +837,80 @@ mod tests {
         assert_eq!(others[1].known_id.as_deref(), Some(id));
         assert_eq!(others[2].known_id.as_deref(), Some("bbbb-1"));
         assert_eq!(others[2].cwd.as_deref(), Some("/w"));
+    }
+
+    #[test]
+    fn other_agents_skips_background_codex_processes() {
+        let procs = vec![
+            // ChatGPT's and the Claude Code plugin's servers: no TUI, no pane.
+            proc(
+                10,
+                Some(1),
+                "codex",
+                &["codex.exe", "-c", "k=v", "app-server"],
+            ),
+            proc(
+                11,
+                Some(2),
+                "node",
+                &["node", "C:\\x\\@openai\\codex\\bin\\codex.js", "app-server"],
+            ),
+            proc(
+                12,
+                Some(3),
+                "codex",
+                &["codex", "--flag", "exec-server", "--x"],
+            ),
+            proc(13, Some(4), "codex", &["codex", "exec", "do it"]),
+            proc(14, Some(5), "codex", &["codex", "mcp-server"]),
+            // Interactive ones, however they were started.
+            proc(20, Some(6), "codex", &["codex"]),
+            proc(21, Some(7), "codex", &["codex", "fix it"]),
+            proc(
+                22,
+                Some(8),
+                "codex",
+                &["codex", "resume", "01a1f64f-c166-7a61-8806-767f14218193"],
+            ),
+            proc(
+                23,
+                Some(9),
+                "codex",
+                &["codex", "--dangerously-bypass-approvals-and-sandbox"],
+            ),
+        ];
+        let pids: Vec<u32> = other_agents(&procs, |_| None)
+            .iter()
+            .map(|o| o.pid)
+            .collect();
+        assert_eq!(pids, vec![20, 21, 22, 23]);
+    }
+
+    #[test]
+    fn codex_probes_and_non_session_subcommands_are_background() {
+        let procs = vec![
+            proc(10, Some(1), "codex", &["codex", "--version"]),
+            proc(11, Some(2), "codex", &["codex", "-V"]),
+            proc(12, Some(3), "codex", &["codex", "-c", "k=v", "--help"]),
+            proc(13, Some(4), "codex", &["codex", "-h"]),
+            proc(14, Some(5), "codex", &["codex", "login", "status"]),
+            proc(15, Some(6), "codex", &["codex", "review", "--base", "main"]),
+            proc(16, Some(7), "codex", &["codex", "features", "list"]),
+            proc(17, Some(8), "codex", &["codex", "apply"]),
+            // Interactive ones, including the session pickers.
+            proc(20, Some(9), "codex", &["codex", "--search"]),
+            proc(21, Some(101), "codex", &["codex", "fork", "--last"]),
+            proc(22, Some(102), "codex", &["codex", "resume"]),
+            proc(23, Some(103), "codex", &["codex", "cloud"]),
+            proc(24, Some(104), "codex", &["codex", "agents"]),
+            // A prompt that merely mentions a probe flag is still a prompt.
+            proc(25, Some(105), "codex", &["codex", "explain --version"]),
+        ];
+        let pids: Vec<u32> = other_agents(&procs, |_| None)
+            .iter()
+            .map(|o| o.pid)
+            .collect();
+        assert_eq!(pids, vec![20, 21, 22, 23, 24, 25]);
     }
 
     #[test]

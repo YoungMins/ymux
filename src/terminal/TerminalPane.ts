@@ -523,10 +523,7 @@ export class TerminalPane implements Pane {
     // when no new output/input arrives to trigger a recheck.
     // Only running and done can change on a tick, and only done looks at
     // visibility (which walks the layout), so idle panes skip both.
-    this.statusTimer = window.setInterval(() => {
-      const status = this.statusMachine.status;
-      if (status === "running" || status === "done") this.statusMachine.tick(Date.now(), status === "done" && this.visible());
-    }, 1000);
+    this.statusTimer = window.setInterval(() => this.tickStatus(), 1000);
 
     // Bell (BEL 0x07) → attention signal with no message.
     this.term.onBell(() => {
@@ -947,7 +944,7 @@ export class TerminalPane implements Pane {
   /// scrollback, so a menu that scrolled away is not mistaken for a live one.
   /// `echoOf`: text we pasted ourselves; rows echoing its start are ignored
   /// (Codex shows a pasted `1. do x` as `› 1. do x`, which looks like a menu).
-  screenBlock(echoOf?: string): BlockKind | null {
+  screenBlock(echoOf: string | undefined = this.echoHint()): BlockKind | null {
     if (!this.spawned) return null;
     const buf = this.term.buffer.active;
     const lines: string[] = [];
@@ -956,6 +953,31 @@ export class TerminalPane implements Pane {
       lines.push(buf.getLine(y)?.translateToString(true) ?? "");
     }
     return detectBlockingScreen(lines, echoOf);
+  }
+
+  /// The last text this program put into the pane as a prompt (a paste, or
+  /// text typed with its Enter), or null. The agent echoes it back on screen.
+  lastSentText: string | null = null;
+
+  /// `lastSentText` as the default echo for `screenBlock`, so a numbered
+  /// prompt sent earlier cannot read as a menu and block the next one. Only a
+  /// long first line counts: a short one ("1. Yes") could hide a real dialog.
+  private echoHint(): string | undefined {
+    const first = (this.lastSentText ?? "").split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+    return first.trim().length >= 12 ? (this.lastSentText ?? undefined) : undefined;
+  }
+
+  /// The last `rows` rows of the visible screen above its trailing blank rows
+  /// (what the remote dialog check reads; nothing above the viewport).
+  screenTail(rows: number): string[] {
+    if (!this.spawned) return [];
+    const buf = this.term.buffer.active;
+    const text = (y: number): string => buf.getLine(y)?.translateToString(true) ?? "";
+    let end = Math.min(buf.length, buf.baseY + this.term.rows);
+    while (end > buf.baseY && text(end - 1).trim() === "") end--;
+    const out: string[] = [];
+    for (let y = Math.max(buf.baseY, end - rows); y < end; y++) out.push(text(y));
+    return out;
   }
 
   /// The screen as plain text, one string per row, with up to `history`
@@ -1037,6 +1059,17 @@ export class TerminalPane implements Pane {
     });
   }
 
+  /// One step of the status machine's clock (running -> done after a quiet
+  /// spell, a watched done fading). Time-based and idempotent: the 1 s
+  /// interval calls it, and so does the backend's scan heartbeat, which still
+  /// arrives while a hidden window throttles that interval.
+  tickStatus(): void {
+    const status = this.statusMachine.status;
+    if (status === "running" || status === "done") {
+      this.statusMachine.tick(Date.now(), status === "done" && this.visible());
+    }
+  }
+
   /// The agent registry reports this pane's agent is waiting on the user.
   markWaiting(): void {
     this.statusMachine.onWaiting();
@@ -1096,6 +1129,7 @@ export class TerminalPane implements Pane {
     if (this.screenBlock() !== null) return false;
     const chunks = preparePaste(text, { bracketed: true });
     if (chunks.length === 0) return false;
+    this.lastSentText = text;
     this.pasteFailed = false;
     this.pasteTail = this.pasteTail
       .then(async () => {
@@ -1510,6 +1544,8 @@ export class TerminalPane implements Pane {
   typeText(text: string): void {
     if (!this.spawned || !text) return;
     void api.writePane(this.id, ENCODER.encode(text));
+    // Text with its Enter is a prompt (the office view's send); a menu key is not.
+    if (text.length > 1 && text.endsWith("\r") && !text.startsWith("\x1b")) this.lastSentText = text.slice(0, -1);
   }
 
   /// Write what the user typed in another pane (broadcast input). Goes behind

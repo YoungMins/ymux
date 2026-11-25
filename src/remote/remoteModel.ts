@@ -4,8 +4,11 @@
 
 import { panes as layoutPanes } from "../layout/LayoutTree";
 import type { PaneStatus } from "../terminal/paneStatus";
+import { phaseOf, type AgentPhase } from "../workspace/promptQueue";
 import type {
   AgentSnapshot,
+  AgentSource,
+  AgentStatus,
   LayoutNode,
   RemoteCap,
   RemotePane,
@@ -21,11 +24,72 @@ export interface RemoteListInput {
   agents: AgentSnapshot;
   paneStatus: (id: Uuid) => PaneStatus | undefined;
   title: (id: Uuid) => string;
-  /// When the pane entered its status (epoch ms); null/undefined = unknown.
-  since: (id: Uuid) => number | null | undefined;
+  /// When the pane entered the REPORTED `status` (epoch ms): changes only when
+  /// that status changes (`StatusClock`); null/undefined = unknown.
+  since: (id: Uuid, status: RemotePane["status"]) => number | null | undefined;
+  /// The live screen shows a blocking dialog or menu (debounced by the
+  /// caller). Asked only where `reportedStatus` needs it.
+  dialog: (id: Uuid) => boolean;
   queued: (id: Uuid) => number;
   /// A live TerminalPane exists for the id (its workspace was hydrated).
   live: (id: Uuid) => boolean;
+}
+
+/// The status a phone is told for a pane's lead agent.
+///
+/// A hook lead's status is the backend's; only `working` can hide a dialog (an
+/// AskUserQuestion menu leaves the backend there), so only then is the screen
+/// asked. A process-scan lead (Codex, Gemini) has no status of its own: it is
+/// the pane's, where `attention` (the PC's unseen flag, nothing a phone could
+/// clear) counts as `done`, and a quiet pane turns `done`/`idle` while the
+/// agent is blocked on an approval prompt, so the screen is asked for
+/// `working`, `done` and `idle`. `dialog` is lazy: it reads the screen.
+export function reportedStatus(
+  lead: { source: AgentSource; status: AgentStatus },
+  paneStatus: PaneStatus,
+  dialog: () => boolean,
+): RemotePane["status"] {
+  if (lead.source === "process") {
+    const eff = effectiveLeadStatus(lead, paneStatus === "attention" ? "done" : paneStatus);
+    return dialog() ? "waiting" : eff;
+  }
+  const eff = effectiveLeadStatus(lead, paneStatus);
+  return eff === "working" && dialog() ? "waiting" : eff;
+}
+
+/// What the prompt path may do with the pane: the same status the phone sees.
+export function remotePhase(
+  lead: { source: AgentSource; status: AgentStatus } | null | undefined,
+  paneStatus: PaneStatus,
+  dialog: () => boolean,
+): AgentPhase {
+  if (!lead) return "none";
+  const s = reportedStatus(lead, paneStatus, dialog);
+  if (s === "working") return "working";
+  if (s === "waiting") return "waiting";
+  return "ready";
+}
+
+/// The phase the prompt queue delivers by. A hook lead keeps `phaseOf`; a
+/// process lead takes the phone's rule (`remotePhase`): its pane's `attention`
+/// without a dialog on screen is `ready`, not `waiting`, so a prompt queued
+/// from the phone does not wait for the PC to focus the pane.
+export function queuePhase(
+  lead: { source: AgentSource; status: AgentStatus } | null | undefined,
+  paneStatus: PaneStatus,
+  dialog: () => boolean,
+): AgentPhase {
+  return lead?.source === "process" ? remotePhase(lead, paneStatus, dialog) : phaseOf(lead, paneStatus);
+}
+
+/// Whether answering from the phone must tell the pane's own status machine
+/// that input was submitted. Only a process lead's status IS the pane's: after
+/// an approval is answered it must run again (and end `done`). A hook lead's
+/// status comes from the backend, and the PC's attention flag comes down by
+/// itself when the agent really leaves `waiting`; a multi-question dialog
+/// keeps it.
+export function answerNotesSubmit(lead: { source: AgentSource } | null | undefined): boolean {
+  return lead?.source === "process";
 }
 
 /// Terminal panes of every workspace that a phone can usefully see:
@@ -36,10 +100,12 @@ export interface RemoteListInput {
 /// Browser/editor/files/git panes are never listed, and neither is a terminal
 /// of an unhydrated workspace that runs no agent (nothing to show or drive).
 ///
-/// `status` is the status the UI shows for the lead: the backend's for a
-/// hook-fed lead, the pane's for a process-scan lead (`effectiveLeadStatus`),
-/// and a pane flagged `attention` counts as waiting, as in the office view's
-/// waiting list. "none" when no agent runs there.
+/// `status` is the agent's REAL status, the one the agent tree shows: the
+/// backend's for a hook-fed lead, the pane's for a process-scan lead
+/// (`effectiveLeadStatus`), plus `waiting` while the screen shows a blocking
+/// dialog or menu. The PC's own `attention` flag ("unseen") is never a reason
+/// to say `waiting`: nothing on the phone could clear it. "none" when no agent
+/// runs there. `since_ms` is when that reported status began.
 export function buildPaneList(input: RemoteListInput): RemotePane[] {
   const out: RemotePane[] = [];
   for (const ws of input.workspaces) {
@@ -49,17 +115,14 @@ export function buildPaneList(input: RemoteListInput): RemotePane[] {
       if (!lead && !input.live(spec.id)) continue;
       const ps = input.paneStatus(spec.id) ?? "idle";
       let status: RemotePane["status"] = "none";
-      if (lead) {
-        const eff = effectiveLeadStatus(lead, ps);
-        status = ps === "attention" ? "waiting" : eff;
-      }
+      if (lead) status = reportedStatus(lead, ps, () => input.dialog(spec.id));
       out.push({
         pane: spec.id,
         ws: ws.label,
         title: input.title(spec.id),
         kind: lead?.kind ?? "",
         status,
-        since_ms: input.since(spec.id) ?? 0,
+        since_ms: input.since(spec.id, status) ?? 0,
         queued: input.queued(spec.id),
       });
     }

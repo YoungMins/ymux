@@ -3,6 +3,7 @@ import {
   buildAgentTree,
   isExpanded,
   newlyWaitingPanes,
+  noLongerWaitingPanes,
   paneLabel,
   parseExpanded,
   showsAgentTrackingHint,
@@ -125,6 +126,27 @@ describe("newlyWaitingPanes", () => {
       p3: { lead: waiting, subagents: [] },
     };
     expect(newlyWaitingPanes(prev, next).sort()).toEqual(["p2", "p3"]);
+  });
+});
+
+describe("noLongerWaitingPanes", () => {
+  it("reports panes whose lead was waiting and now is not, or is gone", () => {
+    const working = { kind: "claude", status: "working", source: "hook", tool: null } as const;
+    const waiting = { ...working, status: "waiting" } as const;
+    const prev: AgentSnapshot = {
+      p1: { lead: waiting, subagents: [] },
+      p2: { lead: waiting, subagents: [] },
+      p3: { lead: waiting, subagents: [] },
+      p4: { lead: working, subagents: [] },
+      p5: { lead: null, subagents: [] },
+    };
+    const next: AgentSnapshot = {
+      p1: { lead: waiting, subagents: [] },
+      p2: { lead: working, subagents: [] },
+      p4: { lead: waiting, subagents: [] },
+      p5: { lead: null, subagents: [] },
+    };
+    expect(noLongerWaitingPanes(prev, next).sort()).toEqual(["p2", "p3"]);
   });
 });
 

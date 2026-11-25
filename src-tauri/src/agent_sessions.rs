@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::agent_binding::{
-    argv_session_id, guess_transcript, OtherAgent, PaneProcess, ProcessKey,
+    argv_session_id, guess_transcript, is_background_codex, OtherAgent, PaneProcess, ProcessKey,
 };
 use crate::agents::AgentStatus;
 
@@ -835,6 +835,12 @@ pub struct SessionTracker {
     /// this run did not see (another agent may have replaced it), so it is not
     /// served until an agent is tied to a conversation in that pane again.
     exited_here: HashSet<Uuid>,
+    /// Panes whose Codex process has had another interactive Codex in its
+    /// folder at some point in its life (another pane or outside ymux). Codex
+    /// writes its rollout late, so the rollout left in that folder may be the
+    /// other one's: such a process is never bound by a disk guess. Runtime
+    /// only, cleared when the pane's process ends or changes.
+    codex_rivals: HashSet<Uuid>,
     /// A record changed since the last `take_dirty`.
     dirty: bool,
     /// Pane id -> when a hook-borne id was last checked against the pane's
@@ -912,9 +918,36 @@ impl SessionTracker {
     /// first so it lists the machine's agents only when some pane needs them.
     pub fn may_disk_scan(&self, pane_id: Uuid, process: ProcessKey, now: u64) -> bool {
         match self.bindings.get(&pane_id) {
-            Some(b) if b.process == process => self.wants_disk_scan(pane_id, now),
+            Some(b) if b.process == process => {
+                self.wants_disk_scan(pane_id, now) || self.wants_revalidation(pane_id, now)
+            }
             _ => true,
         }
+    }
+
+    /// Whether `pane_id`'s Codex conversation, which was only guessed from the
+    /// disk, is due for another look (at most every [`DISK_RESCAN_INTERVAL`]).
+    fn wants_revalidation(&self, pane_id: Uuid, now: u64) -> bool {
+        self.store
+            .get(pane_id)
+            .is_some_and(|s| s.agent == AgentKind::Codex && s.active && s.source == IdSource::Disk)
+            && self
+                .bindings
+                .get(&pane_id)
+                .is_some_and(|b| b.session_id.is_some())
+            && self.last_disk_scan.get(&pane_id).map_or(true, |last| {
+                now.saturating_sub(*last) >= DISK_RESCAN_INTERVAL
+            })
+    }
+
+    /// The session ids recorded for panes other than `pane_id`.
+    fn claimed_elsewhere(&self, pane_id: Uuid) -> HashSet<String> {
+        self.store
+            .sessions
+            .iter()
+            .filter(|(id, _)| **id != pane_id)
+            .map(|(_, s)| s.session_id.clone())
+            .collect()
     }
 
     pub fn wants_disk_scan(&self, pane_id: Uuid, now: u64) -> bool {
@@ -1124,6 +1157,33 @@ impl SessionTracker {
                 // window measures) — only while the record is the live one
                 // for that id, never reviving one that was declined.
                 let id = id.clone();
+                // A Codex conversation that was only guessed is re-checked
+                // now and then: once a second rollout of this folder could be
+                // this process's too, the guess is dropped, never switched.
+                if agent == AgentKind::Codex && self.wants_revalidation(pane, now) {
+                    if let Some(cwd) = obs.cwd.as_deref().filter(|c| !c.is_empty()) {
+                        self.last_disk_scan.insert(pane, now);
+                        let found = match looked.take() {
+                            Some(c) => c,
+                            None => lookup.take().map(|f| f(agent, cwd)).unwrap_or_default(),
+                        };
+                        let claimed = self.claimed_elsewhere(pane);
+                        let possible = found
+                            .iter()
+                            .filter(|d| d.created.is_some_and(|c| c >= process.start_secs))
+                            .filter(|d| !claimed.contains(&d.session_id))
+                            .count();
+                        if possible >= 2 {
+                            self.codex_rivals.insert(pane);
+                            self.dirty |= self.store.deactivate(pane);
+                            self.declined.insert(pane);
+                            if let Some(b) = self.bindings.get_mut(&pane) {
+                                b.session_id = None;
+                            }
+                            return;
+                        }
+                    }
+                }
                 if let Some(existing) = self
                     .store
                     .get(pane)
@@ -1153,6 +1213,25 @@ impl SessionTracker {
                 // conversation any more. Cleared when an agent is tied to a
                 // conversation (`record`).
                 self.declined.insert(pane);
+                self.codex_rivals.remove(&pane);
+            }
+        }
+
+        // Every sighting counts, scan throttle or not: the rival may be gone
+        // by the time the pane's own rollout is looked for.
+        if agent == AgentKind::Codex {
+            let pane_cwd = obs.cwd.as_deref().filter(|c| !c.is_empty());
+            let rival = others.iter().any(|o| {
+                o.kind == AgentKind::Codex
+                    && !process.subtree.contains(&o.pid)
+                    && match (o.cwd.as_deref(), pane_cwd) {
+                        (Some(a), Some(b)) => ypath::same_path(a, b),
+                        // Cannot tell where it is: it could be here.
+                        _ => true,
+                    }
+            });
+            if rival {
+                self.codex_rivals.insert(pane);
             }
         }
 
@@ -1162,14 +1241,17 @@ impl SessionTracker {
         let Some(cwd) = obs.cwd.as_deref().filter(|c| !c.is_empty()) else {
             return;
         };
+        // Counts as a scan even when nothing is read, so the scan loop does
+        // not list every agent on the machine for this pane on every tick.
         self.last_disk_scan.insert(pane, now);
-        let claimed: HashSet<String> = self
-            .store
-            .sessions
-            .iter()
-            .filter(|(id, _)| **id != pane)
-            .map(|(_, s)| s.session_id.clone())
-            .collect();
+        // A Codex that shared its folder with another interactive Codex, or
+        // that is itself a background server, is never matched by a guess.
+        if agent == AgentKind::Codex
+            && (self.codex_rivals.contains(&pane) || is_background_codex(&process.argv))
+        {
+            return;
+        }
+        let claimed = self.claimed_elsewhere(pane);
         // Another pane's process that is already tied to a conversation is
         // not a candidate author of this one's.
         let others: Vec<OtherAgent> = others
@@ -1293,6 +1375,7 @@ impl SessionTracker {
     fn release(&mut self, pane_id: Uuid) {
         self.bindings.remove(&pane_id);
         self.last_disk_scan.remove(&pane_id);
+        self.codex_rivals.remove(&pane_id);
         self.dirty |= self.store.deactivate(pane_id);
     }
 
@@ -1432,6 +1515,7 @@ impl SessionTracker {
         self.last_disk_scan.remove(&pane_id);
         self.last_hook_check.remove(&pane_id);
         self.bindings.remove(&pane_id);
+        self.codex_rivals.remove(&pane_id);
         self.pending.remove(&pane_id);
         self.failed.remove(&pane_id);
         self.foreign.remove(&pane_id);
@@ -2785,6 +2869,202 @@ mod tests {
         assert_eq!(rec.session_id, ID_B);
         assert!(rec.active);
         assert_eq!(rec.source, IdSource::Disk);
+    }
+
+    /// A Codex TUI pane in `/w/proj` over a codex-cli 0.166-shaped rollout
+    /// (`originator: codex-tui`, `source: vscode`): bound from disk, and the
+    /// remote chat then finds the file for that cwd only.
+    #[test]
+    fn a_modern_codex_tui_pane_binds_and_its_chat_is_found() {
+        use crate::agent_scan::{other_agents, ProcEntry};
+        use crate::remote::chat;
+
+        const CODEX_ID: &str = "01a1f64f-c166-7a61-8806-767f14218193";
+        const PANE_CWD: &str = "/w/proj";
+        let root = tempfile::tempdir().expect("tempdir");
+        let rollout = root
+            .path()
+            .join("2026/11/20")
+            .join(format!("rollout-2026-11-20T09-16-24-{CODEX_ID}.jsonl"));
+        std::fs::create_dir_all(rollout.parent().unwrap()).unwrap();
+        let meta = serde_json::json!({
+            "timestamp": "2026-11-20T00:16:24.000Z", "ordinal": 0, "type": "session_meta",
+            "payload": {
+                "session_id": CODEX_ID, "id": CODEX_ID,
+                "timestamp": "2026-11-20T00:16:23.900Z", "cwd": PANE_CWD,
+                "originator": "codex-tui", "cli_version": "0.166.0", "source": "vscode",
+            }
+        });
+        std::fs::write(&rollout, format!("{meta}\n")).unwrap();
+
+        let entry = |pid: u32, args: &[&str]| ProcEntry {
+            pid,
+            parent: Some(1),
+            exe_stem: "codex".into(),
+            argv: args.iter().map(|s| s.to_string()).collect(),
+            start_secs: if pid == 100 { 1_000 } else { 900 },
+            cwd: Some(PANE_CWD.into()),
+        };
+        let run = |extra: &[ProcEntry]| {
+            let mut procs = vec![entry(100, &["codex"])];
+            procs.extend_from_slice(extra);
+            let others = other_agents(&procs, |_| None);
+            let pane = Uuid::from_u128(7);
+            let mut o = obs(pane, "codex", Some(PANE_CWD));
+            o.process = Some(process(100, 1_000, &["codex"]));
+            let mut t = SessionTracker::default();
+            t.observe(&o, 2_000, &others, |agent, cwd| {
+                assert_eq!(agent, AgentKind::Codex);
+                crate::agent_scan_disk::codex_candidates(root.path(), cwd, SystemTime::now())
+            });
+            t.get(pane).filter(|s| s.active).cloned()
+        };
+
+        let rec = run(&[]).expect("bound from the disk guess");
+        assert_eq!(
+            (rec.session_id.as_str(), rec.source),
+            (CODEX_ID, IdSource::Disk)
+        );
+        let b = chat::Binding {
+            agent: AgentKind::Codex,
+            session_id: &rec.session_id,
+            record_cwd: &rec.cwd,
+            source: rec.source,
+        };
+        assert!(chat::locate(&b, root.path(), PANE_CWD).is_some());
+        assert!(chat::locate(&b, root.path(), "/w/other").is_none());
+
+        // ChatGPT's / the Claude Code plugin's servers are not competitors.
+        let bg = [
+            entry(200, &["codex.exe", "-c", "k=v", "app-server"]),
+            entry(201, &["codex", "exec-server"]),
+        ];
+        assert!(run(&bg).is_some(), "a background codex must not block it");
+        // A second interactive one in the same folder stays ambiguous.
+        assert!(run(&[entry(300, &["codex"])]).is_none());
+    }
+
+    fn codex_obs(pane: Uuid, pid: u32, start: u64, argv: &[&str]) -> PaneObservation {
+        let mut o = obs(pane, "codex", Some(CWD));
+        o.process = Some(process(pid, start, argv));
+        o
+    }
+
+    fn codex_other(pid: u32, start: u64, cwd: &str) -> OtherAgent {
+        OtherAgent {
+            kind: AgentKind::Codex,
+            ..other(pid, start, cwd)
+        }
+    }
+
+    fn codex_active(t: &SessionTracker, pane: Uuid) -> Option<String> {
+        t.get(pane)
+            .filter(|s| s.active)
+            .map(|s| s.session_id.clone())
+    }
+
+    #[test]
+    fn a_lone_codex_binds_from_disk_and_a_foreign_folder_rival_does_not_block() {
+        let (a, mut t) = (Uuid::from_u128(1), SessionTracker::default());
+        let far = codex_other(200, 900, "D:\\Work\\elsewhere");
+        t.observe(
+            &codex_obs(a, 100, 1_000, &["codex"]),
+            2_000,
+            &[far],
+            |_, _| vec![disk_at(ID_A, CWD, 1_500)],
+        );
+        assert_eq!(codex_active(&t, a).as_deref(), Some(ID_A));
+        assert_eq!(t.get(a).map(|s| s.source), Some(IdSource::Disk));
+    }
+
+    #[test]
+    fn a_codex_that_ever_saw_a_rival_in_its_folder_never_guesses() {
+        // B started before or after A; either way B's rollout, written late
+        // and left behind when B exits, must not become A's conversation.
+        for b_start in [900, 1_100] {
+            let (a, mut t) = (Uuid::from_u128(1), SessionTracker::default());
+            let a_obs = codex_obs(a, 100, 1_000, &["codex"]);
+            t.observe(&a_obs, 1_100, &[codex_other(200, b_start, CWD)], |_, _| {
+                Vec::new()
+            });
+            // A later tick that is throttled still notices a rival.
+            t.observe(&a_obs, 1_102, &[codex_other(201, 1_050, CWD)], |_, _| {
+                panic!("throttled")
+            });
+            // B is gone now; its rollout is the only one on disk.
+            t.observe(&a_obs, 1_300, &[], |_, _| vec![disk_at(ID_B, CWD, 1_250)]);
+            assert_eq!(codex_active(&t, a), None, "b_start {b_start}");
+        }
+        // A rival whose folder cannot be read counts, and so does an unknown
+        // pane folder; a new process of the pane starts with a clean slate.
+        let (a, mut t) = (Uuid::from_u128(1), SessionTracker::default());
+        let mut blind = codex_other(200, 900, CWD);
+        blind.cwd = None;
+        t.observe(
+            &codex_obs(a, 100, 1_000, &["codex"]),
+            1_100,
+            &[blind],
+            |_, _| Vec::new(),
+        );
+        t.observe(&codex_obs(a, 100, 1_000, &["codex"]), 1_300, &[], |_, _| {
+            vec![disk_at(ID_B, CWD, 1_250)]
+        });
+        assert_eq!(codex_active(&t, a), None);
+        // A rivalled pane is not re-scanned on every tick either.
+        let key = process(100, 1_000, &["codex"]).key();
+        assert!(!t.may_disk_scan(a, key, 1_305));
+        assert!(t.may_disk_scan(a, key, 1_310));
+        t.observe(&codex_obs(a, 101, 1_400, &["codex"]), 1_500, &[], |_, _| {
+            vec![disk_at(ID_C, CWD, 1_450)]
+        });
+        assert_eq!(codex_active(&t, a).as_deref(), Some(ID_C));
+    }
+
+    #[test]
+    fn two_unclaimed_codex_rollouts_are_not_a_guess_and_a_background_pane_never_guesses() {
+        let (a, mut t) = (Uuid::from_u128(1), SessionTracker::default());
+        t.observe(&codex_obs(a, 100, 1_000, &["codex"]), 2_000, &[], |_, _| {
+            vec![disk_at(ID_A, CWD, 1_500), disk_at(ID_B, CWD, 1_600)]
+        });
+        assert_eq!(codex_active(&t, a), None);
+        let (b, mut t) = (Uuid::from_u128(2), SessionTracker::default());
+        let bg = codex_obs(b, 100, 1_000, &["codex", "-c", "k=v", "app-server"]);
+        t.observe(&bg, 2_000, &[], |_, _| vec![disk_at(ID_A, CWD, 1_500)]);
+        assert_eq!(codex_active(&t, b), None);
+    }
+
+    #[test]
+    fn a_second_candidate_appearing_later_unbinds_a_disk_guessed_codex() {
+        let (a, mut t) = (Uuid::from_u128(1), SessionTracker::default());
+        let a_obs = codex_obs(a, 100, 1_000, &["codex"]);
+        t.observe(&a_obs, 2_000, &[], |_, _| vec![disk_at(ID_A, CWD, 1_500)]);
+        assert_eq!(codex_active(&t, a).as_deref(), Some(ID_A));
+        // The scan loop asks first whether a re-read is wanted.
+        assert!(!t.may_disk_scan(a, a_obs.process.as_ref().unwrap().key(), 2_005));
+        assert!(t.may_disk_scan(a, a_obs.process.as_ref().unwrap().key(), 2_010));
+        // Still alone: stays.
+        t.observe(&a_obs, 2_010, &[], |_, _| vec![disk_at(ID_A, CWD, 1_500)]);
+        assert_eq!(codex_active(&t, a).as_deref(), Some(ID_A));
+        // A second rollout from this folder shows up: dropped, not switched.
+        t.observe(&a_obs, 2_020, &[], |_, _| {
+            vec![disk_at(ID_A, CWD, 1_500), disk_at(ID_C, CWD, 2_015)]
+        });
+        assert_eq!(codex_active(&t, a), None);
+        assert!(t.servable_record(a, 2_021).is_none());
+        // And it does not bind to the other one later either.
+        t.observe(&a_obs, 2_040, &[], |_, _| vec![disk_at(ID_C, CWD, 2_015)]);
+        assert_eq!(codex_active(&t, a), None);
+    }
+
+    #[test]
+    fn codex_resume_by_id_still_binds_exactly_next_to_a_rival() {
+        let (a, mut t) = (Uuid::from_u128(1), SessionTracker::default());
+        let a_obs = codex_obs(a, 100, 1_000, &["codex", "resume", ID_B]);
+        t.observe(&a_obs, 1_100, &[codex_other(200, 900, CWD)], |_, _| {
+            Vec::new()
+        });
+        assert_eq!(codex_active(&t, a).as_deref(), Some(ID_B));
+        assert_eq!(t.get(a).map(|s| s.source), Some(IdSource::Process));
     }
 
     const CWD: &str = "D:\\Work\\proj";
