@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0-7fdbca?style=flat-square" alt="version 0.19.0" />
+  <img src="https://img.shields.io/badge/version-0.19.1-7fdbca?style=flat-square" alt="version 0.19.1" />
 </p>
 
 <p align="center">
@@ -442,6 +442,10 @@ def verify(secret: str, timestamp: str, body: bytes, signature: str) -> bool:
 バージョンが並び、**設定 → リモートサーバー** にはサーバーのバージョンが表示されます。
 yMux が古くて会話ビューに対応していないコンピューターは、その旨がスマートフォンに表示されます。
 画像の表示には yMux-Server 0.19.0 が必要です。
+
+**Codex のペイン。** 同じフォルダーで対話型の Codex セッションが 2 つ動いているとき、または
+Codex で `/new` や `/fork` を実行した後は、そのペインがどの会話に属するか ymux には判断できません。
+その場合、スマートフォンではそのペインを画面表示で見せます。
 
 **アクセスレベル**はスマートフォンごとに設定します: **表示のみ**、**表示と応答**、
 **表示・応答・プロンプト送信**。

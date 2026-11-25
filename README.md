@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0-7fdbca?style=flat-square" alt="version 0.19.0" />
+  <img src="https://img.shields.io/badge/version-0.19.1-7fdbca?style=flat-square" alt="version 0.19.1" />
 </p>
 
 <p align="center">
@@ -463,6 +463,10 @@ that pane). The phone lists panes grouped by workspace, with counts and a
 settings list the page, the server and each computer's yMux, and Settings →
 Remote server shows the server's version. A computer whose yMux is too old for
 the conversation view says so on the phone. Pictures need yMux-Server 0.19.0.
+
+**Codex panes.** When two interactive Codex sessions share a folder, or after
+`/new` or `/fork` in Codex, ymux cannot tell which conversation belongs to the
+pane, so the phone shows the screen view for that pane.
 
 **Access levels**, set per phone: **View only**, **View and answer**, or
 **View, answer and prompt**.

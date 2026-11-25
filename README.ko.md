@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0-7fdbca?style=flat-square" alt="version 0.19.0" />
+  <img src="https://img.shields.io/badge/version-0.19.1-7fdbca?style=flat-square" alt="version 0.19.1" />
 </p>
 
 <p align="center">
@@ -427,6 +427,10 @@ csv)입니다. 기본 제한은 파일당 8 MB, 전체 8 MB, 4개이며 (상한�
 서버, 각 컴퓨터의 yMux 버전이 나오고, **설정 → 원격 서버**에는 서버 버전이 나옵니다.
 yMux가 대화 보기를 지원하기에는 너무 오래된 컴퓨터는 휴대폰에 그 사실을 알려 줍니다.
 사진에는 yMux-Server 0.19.0이 필요합니다.
+
+**Codex pane.** 같은 폴더에서 대화형 Codex 세션 두 개가 실행 중이거나 Codex에서 `/new`
+또는 `/fork`를 실행한 뒤에는, 그 pane이 어느 대화에 속하는지 ymux가 알 수 없습니다.
+이때 휴대폰은 그 pane을 화면 보기로 보여 줍니다.
 
 **권한 수준**은 휴대폰마다 지정합니다: **보기만**, **보기와 응답**, **보기, 응답,
 프롬프트 전송**.
