@@ -481,111 +481,111 @@ CHẾ ĐỘ VĂN PHÒNG Nhấn Ctrl+Shift+O để xem không gian làm việc nh
 ĐIỀU KHIỂN TỪ XA Máy chủ từ xa (mặc định tắt): xem và điều khiển các agent từ điện thoại qua relay yMux-Server do chính bạn đặt trên tên miền HTTPS của mình. Từ trình duyệt trên điện thoại (có thể cài như ứng dụng web), bạn xem được mọi agent và trạng thái của chúng, đọc màn hình của một agent, trả lời menu và câu hỏi cấp quyền, dừng agent và gửi prompt. Với Claude Code và Codex, điện thoại hiển thị cuộc trò chuyện dạng chat, có bảng và khối mã được định dạng; một công tắc đưa về chế độ xem màn hình cũ, và có thể tắt trong Cài đặt. Hình ảnh trong cuộc trò chuyện cũng có thể hiện trên điện thoại (mặc định tắt, bật trong Cài đặt), và điện thoại liệt kê các ngăn theo nhóm không gian làm việc. Mỗi điện thoại có một trong ba mức truy cập: chỉ xem, xem và trả lời, hoặc xem, trả lời và gửi prompt. Chỉ máy tính này mới cho phép từng lệnh. Nội dung giữa điện thoại và máy tính được mã hóa đầu cuối, nên relay không đọc được.
 
 yMux miễn phí và mã nguồn mở: https://github.com/YoungMins/ymux"
-ReleaseNotes,3,Text,,"Pictures from the conversation can now be shown on the phone: ones attached to a prompt and ones the agent opened or captured (PNG, JPEG, GIF, WebP, up to 8 MB), in the chat bubbles, with a full-screen viewer. This is off by default: switch it on with “Show pictures from conversations on paired devices” in Settings → Remote server. Pictures are end-to-end encrypted but cannot be redacted.
+ReleaseNotes,3,Text,,"Codex conversations show on the phone again. Codex 0.160 and later changed how its session files are marked, so yMux no longer recognised them. The same fix brings back Codex session resume after a restart and Codex entries in the activity log.
 
-The text of a prompt that was sent together with a picture now appears on the phone. After an agent exits back to the shell, its last conversation stays readable for a day, while yMux keeps running, or until another agent starts in that pane.
+The phone's list no longer keeps a “needs an answer” badge after the question was answered. A Codex or Gemini approval prompt now shows as “needs an answer”. The “x minutes ago” now counts from when the shown status began.
 
-The phone lists panes grouped by workspace, with counts and a “needs you” badge, and each group collapses.
+The phone stays up to date while the yMux window is minimised or hidden to the tray.
 
-Versions are shown: the phone's settings list the page, the server and each computer's yMux, and yMux's Remote server settings show the server's version. A computer whose yMux is too old for the conversation view now says so on the phone.
+Codex's own injected context (hooks, skills, browser and IDE context) is no longer shown as your message. When two interactive Codex sessions run in the same folder, yMux shows the screen instead of guessing which conversation belongs to the pane.
 
-This needs yMux-Server 0.19.0. Older combinations keep working with what both sides know.","이제 대화 속 사진을 휴대폰에서 볼 수 있습니다. 프롬프트에 첨부한 사진과 에이전트가 열었거나 캡처한 사진(PNG, JPEG, GIF, WebP, 최대 8 MB)이 채팅 말풍선에 표시되고 전체 화면으로 볼 수 있습니다. 기본값은 꺼짐이며, 설정 → 원격 서버의 “연결된 기기에서 대화 속 사진 보기”로 켭니다. 사진은 종단 간 암호화되지만 가릴 수는 없습니다.
+No server update is needed: yMux-Server 0.19.0 stays.","Codex 대화가 휴대폰에 다시 대화로 표시됩니다. Codex 0.160 이후 버전에서 세션 파일의 표시 방식이 바뀌어 yMux가 알아보지 못했는데, 이를 고쳤습니다. 같은 수정으로 재시작 후 Codex 세션 이어하기와 활동 로그의 Codex 항목도 돌아옵니다.
 
-사진과 함께 보낸 프롬프트의 텍스트도 이제 휴대폰에 표시됩니다. 에이전트가 종료되어 셸로 돌아가도 마지막 대화는 yMux를 켜 둔 동안 하루까지, 그 pane에서 다른 에이전트를 시작하기 전까지 읽을 수 있습니다.
+질문에 답한 뒤에도 휴대폰 목록에 “답변 필요” 배지가 남던 문제를 고쳤습니다. Codex나 Gemini의 승인 요청도 이제 “답변 필요”로 표시됩니다. 목록의 “몇 분 전”은 지금 표시된 상태가 시작된 때부터 셉니다.
 
-휴대폰은 pane을 작업공간별로 묶어 개수와 “확인 필요” 배지와 함께 보여 주며, 각 그룹은 접을 수 있습니다.
+yMux 창을 최소화하거나 트레이로 숨겨도 휴대폰 화면은 계속 최신으로 유지됩니다.
 
-버전이 표시됩니다. 휴대폰 설정에는 웹 페이지, 서버, 각 컴퓨터의 yMux 버전이 나오고, yMux의 원격 서버 설정에는 서버 버전이 나옵니다. 대화 보기를 지원하기에는 yMux가 너무 오래된 컴퓨터는 휴대폰에 그 사실을 알려 줍니다.
+Codex가 스스로 넣는 문맥(훅, 스킬, 브라우저와 IDE 문맥)은 더 이상 사용자의 메시지로 표시되지 않습니다. 같은 폴더에서 대화형 Codex 세션이 둘 실행 중이면, yMux는 어느 대화인지 추측하지 않고 화면을 보여 줍니다.
 
-yMux-Server 0.19.0이 필요합니다. 이전 조합에서는 양쪽이 아는 범위에서 그대로 동작합니다.","会話の中の画像をスマートフォンで表示できるようになりました。プロンプトに添付した画像と、エージェントが開いた、またはキャプチャした画像（PNG、JPEG、GIF、WebP、最大 8 MB）がチャット吹き出しに表示され、全画面でも見られます。初期設定はオフで、「設定」→「リモートサーバー」の「ペアリング済みの端末に会話の中の画像を表示する」でオンにします。画像はエンドツーエンドで暗号化されますが、伏せることはできません。
+서버 업데이트는 필요 없습니다. yMux-Server 0.19.0을 그대로 쓰면 됩니다.","Codex の会話が、スマートフォンでふたたび会話として表示されます。Codex 0.160 以降でセッションファイルの印の付け方が変わり、yMux が認識できなくなっていました。この修正で、再起動後の Codex セッションの再開と、アクティビティログの Codex の項目も元に戻ります。
 
-画像と一緒に送ったプロンプトのテキストも、スマートフォンに表示されるようになりました。エージェントが終了してシェルに戻っても、最後の会話は 1 日間、yMux が起動している間、またはそのペインで別のエージェントが始まるまで読めます。
+質問に答えたあとも、スマートフォンの一覧に「対応が必要」バッジが残る問題を修正しました。Codex や Gemini の承認プロンプトも「対応が必要」と表示されます。一覧の「○分前」は、表示中の状態が始まった時点から数えます。
 
-スマートフォンではペインがワークスペースごとにまとまり、件数と「対応が必要」バッジが付き、各グループは折りたためます。
+yMux のウィンドウを最小化したりトレイに隠したりしても、スマートフォンの表示は最新のままです。
 
-バージョンが表示されます。スマートフォンの設定にはページ、サーバー、各コンピューターの yMux のバージョンが並び、yMux のリモートサーバー設定にはサーバーのバージョンが表示されます。yMux が古くて会話ビューに対応していないコンピューターは、その旨がスマートフォンに表示されます。
+Codex 自身が差し込むコンテキスト（フック、スキル、ブラウザーや IDE のコンテキスト）は、あなたのメッセージとして表示されなくなりました。同じフォルダーで対話型の Codex セッションが 2 つ動いているときは、どの会話か推測せず、画面を表示します。
 
-yMux-Server 0.19.0 が必要です。これより古い組み合わせでは、双方が対応している範囲でこれまでどおり動作します。","现在可以在手机上显示对话中的图片：包括附在提示上的图片，以及智能体打开或截取的图片（PNG、JPEG、GIF、WebP，最大 8 MB）。图片显示在聊天气泡中，并可全屏查看。此功能默认关闭，请在“设置 → 远程服务器”中开启“在已配对的设备上显示对话中的图片”。图片经过端到端加密，但无法隐去其中的内容。
+サーバーの更新は不要です。yMux-Server は 0.19.0 のままです。","Codex 的对话又能在手机上以对话形式显示了。Codex 0.160 及更高版本改变了会话文件的标记方式，yMux 因此不再识别它们。这次修复同时恢复了重启后的 Codex 会话续接，以及活动日志中的 Codex 条目。
 
-与图片一起发送的提示文字，现在也会显示在手机上。智能体退出并回到 shell 后，它的最后一次对话仍可阅读一天，前提是 yMux 保持运行，且该窗格中没有启动其他智能体。
+回答问题后，手机列表不再保留“需要回答”徽标。Codex 或 Gemini 的批准提示现在也显示为“需要回答”。列表中的“x 分钟前”现在从当前所示状态开始的时间算起。
 
-手机按工作区分组列出窗格，带有数量和“需要你处理”徽标，每个分组都可以折叠。
+yMux 窗口最小化或隐藏到托盘时，手机上的内容仍会保持最新。
 
-现在会显示版本：手机的设置中列出网页、服务器以及每台电脑上的 yMux 版本，yMux 的“远程服务器”设置中显示服务器版本。如果某台电脑的 yMux 太旧，不支持对话视图，手机上会明确提示。
+Codex 自己注入的上下文（钩子、技能、浏览器和 IDE 上下文）不再显示为你的消息。当同一文件夹中运行两个交互式 Codex 会话时，yMux 会显示屏幕内容，而不是猜测该窗格属于哪个对话。
 
-需要 yMux-Server 0.19.0。更旧的组合仍按双方都支持的功能继续工作。","अब बातचीत की तस्वीरें फ़ोन पर दिखाई जा सकती हैं: प्रॉम्प्ट के साथ जोड़ी गई तस्वीरें और वे तस्वीरें जो एजेंट ने खोलीं या कैप्चर कीं (PNG, JPEG, GIF, WebP, 8 MB तक)। वे चैट बबल में दिखती हैं और फ़ुल-स्क्रीन व्यूअर में खुलती हैं। यह डिफ़ॉल्ट रूप से बंद है: इसे सेटिंग्स → रिमोट सर्वर में “पेयर किए गए डिवाइस पर बातचीत की तस्वीरें दिखाएँ” से चालू करें। तस्वीरें एंड-टू-एंड एन्क्रिप्टेड होती हैं, पर उन्हें छिपाया नहीं जा सकता।
+无需更新服务器：yMux-Server 保持 0.19.0。","Codex की बातचीत फ़ोन पर फिर से बातचीत के रूप में दिखती है। Codex 0.160 और उसके बाद के संस्करणों में सेशन फ़ाइलों को चिह्नित करने का तरीका बदल गया था, इसलिए yMux उन्हें पहचान नहीं पाता था। इसी सुधार से रीस्टार्ट के बाद Codex सेशन का फिर से शुरू होना और गतिविधि लॉग में Codex की प्रविष्टियाँ भी लौट आती हैं।
 
-तस्वीर के साथ भेजे गए प्रॉम्प्ट का टेक्स्ट अब फ़ोन पर दिखता है। एजेंट के बाहर निकलकर शेल पर लौटने के बाद भी उसकी आख़िरी बातचीत एक दिन तक पढ़ी जा सकती है, जब तक yMux चलता रहे या उस पेन में दूसरा एजेंट शुरू न हो।
+सवाल का जवाब देने के बाद अब फ़ोन की सूची में “जवाब चाहिए” बैज नहीं रहता। Codex या Gemini का अनुमोदन प्रॉम्प्ट अब “जवाब चाहिए” के रूप में दिखता है। सूची में “x मिनट पहले” अब उस समय से गिना जाता है जब दिख रही स्थिति शुरू हुई थी।
 
-फ़ोन पेन को वर्कस्पेस के अनुसार समूहों में दिखाता है, गिनती और “आपकी ज़रूरत है” बैज के साथ, और हर समूह को समेटा जा सकता है।
+yMux विंडो छोटी करने या ट्रे में छिपाने पर भी फ़ोन अप-टू-डेट रहता है।
 
-अब संस्करण दिखते हैं: फ़ोन की सेटिंग्स में पेज, सर्वर और हर कंप्यूटर के yMux का संस्करण सूचीबद्ध होता है, और yMux की रिमोट सर्वर सेटिंग्स में सर्वर का संस्करण दिखता है। जिस कंप्यूटर का yMux बातचीत व्यू के लिए बहुत पुराना है, उसके बारे में फ़ोन पर अब यह बता दिया जाता है।
+Codex का अपना जोड़ा हुआ संदर्भ (हुक, स्किल, ब्राउज़र और IDE संदर्भ) अब आपके संदेश के रूप में नहीं दिखता। जब एक ही फ़ोल्डर में दो इंटरैक्टिव Codex सेशन चल रहे हों, तो yMux अंदाज़ा नहीं लगाता कि पेन किस बातचीत का है, और स्क्रीन दिखाता है।
 
-इसके लिए yMux-Server 0.19.0 चाहिए। पुराने संयोजन उसी दायरे में काम करते रहते हैं जो दोनों पक्ष समझते हैं।","Ahora las imágenes de la conversación pueden mostrarse en el móvil: las adjuntas a un prompt y las que el agente abrió o capturó (PNG, JPEG, GIF, WebP, hasta 8 MB), dentro de las burbujas de chat y con un visor a pantalla completa. Está desactivado por defecto: actívalo con «Mostrar las imágenes de las conversaciones en los dispositivos vinculados» en Configuración → Servidor remoto. Las imágenes se cifran de extremo a extremo, pero no se pueden ocultar datos en ellas.
+सर्वर अपडेट की ज़रूरत नहीं है: yMux-Server 0.19.0 ही रहेगा।","Las conversaciones de Codex vuelven a mostrarse como conversación en el móvil. Codex 0.160 y posteriores cambiaron la forma de marcar sus archivos de sesión, y yMux dejó de reconocerlos. La misma corrección recupera la reanudación de sesiones de Codex tras reiniciar y las entradas de Codex en el registro de actividad.
 
-El texto de un prompt enviado junto con una imagen ahora aparece en el móvil. Cuando un agente termina y el panel vuelve al shell, su última conversación sigue legible durante un día, mientras yMux siga en ejecución o hasta que otro agente se inicie en ese panel.
+La lista del móvil ya no conserva la insignia «necesita una respuesta» después de responder la pregunta. Una solicitud de aprobación de Codex o Gemini ahora aparece como «necesita una respuesta». El «hace x minutos» cuenta desde que empezó el estado que se muestra.
 
-El móvil lista los paneles agrupados por espacio de trabajo, con contadores y una insignia «te necesita», y cada grupo se puede contraer.
+El móvil se mantiene al día mientras la ventana de yMux está minimizada u oculta en la bandeja.
 
-Se muestran las versiones: los ajustes del móvil indican la de la página, la del servidor y la de yMux en cada equipo, y los ajustes de Servidor remoto de yMux muestran la del servidor. Si el yMux de un equipo es demasiado antiguo para la vista de conversación, el móvil ahora lo indica.
+El contexto que Codex inyecta por sí mismo (hooks, skills, contexto del navegador y del IDE) ya no se muestra como un mensaje tuyo. Si hay dos sesiones interactivas de Codex en la misma carpeta, yMux muestra la pantalla en lugar de adivinar a qué conversación pertenece el panel.
 
-Requiere yMux-Server 0.19.0. Las combinaciones anteriores siguen funcionando con lo que ambas partes conocen.","Les images de la conversation peuvent désormais s’afficher sur le téléphone : celles jointes à un prompt et celles que l’agent a ouvertes ou capturées (PNG, JPEG, GIF, WebP, jusqu’à 8 Mo), dans les bulles de chat, avec une visionneuse plein écran. C’est désactivé par défaut : activez-le avec « Afficher les images des conversations sur les appareils associés » dans Paramètres → Serveur distant. Les images sont chiffrées de bout en bout, mais elles ne peuvent pas être masquées.
+No hace falta actualizar el servidor: yMux-Server sigue en la 0.19.0.","Les conversations Codex s’affichent de nouveau comme une conversation sur le téléphone. Codex 0.160 et les versions suivantes ont changé la façon de marquer leurs fichiers de session, et yMux ne les reconnaissait plus. La même correction rétablit la reprise des sessions Codex après un redémarrage et les entrées Codex du journal d’activité.
 
-Le texte d’un prompt envoyé avec une image apparaît maintenant sur le téléphone. Quand un agent se termine et que le volet revient au shell, sa dernière conversation reste lisible pendant un jour, tant que yMux reste ouvert ou jusqu’à ce qu’un autre agent démarre dans ce volet.
+La liste du téléphone ne garde plus le badge « besoin d’une réponse » une fois la question traitée. Une demande d’approbation de Codex ou Gemini s’affiche maintenant comme « besoin d’une réponse ». Le « il y a x minutes » compte depuis le début de l’état affiché.
 
-Le téléphone regroupe les volets par espace de travail, avec des compteurs et un badge « besoin de vous », et chaque groupe peut être replié.
+Le téléphone reste à jour quand la fenêtre de yMux est réduite ou masquée dans la zone de notification.
 
-Les versions sont affichées : les paramètres du téléphone indiquent celles de la page, du serveur et du yMux de chaque ordinateur, et les paramètres Serveur distant de yMux montrent celle du serveur. Si le yMux d’un ordinateur est trop ancien pour la vue conversation, le téléphone l’indique désormais.
+Le contexte que Codex injecte lui-même (hooks, skills, contexte du navigateur et de l’IDE) n’est plus affiché comme votre message. Quand deux sessions Codex interactives tournent dans le même dossier, yMux affiche l’écran au lieu de deviner à quelle conversation appartient le volet.
 
-Il faut yMux-Server 0.19.0. Les anciennes combinaisons continuent de fonctionner avec ce que les deux côtés connaissent.","صار بالإمكان الآن عرض الصور الموجودة في المحادثة على الهاتف: الصور المرفقة بموجّه وتلك التي فتحها الوكيل أو التقطها (PNG وJPEG وGIF وWebP حتى 8 ميغابايت)، داخل فقاعات الدردشة ومع عارض بملء الشاشة. هذا الخيار متوقف افتراضيًا: فعّله من «عرض الصور الموجودة في المحادثات على الأجهزة المقترنة» في الإعدادات ← الخادم البعيد. تُشفَّر الصور من طرف إلى طرف، لكن لا يمكن إخفاء ما فيها.
+Aucune mise à jour du serveur n’est nécessaire : yMux-Server reste en 0.19.0.","عادت محادثات Codex إلى الظهور على الهاتف كمحادثة. غيّر Codex 0.160 وما بعده طريقة وسم ملفات الجلسات، فلم يعد yMux يتعرّف عليها. ويعيد الإصلاح نفسه استئناف جلسات Codex بعد إعادة التشغيل، وإدخالات Codex في سجل النشاط.
 
-يظهر الآن على الهاتف نص الموجّه الذي أُرسل مع صورة. وبعد أن ينتهي الوكيل ويعود الجزء إلى الصدفة، تبقى آخر محادثة له مقروءة ليوم كامل، ما دام yMux قيد التشغيل أو إلى أن يبدأ وكيل آخر في ذلك الجزء.
+لم تعد قائمة الهاتف تُبقي شارة «يحتاج إلى إجابة» بعد الإجابة عن السؤال. ويظهر طلب الموافقة في Codex أو Gemini الآن بعبارة «يحتاج إلى إجابة». ويُحسب «منذ x دقائق» من بداية الحالة المعروضة.
 
-يعرض الهاتف الأجزاء مجمّعة حسب مساحة العمل، مع الأعداد وشارة «يحتاج إليك»، ويمكن طيّ كل مجموعة.
+يبقى الهاتف محدَّثًا أثناء تصغير نافذة yMux أو إخفائها في صينية النظام.
 
-تظهر الإصدارات الآن: تعرض إعدادات الهاتف إصدار الصفحة والخادم وإصدار yMux على كل حاسوب، وتعرض إعدادات الخادم البعيد في yMux إصدار الخادم. وإذا كان yMux على حاسوب ما أقدم من أن يدعم عرض المحادثة، فسيذكر الهاتف ذلك الآن.
+لم يعد السياق الذي يحقنه Codex بنفسه (الخطافات، والمهارات، وسياق المتصفح وبيئة التطوير) يظهر كرسالة منك. وعندما تعمل جلستان تفاعليتان من Codex في المجلد نفسه، يعرض yMux الشاشة بدلًا من تخمين المحادثة التي ينتمي إليها الجزء.
 
-يتطلب هذا yMux-Server 0.19.0. تواصل التركيبات الأقدم العمل بما يعرفه الطرفان.","Agora as imagens da conversa podem ser exibidas no celular: as anexadas a um prompt e as que o agente abriu ou capturou (PNG, JPEG, GIF, WebP, até 8 MB), dentro dos balões de chat e com um visualizador em tela cheia. Está desativado por padrão: ative em “Mostrar as imagens das conversas nos dispositivos pareados”, em Configurações → Servidor remoto. As imagens têm criptografia de ponta a ponta, mas não podem ser ocultadas.
+لا حاجة إلى تحديث الخادم: يبقى yMux-Server بالإصدار 0.19.0.","As conversas do Codex voltam a aparecer como conversa no celular. O Codex 0.160 e versões posteriores mudaram a forma de marcar os arquivos de sessão, e o yMux deixou de reconhecê-los. A mesma correção traz de volta a retomada de sessões do Codex após reiniciar e as entradas do Codex no registro de atividade.
 
-O texto de um prompt enviado junto com uma imagem agora aparece no celular. Quando um agente termina e o painel volta ao shell, a última conversa dele continua legível por um dia, enquanto o yMux estiver em execução ou até outro agente iniciar nesse painel.
+A lista do celular não mantém mais o selo “precisa de uma resposta” depois que a pergunta foi respondida. Um pedido de aprovação do Codex ou do Gemini agora aparece como “precisa de uma resposta”. O “há x minutos” passa a contar desde o início do status exibido.
 
-O celular lista os painéis agrupados por espaço de trabalho, com contagens e um selo “precisa de você”, e cada grupo pode ser recolhido.
+O celular continua atualizado enquanto a janela do yMux está minimizada ou escondida na bandeja.
 
-As versões são exibidas: as configurações do celular listam a da página, a do servidor e a do yMux de cada computador, e as configurações de Servidor remoto do yMux mostram a do servidor. Se o yMux de um computador for antigo demais para a visualização de conversa, o celular agora avisa.
+O contexto que o próprio Codex injeta (hooks, skills, contexto do navegador e da IDE) não aparece mais como mensagem sua. Quando duas sessões interativas do Codex rodam na mesma pasta, o yMux mostra a tela em vez de adivinhar a qual conversa o painel pertence.
 
-É preciso o yMux-Server 0.19.0. Combinações mais antigas continuam funcionando com o que os dois lados conhecem.","Теперь изображения из диалога можно показывать на телефоне: прикреплённые к промпту и те, что агент открыл или снял (PNG, JPEG, GIF, WebP, до 8 МБ). Они видны в пузырях чата и открываются во весь экран. По умолчанию это выключено: включите «Показывать изображения из диалогов на подключённых устройствах» в разделе «Настройки → Удалённый сервер». Изображения передаются со сквозным шифрованием, но скрыть в них данные нельзя.
+Não é preciso atualizar o servidor: o yMux-Server continua na 0.19.0.","Диалоги Codex снова показываются на телефоне как диалог. В Codex 0.160 и новее изменилась разметка файлов сессий, и yMux перестал их узнавать. То же исправление возвращает возобновление сессий Codex после перезапуска и записи Codex в журнале активности.
 
-Текст промпта, отправленного вместе с изображением, теперь тоже виден на телефоне. Когда агент завершает работу и панель возвращается в оболочку, его последний диалог остаётся доступным сутки, пока yMux работает или пока в этой панели не запустится другой агент.
+Список на телефоне больше не хранит значок «нужен ответ» после того, как на вопрос ответили. Запрос подтверждения от Codex или Gemini теперь показывается как «нужен ответ». «x минут назад» теперь считается с начала показанного статуса.
 
-Телефон показывает панели по рабочим пространствам, со счётчиками и значком «нужны вы»; каждую группу можно свернуть.
+Телефон остаётся актуальным, пока окно yMux свёрнуто или скрыто в трей.
 
-Теперь показываются версии: в настройках телефона указаны версии страницы, сервера и yMux на каждом компьютере, а в настройках удалённого сервера в yMux — версия сервера. Если yMux на компьютере слишком старый для режима диалога, телефон теперь сообщает об этом.
+Контекст, который Codex добавляет сам (хуки, навыки, контекст браузера и IDE), больше не показывается как ваше сообщение. Если в одной папке работают две интерактивные сессии Codex, yMux показывает экран и не гадает, к какому диалогу относится панель.
 
-Нужен yMux-Server 0.19.0. Более старые сочетания продолжают работать в рамках того, что известно обеим сторонам.","Konuşmadaki resimler artık telefonda gösterilebilir: bir isteme eklenenler ve ajanın açtığı ya da yakaladığı resimler (PNG, JPEG, GIF, WebP, en fazla 8 MB). Resimler sohbet balonlarında görünür ve tam ekran görüntüleyicide açılır. Varsayılan olarak kapalıdır: Ayarlar → Uzak sunucu bölümünde “Konuşmalardaki resimleri eşleşmiş cihazlarda göster” ile açın. Resimler uçtan uca şifrelidir ancak maskelenemez.
+Обновлять сервер не нужно: yMux-Server остаётся версии 0.19.0.","Codex konuşmaları telefonda yeniden konuşma olarak görünüyor. Codex 0.160 ve sonrası oturum dosyalarını işaretleme biçimini değiştirdi ve yMux onları artık tanımıyordu. Aynı düzeltme, yeniden başlatmadan sonra Codex oturumunun devam ettirilmesini ve etkinlik günlüğündeki Codex kayıtlarını da geri getirir.
 
-Bir resimle birlikte gönderilen isteminin metni artık telefonda görünür. Bir ajan çıkıp bölme kabuğa döndüğünde, son konuşması yMux çalıştığı sürece ya da o bölmede başka bir ajan başlayana kadar bir gün boyunca okunabilir kalır.
+Soru yanıtlandıktan sonra telefondaki liste artık “yanıt gerekiyor” rozetini tutmaz. Codex veya Gemini onay istemi artık “yanıt gerekiyor” olarak görünür. “x dakika önce” bilgisi, gösterilen durumun başladığı andan itibaren sayılır.
 
-Telefon bölmeleri çalışma alanına göre gruplar; sayılar ve “size ihtiyaç var” rozetiyle listeler, her grup daraltılabilir.
+yMux penceresi simge durumuna küçültüldüğünde veya tepsiye gizlendiğinde de telefon güncel kalır.
 
-Sürümler gösterilir: telefonun ayarlarında sayfanın, sunucunun ve her bilgisayardaki yMux’ın sürümü listelenir, yMux’ın Uzak sunucu ayarlarında ise sunucunun sürümü görünür. Bir bilgisayardaki yMux konuşma görünümü için fazla eskiyse telefon artık bunu söyler.
+Codex’in kendi eklediği bağlam (kancalar, beceriler, tarayıcı ve IDE bağlamı) artık sizin mesajınız olarak gösterilmez. Aynı klasörde iki etkileşimli Codex oturumu çalışırken yMux, bölmenin hangi konuşmaya ait olduğunu tahmin etmek yerine ekranı gösterir.
 
-yMux-Server 0.19.0 gerekir. Daha eski eşleşmeler, iki tarafın da bildiği özelliklerle çalışmaya devam eder.","Bilder aus der Unterhaltung lassen sich jetzt auf dem Smartphone anzeigen: an einen Prompt angehängte und solche, die der Agent geöffnet oder aufgenommen hat (PNG, JPEG, GIF, WebP, bis 8 MB), in den Chat-Blasen und mit einer Vollbildansicht. Das ist standardmäßig aus: Schalten Sie es unter Einstellungen → Remote-Server mit „Bilder aus Unterhaltungen auf gekoppelten Geräten anzeigen“ ein. Bilder sind Ende-zu-Ende-verschlüsselt, lassen sich aber nicht schwärzen.
+Sunucuyu güncellemeniz gerekmez: yMux-Server 0.19.0 olarak kalır.","Codex-Unterhaltungen erscheinen auf dem Smartphone wieder als Unterhaltung. Codex 0.160 und neuer haben die Kennzeichnung der Sitzungsdateien geändert, sodass yMux sie nicht mehr erkannte. Dieselbe Korrektur bringt auch das Fortsetzen von Codex-Sitzungen nach einem Neustart und die Codex-Einträge im Aktivitätsprotokoll zurück.
 
-Der Text eines Prompts, der zusammen mit einem Bild gesendet wurde, erscheint jetzt auf dem Smartphone. Wenn ein Agent beendet ist und der Bereich zur Shell zurückkehrt, bleibt seine letzte Unterhaltung einen Tag lang lesbar, solange yMux läuft oder bis in diesem Bereich ein anderer Agent startet.
+Die Liste auf dem Smartphone behält das Zeichen „braucht eine Antwort“ nicht mehr, wenn die Frage beantwortet wurde. Eine Freigabe-Anfrage von Codex oder Gemini erscheint jetzt als „braucht eine Antwort“. Das „vor x Minuten“ zählt jetzt ab dem Beginn des angezeigten Status.
 
-Das Smartphone listet die Bereiche nach Arbeitsbereich gruppiert, mit Zählern und einem Hinweis „braucht Sie“, und jede Gruppe lässt sich einklappen.
+Das Smartphone bleibt aktuell, auch wenn das yMux-Fenster minimiert oder im Infobereich versteckt ist.
 
-Versionen werden angezeigt: Die Smartphone-Einstellungen nennen die von Seite, Server und yMux auf jedem Computer, und die Remote-Server-Einstellungen in yMux zeigen die Serverversion. Ist das yMux eines Computers zu alt für die Unterhaltungsansicht, sagt das Smartphone das jetzt.
+Der Kontext, den Codex selbst einfügt (Hooks, Skills, Browser- und IDE-Kontext), wird nicht mehr als Ihre Nachricht angezeigt. Laufen zwei interaktive Codex-Sitzungen im selben Ordner, zeigt yMux den Bildschirm, statt zu raten, zu welcher Unterhaltung der Bereich gehört.
 
-Dafür wird yMux-Server 0.19.0 benötigt. Ältere Kombinationen funktionieren weiter mit dem, was beide Seiten kennen.","Giờ đây hình ảnh trong cuộc trò chuyện có thể hiện trên điện thoại: ảnh đính kèm trong prompt và ảnh mà agent đã mở hoặc chụp (PNG, JPEG, GIF, WebP, tối đa 8 MB), nằm trong bong bóng chat và có trình xem toàn màn hình. Tính năng này mặc định tắt: bật bằng “Hiện hình ảnh trong cuộc trò chuyện trên các thiết bị đã ghép nối” trong Cài đặt → Máy chủ từ xa. Hình ảnh được mã hóa đầu cuối nhưng không thể che đi nội dung.
+Ein Server-Update ist nicht nötig: yMux-Server bleibt bei 0.19.0.","Cuộc trò chuyện Codex lại hiện trên điện thoại dưới dạng cuộc trò chuyện. Codex 0.160 trở lên đã đổi cách đánh dấu tệp phiên, nên yMux không còn nhận ra chúng. Bản sửa này cũng khôi phục việc tiếp tục phiên Codex sau khi khởi động lại và các mục Codex trong nhật ký hoạt động.
 
-Nội dung prompt được gửi kèm hình ảnh giờ cũng hiện trên điện thoại. Khi agent thoát và ngăn quay về shell, cuộc trò chuyện cuối của nó vẫn đọc được trong một ngày, miễn là yMux còn chạy hoặc cho đến khi agent khác khởi động trong ngăn đó.
+Danh sách trên điện thoại không còn giữ huy hiệu “cần trả lời” sau khi câu hỏi đã được trả lời. Yêu cầu phê duyệt của Codex hoặc Gemini giờ hiện là “cần trả lời”. Mốc “x phút trước” giờ được tính từ lúc trạng thái đang hiển thị bắt đầu.
 
-Điện thoại liệt kê các ngăn theo nhóm không gian làm việc, kèm số lượng và huy hiệu “cần bạn”, và mỗi nhóm có thể thu gọn.
+Điện thoại luôn được cập nhật khi cửa sổ yMux được thu nhỏ hoặc ẩn xuống khay hệ thống.
 
-Phiên bản được hiển thị: phần cài đặt trên điện thoại liệt kê phiên bản của trang, máy chủ và yMux trên từng máy tính, còn cài đặt Máy chủ từ xa của yMux hiện phiên bản máy chủ. Nếu yMux trên một máy tính quá cũ để hỗ trợ chế độ xem cuộc trò chuyện, điện thoại giờ sẽ báo điều đó.
+Ngữ cảnh do chính Codex chèn vào (hook, skill, ngữ cảnh trình duyệt và IDE) không còn hiện như tin nhắn của bạn. Khi hai phiên Codex tương tác chạy trong cùng một thư mục, yMux hiển thị màn hình thay vì đoán ngăn đó thuộc cuộc trò chuyện nào.
 
-Cần yMux-Server 0.19.0. Các tổ hợp cũ hơn vẫn chạy với những gì cả hai bên đều biết."
+Không cần cập nhật máy chủ: yMux-Server vẫn là 0.19.0."
 Title,4,Text,,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux,yMux
 ShortTitle,5,Text,,,,,,,,,,,,,,
 SortTitle,6,Text,,,,,,,,,,,,,,
